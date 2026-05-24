@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use just_agent_core::types::SseEvent;
 
 use super::ApprovalRequest;
 use crate::state::SharedState;
@@ -18,14 +19,22 @@ pub async fn respond_approval(
 
     let mut deferred = entry.agent.deferred.lock().await;
     match req.decision.as_str() {
-        "approve" => deferred
-            .approve(&req.request_id)
-            .map(|()| StatusCode::OK)
-            .map_err(|_| StatusCode::NOT_FOUND),
-        "deny" => deferred
-            .deny(&req.request_id, req.reason.as_deref().unwrap_or("denied"))
-            .map(|()| StatusCode::OK)
-            .map_err(|_| StatusCode::NOT_FOUND),
+        "approve" => {
+            deferred.approve(&req.request_id).map_err(|_| StatusCode::NOT_FOUND)?;
+            entry.agent.events_tx.send(SseEvent::DeferredApproved {
+                request_id: req.request_id.clone(),
+            }).ok();
+            Ok(StatusCode::OK)
+        }
+        "deny" => {
+            let reason = req.reason.as_deref().unwrap_or("denied").to_owned();
+            deferred.deny(&req.request_id, &reason).map_err(|_| StatusCode::NOT_FOUND)?;
+            entry.agent.events_tx.send(SseEvent::DeferredDenied {
+                request_id: req.request_id.clone(),
+                reason,
+            }).ok();
+            Ok(StatusCode::OK)
+        }
         _ => Err(StatusCode::BAD_REQUEST),
     }
 }
