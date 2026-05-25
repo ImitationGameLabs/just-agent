@@ -23,6 +23,7 @@ pub enum ChatLine {
     Status(String),
     Error(String),
     System(String),
+    Retrying { attempt: u32, max_attempts: u32, error: String, delay_secs: f64 },
 }
 
 /// TUI application state.

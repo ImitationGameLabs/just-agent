@@ -125,6 +125,15 @@ impl App {
                         ]));
                     }
                 }
+                ChatLine::Retrying { attempt, max_attempts, error, delay_secs } => {
+                    lines.push(Line::from(vec![
+                        "\u{27F3} ".dim(),
+                        format!("retrying ({attempt}/{max_attempts}): ").dim(),
+                        format!("{error} \u{2014} waiting {delay_secs:.1}s")
+                            .dim()
+                            .italic(),
+                    ]));
+                }
             }
         }
         Text::from(lines)

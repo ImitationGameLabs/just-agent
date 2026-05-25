@@ -1,3 +1,5 @@
+use just_agent_core::context::ContextUsage;
+use just_agent_core::retry::RetryRecord;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]
@@ -49,4 +51,11 @@ pub struct DeferredInfo {
     pub summary: String,
     pub reason: String,
     pub dangerous: bool,
+}
+
+/// Combined agent status: context usage + retry history.
+#[derive(Debug, Deserialize)]
+pub struct AgentStatusResponse {
+    pub context: ContextUsage,
+    pub recent_retries: Vec<RetryRecord>,
 }

@@ -186,6 +186,9 @@ fn handle_sse_event(event: SseEvent, approval_tx: &mpsc::Sender<ApprovalPrompt>,
         SseEvent::DeferredDenied { request_id, reason } => {
             eprintln!("[deferred] {request_id} denied: {reason}");
         }
+        SseEvent::Retrying { attempt, max_attempts, error, delay_secs } => {
+            eprintln!("[retry {attempt}/{max_attempts}] {error} — waiting {delay_secs:.1}s");
+        }
     }
 }
 
@@ -206,7 +209,20 @@ async fn handle_command(
             // No buffer to clear in stdio mode.
         }
         SlashCommand::Status => match client.agent_status(agent_id).await {
-            Ok(usage) => println!("{}", usage.format_summary()),
+            Ok(status) => {
+                println!("{}", status.context.format_summary());
+                if !status.recent_retries.is_empty() {
+                    println!(
+                        "retries: {} (last: {})",
+                        status.recent_retries.len(),
+                        status
+                            .recent_retries
+                            .first()
+                            .map(|r| r.error.as_str())
+                            .unwrap_or("n/a")
+                    );
+                }
+            }
             Err(e) => eprintln!("[error] {e}"),
         },
         // Unreachable: parse() never produces these

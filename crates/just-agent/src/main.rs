@@ -64,8 +64,25 @@ async fn main() -> Result<()> {
         }
         Commands::Status(args) => {
             let client = DaemonClient::new(&args.daemon.daemon_url);
-            let usage = client.agent_status(&args.id).await?;
-            println!("{}", usage.format_summary());
+            let status = client.agent_status(&args.id).await?;
+            println!("{}", status.context.format_summary());
+            if !status.recent_retries.is_empty() {
+                println!(
+                    "retries: {} (last: {})",
+                    status.recent_retries.len(),
+                    status
+                        .recent_retries
+                        .first()
+                        .map(|r| r.error.as_str())
+                        .unwrap_or("n/a")
+                );
+                for r in &status.recent_retries {
+                    println!(
+                        "  [{}/{}] {} — waited {:.1}s  (round {})",
+                        r.attempt, r.max_attempts, r.error, r.delay_secs, r.round,
+                    );
+                }
+            }
         }
         Commands::Approve(args) => {
             init_tracing();

@@ -2,12 +2,16 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 
+use crate::retry::RetryPolicy;
+
 const DEFAULT_SYSTEM_PROMPT: &str = "You are a minimal coding agent. Use shell_session_exec for shell commands. Use shell_session_create to create persistent shell sessions, shell_session_list to inspect them, shell_session_capture to inspect recent output, and shell_session_restart or shell_session_kill when session lifecycle control is necessary. Keep answers concise and prefer the least risky tool that can accomplish the task.\n\nWhen a tool returns {\"deferred\": true, \"request_id\": \"...\"}, the action was NOT executed and is pending approval. Continue with other work. When you see an approval notification in context, call approval_redeem with the request_id to execute. Call approval_list to check status, approval_cancel if you no longer need a pending action.";
 const DEFAULT_MAX_TOOL_ROUNDS: usize = 32;
 const DEFAULT_COMPACT_MAX_TOKENS: u32 = 1_200;
 const DEFAULT_CONTEXT_WINDOW_TOKENS: usize = 128_000;
 const DEFAULT_OUTPUT_RESERVE_TOKENS: usize = 8_192;
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
+const DEFAULT_MAX_RETRIES: u32 = 3;
+const DEFAULT_RETRY_BASE_DELAY_SECS: u64 = 1;
 
 /// Runtime configuration for `just-agent`.
 #[derive(Clone, Debug)]
@@ -21,6 +25,7 @@ pub struct AgentConfig {
     pub compact_max_tokens: u32,
     pub tool_timeout_secs: u64,
     pub skills: Vec<String>,
+    pub retry_policy: RetryPolicy,
 }
 
 impl AgentConfig {
@@ -50,6 +55,18 @@ impl AgentConfig {
         let tool_timeout_secs =
             parse_env::<u64>("JUST_AGENT_TOOL_TIMEOUT_SECS")?.unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS);
 
+        let max_retries =
+            parse_env::<u32>("JUST_AGENT_MAX_RETRIES")?.unwrap_or(DEFAULT_MAX_RETRIES);
+        let retry_base_delay_secs = parse_env::<u64>("JUST_AGENT_RETRY_BASE_DELAY_SECS")?
+            .unwrap_or(DEFAULT_RETRY_BASE_DELAY_SECS);
+        // max_delay and retry_timeout use defaults (30s / 120s) — intentionally
+        // not exposed as env vars since they rarely need tuning.
+        let retry_policy = RetryPolicy {
+            max_retries,
+            base_delay: std::time::Duration::from_secs(retry_base_delay_secs),
+            ..RetryPolicy::default()
+        };
+
         let workspace_root = workspace_root.canonicalize().with_context(|| {
             format!(
                 "failed to resolve workspace root {}",
@@ -77,6 +94,7 @@ impl AgentConfig {
             compact_max_tokens,
             tool_timeout_secs,
             skills,
+            retry_policy,
         })
     }
 }

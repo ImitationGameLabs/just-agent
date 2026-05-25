@@ -5,6 +5,7 @@ pub mod deferred;
 pub mod persistence;
 pub mod policy;
 pub mod provider;
+pub mod retry;
 pub mod runner;
 pub mod session;
 pub mod tools;

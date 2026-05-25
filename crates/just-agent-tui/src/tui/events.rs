@@ -104,6 +104,15 @@ impl App {
                 )));
                 self.auto_scroll = true;
             }
+            SseEvent::Retrying { attempt, max_attempts, error, delay_secs } => {
+                self.chat_lines.push(ChatLine::Retrying {
+                    attempt,
+                    max_attempts,
+                    error,
+                    delay_secs,
+                });
+                self.auto_scroll = true;
+            }
         }
     }
 

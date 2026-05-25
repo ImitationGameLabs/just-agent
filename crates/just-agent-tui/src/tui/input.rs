@@ -203,9 +203,20 @@ impl App {
             }
             // Daemon query
             SlashCommand::Status => match client.agent_status(agent_id).await {
-                Ok(usage) => {
-                    self.chat_lines
-                        .push(ChatLine::Status(usage.format_summary()));
+                Ok(status) => {
+                    let mut msg = status.context.format_summary();
+                    if !status.recent_retries.is_empty() {
+                        msg.push_str(&format!(
+                            "\n  retries: {} (last: {})",
+                            status.recent_retries.len(),
+                            status
+                                .recent_retries
+                                .first()
+                                .map(|r| r.error.as_str())
+                                .unwrap_or("n/a")
+                        ));
+                    }
+                    self.chat_lines.push(ChatLine::Status(msg));
                     self.auto_scroll = true;
                 }
                 Err(e) => {

@@ -28,6 +28,12 @@ pub enum AgentEvent {
         reason: String,
         dangerous: bool,
     },
+    Retrying {
+        attempt: u32,
+        max_attempts: u32,
+        error: String,
+        delay_secs: f64,
+    },
 }
 
 /// Outcome of running the agent round loop.
@@ -84,6 +90,12 @@ pub enum SseEvent {
         request_id: String,
         reason: String,
     },
+    Retrying {
+        attempt: u32,
+        max_attempts: u32,
+        error: String,
+        delay_secs: f64,
+    },
 }
 
 impl From<AgentEvent> for SseEvent {
@@ -104,6 +116,9 @@ impl From<AgentEvent> for SseEvent {
             AgentEvent::Busy => SseEvent::Busy,
             AgentEvent::DeferredCreated { request_id, tool_name, summary, reason, dangerous } => {
                 SseEvent::DeferredCreated { request_id, tool_name, summary, reason, dangerous }
+            }
+            AgentEvent::Retrying { attempt, max_attempts, error, delay_secs } => {
+                SseEvent::Retrying { attempt, max_attempts, error, delay_secs }
             }
         }
     }

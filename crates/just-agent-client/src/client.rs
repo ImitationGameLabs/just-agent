@@ -189,9 +189,9 @@ impl DaemonClient {
         Ok(())
     }
 
-    /// Get context usage status for an agent.
-    pub async fn agent_status(&self, id: &str) -> Result<just_agent_core::context::ContextUsage> {
-        let usage = self
+    /// Get agent status including context usage and retry history.
+    pub async fn agent_status(&self, id: &str) -> Result<AgentStatusResponse> {
+        let status = self
             .inner
             .http
             .get(self.url(&format!("/agents/{id}/status")))
@@ -203,7 +203,7 @@ impl DaemonClient {
             .json()
             .await
             .context("failed to parse status response")?;
-        Ok(usage)
+        Ok(status)
     }
 
     /// Trigger context compaction for an agent.

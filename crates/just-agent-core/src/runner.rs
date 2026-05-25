@@ -68,7 +68,36 @@ pub async fn run_agent_rounds(
         request.stream = Some(true);
         request.stream_options = Some(StreamOptions { include_usage: Some(true) });
 
-        let stream = ctx.client.stream_chat_completion(request).await?;
+        let mut retry_records = Vec::new();
+        let prior_retries = {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let window_secs = ctx.config.retry_policy.retry_timeout.as_secs();
+            ctx.store
+                .lock()
+                .await
+                .retry_log
+                .iter()
+                .filter(|r| r.timestamp + window_secs > now)
+                .count() as u32
+        };
+        let stream_result = crate::retry::stream_with_retry(
+            &ctx.client,
+            request,
+            &ctx.config.retry_policy,
+            _round,
+            tx,
+            &mut retry_records,
+            prior_retries,
+        )
+        .await;
+        if !retry_records.is_empty() {
+            ctx.store.lock().await.retry_log.extend(retry_records);
+            ctx.persist().await;
+        }
+        let stream = stream_result?;
 
         let mut content = String::new();
         let mut reasoning = String::new();

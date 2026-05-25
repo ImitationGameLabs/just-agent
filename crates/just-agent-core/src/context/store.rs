@@ -6,6 +6,8 @@ use std::ops::Range;
 use anyhow::{Result, bail};
 use just_llm_client::types::chat::{ChatMessage, ToolDefinition};
 
+use crate::retry::RetryRecord;
+
 use super::turn::{Turn, TurnId, estimate_message_tokens};
 
 /// A pinned context item with a label for identification and lifecycle.
@@ -102,6 +104,10 @@ pub struct ContextStore {
     last_prompt_tokens: Option<u32>,
     /// The next turn ID to assign.
     next_turn_id: u64,
+    /// Historical retry records, persisted across session restarts.
+    /// Bounded by max_retries × max_tool_rounds (default 96 records).
+    #[serde(default)]
+    pub retry_log: Vec<RetryRecord>,
 }
 
 impl AgenticContext for ContextStore {
@@ -173,6 +179,7 @@ impl ContextStore {
             summary_tokens: 0,
             last_prompt_tokens: None,
             next_turn_id: 0,
+            retry_log: Vec::new(),
         }
     }
 
