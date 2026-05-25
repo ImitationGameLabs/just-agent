@@ -1,5 +1,6 @@
 //! Agent session orchestration: shared context, round execution, command handling.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -21,6 +22,32 @@ pub struct AgentContext {
     pub executor: AuthorizedToolExecutor,
     pub strategy: Box<dyn CompactionStrategy>,
     pub config: AgentConfig,
+    /// Session directory for persistence.
+    pub session_dir: Option<PathBuf>,
+}
+
+impl AgentContext {
+    /// Persist context and deferred state to disk. Logs warnings on failure.
+    pub async fn persist(&self) {
+        let Some(ref dir) = self.session_dir else { return };
+
+        {
+            let guard = self.store.lock().await;
+            if let Ok(json) = serde_json::to_string(&*guard) {
+                if let Err(e) = crate::persistence::persist_context(&json, dir) {
+                    tracing::error!("context persist failed: {e:#}");
+                }
+            }
+        }
+        {
+            let guard = self.deferred.lock().await;
+            if let Ok(json) = serde_json::to_string(&*guard) {
+                if let Err(e) = crate::persistence::persist_deferred(&json, dir) {
+                    tracing::error!("deferred persist failed: {e:#}");
+                }
+            }
+        }
+    }
 }
 
 /// Agent task: receives user input, runs rounds, sends events back.

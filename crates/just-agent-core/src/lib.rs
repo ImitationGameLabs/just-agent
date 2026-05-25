@@ -2,6 +2,7 @@ pub mod command;
 pub mod config;
 pub mod context;
 pub mod deferred;
+pub mod persistence;
 pub mod policy;
 pub mod provider;
 pub mod runner;

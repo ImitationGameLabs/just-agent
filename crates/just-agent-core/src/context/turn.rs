@@ -3,10 +3,12 @@
 //! A [`Turn`] groups the messages from one agent loop iteration,
 //! keeping tool call/result pairs coherent during compaction.
 
+use serde::{Deserialize, Serialize};
+
 use just_llm_client::types::chat::ChatMessage;
 
 /// Stable unique identifier for a turn within a session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TurnId(pub u64);
 
 /// A logical conversation turn: one or more messages produced in a
@@ -16,7 +18,7 @@ pub struct TurnId(pub u64);
 /// - A user message (initial prompt)
 /// - An assistant tool-call message + corresponding tool-result messages
 /// - A final assistant text response
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Turn {
     pub id: TurnId,
     pub messages: Vec<ChatMessage>,

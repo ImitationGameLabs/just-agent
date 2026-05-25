@@ -17,7 +17,7 @@ pub enum DeferredStatus {
 }
 
 /// A tool action that was deferred pending approval.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeferredAction {
     pub request_id: String,
     pub tool_name: String,
@@ -40,14 +40,14 @@ pub struct DeferredActionInfo {
 }
 
 /// Notification pushed when an external approval/denial arrives.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum DeferredNotification {
     Approved { request_id: String, summary: String },
     Denied { request_id: String, summary: String, reason: String },
 }
 
 /// Info about the most recently enqueued deferred action (consumed once).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeferredCreateInfo {
     pub request_id: String,
     pub tool_name: String,
@@ -61,10 +61,14 @@ pub struct DeferredCreateInfo {
 /// Shared between the executor (enqueue, redeem, cancel) and the daemon
 /// routes (approve, deny). The runner drains notifications to inject into
 /// the LLM context at the start of each round.
+#[derive(Serialize, Deserialize)]
 pub struct DeferredQueue {
     actions: HashMap<String, DeferredAction>,
+    /// Transient: drained each round, not persisted.
+    #[serde(skip)]
     notifications: VecDeque<DeferredNotification>,
-    /// Set by `enqueue`, consumed by `take_last_deferred`.
+    /// Transient: one-shot flag, not persisted.
+    #[serde(skip)]
     last_deferred: Option<DeferredCreateInfo>,
 }
 

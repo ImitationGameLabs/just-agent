@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use just_agent_core::command::UserInput;
@@ -28,13 +29,13 @@ pub struct Agent {
     pub agent_handle: JoinHandle<()>,
     pub bridge_handle: JoinHandle<()>,
     pub store: Arc<Mutex<ContextStore>>,
+    pub session_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AgentSummary {
     pub id: String,
     pub workspace_root: String,
-    pub skills: Vec<String>,
 }
 
 impl AppState {

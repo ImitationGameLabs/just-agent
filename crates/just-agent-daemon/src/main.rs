@@ -31,7 +31,10 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(AppState::new());
 
-    let app = routes::router().with_state(state);
+    // Restore persisted sessions before accepting requests.
+    routes::restore_sessions(&state).await;
+
+    let app = routes::router().with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&args.listen_addr).await?;
     info!(addr = %args.listen_addr, "daemon listening");

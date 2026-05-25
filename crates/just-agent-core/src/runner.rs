@@ -168,6 +168,7 @@ pub async fn run_agent_rounds(
         }
 
         ctx.store.lock().await.push_turn(turn_messages);
+        ctx.persist().await;
     }
 
     Ok(AgentOutcome::MaxRoundsExceeded)
@@ -220,15 +221,25 @@ pub async fn compact_context(ctx: &AgentContext) -> Result<bool> {
         }
     };
 
-    let mut guard = ctx.store.lock().await;
-    guard.set_summary(result.summary);
+    let context_json = {
+        let mut guard = ctx.store.lock().await;
+        guard.set_summary(result.summary);
 
-    info!(
-        strategy = ctx.strategy.name(),
-        turns_compacted = result.turns_compacted,
-        summary_tokens = result.summary_tokens,
-        "compacted turns"
-    );
+        info!(
+            strategy = ctx.strategy.name(),
+            turns_compacted = result.turns_compacted,
+            summary_tokens = result.summary_tokens,
+            "compacted turns"
+        );
+
+        serde_json::to_string(&*guard).ok()
+    };
+
+    if let (Some(json), Some(dir)) = (context_json, ctx.session_dir.as_ref())
+        && let Err(e) = crate::persistence::persist_context(&json, dir)
+    {
+        tracing::error!("context persist after compaction failed: {e:#}");
+    }
 
     Ok(true)
 }

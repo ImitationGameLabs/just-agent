@@ -1,4 +1,5 @@
 mod agent;
+pub use agent::restore_sessions;
 mod approval;
 mod context;
 mod prompt;

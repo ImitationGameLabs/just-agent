@@ -9,7 +9,7 @@ use just_llm_client::types::chat::{ChatMessage, ToolDefinition};
 use super::turn::{Turn, TurnId, estimate_message_tokens};
 
 /// A pinned context item with a label for identification and lifecycle.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PinnedItem {
     pub label: String,
     pub message: ChatMessage,
@@ -85,8 +85,10 @@ pub trait AgenticContext: Send + Sync {
 /// and an optional summary of compacted history.
 /// Budget checking is handled by the main loop using ChatClient's
 /// accurate token estimation pipeline.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct ContextStore {
-    /// Tool definitions: part of every request.
+    /// Tool definitions: reconstructed on restore, not persisted.
+    #[serde(skip)]
     tool_definitions: Vec<ToolDefinition>,
     /// Pinned items: always included, never subject to compaction.
     pinned: Vec<PinnedItem>,

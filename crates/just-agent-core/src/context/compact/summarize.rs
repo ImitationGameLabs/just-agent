@@ -80,10 +80,6 @@ impl CompactionStrategy for SummarizeStrategy {
         };
         let summary_tokens = summary.chars().count() / 4 + 16;
 
-        Ok(CompactionResult {
-            summary,
-            summary_tokens,
-            turns_compacted: turns_used,
-        })
+        Ok(CompactionResult { summary, summary_tokens, turns_compacted: turns_used })
     }
 }
