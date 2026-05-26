@@ -73,7 +73,9 @@ pub async fn agent_task(
             .lock()
             .await
             .push_turn(vec![ChatMessage::user(&p)]);
-        run_and_report(&mut ctx, &agent_tx).await;
+        if run_and_report(&mut ctx, &agent_tx).await.is_some() {
+            return;
+        }
     }
 
     loop {
@@ -85,7 +87,9 @@ pub async fn agent_task(
                             .lock()
                             .await
                             .push_turn(vec![ChatMessage::user(&text)]);
-                        run_and_report(&mut ctx, &agent_tx).await;
+                        if run_and_report(&mut ctx, &agent_tx).await.is_some() {
+                            break;
+                        }
                     }
                     Some(UserInput::Command(cmd)) => {
                         handle_command(&cmd, &mut ctx, &agent_tx).await;
@@ -122,7 +126,7 @@ async fn handle_command(
 pub async fn run_and_report(
     ctx: &mut AgentContext,
     agent_tx: &tokio::sync::mpsc::Sender<AgentEvent>,
-) {
+) -> Option<AgentOutcome> {
     agent_tx.send(AgentEvent::Busy).await.ok();
     match runner::run_agent_rounds(ctx, agent_tx).await {
         Ok(AgentOutcome::Finished { content }) => {
@@ -131,19 +135,23 @@ pub async fn run_and_report(
                 .await
                 .push_turn(vec![ChatMessage::assistant(&content)]);
             agent_tx.send(AgentEvent::Finished(content)).await.ok();
+            None
         }
         Ok(AgentOutcome::MaxRoundsExceeded) => {
             agent_tx.send(AgentEvent::MaxRoundsExceeded).await.ok();
+            None
         }
-        Ok(AgentOutcome::Cancelled) => {
+        Ok(outcome @ AgentOutcome::Cancelled) => {
             ctx.persist().await;
             agent_tx.send(AgentEvent::Cancelled).await.ok();
+            Some(outcome)
         }
         Err(e) => {
             agent_tx
                 .send(AgentEvent::Error(format!("{e:#}")))
                 .await
                 .ok();
+            None
         }
     }
 }
