@@ -27,9 +27,9 @@ impl LlmTool for ContextStatusTool {
 
     fn description(&self) -> &str {
         "Report the agent's current context window usage: how many tokens are \
-         consumed by pinned items, summary, and conversation turns, and how many \
-         remain. Use this to decide whether to evict old turns with context_evict \
-         before the automatic compaction triggers."
+         consumed by pinned items and conversation turns, and how many \
+         remain. Use this to decide whether to evict all turns with context_evict \
+         (providing a summary to preserve key facts) before the automatic compaction triggers."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -44,12 +44,10 @@ impl LlmTool for ContextStatusTool {
             "last_prompt_tokens": usage.last_prompt_tokens,
             "usage": {
                 "pinned_tokens": pinned_tokens,
-                "summary_tokens": usage.summary_tokens,
                 "turn_tokens": usage.turn_tokens,
             },
             "pinned_items": usage.pinned_items,
             "turn_count": usage.turn_count,
-            "has_summary": usage.summary_tokens > 0,
         }))?)
     }
 }

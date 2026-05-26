@@ -21,12 +21,11 @@ that aren't possible when context management is opaque.
 
 ## Context layers
 
-The `ContextStore` holds three layers, composed in priority order:
+The `ContextStore` holds two layers, composed in priority order:
 
 | Layer         | Content                | Behavior                                          |
 | ------------- | ---------------------- | ------------------------------------------------- |
 | Pinned layer  | Labeled items          | Always included. Survives eviction.               |
-| Summary layer | Optional string        | Accumulated summary of compacted turns.           |
 | Working turns | Chronological messages | Subject to eviction and compaction (newest last). |
 
 Each turn is a `Vec<ChatMessage>` (assistant message + tool results) with a
@@ -38,24 +37,18 @@ pre-cached token estimate.
 | ---------------- | ------------------------------------------------------------------------------------------- |
 | `context_pin`    | Add a labeled item to the pinned layer. Pinned items survive eviction and compaction.       |
 | `context_unpin`  | Remove an item from the pinned layer. The content can then be evicted.                      |
-| `context_evict`  | Discard the oldest N working turns. Hard delete — turns are not summarized.                 |
-| `context_status` | Return a snapshot: pinned items with token counts, summary tokens, turn count, turn tokens. |
+| `context_evict`  | Evict all working turns, replacing them with a summary that is pinned as `context_summary`. |
+| `context_status` | Return a snapshot: pinned items with token counts, turn count, turn tokens.                 |
 
 These tools go through the same policy system as shell tools. By default, they
 are auto-allowed (no human approval needed).
 
 ## `/compact` as a special case
 
-The `/compact` command found in most coding agents is just one possible use of
-this model:
-
-1. Produce a summary of the conversation so far.
-2. Pin the summary.
-3. Evict the original turns.
-
-The pinned summary survives. But eviction is more general than compaction — the
-agent might evict turns to switch focus to a different task, not just to shrink
-context within the same task.
+The `/compact` command found in most coding agents maps directly to
+`context_evict`: the agent writes a summary preserving key facts, and the tool
+atomically pins the summary and evicts all turns. The agent decides what to
+preserve — compaction is not a hidden heuristic but an explicit agent action.
 
 ## Compaction
 
@@ -68,20 +61,20 @@ until a token budget is exhausted. The new summary replaces the old one, and
 all processed turns are dropped.
 
 The maximum summary token count is configured via the
-`JUST_AGENT_COMPACT_MAX_TOKENS` environment variable (default: 1200).
+`JUST_AGENT_SUMMARY_MAX_TOKENS` environment variable (default: 1200).
 
 ## Automatic compaction in the agent loop
 
 At the start of each agent round:
 
-1. Compose context from all three layers.
+1. Compose context from both layers (pinned, turns).
 2. Estimate prompt tokens.
 3. If `prompt_tokens + output_reserve > context_window`, trigger compaction.
 4. If compaction succeeds, re-compose and continue.
 5. If compaction has nothing to compact, fall through (the round proceeds
    anyway).
 
-If compaction fails, drained turns are **restored** — no data loss on failure.
+If summarize_and_evict fails, the store is unchanged — no data loss on failure.
 
 ## Emergent skills
 

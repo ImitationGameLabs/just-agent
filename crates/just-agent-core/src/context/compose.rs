@@ -9,9 +9,9 @@ use super::store::ContextStore;
 
 /// Build the context for the next LLM call.
 ///
-/// Layers are filled in priority order: pinned → summary → turns.
+/// Layers are filled in priority order: pinned → turns.
 /// Returns all messages without budget filtering — the caller is
-/// responsible for estimating tokens and triggering compaction.
+/// responsible for estimating tokens and triggering summarize_and_evict.
 pub async fn compose_context(store: Arc<Mutex<ContextStore>>) -> Vec<ChatMessage> {
     let guard = store.lock().await;
     let mut messages = Vec::new();
@@ -21,12 +21,7 @@ pub async fn compose_context(store: Arc<Mutex<ContextStore>>) -> Vec<ChatMessage
         messages.push(item.message.clone());
     }
 
-    // Layer 2: Summary (if present).
-    if let Some(summary) = guard.summary() {
-        messages.push(ChatMessage::assistant(summary));
-    }
-
-    // Layer 3: All turns (oldest to newest).
+    // Layer 2: All turns (oldest to newest).
     for turn in guard.turns() {
         messages.extend(turn.messages.iter().cloned());
     }

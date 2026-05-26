@@ -15,7 +15,6 @@ pub enum SlashCommand {
     Quit,
     Clear,
     Status,
-    Compact,
     Skill { name: String },
 }
 

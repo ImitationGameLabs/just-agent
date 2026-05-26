@@ -209,12 +209,8 @@ pub fn restore_session(agent_id: &str, dir: &Path) -> Result<RestorableSession> 
 
     fix_incomplete_turn(&mut store);
 
-    // TODO: Handle context exceeding context_window after restore.
-    // If the new context_window_tokens is smaller than the restored
-    // context, options include:
-    // 1. Trigger compaction before entering the agent loop
-    // 2. Truncate oldest turns to fit budget
-    // 3. Refuse restore and require user to adjust JUST_AGENT_CONTEXT_WINDOW_TOKENS
+    // Migrate legacy summary field to pinned item.
+    store.migrate_legacy_summary();
 
     store.push_turn(vec![ChatMessage::user(RESTART_MESSAGE)]);
 

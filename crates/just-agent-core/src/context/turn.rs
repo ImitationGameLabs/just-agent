@@ -1,7 +1,7 @@
 //! Logical conversation unit for context management.
 //!
 //! A [`Turn`] groups the messages from one agent loop iteration,
-//! keeping tool call/result pairs coherent during compaction.
+//! keeping tool call/result pairs coherent across eviction.
 
 use serde::{Deserialize, Serialize};
 

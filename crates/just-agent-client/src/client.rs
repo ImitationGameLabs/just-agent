@@ -220,19 +220,6 @@ impl DaemonClient {
         Ok(status)
     }
 
-    /// Trigger context compaction for an agent.
-    pub async fn agent_compact(&self, id: &str) -> Result<()> {
-        self.inner
-            .http
-            .post(self.url(&format!("/agents/{id}/compact")))
-            .send()
-            .await
-            .context("failed to trigger compaction")?
-            .error_for_status()
-            .context("daemon returned error")?;
-        Ok(())
-    }
-
     /// Load a skill into the agent's context.
     pub async fn agent_load_skill(&self, id: &str, name: &str) -> Result<()> {
         self.inner

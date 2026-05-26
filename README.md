@@ -30,18 +30,17 @@ The most experimental part of the design. Context management in just-agent is no
 hidden behind heuristics — the agent manages its own attention explicitly
 through tools:
 
-| Tool             | What it does                                              |
-| ---------------- | --------------------------------------------------------- |
-| `context_pin`    | Mark content as essential — pinned items survive eviction |
-| `context_unpin`  | Remove the pin, allowing the content to be evicted again  |
-| `context_evict`  | Discard older turns to free token budget (respects pins)  |
-| `context_status` | Inspect current token usage and pinned items              |
+| Tool             | What it does                                                               |
+| ---------------- | -------------------------------------------------------------------------- |
+| `context_pin`    | Mark content as essential — pinned items survive eviction                  |
+| `context_unpin`  | Remove the pin, allowing the content to be evicted again                   |
+| `context_evict`  | Evict all turns, replacing them with a summary pinned as `context_summary` |
+| `context_status` | Inspect current token usage and pinned items                               |
 
-To make this concrete: the `/compact` command common in coding agents is just a
-special case of this model — the agent produces a summary, pins it, then evicts
-the original turns. The pinned summary survives. But eviction is more general
-than compaction: the agent might evict to focus on a different task, not just to
-shrink context.
+To make this concrete: context compaction maps directly to `context_evict` —
+the agent writes a summary preserving key facts, and the tool atomically pins
+the summary and evicts all turns. Compaction is not a hidden heuristic but an
+explicit agent action.
 
 We openly acknowledge that this approach is **unproven** — it may or may not
 outperform traditional summarization-only context strategies. But it enables

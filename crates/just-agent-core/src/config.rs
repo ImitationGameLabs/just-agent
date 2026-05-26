@@ -6,12 +6,14 @@ use crate::retry::RetryPolicy;
 
 const DEFAULT_SYSTEM_PROMPT: &str = "You are a minimal coding agent. Use shell_session_exec for shell commands. Use shell_session_create to create persistent shell sessions, shell_session_list to inspect them, shell_session_capture to inspect recent output, and shell_session_restart or shell_session_kill when session lifecycle control is necessary. Keep answers concise and prefer the least risky tool that can accomplish the task.\n\nWhen a tool returns {\"deferred\": true, \"request_id\": \"...\"}, the action was NOT executed and is pending approval. Continue with other work. When you see an approval notification in context, call approval_redeem with the request_id to execute. Call approval_list to check status, approval_cancel if you no longer need a pending action.";
 const DEFAULT_MAX_TOOL_ROUNDS: usize = 32;
-const DEFAULT_COMPACT_MAX_TOKENS: u32 = 1_200;
+const DEFAULT_SUMMARY_MAX_TOKENS: u32 = 1_200;
 const DEFAULT_CONTEXT_WINDOW_TOKENS: usize = 128_000;
 const DEFAULT_OUTPUT_RESERVE_TOKENS: usize = 8_192;
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_MAX_RETRIES: u32 = 3;
 const DEFAULT_RETRY_BASE_DELAY_SECS: u64 = 1;
+const DEFAULT_PINNED_BUDGET_RATIO: f64 = 0.25;
+const DEFAULT_CONTEXT_THRESHOLDS: &[u8] = &[50, 60, 70, 80];
 
 /// Runtime configuration for `just-agent`.
 #[derive(Clone, Debug)]
@@ -22,10 +24,12 @@ pub struct AgentConfig {
     pub workspace_root: PathBuf,
     pub context_window_tokens: usize,
     pub output_reserve_tokens: usize,
-    pub compact_max_tokens: u32,
+    pub summary_max_tokens: u32,
     pub tool_timeout_secs: u64,
     pub skills: Vec<String>,
     pub retry_policy: RetryPolicy,
+    pub pinned_budget_ratio: f64,
+    pub context_thresholds: Vec<u8>,
 }
 
 impl AgentConfig {
@@ -50,11 +54,15 @@ impl AgentConfig {
             .unwrap_or(DEFAULT_CONTEXT_WINDOW_TOKENS);
         let output_reserve_tokens = parse_env::<usize>("JUST_AGENT_OUTPUT_RESERVE_TOKENS")?
             .unwrap_or(DEFAULT_OUTPUT_RESERVE_TOKENS);
-        let compact_max_tokens = parse_env::<u32>("JUST_AGENT_COMPACT_MAX_TOKENS")?
-            .unwrap_or(DEFAULT_COMPACT_MAX_TOKENS);
+        let summary_max_tokens = parse_env::<u32>("JUST_AGENT_SUMMARY_MAX_TOKENS")?
+            .unwrap_or(DEFAULT_SUMMARY_MAX_TOKENS);
         let tool_timeout_secs =
             parse_env::<u64>("JUST_AGENT_TOOL_TIMEOUT_SECS")?.unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS);
 
+        let pinned_budget_ratio = parse_env::<f64>("JUST_AGENT_PINNED_BUDGET_RATIO")?
+            .unwrap_or(DEFAULT_PINNED_BUDGET_RATIO);
+        let context_thresholds = parse_env_list::<u8>("JUST_AGENT_CONTEXT_THRESHOLDS")?
+            .unwrap_or_else(|| DEFAULT_CONTEXT_THRESHOLDS.to_vec());
         let max_retries =
             parse_env::<u32>("JUST_AGENT_MAX_RETRIES")?.unwrap_or(DEFAULT_MAX_RETRIES);
         let retry_base_delay_secs = parse_env::<u64>("JUST_AGENT_RETRY_BASE_DELAY_SECS")?
@@ -74,14 +82,43 @@ impl AgentConfig {
             )
         })?;
 
-        if compact_max_tokens == 0 {
-            bail!("JUST_AGENT_COMPACT_MAX_TOKENS must be greater than zero");
+        if summary_max_tokens == 0 {
+            bail!("JUST_AGENT_SUMMARY_MAX_TOKENS must be greater than zero");
         }
         if max_tool_rounds == 0 {
             bail!("JUST_AGENT_MAX_TOOL_ROUNDS must be greater than zero");
         }
         if context_window_tokens == 0 {
             bail!("JUST_AGENT_CONTEXT_WINDOW_TOKENS must be greater than zero");
+        }
+        if output_reserve_tokens >= context_window_tokens {
+            bail!(
+                "JUST_AGENT_OUTPUT_RESERVE_TOKENS ({output_reserve_tokens}) must be less than \
+                 JUST_AGENT_CONTEXT_WINDOW_TOKENS ({context_window_tokens})"
+            );
+        }
+        if !(0.0..1.0).contains(&pinned_budget_ratio) {
+            bail!("JUST_AGENT_PINNED_BUDGET_RATIO must be between 0.0 and 1.0 (exclusive)");
+        }
+        let effective_budget = context_window_tokens.saturating_sub(output_reserve_tokens);
+        let pinned_budget = (effective_budget as f64 * pinned_budget_ratio) as usize;
+        if summary_max_tokens as usize > pinned_budget {
+            bail!(
+                "JUST_AGENT_SUMMARY_MAX_TOKENS ({summary_max_tokens}) exceeds pinned budget \
+                 ({pinned_budget} = effective_budget {effective_budget} × ratio {pinned_budget_ratio}). \
+                 Increase PINNED_BUDGET_RATIO or CONTEXT_WINDOW_TOKENS, or reduce SUMMARY_MAX_TOKENS."
+            );
+        }
+        if context_thresholds.len() < 2 {
+            bail!(
+                "JUST_AGENT_CONTEXT_THRESHOLDS must have at least 2 values (warnings + auto-compact)"
+            );
+        }
+        if !context_thresholds.is_sorted() {
+            bail!("JUST_AGENT_CONTEXT_THRESHOLDS must be sorted ascending");
+        }
+        if context_thresholds.iter().any(|&t| !(1..=99).contains(&t)) {
+            bail!("JUST_AGENT_CONTEXT_THRESHOLDS values must be 1-99");
         }
 
         Ok(Self {
@@ -91,12 +128,49 @@ impl AgentConfig {
             workspace_root,
             context_window_tokens,
             output_reserve_tokens,
-            compact_max_tokens,
+            summary_max_tokens,
             tool_timeout_secs,
             skills,
             retry_policy,
+            pinned_budget_ratio,
+            context_thresholds,
         })
     }
+
+    /// Warning thresholds: all elements except the last.
+    pub fn warning_thresholds(&self) -> &[u8] {
+        // Last element is the auto-compact trigger, not a warning.
+        &self.context_thresholds[..self.context_thresholds.len().saturating_sub(1)]
+    }
+
+    /// Auto-compact trigger: the last (highest) threshold.
+    pub fn auto_compact_threshold(&self) -> u8 {
+        *self.context_thresholds.last().unwrap_or(&80)
+    }
+
+    /// Effective token budget: context window minus output reserve.
+    pub fn effective_budget(&self) -> usize {
+        self.context_window_tokens
+            .saturating_sub(self.output_reserve_tokens)
+    }
+}
+
+/// Parse a comma-separated list env var into a Vec<T>.
+fn parse_env_list<T: std::str::FromStr>(name: &str) -> Result<Option<Vec<T>>> {
+    let Some(value) = std::env::var(name).ok() else {
+        return Ok(None);
+    };
+    if value.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    let items: Result<Vec<T>, _> = value.split(',').map(|s| s.trim().parse()).collect();
+    let items = items.map_err(|_| {
+        anyhow::anyhow!(
+            "{name} must be a comma-separated list of {}",
+            std::any::type_name::<T>()
+        )
+    })?;
+    Ok(Some(items))
 }
 
 fn parse_env<T: std::str::FromStr>(name: &str) -> Result<Option<T>> {

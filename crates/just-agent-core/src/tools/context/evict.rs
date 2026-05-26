@@ -8,13 +8,18 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use crate::context::AgenticContext;
+use just_llm_client::types::chat::ChatMessage;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct EvictArgs {
-    count: usize,
+    /// Summary text preserving key facts from the evicted turns.
+    summary: String,
 }
 
-/// Evicts the oldest conversation turns to free context capacity.
+/// Evicts all conversation turns and replaces them with a summary.
+///
+/// The summary is pinned as `context_summary`, overwriting any existing one.
+/// This is the only supported eviction path: you must preserve what matters.
 pub struct ContextEvictTool {
     ctx: Arc<Mutex<dyn AgenticContext>>,
 }
@@ -32,30 +37,44 @@ impl LlmTool for ContextEvictTool {
     }
 
     fn description(&self) -> &str {
-        "Evict the oldest conversation turns to free context capacity. Evicted turns \
-         are permanently discarded (not summarized). Pin important content with \
-         context_pin before evicting if you need to preserve it. Use context_status \
-         to check current usage before deciding how many turns to evict."
+        "Evict all conversation turns, replacing them with a summary you provide. \
+         The summary is pinned as context_summary — write it to preserve the key \
+         facts, decisions, and current state that you need from the turns being \
+         discarded. Use context_status to review current turns before writing \
+         your summary."
     }
 
     fn parameters_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "count": {
-                    "type": "integer",
-                    "description": "Number of oldest turns to evict."
+                "summary": {
+                    "type": "string",
+                    "description": "Summary preserving key facts from the conversation turns being evicted."
                 }
             },
-            "required": ["count"]
+            "required": ["summary"]
         })
     }
 
     async fn call(&self, args_json: &str) -> Result<String> {
         let args: EvictArgs =
             serde_json::from_str(args_json).context("context_evict: invalid arguments")?;
+
         let mut ctx = self.ctx.lock().await;
-        let result = ctx.evict_turns(args.count);
+        let turn_count = ctx.usage_snapshot().turn_count;
+        if turn_count == 0 {
+            return Ok(serde_json::to_string(&json!({
+                "evicted": 0,
+                "remaining_turns": 0,
+                "freed_tokens": 0,
+            }))?);
+        }
+
+        ctx.replace_pin("context_summary", ChatMessage::assistant(&args.summary))?;
+        let result = ctx.evict_turns(turn_count);
+        ctx.reset_warnings();
+
         Ok(serde_json::to_string(&json!({
             "evicted": result.evicted,
             "remaining_turns": result.remaining_turns,

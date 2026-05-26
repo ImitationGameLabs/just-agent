@@ -1,4 +1,4 @@
-//! Agent round execution loop and context compaction.
+//! Agent round execution loop.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;
 use tracing::{info, warn};
 
-use crate::context::compose_context;
+use crate::context::{AgenticContext, compose_context};
 use crate::deferred::DeferredNotification;
 use crate::session::AgentContext;
 use crate::types::{AgentEvent, AgentOutcome};
@@ -22,7 +22,6 @@ pub async fn run_agent_rounds(
     tx: &tokio::sync::mpsc::Sender<AgentEvent>,
 ) -> Result<AgentOutcome> {
     let tool_timeout = Duration::from_secs(ctx.config.tool_timeout_secs);
-    let output_reserve = ctx.config.output_reserve_tokens;
     let context_window = ctx.config.context_window_tokens;
 
     for _round in 0..ctx.config.max_tool_rounds {
@@ -58,20 +57,28 @@ pub async fn run_agent_rounds(
             }
         };
 
-        if prompt_tokens > 0 && prompt_tokens + output_reserve > context_window {
-            info!(
-                prompt_tokens,
-                context_window, "context exceeds budget, triggering compaction"
-            );
-            // Let compaction run to completion — drain-based recovery is
-            // not cancellation-safe, so we check after instead.
-            match compact_context(ctx).await {
-                Ok(true) => continue,
-                Ok(false) => {} // nothing to compact, fall through
-                Err(e) => warn!("compaction failed: {e:#}"),
+        // Two-phase threshold check: progressive warnings, then auto-compact.
+        if prompt_tokens > 0 {
+            let effective_budget = ctx.config.effective_budget();
+            let usage_pct = prompt_tokens * 100 / effective_budget;
+
+            // Phase 1: Progressive warnings.
+            if check_progressive_warnings(ctx, usage_pct, effective_budget).await {
+                continue;
             }
-            if ctx.cancel.is_cancelled() {
-                return Ok(AgentOutcome::Cancelled);
+
+            // Phase 2: Auto-compact at the highest threshold.
+            let auto_threshold = ctx.config.auto_compact_threshold() as usize;
+            if usage_pct >= auto_threshold {
+                info!(prompt_tokens, context_window, "context exceeds budget");
+                match summarize_and_evict(ctx).await {
+                    Ok(true) => continue,
+                    Ok(false) => {} // nothing to compact, fall through
+                    Err(e) => warn!("summarize_and_evict failed: {e:#}"),
+                }
+                if ctx.cancel.is_cancelled() {
+                    return Ok(AgentOutcome::Cancelled);
+                }
             }
         }
 
@@ -261,61 +268,148 @@ async fn estimate_prompt_tokens(
     Ok(estimate.prompt_tokens as usize)
 }
 
-/// Drain old turns, run compaction strategy, write back results.
+/// Summarize turns to bring context within budget.
 ///
-/// Returns `Ok(true)` if compaction was performed, `Ok(false)` if
-/// there were no turns to compact.
-pub async fn compact_context(ctx: &AgentContext) -> Result<bool> {
-    let (drained, existing_summary) = {
-        let mut guard = ctx.store.lock().await;
-        let turn_count = guard.turn_count();
-        if turn_count == 0 {
-            return Ok(false);
+/// Loops in bounded passes: each pass summarizes the oldest turns that fit
+/// in the summarizer input budget, accumulates into the existing summary,
+/// and evicts the summarized turns. Repeats until context fits or no
+/// progress can be made.
+///
+/// Returns `Ok(true)` if any summarization was performed.
+pub(crate) async fn summarize_and_evict(ctx: &AgentContext) -> Result<bool> {
+    let effective_budget = ctx.config.effective_budget();
+    let summarizer_input_budget =
+        effective_budget.saturating_sub(ctx.summarizer.max_tokens as usize);
+    let mut any_summarized = false;
+
+    loop {
+        // Read phase: snapshot under single lock.
+        let (window, existing_summary) = {
+            let guard = ctx.store.lock().await;
+            if guard.turn_count() == 0 {
+                break;
+            }
+            if guard.total_estimated_tokens() <= effective_budget {
+                break;
+            }
+            let existing_summary = guard
+                .pinned()
+                .iter()
+                .find(|p| p.label == "context_summary")
+                .and_then(|p| p.message.content().map(|c| c.to_owned()));
+
+            // Take oldest turns that fit in summarizer_input_budget.
+            let mut budget = summarizer_input_budget;
+            let mut window = Vec::new();
+            for turn in guard.turns().iter() {
+                if turn.estimated_tokens > budget {
+                    break;
+                }
+                budget -= turn.estimated_tokens;
+                window.push(turn.clone());
+            }
+            if window.is_empty() {
+                break;
+            }
+            (window, existing_summary)
+        };
+
+        // LLM call — lock released during this potentially long await.
+        let result = ctx
+            .summarizer
+            .summarize(
+                &window,
+                existing_summary.as_deref(),
+                effective_budget,
+                &ctx.client,
+            )
+            .await?;
+
+        // Write phase: replace summary + evict turns — single lock, no await.
+        {
+            let mut guard = ctx.store.lock().await;
+            guard.replace_pin("context_summary", ChatMessage::assistant(&result.text))?;
+            guard.evict_turns(result.source_turns);
+            guard.reset_warnings();
+            info!(
+                source_turns = result.source_turns,
+                estimated_tokens = result.estimated_tokens,
+                "summarize pass completed"
+            );
         }
-        let drained = guard.drain_turns(0..turn_count);
-        let summary = guard.summary().map(|s| s.to_owned());
-        (drained, summary)
-    };
 
-    let available = ctx.config.context_window_tokens;
-    let result = match ctx
-        .strategy
-        .compact(
-            &drained,
-            existing_summary.as_deref(),
-            available,
-            &ctx.client,
-        )
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            ctx.store.lock().await.prepend_turns(drained);
-            return Err(e.context("compaction failed; drained turns restored"));
-        }
-    };
-
-    let context_json = {
-        let mut guard = ctx.store.lock().await;
-        guard.set_summary(result.summary);
-
-        info!(
-            strategy = ctx.strategy.name(),
-            turns_compacted = result.turns_compacted,
-            summary_tokens = result.summary_tokens,
-            "compacted turns"
-        );
-
-        serde_json::to_string(&*guard).ok()
-    };
-
-    if let (Some(json), Some(dir)) = (context_json, ctx.session_dir.as_ref())
-        && let Err(e) = crate::persistence::persist_context(&json, dir)
-    {
-        tracing::error!("context persist after compaction failed: {e:#}");
+        any_summarized = true;
     }
 
-    Ok(true)
+    if any_summarized {
+        ctx.persist().await;
+    }
+
+    Ok(any_summarized)
+}
+
+/// Check progressive warning thresholds and inject a [system] message if crossed.
+/// Returns `true` if a warning was injected (caller should continue to re-compose).
+async fn check_progressive_warnings(
+    ctx: &mut AgentContext,
+    usage_pct: usize,
+    effective_budget: usize,
+) -> bool {
+    let warnings = ctx.config.warning_thresholds();
+    if warnings.is_empty() {
+        return false;
+    }
+
+    let mut guard = ctx.store.lock().await;
+
+    // If usage is below the lowest threshold, reset warning state.
+    let lowest = warnings[0] as usize;
+    if usage_pct < lowest {
+        guard.reset_warnings();
+        return false;
+    }
+
+    // Find the highest crossed threshold that hasn't been warned yet.
+    let Some(threshold) = warnings
+        .iter()
+        .rev()
+        .find(|&&t| usage_pct >= t as usize && guard.should_warn(t))
+        .copied()
+    else {
+        return false;
+    };
+
+    let msg = format!(
+        "[system]\nContext usage is at {}% ({} / {} tokens). \
+         Use context_status to review current turns, then context_evict with a \
+         summary to evict all turns while preserving key facts.",
+        threshold,
+        effective_budget * threshold as usize / 100,
+        effective_budget
+    );
+
+    guard.mark_warned(threshold);
+    guard.push_turn(vec![ChatMessage::user(&msg)]);
+    drop(guard);
+    info!(threshold, "injected context warning");
+    true
+}
+
+/// Compact context if it exceeds the budget.
+/// Called at agent startup for restored sessions.
+pub async fn compact_if_needed(ctx: &AgentContext) -> Result<bool> {
+    let effective_budget = ctx.config.effective_budget();
+    let total_tokens = {
+        let guard = ctx.store.lock().await;
+        guard.total_estimated_tokens()
+    };
+
+    if total_tokens <= effective_budget {
+        return Ok(false);
+    }
+
+    info!(total_tokens, effective_budget, "pre-loop compaction needed");
+    summarize_and_evict(ctx).await
 }
 
 fn format_deferred_notifications(notifications: &[DeferredNotification]) -> String {

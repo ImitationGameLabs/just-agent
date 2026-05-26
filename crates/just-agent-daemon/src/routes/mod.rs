@@ -75,10 +75,6 @@ pub fn router() -> Router<SharedState> {
             axum::routing::get(context::agent_status),
         )
         .route(
-            "/agents/{id}/compact",
-            axum::routing::post(context::agent_compact),
-        )
-        .route(
             "/agents/{id}/skill",
             axum::routing::post(context::agent_load_skill),
         )

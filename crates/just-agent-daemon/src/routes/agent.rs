@@ -5,7 +5,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use just_agent_core::config::AgentConfig;
-use just_agent_core::context::{AgenticContext, ContextStore, SummarizeStrategy};
+use just_agent_core::context::{AgenticContext, ContextStore, ContextSummarizer};
 use just_agent_core::deferred::DeferredQueue;
 use just_agent_core::persistence;
 use just_agent_core::policy::{AgentPolicy, AuthorizedToolExecutor};
@@ -51,15 +51,16 @@ async fn spawn_agent(
     );
     let tool_defs = executor.tool_definitions();
     store.lock().await.set_tool_definitions(tool_defs);
-    let strategy: Box<dyn just_agent_core::context::CompactionStrategy> =
-        Box::new(SummarizeStrategy::new(config.compact_max_tokens));
+    let pinned_budget = (config.effective_budget() as f64 * config.pinned_budget_ratio) as usize;
+    store.lock().await.set_pinned_budget(pinned_budget);
+    let summarizer = ContextSummarizer::new(config.summary_max_tokens);
 
     let ctx = AgentContext {
         client,
         store: store.clone(),
         deferred: deferred.clone(),
         executor,
-        strategy,
+        summarizer,
         config: config.clone(),
         session_dir: Some(session_dir.clone()),
         cancel: cancel.clone(),

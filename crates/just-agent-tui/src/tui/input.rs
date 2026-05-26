@@ -193,7 +193,7 @@ impl App {
     /// Three dispatch categories:
     /// - **TUI-local** (help/quit/clear): no daemon call, handled entirely here
     /// - **Daemon query** (status): request-response, awaits daemon endpoint directly
-    /// - **Unreachable** (compact/skill): not user-facing, handled agenticly
+    /// - **Unreachable** (skill): not user-facing, handled via daemon route
     async fn dispatch_command(&mut self, cmd: SlashCommand, client: &DaemonClient, agent_id: &str) {
         match cmd {
             // TUI-local

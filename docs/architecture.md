@@ -61,7 +61,6 @@ an `RwLock`; lookup is by UUID.
 | `GET`    | `/agents/{id}/events`   | Subscribe to agent events via SSE           |
 | `POST`   | `/agents/{id}/approval` | Approve or deny a deferred tool call        |
 | `GET`    | `/agents/{id}/status`   | Get context usage snapshot                  |
-| `POST`   | `/agents/{id}/compact`  | Trigger context compaction                  |
 | `POST`   | `/agents/{id}/skill`    | Load a skill into a running agent           |
 
 `send_prompt` returns immediately (`202 Accepted`). Actual processing is async.
@@ -87,7 +86,7 @@ The core loop (`run_agent_rounds` in `just-agent-core`) iterates up to
 
 1. Drain deferred notifications into context as a synthetic user message.
 2. Compose context from layers (pinned → summary → working turns).
-3. Check token budget — if over limit, trigger compaction.
+3. Check token budget — if over limit, summarize old turns and evict.
 4. Stream the LLM request with tool definitions.
 5. If the response has tool calls, execute each through the policy gate.
 6. Push the assistant message and tool results as a new turn.

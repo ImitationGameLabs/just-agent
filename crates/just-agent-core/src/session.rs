@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::command::{SlashCommand, UserInput};
 use crate::config::AgentConfig;
-use crate::context::{AgenticContext, CompactionStrategy, ContextStore};
+use crate::context::{AgenticContext, ContextStore, ContextSummarizer};
 use crate::deferred::DeferredQueue;
 use crate::policy::AuthorizedToolExecutor;
 use crate::runner;
@@ -21,7 +21,7 @@ pub struct AgentContext {
     pub store: Arc<Mutex<ContextStore>>,
     pub deferred: Arc<Mutex<DeferredQueue>>,
     pub executor: AuthorizedToolExecutor,
-    pub strategy: Box<dyn CompactionStrategy>,
+    pub summarizer: ContextSummarizer,
     pub config: AgentConfig,
     /// Session directory for persistence.
     pub session_dir: Option<PathBuf>,
@@ -60,6 +60,11 @@ pub async fn agent_task(
     mut prompt_rx: tokio::sync::mpsc::Receiver<UserInput>,
     agent_tx: tokio::sync::mpsc::Sender<AgentEvent>,
 ) {
+    // Pre-loop compaction: handle context overflow from restored sessions.
+    if let Err(e) = runner::compact_if_needed(&ctx).await {
+        tracing::warn!("pre-loop compaction failed: {e:#}");
+    }
+
     if let Some(p) = initial_prompt {
         if p.is_empty() {
             return;
@@ -111,23 +116,6 @@ async fn handle_command(
                 .send(AgentEvent::Status(usage.format_summary()))
                 .await
                 .ok();
-        }
-        SlashCommand::Compact => {
-            agent_tx.send(AgentEvent::Busy).await.ok();
-            match runner::compact_context(ctx).await {
-                Ok(_) => {
-                    agent_tx
-                        .send(AgentEvent::Status("compaction complete".into()))
-                        .await
-                        .ok();
-                }
-                Err(e) => {
-                    agent_tx
-                        .send(AgentEvent::Error(format!("compaction failed: {e:#}")))
-                        .await
-                        .ok();
-                }
-            }
         }
         SlashCommand::Skill { name } => {
             match crate::tools::pin_skill(&mut *ctx.store.lock().await, name) {

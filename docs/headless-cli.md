@@ -176,6 +176,5 @@ client.kill_agent(&id).await?;
 
 // Additional methods not yet in the CLI:
 let usage = client.agent_status(&id).await?;
-client.agent_compact(&id).await?;
 client.agent_load_skill(&id, "security-review").await?;
 ```
