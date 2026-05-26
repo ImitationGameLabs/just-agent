@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::command::{SlashCommand, UserInput};
 use crate::config::AgentConfig;
@@ -24,6 +25,8 @@ pub struct AgentContext {
     pub config: AgentConfig,
     /// Session directory for persistence.
     pub session_dir: Option<PathBuf>,
+    /// Cancellation signal for graceful interruption.
+    pub cancel: CancellationToken,
 }
 
 impl AgentContext {
@@ -33,18 +36,18 @@ impl AgentContext {
 
         {
             let guard = self.store.lock().await;
-            if let Ok(json) = serde_json::to_string(&*guard) {
-                if let Err(e) = crate::persistence::persist_context(&json, dir) {
-                    tracing::error!("context persist failed: {e:#}");
-                }
+            if let Ok(json) = serde_json::to_string(&*guard)
+                && let Err(e) = crate::persistence::persist_context(&json, dir)
+            {
+                tracing::error!("context persist failed: {e:#}");
             }
         }
         {
             let guard = self.deferred.lock().await;
-            if let Ok(json) = serde_json::to_string(&*guard) {
-                if let Err(e) = crate::persistence::persist_deferred(&json, dir) {
-                    tracing::error!("deferred persist failed: {e:#}");
-                }
+            if let Ok(json) = serde_json::to_string(&*guard)
+                && let Err(e) = crate::persistence::persist_deferred(&json, dir)
+            {
+                tracing::error!("deferred persist failed: {e:#}");
             }
         }
     }
@@ -68,17 +71,28 @@ pub async fn agent_task(
         run_and_report(&mut ctx, &agent_tx).await;
     }
 
-    while let Some(input) = prompt_rx.recv().await {
-        match input {
-            UserInput::Prompt(text) => {
-                ctx.store
-                    .lock()
-                    .await
-                    .push_turn(vec![ChatMessage::user(&text)]);
-                run_and_report(&mut ctx, &agent_tx).await;
+    loop {
+        tokio::select! {
+            input = prompt_rx.recv() => {
+                match input {
+                    Some(UserInput::Prompt(text)) => {
+                        ctx.store
+                            .lock()
+                            .await
+                            .push_turn(vec![ChatMessage::user(&text)]);
+                        run_and_report(&mut ctx, &agent_tx).await;
+                    }
+                    Some(UserInput::Command(cmd)) => {
+                        handle_command(&cmd, &mut ctx, &agent_tx).await;
+                    }
+                    None => break,
+                }
             }
-            UserInput::Command(cmd) => {
-                handle_command(&cmd, &mut ctx, &agent_tx).await;
+            _ = ctx.cancel.cancelled() => {
+                tracing::info!("agent task: cancellation requested, persisting and exiting");
+                ctx.persist().await;
+                agent_tx.send(AgentEvent::Cancelled).await.ok();
+                break;
             }
         }
     }
@@ -152,6 +166,10 @@ pub async fn run_and_report(
         }
         Ok(AgentOutcome::MaxRoundsExceeded) => {
             agent_tx.send(AgentEvent::MaxRoundsExceeded).await.ok();
+        }
+        Ok(AgentOutcome::Cancelled) => {
+            ctx.persist().await;
+            agent_tx.send(AgentEvent::Cancelled).await.ok();
         }
         Err(e) => {
             agent_tx

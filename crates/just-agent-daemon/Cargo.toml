@@ -10,6 +10,7 @@ just-agent-core = { workspace = true }
 just-llm-client = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+tokio-util = { workspace = true }
 tokio-stream = { workspace = true, features = ["sync"] }
 axum = { workspace = true }
 clap = { workspace = true }

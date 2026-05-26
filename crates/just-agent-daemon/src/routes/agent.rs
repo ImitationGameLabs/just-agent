@@ -13,6 +13,7 @@ use just_agent_core::provider::client_from_env;
 use just_agent_core::session::{self, AgentContext};
 use just_agent_core::tools::{build_tool_dispatch, ensure_meta_skill, load_skill};
 use just_llm_client::types::chat::ChatMessage;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use super::{CreateAgentRequest, CreateAgentResponse, ListAgentsResponse};
@@ -26,7 +27,10 @@ async fn spawn_agent(
     session_dir: std::path::PathBuf,
     config: AgentConfig,
     initial_prompt: Option<String>,
+    parent_cancel: CancellationToken,
 ) -> anyhow::Result<Agent> {
+    let cancel = parent_cancel.child_token();
+
     let client = {
         let meta = ensure_meta_skill()?;
         let mut sp = config.system_prompt.clone();
@@ -58,6 +62,7 @@ async fn spawn_agent(
         strategy,
         config: config.clone(),
         session_dir: Some(session_dir.clone()),
+        cancel: cancel.clone(),
     };
 
     let agent_handle = tokio::spawn(session::agent_task(
@@ -67,7 +72,7 @@ async fn spawn_agent(
         agent_tx,
     ));
     let (events_tx, _) = tokio::sync::broadcast::channel(256);
-    let bridge_handle = tokio::spawn(bridge_task(agent_rx, events_tx.clone()));
+    let bridge_handle = tokio::spawn(bridge_task(agent_rx, events_tx.clone(), cancel.clone()));
 
     Ok(Agent {
         prompt_tx,
@@ -78,6 +83,7 @@ async fn spawn_agent(
         bridge_handle,
         store,
         session_dir: Some(session_dir),
+        cancel,
     })
 }
 
@@ -114,9 +120,16 @@ pub async fn create_agent(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let prompt = config.prompt.take();
-    let agent = spawn_agent(store, deferred, session_dir, config, prompt)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let agent = spawn_agent(
+        store,
+        deferred,
+        session_dir,
+        config,
+        prompt,
+        state.shutdown.clone(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     state
         .agents
@@ -140,19 +153,41 @@ pub async fn list_agents(State(state): State<SharedState>) -> Json<ListAgentsRes
 }
 
 pub async fn delete_agent(State(state): State<SharedState>, Path(id): Path<String>) -> StatusCode {
-    let mut agents = state.agents.write().await;
-    if let Some(idx) = agents.iter().position(|e| e.id == id) {
-        let entry = agents.remove(idx);
-        entry.agent.agent_handle.abort();
-        entry.agent.bridge_handle.abort();
-        if let Err(e) = persistence::cleanup_session(&id) {
-            info!(id = %id, "session cleanup failed: {e:#}");
-        }
-        info!(id = %id, "deleted agent");
-        StatusCode::NO_CONTENT
-    } else {
-        StatusCode::NOT_FOUND
+    let entry = {
+        let mut agents = state.agents.write().await;
+        let Some(idx) = agents.iter().position(|e| e.id == id) else {
+            return StatusCode::NOT_FOUND;
+        };
+        agents.remove(idx)
+    };
+
+    // Signal graceful cancellation.
+    entry.agent.cancel.cancel();
+
+    // Wait briefly for the agent to persist and exit.
+    // Since JoinHandle is not Clone, we sleep and then abort.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    entry.agent.agent_handle.abort();
+    entry.agent.bridge_handle.abort();
+
+    if let Err(e) = persistence::cleanup_session(&id) {
+        info!(id = %id, "session cleanup failed: {e:#}");
     }
+    info!(id = %id, "deleted agent");
+    StatusCode::NO_CONTENT
+}
+
+/// Interrupt the current agent operation without deleting it.
+pub async fn interrupt_agent(
+    State(state): State<SharedState>,
+    Path(id): Path<String>,
+) -> StatusCode {
+    let agents = state.agents.read().await;
+    let Some(entry) = agents.iter().find(|e| e.id == id) else {
+        return StatusCode::NOT_FOUND;
+    };
+    entry.agent.cancel.cancel();
+    StatusCode::ACCEPTED
 }
 
 /// Fire-and-forget: spawn one restore task per persisted session.
@@ -188,7 +223,16 @@ pub async fn restore_sessions(state: &SharedState) {
             let store = Arc::new(tokio::sync::Mutex::new(sess.store));
             let deferred = Arc::new(tokio::sync::Mutex::new(sess.deferred));
 
-            match spawn_agent(store, deferred, sess.session_dir, config, None).await {
+            match spawn_agent(
+                store,
+                deferred,
+                sess.session_dir,
+                config,
+                None,
+                state.shutdown.clone(),
+            )
+            .await
+            {
                 Ok(agent) => {
                     state
                         .agents

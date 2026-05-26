@@ -44,11 +44,17 @@ pub async fn run_agent_rounds(
             .with_tools(ctx.store.lock().await.tool_definitions().to_vec())
             .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto));
 
-        let prompt_tokens = match estimate_prompt_tokens(&ctx.client, &request).await {
-            Ok(tokens) => tokens,
-            Err(e) => {
-                warn!("token estimation failed, sending request anyway: {e:#}");
-                0
+        let prompt_tokens = {
+            let estimate = estimate_prompt_tokens(&ctx.client, &request);
+            tokio::select! {
+                result = estimate => match result {
+                    Ok(tokens) => tokens,
+                    Err(e) => {
+                        warn!("token estimation failed, sending request anyway: {e:#}");
+                        0
+                    }
+                },
+                _ = ctx.cancel.cancelled() => return Ok(AgentOutcome::Cancelled),
             }
         };
 
@@ -57,10 +63,15 @@ pub async fn run_agent_rounds(
                 prompt_tokens,
                 context_window, "context exceeds budget, triggering compaction"
             );
+            // Let compaction run to completion — drain-based recovery is
+            // not cancellation-safe, so we check after instead.
             match compact_context(ctx).await {
                 Ok(true) => continue,
                 Ok(false) => {} // nothing to compact, fall through
                 Err(e) => warn!("compaction failed: {e:#}"),
+            }
+            if ctx.cancel.is_cancelled() {
+                return Ok(AgentOutcome::Cancelled);
             }
         }
 
@@ -83,16 +94,28 @@ pub async fn run_agent_rounds(
                 .filter(|r| r.timestamp + window_secs > now)
                 .count() as u32
         };
-        let stream_result = crate::retry::stream_with_retry(
-            &ctx.client,
-            request,
-            &ctx.config.retry_policy,
-            _round,
-            tx,
-            &mut retry_records,
-            prior_retries,
-        )
-        .await;
+        let stream_result = {
+            let stream_fut = crate::retry::stream_with_retry(
+                &ctx.client,
+                request,
+                &ctx.config.retry_policy,
+                _round,
+                tx,
+                &mut retry_records,
+                prior_retries,
+                ctx.cancel.clone(),
+            );
+            tokio::select! {
+                result = stream_fut => result,
+                _ = ctx.cancel.cancelled() => {
+                    if !retry_records.is_empty() {
+                        ctx.store.lock().await.retry_log.extend(retry_records);
+                        ctx.persist().await;
+                    }
+                    return Ok(AgentOutcome::Cancelled);
+                }
+            }
+        };
         if !retry_records.is_empty() {
             ctx.store.lock().await.retry_log.extend(retry_records);
             ctx.persist().await;
@@ -105,35 +128,50 @@ pub async fn run_agent_rounds(
         let mut usage_prompt_tokens: Option<u32> = None;
 
         tokio::pin!(stream);
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result?;
-            let choice = match chunk.choices.first() {
-                Some(c) => c,
-                None => continue,
-            };
+        loop {
+            tokio::select! {
+                chunk_result = stream.next() => {
+                    let chunk = match chunk_result {
+                        Some(Ok(c)) => c,
+                        Some(Err(e)) => {
+                            warn!("stream chunk error: {e:#}");
+                            break;
+                        }
+                        None => break,
+                    };
+                    let choice = match chunk.choices.first() {
+                        Some(c) => c,
+                        None => continue,
+                    };
 
-            if let Some(delta) = &choice.delta.content {
-                content.push_str(delta);
-                tx.send(AgentEvent::AssistantContentDelta { delta: delta.clone() })
-                    .await
-                    .ok();
-            }
+                    if let Some(delta) = &choice.delta.content {
+                        content.push_str(delta);
+                        tx.send(AgentEvent::AssistantContentDelta { delta: delta.clone() })
+                            .await
+                            .ok();
+                    }
 
-            if let Some(delta) = &choice.delta.reasoning_content {
-                reasoning.push_str(delta);
-                tx.send(AgentEvent::ReasoningDelta { delta: delta.clone() })
-                    .await
-                    .ok();
-            }
+                    if let Some(delta) = &choice.delta.reasoning_content {
+                        reasoning.push_str(delta);
+                        tx.send(AgentEvent::ReasoningDelta { delta: delta.clone() })
+                            .await
+                            .ok();
+                    }
 
-            if let Some(deltas) = &choice.delta.tool_calls {
-                for tc in deltas {
-                    tool_acc.push(tc);
+                    if let Some(deltas) = &choice.delta.tool_calls {
+                        for tc in deltas {
+                            tool_acc.push(tc);
+                        }
+                    }
+
+                    if let Some(usage) = &chunk.usage {
+                        usage_prompt_tokens = Some(usage.prompt_tokens);
+                    }
                 }
-            }
-
-            if let Some(usage) = &chunk.usage {
-                usage_prompt_tokens = Some(usage.prompt_tokens);
+                _ = ctx.cancel.cancelled() => {
+                    tracing::info!("LLM stream cancelled mid-stream");
+                    return Ok(AgentOutcome::Cancelled);
+                }
             }
         }
 
@@ -164,19 +202,26 @@ pub async fn run_agent_rounds(
             })
             .await
             .ok();
-            let result = match tokio::time::timeout(
-                tool_timeout,
-                ctx.executor
-                    .execute(&call.function.name, &call.function.arguments),
-            )
-            .await
-            {
-                Ok(output) => output,
-                Err(_) => format!(
-                    "tool '{}' timed out after {}s",
-                    call.function.name,
-                    tool_timeout.as_secs()
-                ),
+            let result = {
+                let tool_fut = tokio::time::timeout(
+                    tool_timeout,
+                    ctx.executor
+                        .execute(&call.function.name, &call.function.arguments),
+                );
+                tokio::select! {
+                    result = tool_fut => match result {
+                        Ok(output) => output,
+                        Err(_) => format!(
+                            "tool '{}' timed out after {}s",
+                            call.function.name,
+                            tool_timeout.as_secs()
+                        ),
+                    },
+                    _ = ctx.cancel.cancelled() => {
+                        tracing::info!(tool = %call.function.name, "tool execution cancelled");
+                        return Ok(AgentOutcome::Cancelled);
+                    }
+                }
             };
 
             // Check if this was a deferred action and emit DeferredCreated.

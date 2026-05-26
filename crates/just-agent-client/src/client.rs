@@ -100,6 +100,7 @@ impl DaemonClient {
                     SseEvent::MaxRoundsExceeded => {
                         anyhow::bail!("agent {id} exceeded maximum tool rounds")
                     }
+                    SseEvent::Cancelled => anyhow::bail!("agent {id} was cancelled"),
                     _ => continue,
                 },
                 Ok(Some(Err(e))) => anyhow::bail!("SSE error: {e}"),
@@ -145,6 +146,19 @@ impl DaemonClient {
         self.inner
             .http
             .delete(self.url(&format!("/agents/{id}")))
+            .send()
+            .await
+            .context("failed to connect to daemon")?
+            .error_for_status()
+            .context("daemon returned error")?;
+        Ok(())
+    }
+
+    /// Interrupt the current agent operation gracefully.
+    pub async fn interrupt_agent(&self, id: &str) -> Result<()> {
+        self.inner
+            .http
+            .post(self.url(&format!("/agents/{id}/interrupt")))
             .send()
             .await
             .context("failed to connect to daemon")?

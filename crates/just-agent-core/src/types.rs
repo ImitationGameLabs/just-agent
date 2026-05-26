@@ -34,12 +34,14 @@ pub enum AgentEvent {
         error: String,
         delay_secs: f64,
     },
+    Cancelled,
 }
 
 /// Outcome of running the agent round loop.
 pub enum AgentOutcome {
     Finished { content: String },
     MaxRoundsExceeded,
+    Cancelled,
 }
 
 /// Wire-format event for SSE transport (daemon to client).
@@ -96,6 +98,7 @@ pub enum SseEvent {
         error: String,
         delay_secs: f64,
     },
+    Cancelled,
 }
 
 impl From<AgentEvent> for SseEvent {
@@ -120,6 +123,7 @@ impl From<AgentEvent> for SseEvent {
             AgentEvent::Retrying { attempt, max_attempts, error, delay_secs } => {
                 SseEvent::Retrying { attempt, max_attempts, error, delay_secs }
             }
+            AgentEvent::Cancelled => SseEvent::Cancelled,
         }
     }
 }

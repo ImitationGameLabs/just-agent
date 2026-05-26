@@ -62,6 +62,12 @@ impl App {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if self.completion.is_visible() {
                 self.completion.hide();
+            } else if self.agent_busy
+                && let Err(e) = client.interrupt_agent(agent_id).await
+            {
+                self.chat_lines
+                    .push(ChatLine::Error(format!("interrupt failed: {e}")));
+                self.auto_scroll = true;
             }
             return;
         }

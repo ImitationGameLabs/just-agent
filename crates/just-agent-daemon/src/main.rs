@@ -8,6 +8,7 @@ use anyhow::Result;
 use clap::Parser;
 use state::AppState;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use args::Args;
@@ -38,6 +39,47 @@ async fn main() -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind(&args.listen_addr).await?;
     info!(addr = %args.listen_addr, "daemon listening");
-    axum::serve(listener, app).await?;
+    let shutdown_token = state.shutdown.clone();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(shutdown_token))
+        .await?;
+
+    // After HTTP server stops: give agents a brief window to persist.
+    graceful_agent_shutdown(&state).await;
+
     Ok(())
+}
+
+async fn shutdown_signal(token: CancellationToken) {
+    let ctrl_c = tokio::signal::ctrl_c();
+    let sigterm = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = sigterm => {},
+    }
+    info!("received shutdown signal, initiating graceful shutdown");
+    token.cancel();
+}
+
+/// Give in-flight agent tasks a brief window to persist, then abort.
+async fn graceful_agent_shutdown(state: &AppState) {
+    let agents = state.agents.read().await;
+    if agents.is_empty() {
+        return;
+    }
+    info!(count = agents.len(), "waiting for agents to persist");
+
+    // Allow agents a few seconds to finish persisting after cancellation.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    for entry in agents.iter() {
+        entry.agent.agent_handle.abort();
+        entry.agent.bridge_handle.abort();
+    }
+    info!("all agents shut down");
 }

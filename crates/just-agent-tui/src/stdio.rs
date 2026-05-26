@@ -189,6 +189,10 @@ fn handle_sse_event(event: SseEvent, approval_tx: &mpsc::Sender<ApprovalPrompt>,
         SseEvent::Retrying { attempt, max_attempts, error, delay_secs } => {
             eprintln!("[retry {attempt}/{max_attempts}] {error} — waiting {delay_secs:.1}s");
         }
+        SseEvent::Cancelled => {
+            eprintln!("[cancelled]");
+            *busy = false;
+        }
     }
 }
 

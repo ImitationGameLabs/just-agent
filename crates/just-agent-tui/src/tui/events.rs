@@ -113,6 +113,14 @@ impl App {
                 });
                 self.auto_scroll = true;
             }
+            SseEvent::Cancelled => {
+                self.chat_lines
+                    .push(ChatLine::System("Operation cancelled".into()));
+                self.agent_busy = false;
+                self.streaming_content = false;
+                self.streaming_reasoning = false;
+                self.auto_scroll = true;
+            }
         }
     }
 

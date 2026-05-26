@@ -13,6 +13,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 rable = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 uuid = { workspace = true }
 dirs = { workspace = true }
 tracing = { workspace = true }

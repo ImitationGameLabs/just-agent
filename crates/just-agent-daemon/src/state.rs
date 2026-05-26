@@ -9,11 +9,13 @@ use just_agent_core::types::SseEvent;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 pub type SharedState = Arc<AppState>;
 
 pub struct AppState {
     pub agents: RwLock<Vec<AgentEntry>>,
+    pub shutdown: CancellationToken,
 }
 
 pub struct AgentEntry {
@@ -30,6 +32,7 @@ pub struct Agent {
     pub bridge_handle: JoinHandle<()>,
     pub store: Arc<Mutex<ContextStore>>,
     pub session_dir: Option<PathBuf>,
+    pub cancel: CancellationToken,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -40,6 +43,6 @@ pub struct AgentSummary {
 
 impl AppState {
     pub fn new() -> Self {
-        Self { agents: RwLock::new(Vec::new()) }
+        Self { agents: RwLock::new(Vec::new()), shutdown: CancellationToken::new() }
     }
 }

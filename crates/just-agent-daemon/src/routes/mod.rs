@@ -67,6 +67,10 @@ pub fn router() -> Router<SharedState> {
         )
         .route("/agents/{id}", axum::routing::delete(agent::delete_agent))
         .route(
+            "/agents/{id}/interrupt",
+            axum::routing::post(agent::interrupt_agent),
+        )
+        .route(
             "/agents/{id}/status",
             axum::routing::get(context::agent_status),
         )

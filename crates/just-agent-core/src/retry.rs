@@ -11,6 +11,7 @@ use std::error::Error as StdError;
 use anyhow::Result;
 use just_llm_client::{LlmError, TransportError};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::types::AgentEvent;
@@ -124,6 +125,7 @@ fn backoff_delay(policy: &RetryPolicy, attempt: u32) -> Duration {
     capped + jitter
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Open a streaming chat completion with retry on transient errors.
 ///
 /// Uses a global retry budget shared across the agent's lifetime: `prior_retries`
@@ -143,6 +145,7 @@ pub async fn stream_with_retry(
     event_tx: &tokio::sync::mpsc::Sender<AgentEvent>,
     retry_log: &mut Vec<RetryRecord>,
     prior_retries: u32,
+    cancel: CancellationToken,
 ) -> Result<just_llm_client::ChatCompletionStream> {
     if policy.max_retries == 0 {
         return Ok(client.stream_chat_completion(request).await?);
@@ -175,7 +178,9 @@ pub async fn stream_with_retry(
 
                 info!(
                     attempt = global_attempt,
-                    max_attempts = policy.max_retries, delay_secs, "LLM request failed, retrying"
+                    max_attempts = policy.max_retries,
+                    delay_secs,
+                    "LLM request failed, retrying"
                 );
 
                 let record = RetryRecord {
@@ -206,7 +211,12 @@ pub async fn stream_with_retry(
                     return Err(e.into());
                 }
 
-                tokio::time::sleep(delay.min(remaining)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(delay.min(remaining)) => {}
+                    _ = cancel.cancelled() => {
+                        return Err(anyhow::anyhow!("cancelled during retry backoff"));
+                    }
+                }
                 last_error = Some(e);
             }
         }
