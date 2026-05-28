@@ -152,14 +152,14 @@ impl App {
 
         let lines = vec![
             Line::from(""),
-            Line::from("  [1] Stop agent and exit"),
-            Line::from("  [2] Keep agent running and exit"),
+            Line::from("  [1] Keep agent running and quit"),
+            Line::from("  [2] Stop agent and quit"),
             Line::from(""),
             Line::from("  Esc to cancel".dark_gray()),
         ];
 
         let popup = Paragraph::new(lines)
-            .block(Block::bordered().title(" Exit ").yellow())
+            .block(Block::bordered().title(" Quit ").yellow())
             .wrap(Wrap { trim: true });
         frame.render_widget(popup, popup_area);
     }

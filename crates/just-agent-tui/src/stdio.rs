@@ -4,21 +4,42 @@ use std::io::{self, Write};
 
 use anyhow::Result;
 use futures_util::StreamExt;
-use just_agent_client::DaemonClient;
 use just_agent_core::command::{self, SlashCommand};
-use just_agent_core::types::AgentId;
 use just_agent_core::types::SseEvent;
 use tokio::sync::mpsc;
 
-pub async fn run_stdio(client: DaemonClient, agent_id: AgentId) -> Result<()> {
-    let mut event_stream = client.event_stream(&agent_id).await?;
+use crate::session::Session;
+
+/// Pending interactive prompt waiting for the next stdin line.
+enum PendingPrompt {
+    None,
+    QuitConfirm,
+    Approval { request_id: String },
+}
+
+enum Action {
+    SendPrompt(String),
+    RespondApproval { request_id: String, decision: String },
+}
+
+/// Action resulting from a stdin line, to be dispatched by the main loop.
+enum StdinAction {
+    None,
+    SendPrompt(String),
+    RespondApproval { request_id: String, decision: String },
+    Quit { kill: bool },
+    Command(SlashCommand),
+}
+
+pub async fn run_stdio(session: Session) -> Result<()> {
+    let mut event_stream = session.client.event_stream(&session.agent_id).await?;
 
     let (action_tx, mut action_rx) = mpsc::channel::<Action>(64);
 
     // Background task: drain async actions.
     {
-        let client = client.clone();
-        let agent_id = agent_id.clone();
+        let client = session.client.clone();
+        let agent_id = session.agent_id.clone();
         tokio::spawn(async move {
             while let Some(action) = action_rx.recv().await {
                 let result = match action {
@@ -36,21 +57,19 @@ pub async fn run_stdio(client: DaemonClient, agent_id: AgentId) -> Result<()> {
         });
     }
 
-    // Channel for approval requests forwarded from SSE handling.
-    let (approval_tx, mut approval_rx) = mpsc::channel::<ApprovalPrompt>(4);
-
-    // Stdin line reader — a background task that reads lines and sends them.
+    // Stdin line reader — runs on a plain OS thread to avoid blocking
+    // the tokio runtime with synchronous stdin reads.
     let (stdin_tx, mut stdin_rx) = mpsc::channel::<String>(64);
-    tokio::spawn(async move {
+    std::thread::spawn(move || {
         let stdin = io::stdin();
         let mut buf = String::new();
         loop {
             buf.clear();
             match stdin.read_line(&mut buf) {
-                Ok(0) => break, // EOF
+                Ok(0) => break,
                 Ok(_) => {
                     let line = buf.trim_end().to_owned();
-                    if stdin_tx.send(line).await.is_err() {
+                    if stdin_tx.blocking_send(line).is_err() {
                         break;
                     }
                 }
@@ -61,13 +80,15 @@ pub async fn run_stdio(client: DaemonClient, agent_id: AgentId) -> Result<()> {
 
     let mut busy = false;
     let mut should_quit = false;
+    let mut kill_on_exit = false;
+    let mut pending = PendingPrompt::None;
 
     loop {
         if should_quit {
             break;
         }
 
-        if !busy {
+        if !busy && matches!(pending, PendingPrompt::None) {
             print!("You> ");
             io::stdout().flush().ok();
         }
@@ -79,17 +100,25 @@ pub async fn run_stdio(client: DaemonClient, agent_id: AgentId) -> Result<()> {
                     continue;
                 }
 
-                match command::parse(&line) {
-                    None => {
+                match handle_stdin_line(&line, &mut pending) {
+                    StdinAction::None => {}
+                    StdinAction::SendPrompt(text) => {
                         println!();
                         busy = true;
-                        action_tx.send(Action::SendPrompt(line)).await.ok();
+                        action_tx.send(Action::SendPrompt(text)).await.ok();
                     }
-                    Some(Ok(cmd)) => {
-                        handle_command(cmd, &client, &agent_id, &mut should_quit).await;
+                    StdinAction::RespondApproval { request_id, decision } => {
+                        action_tx
+                            .send(Action::RespondApproval { request_id, decision })
+                            .await
+                            .ok();
                     }
-                    Some(Err(msg)) => {
-                        eprintln!("[error] {msg}");
+                    StdinAction::Quit { kill } => {
+                        kill_on_exit = kill;
+                        should_quit = true;
+                    }
+                    StdinAction::Command(cmd) => {
+                        handle_command(cmd, &session, &mut pending).await;
                     }
                 }
             }
@@ -98,7 +127,7 @@ pub async fn run_stdio(client: DaemonClient, agent_id: AgentId) -> Result<()> {
             Some(result) = event_stream.next() => {
                 match result {
                     Ok(event) => {
-                        handle_sse_event(event, &approval_tx, &mut busy);
+                        handle_sse_event(event, &mut busy, &mut pending);
                     }
                     Err(e) => {
                         eprintln!("[error] SSE: {e}");
@@ -106,38 +135,17 @@ pub async fn run_stdio(client: DaemonClient, agent_id: AgentId) -> Result<()> {
                 }
             }
 
-            // Approval prompt forwarded from SSE
-            Some(prompt) = approval_rx.recv() => {
-                handle_approval(&prompt, &action_tx).await;
-            }
-
             // Background action results are logged inside the spawned task
             else => break,
         }
     }
 
-    // Clean up: kill the agent on exit.
-    if let Err(e) = client.kill_agent(&agent_id).await {
-        tracing::warn!("failed to kill agent on exit: {e}");
-    }
+    session.cleanup(kill_on_exit).await;
 
     Ok(())
 }
 
-enum Action {
-    SendPrompt(String),
-    RespondApproval { request_id: String, decision: String },
-}
-
-struct ApprovalPrompt {
-    request_id: String,
-    tool_name: String,
-    summary: String,
-    reason: String,
-    dangerous: bool,
-}
-
-fn handle_sse_event(event: SseEvent, approval_tx: &mpsc::Sender<ApprovalPrompt>, busy: &mut bool) {
+fn handle_sse_event(event: SseEvent, busy: &mut bool, pending: &mut PendingPrompt) {
     match event {
         SseEvent::Reasoning { content } => {
             println!("[think] {content}");
@@ -177,9 +185,16 @@ fn handle_sse_event(event: SseEvent, approval_tx: &mpsc::Sender<ApprovalPrompt>,
             *busy = true;
         }
         SseEvent::DeferredCreated { request_id, tool_name, summary, reason, dangerous } => {
-            approval_tx
-                .try_send(ApprovalPrompt { request_id, tool_name, summary, reason, dangerous })
-                .ok();
+            if !matches!(pending, PendingPrompt::None) {
+                eprintln!("[warning] dropping previous pending prompt for new approval request");
+            }
+            let label = if dangerous { "DANGER" } else { "approval" };
+            eprintln!("[{label}] tool: {tool_name}");
+            eprintln!("[{label}] reason: {reason}");
+            eprintln!("[{label}] cmd: {summary}");
+            eprint!("[{label}] [1] Approve  [2] Deny: ");
+            io::stderr().flush().ok();
+            *pending = PendingPrompt::Approval { request_id };
         }
         SseEvent::DeferredApproved { request_id } => {
             println!("[deferred] {request_id} approved");
@@ -197,23 +212,18 @@ fn handle_sse_event(event: SseEvent, approval_tx: &mpsc::Sender<ApprovalPrompt>,
     }
 }
 
-async fn handle_command(
-    cmd: SlashCommand,
-    client: &DaemonClient,
-    agent_id: &AgentId,
-    should_quit: &mut bool,
-) {
+async fn handle_command(cmd: SlashCommand, session: &Session, pending: &mut PendingPrompt) {
     match cmd {
         SlashCommand::Help => {
             print!("{}", command::help_text());
         }
         SlashCommand::Quit => {
-            *should_quit = true;
+            eprint!("[quit] [1] Keep agent running and quit  [2] Stop agent and quit: ");
+            io::stderr().flush().ok();
+            *pending = PendingPrompt::QuitConfirm;
         }
-        SlashCommand::Clear => {
-            // No buffer to clear in stdio mode.
-        }
-        SlashCommand::Status => match client.agent_status(agent_id).await {
+        SlashCommand::Clear => {}
+        SlashCommand::Status => match session.client.agent_status(&session.agent_id).await {
             Ok(status) => {
                 println!("{}", status.context.format_summary());
                 if !status.recent_retries.is_empty() {
@@ -233,27 +243,46 @@ async fn handle_command(
     }
 }
 
-async fn handle_approval(prompt: &ApprovalPrompt, action_tx: &mpsc::Sender<Action>) {
-    let label = if prompt.dangerous { "DANGER" } else { "approval" };
-    eprintln!("[{label}] tool: {}", prompt.tool_name);
-    eprintln!("[{label}] reason: {}", prompt.reason);
-    eprintln!("[{label}] cmd: {}", prompt.summary);
-
-    eprint!("[{label}] [1] Approve  [2] Deny: ");
-    io::stderr().flush().ok();
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).ok();
-
-    let decision = match input.trim() {
-        "1" => "approve",
-        _ => "deny",
-    };
-    action_tx
-        .send(Action::RespondApproval {
-            request_id: prompt.request_id.clone(),
-            decision: decision.to_owned(),
-        })
-        .await
-        .ok();
+fn handle_stdin_line(line: &str, pending: &mut PendingPrompt) -> StdinAction {
+    let trimmed = line.trim();
+    match pending {
+        PendingPrompt::QuitConfirm => match trimmed {
+            "1" => {
+                *pending = PendingPrompt::None;
+                StdinAction::Quit { kill: false }
+            }
+            "2" => {
+                *pending = PendingPrompt::None;
+                StdinAction::Quit { kill: true }
+            }
+            _ => {
+                eprint!("[quit] [1] Keep agent running and quit  [2] Stop agent and quit: ");
+                io::stderr().flush().ok();
+                StdinAction::None
+            }
+        },
+        PendingPrompt::Approval { request_id } => {
+            let rid = request_id.clone();
+            match trimmed {
+                "1" | "2" => {
+                    *pending = PendingPrompt::None;
+                    let decision = if trimmed == "1" { "approve" } else { "deny" };
+                    StdinAction::RespondApproval { request_id: rid, decision: decision.to_owned() }
+                }
+                _ => {
+                    eprint!("[approval] [1] Approve  [2] Deny: ");
+                    io::stderr().flush().ok();
+                    StdinAction::None
+                }
+            }
+        }
+        PendingPrompt::None => match command::parse(line) {
+            None => StdinAction::SendPrompt(line.to_owned()),
+            Some(Ok(cmd)) => StdinAction::Command(cmd),
+            Some(Err(msg)) => {
+                eprintln!("[error] {msg}");
+                StdinAction::None
+            }
+        },
+    }
 }

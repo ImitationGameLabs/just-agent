@@ -56,7 +56,7 @@ an `RwLock`; lookup is by UUID.
 | -------- | ------------------------ | --------------------------------------- |
 | `POST`   | `/agents`                | Create a new agent instance             |
 | `GET`    | `/agents`                | List all running agents                 |
-| `DELETE` | `/agents/{id}`           | Kill and remove an agent                |
+| `DELETE` | `/agents/{id}`           | Stop and remove an agent                |
 | `POST`   | `/agents/{id}/message`   | Send a message (returns `202 Accepted`) |
 | `GET`    | `/agents/{id}/events`    | Subscribe to agent events via SSE       |
 | `POST`   | `/agents/{id}/approval`  | Approve or deny a deferred tool call    |

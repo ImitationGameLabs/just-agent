@@ -21,3 +21,4 @@ comfy-table = { workspace = true }
 syntect = { workspace = true }
 unicode-width = { workspace = true }
 futures-util = { workspace = true }
+rpassword = { workspace = true }

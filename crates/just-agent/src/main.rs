@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
         }
         Commands::Stop(args) => {
             let client = build_client();
-            if let Err(e) = client.kill_agent(&args.id).await {
+            if let Err(e) = client.stop_agent(&args.id).await {
                 let msg = e.to_string();
                 if msg.contains("409") || msg.contains("busy") || msg.contains("subagent") {
                     eprintln!(

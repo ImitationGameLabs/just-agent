@@ -46,7 +46,7 @@ just-agent list
 
 Prints all agents with their workspace root.
 
-### `stop` — Kill an agent
+### `stop` — Stop an agent
 
 ```bash
 just-agent stop <ID>
@@ -83,7 +83,7 @@ just-agent interrupt <ID>
 ```
 
 Gracefully interrupts the agent's current operation. The agent persists its
-state and stops processing. Use `stop` to kill the agent entirely.
+state and stops processing. Use `stop` to stop the agent entirely.
 
 ### `approve` — Respond to a deferred action
 
@@ -198,8 +198,8 @@ let id = client.spawn(CreateAgentRequest {
 // Send a message (fire-and-forget)
 client.post_message(&id, "Review src/main.rs").await?;
 
-// Stream events, check status, kill
+// Stream events, check status, stop
 let mut stream = client.event_stream(&id).await?;
 let usage = client.agent_status(&id).await?;
-client.kill_agent(&id).await?;
+client.stop_agent(&id).await?;
 ```

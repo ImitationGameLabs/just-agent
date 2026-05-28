@@ -25,11 +25,11 @@ impl App {
         if self.quit_confirm {
             match key.code {
                 KeyCode::Char('1') => {
-                    self.kill_on_exit = true;
+                    self.kill_on_exit = false;
                     self.should_quit = true;
                 }
                 KeyCode::Char('2') => {
-                    self.kill_on_exit = false;
+                    self.kill_on_exit = true;
                     self.should_quit = true;
                 }
                 KeyCode::Esc => {

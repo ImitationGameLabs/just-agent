@@ -20,6 +20,7 @@ pub struct AgentSummary {
     pub id: AgentId,
     pub workspace_root: String,
     pub state: AgentState,
+    pub created_by: Option<AgentId>,
 }
 
 #[derive(Debug, Serialize)]

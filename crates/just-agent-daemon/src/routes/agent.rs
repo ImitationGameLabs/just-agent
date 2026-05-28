@@ -239,6 +239,7 @@ pub async fn list_agents(
             id: id.clone(),
             workspace_root: entry.agent.config.workspace_root.display().to_string(),
             state: entry.agent.get_state(),
+            created_by: entry.agent.config.created_by.clone(),
         })
         .collect();
     Json(ListAgentsResponse { agents: summaries })

@@ -96,9 +96,9 @@ impl DaemonClient {
         Ok(resp.agents)
     }
 
-    /// Kill an agent instance.
+    /// Stop an agent instance.
     /// Requires superior-level auth if the daemon enforces it.
-    pub async fn kill_agent(&self, id: &AgentId) -> Result<()> {
+    pub async fn stop_agent(&self, id: &AgentId) -> Result<()> {
         self.with_auth(self.inner.http.delete(self.url(&format!("/agents/{id}"))))
             .send()
             .await

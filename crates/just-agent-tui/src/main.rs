@@ -1,4 +1,5 @@
 mod args;
+mod session;
 mod stdio;
 mod tui;
 
@@ -6,10 +7,10 @@ use anyhow::Result;
 use clap::Parser;
 use futures_util::StreamExt;
 use just_agent_client::DaemonClient;
-use just_agent_core::types::AgentId;
 use tokio::sync::mpsc;
 
 use args::Args;
+use session::Session;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -39,37 +40,21 @@ async fn main() -> Result<()> {
 
     let token = match std::env::var("JUST_AGENT_AUTH_TOKEN").ok() {
         Some(tok) => tok,
-        None if !args.stdio => {
-            eprint!("Auth token (from daemon output): ");
-            let mut tok = String::new();
-            std::io::stdin().read_line(&mut tok)?;
+        None => {
+            eprint!("Auth token: ");
+            let tok = rpassword::read_password()?;
             let tok = tok.trim().to_owned();
             if tok.is_empty() {
                 anyhow::bail!("no token provided");
             }
             tok
         }
-        None => {
-            anyhow::bail!(
-                "JUST_AGENT_AUTH_TOKEN not set. Set the env var or run without --stdio for interactive prompt."
-            );
-        }
     };
     let client = DaemonClient::new_with_token(&args.daemon_url, token);
-    let agent_id = client
-        .spawn(just_agent_core::types::CreateAgentRequest {
-            workspace_root: None,
-            skills: args.skills,
-            prompt: None,
-            created_by: None,
-        })
-        .await?;
 
-    if args.stdio {
-        stdio::run_stdio(client, agent_id).await
-    } else {
-        run_tui(client, agent_id).await
-    }
+    let session = Session::connect(client).await?;
+
+    if args.stdio { stdio::run_stdio(session).await } else { run_tui(session).await }
 }
 
 /// Fire-and-forget prompt delivery. Results arrive via SSE.
@@ -77,17 +62,17 @@ enum Action {
     SendPrompt(String),
 }
 
-async fn run_tui(client: DaemonClient, agent_id: AgentId) -> Result<()> {
+async fn run_tui(session: Session) -> Result<()> {
     // Subscribe to SSE before anything else.
-    let mut event_stream = client.event_stream(&agent_id).await?;
+    let mut event_stream = session.client.event_stream(&session.agent_id).await?;
 
     // Channel for prompt delivery to the background task.
     let (action_tx, mut action_rx) = mpsc::channel::<Action>(64);
 
     // Background task: delivers prompts to the daemon.
     {
-        let client = client.clone();
-        let agent_id = agent_id.clone();
+        let client = session.client.clone();
+        let agent_id = session.agent_id.clone();
         tokio::spawn(async move {
             while let Some(action) = action_rx.recv().await {
                 let Action::SendPrompt(text) = action;
@@ -123,7 +108,7 @@ async fn run_tui(client: DaemonClient, agent_id: AgentId) -> Result<()> {
             Some(event) = key_rx.recv() => {
                 match event {
                     ratatui::crossterm::event::Event::Key(key) => {
-                        app.handle_key_event(key, &action_tx, &client, &agent_id).await;
+                        app.handle_key_event(key, &action_tx, &session.client, &session.agent_id).await;
                         if app.should_quit {
                             break;
                         }
@@ -154,11 +139,7 @@ async fn run_tui(client: DaemonClient, agent_id: AgentId) -> Result<()> {
     .ok();
     ratatui::restore();
 
-    if app.kill_on_exit
-        && let Err(e) = client.kill_agent(&agent_id).await
-    {
-        tracing::warn!("failed to kill agent on exit: {e}");
-    }
+    session.cleanup(app.kill_on_exit).await;
 
     Ok(())
 }
