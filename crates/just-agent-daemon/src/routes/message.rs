@@ -2,14 +2,14 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use just_agent_core::command::UserInput;
+use just_agent_common::command::UserInput;
 use tracing::{error, info};
 
 use super::MessageRequest;
 use crate::routes::agent::{SpawnArgs, spawn_agent};
 use crate::sse::sse_stream;
 use crate::state::SharedState;
-use just_agent_core::types::AgentId;
+use just_agent_common::types::AgentId;
 
 /// Any authenticated agent may send a message to any other agent.
 /// This is intentional: inter-agent communication should not require a

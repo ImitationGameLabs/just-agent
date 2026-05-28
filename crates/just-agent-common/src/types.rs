@@ -1,5 +1,7 @@
 //! Shared types used across the agent crate.
 
+use serde::{Deserialize, Serialize};
+
 /// Agent lifecycle state exposed via the status endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,7 +23,6 @@ impl std::fmt::Display for AgentState {
         })
     }
 }
-use serde::{Deserialize, Serialize};
 
 /// Unique identifier for an agent instance.
 ///

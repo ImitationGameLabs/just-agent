@@ -1258,7 +1258,7 @@ dependencies = [
  "clap",
  "futures-util",
  "just-agent-client",
- "just-agent-core",
+ "just-agent-common",
  "serde_json",
  "tokio",
  "tracing",
@@ -1271,7 +1271,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures-util",
- "just-agent-core",
+ "just-agent-common",
  "just-llm-client",
  "reqwest",
  "serde",
@@ -1280,13 +1280,44 @@ dependencies = [
 ]
 
 [[package]]
-name = "just-agent-core"
+name = "just-agent-common"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "uuid",
+]
+
+[[package]]
+name = "just-agent-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "futures-core",
+ "just-agent-common",
+ "just-agent-runtime",
+ "just-llm-client",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "just-agent-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "dirs",
  "futures-util",
+ "just-agent-common",
  "just-llm-client",
  "portable-pty",
  "rable",
@@ -1302,27 +1333,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "just-agent-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "futures-core",
- "just-agent-core",
- "just-llm-client",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "just-agent-tui"
 version = "0.1.0"
 dependencies = [
@@ -1332,7 +1342,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "just-agent-client",
- "just-agent-core",
+ "just-agent-common",
  "pulldown-cmark",
  "ratatui",
  "ratatui-textarea",

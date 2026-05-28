@@ -115,7 +115,7 @@ supervisor.
 
 ## Agent loop
 
-The core loop (`run_agent_rounds` in `just-agent-core`) iterates up to
+The core loop (`run_agent_rounds` in `just-agent-runtime`) iterates up to
 `max_tool_rounds` (default 32) per message:
 
 1. Drain deferred notifications into context as a synthetic user message.
@@ -168,10 +168,11 @@ analyze shell commands:
 
 ## Crate responsibilities
 
-| Crate               | Role                                                                                            |
-| ------------------- | ----------------------------------------------------------------------------------------------- |
-| `just-agent-core`   | Agent runtime: session loop, context management, tool dispatch, policy engine. No network code. |
-| `just-agent-daemon` | HTTP server hosting agent instances. Uses `just-agent-core` internally.                         |
-| `just-agent`        | Headless CLI binary. Thin wrapper over `just-agent-client`. No agent logic.                     |
-| `just-agent-tui`    | Interactive terminal UI. Same client library, adds ratatui rendering.                           |
-| `just-agent-client` | Async HTTP client for the daemon API. Used by both CLI and TUI.                                 |
+| Crate                | Role                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------------------- |
+| `just-agent-common`  | Shared types and command parsing (serde + uuid only). Used by all crates.                       |
+| `just-agent-runtime` | Agent runtime: session loop, context management, tool dispatch, policy engine. No network code. |
+| `just-agent-daemon`  | HTTP server hosting agent instances. Uses `just-agent-runtime` internally.                      |
+| `just-agent`         | Headless CLI binary. Thin wrapper over `just-agent-client`. No agent logic.                     |
+| `just-agent-tui`     | Interactive terminal UI. Same client library, adds ratatui rendering.                           |
+| `just-agent-client`  | Async HTTP client for the daemon API. Used by both CLI and TUI.                                 |

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::context::ContextStore;
 use crate::deferred::DeferredQueue;
-use crate::types::AgentId;
+use just_agent_common::types::AgentId;
 use just_llm_client::types::chat::ChatMessage;
 /// Resolve the base sessions directory.
 fn sessions_base() -> Result<PathBuf> {

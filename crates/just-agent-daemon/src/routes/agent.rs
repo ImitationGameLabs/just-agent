@@ -8,15 +8,15 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use just_agent_core::config::{AgentConfig, PermissionProfile};
-use just_agent_core::context::{AgenticContext, ContextStore, ContextSummarizer};
-use just_agent_core::deferred::DeferredQueue;
-use just_agent_core::persistence;
-use just_agent_core::policy::{AgentPolicy, AuthorizedToolExecutor};
-use just_agent_core::provider::client_from_env;
-use just_agent_core::session::{self, AgentContext};
-use just_agent_core::tools::{build_tool_dispatch, ensure_meta_skill, load_skill};
-use just_agent_core::types::{AgentId, SseEvent};
+use just_agent_common::types::{AgentId, SseEvent};
+use just_agent_runtime::config::{AgentConfig, PermissionProfile};
+use just_agent_runtime::context::{AgenticContext, ContextStore, ContextSummarizer};
+use just_agent_runtime::deferred::DeferredQueue;
+use just_agent_runtime::persistence;
+use just_agent_runtime::policy::{AgentPolicy, AuthorizedToolExecutor};
+use just_agent_runtime::provider::client_from_env;
+use just_agent_runtime::session::{self, AgentContext};
+use just_agent_runtime::tools::{build_tool_dispatch, ensure_meta_skill, load_skill};
 use just_llm_client::types::chat::ChatMessage;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
@@ -342,7 +342,7 @@ fn validate_subagent_depth(
         current_meta = persistence::read_meta(parent_id).context("incomplete supervisor chain")?;
     }
 
-    Ok(just_agent_core::config::DEFAULT_MAX_DEPTH.saturating_sub(levels))
+    Ok(just_agent_runtime::config::DEFAULT_MAX_DEPTH.saturating_sub(levels))
 }
 
 /// Restore a single persisted session to a running agent.

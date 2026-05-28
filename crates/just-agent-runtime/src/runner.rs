@@ -10,7 +10,7 @@ use tracing::{info, warn};
 use crate::context::{AgenticContext, compose_context};
 use crate::deferred::DeferredNotification;
 use crate::session::AgentContext;
-use crate::types::{AgentEvent, AgentOutcome};
+use just_agent_common::types::{AgentEvent, AgentOutcome};
 use just_llm_client::types::chat::{
     ChatCompletionChunkToolCall, ChatMessage, ChatToolCall, FunctionCall, StreamOptions,
     ToolCallsMessage, ToolChoice, ToolChoiceMode, ToolType,

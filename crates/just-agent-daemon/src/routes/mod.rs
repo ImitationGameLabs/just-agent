@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use state::SharedState;
 
 use crate::state;
-use just_agent_core::types::{CreateAgentRequest, CreateAgentResponse};
+use just_agent_common::types::{CreateAgentRequest, CreateAgentResponse};
 
 #[derive(Debug, Serialize)]
 pub struct ListAgentsResponse {

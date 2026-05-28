@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 just-agent-client = { workspace = true }
-just-agent-core = { workspace = true }
+just-agent-common = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }

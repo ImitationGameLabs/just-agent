@@ -6,7 +6,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
-use just_agent_core::command::{self, CommandInfo};
+use just_agent_common::command::{self, CommandInfo};
 
 /// Tracks completion popup state: filtered candidates and selection.
 pub struct CompletionState {

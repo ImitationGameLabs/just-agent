@@ -1,8 +1,8 @@
-use just_agent_core::context::ContextUsage;
-use just_agent_core::retry::RetryRecord;
-use just_agent_core::types::AgentId;
-use just_agent_core::types::AgentState;
-pub(crate) use just_agent_core::types::{CreateAgentRequest, CreateAgentResponse};
+use just_agent_common::context::ContextUsage;
+use just_agent_common::retry::RetryRecord;
+use just_agent_common::types::AgentId;
+use just_agent_common::types::AgentState;
+pub(crate) use just_agent_common::types::{CreateAgentRequest, CreateAgentResponse};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]

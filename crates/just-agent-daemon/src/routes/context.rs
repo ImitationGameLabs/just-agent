@@ -2,12 +2,13 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use just_agent_core::context::{AgenticContext, ContextUsage};
-use just_agent_core::types::AgentId;
-use just_agent_core::types::AgentState;
+use just_agent_common::context::ContextUsage;
+use just_agent_common::retry::RetryRecord;
+use just_agent_common::types::AgentId;
+use just_agent_common::types::AgentState;
+use just_agent_runtime::context::AgenticContext;
 
 use crate::state::SharedState;
-use just_agent_core::retry::RetryRecord;
 use serde::Serialize;
 
 /// Combined status response: context usage + recent retry history.

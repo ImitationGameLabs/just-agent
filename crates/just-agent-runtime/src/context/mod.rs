@@ -13,5 +13,5 @@ mod summarize;
 mod turn;
 
 pub use compose::compose_context;
-pub use store::{AgenticContext, ContextStore, ContextUsage};
+pub use store::{AgenticContext, ContextStore};
 pub use summarize::{ContextSummarizer, Summary};

@@ -1,6 +1,6 @@
 [package]
-name = "just-agent-core"
-description = "Agent runtime: session management, context, policy, and tool dispatch"
+name = "just-agent-runtime"
+description = "Agent runtime: session management, context, policy, and tool dispatch (daemon-only)"
 edition = "2024"
 version.workspace = true
 license.workspace = true
@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+just-agent-common = { workspace = true }
 just-llm-client = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -4,9 +4,10 @@ use std::collections::VecDeque;
 use std::ops::Range;
 
 use anyhow::{Result, bail};
+use just_agent_common::context::ContextUsage;
 use just_llm_client::types::chat::{ChatMessage, ToolDefinition};
 
-use crate::retry::RetryRecord;
+use just_agent_common::retry::RetryRecord;
 
 use super::turn::{Turn, TurnId, estimate_message_tokens};
 
@@ -15,39 +16,6 @@ use super::turn::{Turn, TurnId, estimate_message_tokens};
 pub struct PinnedItem {
     pub label: String,
     pub message: ChatMessage,
-}
-
-/// Snapshot of current context layer breakdown and last known token usage.
-///
-/// `last_prompt_tokens` comes from the provider's response `usage` field —
-/// the most accurate token count available. Layer breakdowns use heuristic
-/// estimates for informational purposes.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ContextUsage {
-    /// Per-item breakdown: (label, estimated_tokens).
-    pub pinned_items: Vec<(String, usize)>,
-    /// Number of stored conversation turns.
-    pub turn_count: usize,
-    /// Estimated tokens across all turns.
-    pub turn_tokens: usize,
-    /// Exact prompt token count from the last provider response, if any.
-    pub last_prompt_tokens: Option<u32>,
-}
-
-impl ContextUsage {
-    pub fn format_summary(&self) -> String {
-        let pinned_tokens: usize = self.pinned_items.iter().map(|(_, t)| *t).sum();
-        format!(
-            "turns: {} ({} est tokens), pinned: {} ({} tokens), last prompt: {}",
-            self.turn_count,
-            self.turn_tokens,
-            self.pinned_items.len(),
-            pinned_tokens,
-            self.last_prompt_tokens
-                .map(|t| t.to_string())
-                .unwrap_or_else(|| "n/a".into()),
-        )
-    }
 }
 
 /// Result of evicting turns from the context store.

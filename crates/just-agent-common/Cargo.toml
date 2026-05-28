@@ -1,0 +1,10 @@
+[package]
+name = "just-agent-common"
+description = "Shared types and command parsing for just-agent"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+uuid = { workspace = true }

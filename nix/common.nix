@@ -52,15 +52,16 @@ let
   cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
   # mapToAbsolute is a function that converts relative crate paths to absolute paths.
-  # Takes an attrset like { just-agent-core = "crates/just-agent-core"; }
-  # and returns { just-agent-core = /absolute/path/to/crates/just-agent-core; }
+  # Takes an attrset like { just-agent-runtime = "crates/just-agent-runtime"; }
+  # and returns { just-agent-runtime = /absolute/path/to/crates/just-agent-runtime; }
   mapToAbsolute = lib.mapAttrs (_: path: root + "/${path}");
 
   # Library-only crates (only needed for fileset dependencies, not built separately)
   # Add your library crates here
   libraryCratePaths = mapToAbsolute {
     just-agent = "crates/just-agent";
-    just-agent-core = "crates/just-agent-core";
+    just-agent-common = "crates/just-agent-common";
+    just-agent-runtime = "crates/just-agent-runtime";
     just-agent-client = "crates/just-agent-client";
     just-agent-tui = "crates/just-agent-tui";
     just-agent-daemon = "crates/just-agent-daemon";

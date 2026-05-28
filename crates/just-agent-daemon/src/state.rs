@@ -4,13 +4,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use axum::http::StatusCode;
-use just_agent_core::command::UserInput;
-use just_agent_core::config::AgentConfig;
-use just_agent_core::context::ContextStore;
-use just_agent_core::deferred::DeferredQueue;
-pub use just_agent_core::types::AgentId;
-pub use just_agent_core::types::AgentState;
-use just_agent_core::types::SseEvent;
+use just_agent_common::command::UserInput;
+pub use just_agent_common::types::AgentId;
+pub use just_agent_common::types::AgentState;
+use just_agent_common::types::SseEvent;
+use just_agent_runtime::config::AgentConfig;
+use just_agent_runtime::context::ContextStore;
+use just_agent_runtime::deferred::DeferredQueue;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
@@ -246,8 +246,8 @@ impl AgentRegistry {
 mod tests {
     use super::*;
     use crate::auth::Identity;
-    use just_agent_core::config::PermissionProfile;
-    use just_agent_core::retry::RetryPolicy;
+    use just_agent_runtime::config::PermissionProfile;
+    use just_agent_runtime::retry::RetryPolicy;
 
     fn make_entry(created_by: Option<AgentId>, auth_token: String) -> AgentEntry {
         let (prompt_tx, _) = mpsc::channel(1);

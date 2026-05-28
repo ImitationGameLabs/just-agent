@@ -6,13 +6,14 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::command::{SlashCommand, UserInput};
+use just_agent_common::command::{SlashCommand, UserInput};
+use just_agent_common::types::{AgentEvent, AgentOutcome};
+
 use crate::config::AgentConfig;
 use crate::context::{AgenticContext, ContextStore, ContextSummarizer};
 use crate::deferred::DeferredQueue;
 use crate::policy::AuthorizedToolExecutor;
 use crate::runner;
-use crate::types::{AgentEvent, AgentOutcome};
 use just_llm_client::types::chat::ChatMessage;
 
 /// Shared agent resources passed between modes.

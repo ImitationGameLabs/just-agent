@@ -6,7 +6,7 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
-just-agent-core = { workspace = true }
+just-agent-common = { workspace = true }
 just-llm-client = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }

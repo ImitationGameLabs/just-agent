@@ -10,28 +10,11 @@ use std::error::Error as StdError;
 
 use anyhow::Result;
 use just_llm_client::{LlmError, TransportError};
-use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::types::AgentEvent;
-
-/// Persistent record of a single retry attempt.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetryRecord {
-    /// Unix epoch seconds when this retry was triggered.
-    pub timestamp: u64,
-    /// Which tool round the retry belongs to.
-    pub round: usize,
-    /// Retry attempt number (1-based).
-    pub attempt: u32,
-    /// Maximum retry attempts configured.
-    pub max_attempts: u32,
-    /// Short description of the error that triggered this retry.
-    pub error: String,
-    /// Backoff delay in seconds before the next attempt.
-    pub delay_secs: f64,
-}
+use just_agent_common::retry::RetryRecord;
+use just_agent_common::types::AgentEvent;
 
 /// Configuration for LLM request retry behavior.
 #[derive(Clone, Debug)]

@@ -1,9 +1,9 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use just_agent_core::persistence;
-use just_agent_core::types::AgentId;
-use just_agent_core::types::SseEvent;
+use just_agent_common::types::AgentId;
+use just_agent_common::types::SseEvent;
+use just_agent_runtime::persistence;
 
 use super::ApprovalRequest;
 use crate::state::SharedState;

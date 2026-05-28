@@ -4,8 +4,8 @@ use std::io::{self, Write};
 
 use anyhow::Result;
 use futures_util::StreamExt;
-use just_agent_core::command::{self, SlashCommand};
-use just_agent_core::types::SseEvent;
+use just_agent_common::command::{self, SlashCommand};
+use just_agent_common::types::SseEvent;
 use tokio::sync::mpsc;
 
 use crate::session::Session;

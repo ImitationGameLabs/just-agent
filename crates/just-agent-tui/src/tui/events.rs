@@ -1,7 +1,7 @@
 use ratatui::crossterm::event::{MouseEvent, MouseEventKind};
 
 use just_agent_client::DeferredInfo;
-use just_agent_core::types::SseEvent;
+use just_agent_common::types::SseEvent;
 
 use super::{App, ChatLine};
 

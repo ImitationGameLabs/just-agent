@@ -6,7 +6,8 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
-just-agent-core = { workspace = true }
+just-agent-runtime = { workspace = true }
+just-agent-common = { workspace = true }
 just-llm-client = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

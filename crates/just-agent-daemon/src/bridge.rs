@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use just_agent_core::types::{AgentEvent, AgentState, SseEvent};
+use just_agent_common::types::{AgentEvent, AgentState, SseEvent};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::info;

@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-use just_agent_core::types::AgentId;
+use just_agent_common::types::AgentId;
 
 #[derive(Parser)]
 #[command(name = "just-agent", about = "Agent CLI: daemon client")]

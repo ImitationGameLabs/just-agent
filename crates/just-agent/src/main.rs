@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::Parser;
 use futures_util::StreamExt;
 use just_agent_client::DaemonClient;
-use just_agent_core::types::AgentId;
+use just_agent_common::types::AgentId;
 
 use args::{Cli, Commands};
 
@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
         Commands::Start(args) => {
             let client = build_client();
             let id = client
-                .spawn(just_agent_core::types::CreateAgentRequest {
+                .spawn(just_agent_common::types::CreateAgentRequest {
                     workspace_root: args.workspace_root,
                     skills: args.skills,
                     prompt: args.prompt,

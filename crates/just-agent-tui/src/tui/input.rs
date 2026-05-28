@@ -2,8 +2,8 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use tokio::sync::mpsc;
 
 use just_agent_client::DaemonClient;
-use just_agent_core::command::{self, SlashCommand};
-use just_agent_core::types::AgentId;
+use just_agent_common::command::{self, SlashCommand};
+use just_agent_common::types::AgentId;
 
 use super::super::Action;
 use super::{App, ChatLine};

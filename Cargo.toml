@@ -1,6 +1,7 @@
 [workspace]
 members = [
-  "crates/just-agent-core",
+  "crates/just-agent-common",
+  "crates/just-agent-runtime",
   "crates/just-agent",
   "crates/just-agent-tui",
   "crates/just-agent-daemon",
@@ -19,7 +20,8 @@ name = "just-agent"
 [workspace.dependencies]
 just-llm-client = "0.1.0"
 
-just-agent-core = { path = "crates/just-agent-core" }
+just-agent-common = { path = "crates/just-agent-common" }
+just-agent-runtime = { path = "crates/just-agent-runtime" }
 just-agent-client = { path = "crates/just-agent-client" }
 just-agent-daemon = { path = "crates/just-agent-daemon" }
 
