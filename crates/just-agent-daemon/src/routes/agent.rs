@@ -393,7 +393,8 @@ pub async fn restore_sessions(state: &SharedState) {
         return;
     }
 
-    info!(count = pending.len(), "restoring sessions");
+    // Use "agents" in logs to avoid confusing users with the internal "session" concept.
+    info!(count = pending.len(), "restoring agents");
 
     for p in pending {
         let agent_id = p.agent_id.clone();
@@ -408,7 +409,7 @@ pub async fn restore_sessions(state: &SharedState) {
                         subagent_ids: vec![],
                     },
                 );
-                info!(id = %agent_id, "restored session");
+                info!(id = %agent_id, "restored agent");
             }
             Err(e) => {
                 tracing::error!(id = %agent_id, "restore failed: {e:#}");

@@ -30,13 +30,21 @@ async fn main() -> Result<()> {
 
     let operator_token = uuid::Uuid::new_v4().to_string();
     println!("─────────────────────────────────────────────────");
-    println!("  Operator token (set before using CLI/TUI):");
-    println!("  export JUST_AGENT_AUTH_TOKEN={operator_token}");
+    println!("  Operator Token:");
+    println!("  {operator_token}");
+    println!();
+    println!("  WARNING: Do not leak this token.");
+    println!();
+    println!("  To authenticate, either:");
+    println!("  - Set env and launch TUI:");
+    println!("      export JUST_AGENT_AUTH_TOKEN={operator_token}");
+    println!("      just-agent-tui");
+    println!("  - Or enter the token when prompted inside the TUI.");
     println!("─────────────────────────────────────────────────");
 
     let state = Arc::new(AppState::new(operator_token));
 
-    // Restore persisted sessions before accepting requests.
+    // Restore persisted agents before accepting requests.
     routes::restore_sessions(&state).await;
 
     let app = routes::router()
