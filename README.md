@@ -2,7 +2,7 @@
 
 > **Early stage.** Not ready for production use.
 
-An agentic AI agent runtime built in Rust — not another coding assistant.
+An agentic multi-agent system. Agents manage their own context, coordinate across projects, and operate within a safety harness that constrains dangerous operations.
 
 ## Why not another Claude Code / Codex / OpenCode?
 
@@ -16,13 +16,14 @@ switch between, and coordinate multiple agent instances across projects.
 
 ## Architecture
 
-| Crate               | Description                                                                                  |
-| ------------------- | -------------------------------------------------------------------------------------------- |
-| `just-agent-core`   | Agent runtime: chat completion, context management, policy engine, core tools, tool dispatch |
-| `just-agent-daemon` | HTTP API server hosting multiple agent instances                                             |
-| `just-agent-client` | Async client library for the daemon HTTP API                                                 |
-| `just-agent`        | Headless CLI — designed for agents to call, so an agent can manage other agents              |
-| `just-agent-tui`    | Interactive terminal UI for human users, with approval prompts and markdown rendering        |
+| Crate                | Description                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `just-agent-common`  | Shared types and command parsing                                                      |
+| `just-agent-runtime` | Agent runtime: session, context management, policy engine, tool dispatch              |
+| `just-agent-daemon`  | HTTP API server hosting multiple agent instances                                      |
+| `just-agent-client`  | Async client library for the daemon HTTP API                                          |
+| `just-agent`         | Headless CLI — designed for agents to call, so an agent can manage other agents       |
+| `just-agent-tui`     | Interactive terminal UI for human users, with approval prompts and markdown rendering |
 
 ## Agentic context management
 
@@ -84,16 +85,11 @@ without a human in the loop. Or it can surface the decision to a human.
 ## Quick start
 
 ```bash
-cargo build --workspace
-
 JUST_LLM_PROVIDER=deepseek \
 JUST_LLM_MODEL=deepseek-v4-flash \
 JUST_LLM_DEEPSEEK_API_KEY=your-key \
 cargo run -p just-agent-daemon
 
-# Headless CLI
-cargo run -p just-agent -- start --prompt "Show the current working directory."
-
-# Or the TUI
+# TUI client
 cargo run -p just-agent-tui
 ```

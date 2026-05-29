@@ -170,7 +170,7 @@ analyze shell commands:
 
 | Crate                | Role                                                                                            |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
-| `just-agent-common`  | Shared types and command parsing (serde + uuid only). Used by all crates.                       |
+| `just-agent-common`  | Shared types and command parsing. Used by all crates.                                           |
 | `just-agent-runtime` | Agent runtime: session loop, context management, tool dispatch, policy engine. No network code. |
 | `just-agent-daemon`  | HTTP server hosting agent instances. Uses `just-agent-runtime` internally.                      |
 | `just-agent`         | Headless CLI binary. Thin wrapper over `just-agent-client`. No agent logic.                     |

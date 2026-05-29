@@ -8,7 +8,7 @@ AI Agent working guide. This document provides code structure and decision rules
 .
 ├── flake.nix                  # Flake entry point
 ├── crates/                    # Rust workspace members
-│   ├── just-agent-common/    # Shared types and command parsing (serde + uuid only)
+│   ├── just-agent-common/    # Shared types and command parsing
 │   ├── just-agent-runtime/   # Agent runtime: session, context, policy, tool dispatch (daemon-only)
 │   ├── just-agent/           # Agent CLI binary (daemon client)
 │   ├── just-agent-tui/       # Interactive TUI client
