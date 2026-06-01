@@ -8,26 +8,26 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use super::AgentPolicy;
-use crate::deferred::{DeferredQueue, DeferredStatus, deferred_result_json};
+use crate::deferred::{DeferredActionStatus, DeferredActionStore, deferred_result_json};
 use crate::tools;
 
 /// Executes tools behind a policy gate with deferred approval.
 ///
 /// When policy returns `Ask`, the tool call is stored in the
-/// [`DeferredQueue`] and a deferred result is returned immediately.
+/// [`DeferredActionStore`] and a deferred result is returned immediately.
 /// The LLM can continue working. When approval arrives, the LLM
-/// calls `approval_redeem` to execute the stored action.
+/// calls `deferred_action_redeem` to execute the stored action.
 pub struct AuthorizedToolExecutor {
     dispatch: ToolDispatcher,
     policy: AgentPolicy,
-    deferred: Arc<Mutex<DeferredQueue>>,
+    deferred: Arc<Mutex<DeferredActionStore>>,
 }
 
 impl AuthorizedToolExecutor {
     pub fn new(
         dispatch: ToolDispatcher,
         policy: AgentPolicy,
-        deferred: Arc<Mutex<DeferredQueue>>,
+        deferred: Arc<Mutex<DeferredActionStore>>,
     ) -> Self {
         Self {
             dispatch,
@@ -38,17 +38,19 @@ impl AuthorizedToolExecutor {
 
     pub fn tool_definitions(&self) -> Vec<ToolDefinition> {
         let mut defs = self.dispatch.tool_definitions();
-        defs.push(tools::approval_list_definition());
-        defs.push(tools::approval_redeem_definition());
-        defs.push(tools::approval_cancel_definition());
+        defs.push(tools::deferred_action_list_definition());
+        defs.push(tools::deferred_action_commit_definition());
+        defs.push(tools::deferred_action_redeem_definition());
+        defs.push(tools::deferred_action_cancel_definition());
         defs
     }
 
     pub async fn execute(&mut self, tool_name: &str, args_json: &str) -> String {
         match tool_name {
-            "approval_list" => self.handle_list(args_json).await,
-            "approval_redeem" => self.handle_redeem(args_json).await,
-            "approval_cancel" => self.handle_cancel(args_json).await,
+            "deferred_action_list" => self.handle_list(args_json).await,
+            "deferred_action_commit" => self.handle_commit(args_json).await,
+            "deferred_action_redeem" => self.handle_redeem(args_json).await,
+            "deferred_action_cancel" => self.handle_cancel(args_json).await,
             _ => self.execute_tool(tool_name, args_json).await,
         }
     }
@@ -69,9 +71,8 @@ impl AuthorizedToolExecutor {
                 error_result(tool_name, format!("tool denied: {reason}"))
             }
             super::ToolDecision::Ask { reason, dangerous } => {
-                let summary = tools::make_summary(tool_name, args_json);
                 let mut q = self.deferred.lock().await;
-                let id = q.enqueue(tool_name, args_json, &summary, &reason, dangerous);
+                let id = q.enqueue(tool_name, args_json, &reason, dangerous);
                 deferred_result_json(&id, tool_name, &reason, dangerous)
             }
         }
@@ -80,35 +81,46 @@ impl AuthorizedToolExecutor {
     async fn handle_list(&self, args_json: &str) -> String {
         let status_filter = parse_status_filter(args_json);
         let q = self.deferred.lock().await;
-        let items: Vec<Value> = match status_filter {
-            Some(ref s) => q.list(Some(s)),
-            None => q.list(None),
-        }
-        .into_iter()
-        .map(|a| {
-            json!({
-                "request_id": a.request_id,
-                "tool_name": a.tool_name,
-                "summary": a.summary,
-                "reason": a.reason,
-                "dangerous": a.dangerous,
-                "status": a.status,
+        let items: Vec<Value> = q
+            .list(status_filter.as_ref())
+            .into_iter()
+            .map(|a| {
+                json!({
+                    "id": a.id,
+                    "content": a.content,
+                    "reason": a.reason,
+                    "dangerous": a.dangerous,
+                    "status": a.status,
+                    "deny_reason": a.deny_reason,
+                    "created_at": a.created_at,
+                })
             })
-        })
-        .collect();
+            .collect();
         json!({"ok": true, "actions": items}).to_string()
     }
 
+    async fn handle_commit(&self, args_json: &str) -> String {
+        let (id, reason) = match parse_commit_args(args_json) {
+            Ok(v) => v,
+            Err(e) => return error_result("deferred_action_commit", e.to_string()),
+        };
+        let mut q = self.deferred.lock().await;
+        match q.commit(&id, &reason) {
+            Ok(()) => json!({"ok": true, "committed": true, "id": id}).to_string(),
+            Err(e) => error_result("deferred_action_commit", e.to_string()),
+        }
+    }
+
     async fn handle_redeem(&mut self, args_json: &str) -> String {
-        let request_id = match parse_request_id(args_json) {
+        let id = match parse_id(args_json) {
             Ok(id) => id,
-            Err(e) => return error_result("approval_redeem", e.to_string()),
+            Err(e) => return error_result("deferred_action_redeem", e.to_string()),
         };
         let action = {
             let mut q = self.deferred.lock().await;
-            match q.take_for_redeem(&request_id) {
+            match q.take_for_redeem(&id) {
                 Ok(a) => a,
-                Err(e) => return error_result("approval_redeem", e.to_string()),
+                Err(e) => return error_result("deferred_action_redeem", e.to_string()),
             }
         };
         match self
@@ -122,39 +134,50 @@ impl AuthorizedToolExecutor {
     }
 
     async fn handle_cancel(&self, args_json: &str) -> String {
-        let request_id = match parse_request_id(args_json) {
+        let id = match parse_id(args_json) {
             Ok(id) => id,
-            Err(e) => return error_result("approval_cancel", e.to_string()),
+            Err(e) => return error_result("deferred_action_cancel", e.to_string()),
         };
         let mut q = self.deferred.lock().await;
-        match q.cancel(&request_id) {
-            Ok(()) => json!({"ok": true, "cancelled": request_id}).to_string(),
-            Err(e) => error_result("approval_cancel", e.to_string()),
+        match q.cancel(&id) {
+            Ok(prev) => json!({
+                "ok": true,
+                "cancelled": id,
+                "previous_status": prev.to_string(),
+            })
+            .to_string(),
+            Err(e) => error_result("deferred_action_cancel", e.to_string()),
         }
     }
 }
 
-fn parse_request_id(args_json: &str) -> Result<String> {
+fn parse_id(args_json: &str) -> Result<String> {
     let v: Value = serde_json::from_str(args_json)?;
-    v.get("request_id")
+    v.get("id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_owned())
-        .ok_or_else(|| anyhow::anyhow!("missing or invalid 'request_id' field"))
+        .ok_or_else(|| anyhow::anyhow!("missing or invalid 'id' field"))
 }
 
-fn parse_status_filter(args_json: &str) -> Option<DeferredStatus> {
+fn parse_status_filter(args_json: &str) -> Option<DeferredActionStatus> {
     let v: Value = serde_json::from_str(args_json).ok()?;
     let s = v.get("status")?.as_str()?;
-    match s {
-        "pending" => Some(DeferredStatus::Pending),
-        "approved" => Some(DeferredStatus::Approved),
-        "denied" => Some(DeferredStatus::Denied {
-            reason: String::new(),
-        }),
-        "redeemed" => Some(DeferredStatus::Redeemed),
-        "cancelled" => Some(DeferredStatus::Cancelled),
-        _ => None,
-    }
+    DeferredActionStatus::from_str_name(s)
+}
+
+fn parse_commit_args(args_json: &str) -> Result<(String, String)> {
+    let v: Value = serde_json::from_str(args_json)?;
+    let id = v
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing or invalid 'id' field"))?
+        .to_owned();
+    let reason = v
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("missing or invalid 'reason' field"))?
+        .to_owned();
+    Ok((id, reason))
 }
 
 fn success_result(tool_name: &str, output: String) -> String {

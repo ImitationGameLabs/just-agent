@@ -542,6 +542,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 dependencies = [
  "powerfmt",
+ "serde_core",
 ]
 
 [[package]]
@@ -1284,6 +1285,8 @@ name = "just-agent-common"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "time",
  "uuid",
 ]
 
@@ -1326,6 +1329,7 @@ dependencies = [
  "serde_json",
  "strip-ansi-escapes",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1347,6 +1351,7 @@ dependencies = [
  "ratatui",
  "ratatui-textarea",
  "rpassword",
+ "serde_json",
  "syntect",
  "tokio",
  "tracing",
@@ -2291,6 +2296,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

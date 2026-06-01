@@ -144,20 +144,18 @@ impl DaemonClient {
         JsonEventStream::from_response(response).context("failed to parse SSE stream")
     }
 
-    /// Send an approval decision for a deferred action.
-    pub async fn respond_approval(
+    /// Send a decision (approve/deny) for a deferred action.
+    pub async fn respond_deferred_action(
         &self,
-        id: &AgentId,
-        request_id: &str,
+        deferred_action_id: &str,
         decision: &str,
         reason: Option<&str>,
     ) -> Result<()> {
         self.with_auth(
             self.inner
                 .http
-                .post(self.url(&format!("/agents/{id}/approval")))
-                .json(&ApprovalRequestBody {
-                    request_id: request_id.to_owned(),
+                .post(self.url(&format!("/approvals/{deferred_action_id}")))
+                .json(&DeferredActionDecisionBody {
                     decision: decision.to_owned(),
                     reason: reason.map(|s| s.to_owned()),
                 }),
@@ -168,6 +166,42 @@ impl DaemonClient {
         .error_for_status()
         .context("daemon returned error")?;
         Ok(())
+    }
+
+    /// List deferred actions with optional filtering and pagination.
+    pub async fn list_deferred_actions(
+        &self,
+        params: &ListDeferredActionsParams,
+    ) -> Result<ListDeferredActionsResponse> {
+        let req = self.inner.http.get(self.url("/approvals")).query(params);
+
+        let resp: ListDeferredActionsResponse = self
+            .with_auth(req)
+            .send()
+            .await
+            .context("failed to connect to daemon")?
+            .error_for_status()
+            .context("daemon returned error")?
+            .json()
+            .await
+            .context("failed to parse response")?;
+        Ok(resp)
+    }
+
+    /// Get a single deferred action by id.
+    pub async fn get_deferred_action(&self, id: &str) -> Result<DeferredActionEntry> {
+        let req = self.inner.http.get(self.url(&format!("/approvals/{id}")));
+        let entry: DeferredActionEntry = self
+            .with_auth(req)
+            .send()
+            .await
+            .context("failed to connect to daemon")?
+            .error_for_status()
+            .context("daemon returned error")?
+            .json()
+            .await
+            .context("failed to parse response")?;
+        Ok(entry)
     }
 
     /// Get agent status including context usage and retry history.

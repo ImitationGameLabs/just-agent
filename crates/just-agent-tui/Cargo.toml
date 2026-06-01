@@ -22,3 +22,4 @@ syntect = { workspace = true }
 unicode-width = { workspace = true }
 futures-util = { workspace = true }
 rpassword = { workspace = true }
+serde_json = { workspace = true }

@@ -6,9 +6,9 @@ use just_agent_common::types::SseEvent;
 use super::{App, ChatLine};
 
 impl App {
-    /// Show approval popup from SSE DeferredCreated event data.
-    pub fn show_approval(&mut self, info: DeferredInfo) {
-        self.approval.show(info);
+    /// Show deferred action popup from SSE DeferredCreated event data.
+    pub fn show_deferred_action(&mut self, info: DeferredInfo) {
+        self.deferred_action.show(info);
     }
 
     /// Push an error into chat lines.
@@ -84,30 +84,39 @@ impl App {
                 self.streaming_reasoning = false;
             }
             SseEvent::DeferredCreated {
-                request_id,
+                id: _,
                 tool_name,
-                summary,
+                arguments: _,
+                reason: _,
+                dangerous: _,
+            } => {
+                self.chat_lines
+                    .push(ChatLine::Status(format!("tool call deferred: {tool_name}")));
+                self.auto_scroll = true;
+            }
+            SseEvent::DeferredCommitted {
+                id,
+                tool_name,
+                arguments,
                 reason,
                 dangerous,
             } => {
-                self.show_approval(DeferredInfo {
-                    request_id,
+                self.show_deferred_action(DeferredInfo {
+                    id,
                     tool_name,
-                    summary,
+                    arguments,
                     reason,
                     dangerous,
                 });
             }
-            SseEvent::DeferredApproved { request_id } => {
-                self.chat_lines.push(ChatLine::Status(format!(
-                    "deferred action {request_id} approved"
-                )));
+            SseEvent::DeferredApproved { id } => {
+                self.chat_lines
+                    .push(ChatLine::Status(format!("approval {id} approved")));
                 self.auto_scroll = true;
             }
-            SseEvent::DeferredDenied { request_id, reason } => {
-                self.chat_lines.push(ChatLine::Error(format!(
-                    "deferred action {request_id} denied: {reason}"
-                )));
+            SseEvent::DeferredDenied { id, reason } => {
+                self.chat_lines
+                    .push(ChatLine::Error(format!("approval {id} denied: {reason}")));
                 self.auto_scroll = true;
             }
             SseEvent::Retrying {

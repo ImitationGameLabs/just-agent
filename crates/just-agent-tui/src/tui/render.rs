@@ -71,7 +71,7 @@ impl App {
 
         self.completion.render(frame, input_area);
         if !self.quit_confirm {
-            self.approval.render(frame, input_area);
+            self.deferred_action.render(frame, input_area);
         } else {
             self.render_quit_popup(frame, input_area);
         }

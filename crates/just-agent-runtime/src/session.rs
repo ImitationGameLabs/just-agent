@@ -11,7 +11,7 @@ use just_agent_common::types::{AgentEvent, AgentOutcome};
 
 use crate::config::AgentConfig;
 use crate::context::{AgenticContext, ContextStore, ContextSummarizer};
-use crate::deferred::DeferredQueue;
+use crate::deferred::DeferredActionStore;
 use crate::policy::AuthorizedToolExecutor;
 use crate::runner;
 use just_llm_client::types::chat::ChatMessage;
@@ -20,7 +20,7 @@ use just_llm_client::types::chat::ChatMessage;
 pub struct AgentContext {
     pub client: just_llm_client::ChatClient,
     pub store: Arc<Mutex<ContextStore>>,
-    pub deferred: Arc<Mutex<DeferredQueue>>,
+    pub deferred: Arc<Mutex<DeferredActionStore>>,
     pub executor: AuthorizedToolExecutor,
     pub summarizer: ContextSummarizer,
     pub config: AgentConfig,

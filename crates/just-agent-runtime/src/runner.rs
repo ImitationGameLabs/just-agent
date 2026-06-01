@@ -243,10 +243,27 @@ pub async fn run_agent_rounds(
 
             // Check if this was a deferred action and emit DeferredCreated.
             if let Some(info) = ctx.deferred.lock().await.take_last_deferred() {
+                let arguments =
+                    serde_json::from_str(&info.args_json).unwrap_or(serde_json::Value::Null);
                 tx.send(AgentEvent::DeferredCreated {
-                    request_id: info.request_id,
+                    id: info.id,
                     tool_name: info.tool_name,
-                    summary: info.summary,
+                    arguments,
+                    reason: info.reason,
+                    dangerous: info.dangerous,
+                })
+                .await
+                .ok();
+            }
+
+            // Check if a deferred action was committed and emit DeferredCommitted.
+            if let Some(info) = ctx.deferred.lock().await.take_last_committed() {
+                let arguments =
+                    serde_json::from_str(&info.args_json).unwrap_or(serde_json::Value::Null);
+                tx.send(AgentEvent::DeferredCommitted {
+                    id: info.id,
+                    tool_name: info.tool_name,
+                    arguments,
                     reason: info.reason,
                     dangerous: info.dangerous,
                 })
@@ -426,23 +443,14 @@ fn format_deferred_notifications(notifications: &[DeferredNotification]) -> Stri
     let mut parts = Vec::new();
     for n in notifications {
         match n {
-            DeferredNotification::Approved {
-                request_id,
-                summary,
-            } => {
+            DeferredNotification::Approved { id } => {
                 parts.push(format!(
-                    "Deferred action {request_id} (\"{summary}\") has been approved. \
-                     Call approval_redeem with this request_id to execute."
+                    "Deferred action {id} has been approved. \
+                     Call deferred_action_redeem with this id to execute."
                 ));
             }
-            DeferredNotification::Denied {
-                request_id,
-                summary,
-                reason,
-            } => {
-                parts.push(format!(
-                    "Deferred action {request_id} (\"{summary}\") has been denied: {reason}"
-                ));
+            DeferredNotification::Denied { id, reason } => {
+                parts.push(format!("Deferred action {id} has been denied: {reason}"));
             }
         }
     }

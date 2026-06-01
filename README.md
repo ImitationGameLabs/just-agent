@@ -61,11 +61,12 @@ When a tool call is classified as risky (e.g. `rm -rf`, `sudo`, `git push --forc
 the agent does not block waiting for a human. Instead, the call is deferred and
 the agent manages the lifecycle through tools:
 
-| Tool              | What it does                                         |
-| ----------------- | ---------------------------------------------------- |
-| `approval_list`   | List deferred actions, optionally filtered by status |
-| `approval_redeem` | Execute a previously approved action                 |
-| `approval_cancel` | Abandon a pending action that is no longer needed    |
+| Tool                     | What it does                                         |
+| ------------------------ | ---------------------------------------------------- |
+| `deferred_action_list`   | List deferred actions, optionally filtered by status |
+| `deferred_action_commit` | Submit a pending action for approval with justification |
+| `deferred_action_redeem` | Execute a previously approved action                 |
+| `deferred_action_cancel` | Abandon a deferred action that is no longer needed  |
 
 The flow:
 
@@ -76,7 +77,7 @@ The flow:
    (TUI, CLI, or a supervisor agent).
 4. The client approves or denies the request via the daemon API.
 5. On the next agent round, the approval notification is injected into context.
-   The agent then calls `approval_redeem` to execute the stored action.
+   The agent then calls `deferred_action_redeem` to execute the stored action.
 
 This design is intentional for multi-agent scenarios: a supervisor agent can monitor
 deferred actions from its subagents and make approval decisions programmatically,

@@ -11,7 +11,7 @@ use axum::response::IntoResponse;
 use just_agent_common::types::{AgentId, SseEvent};
 use just_agent_runtime::config::{AgentConfig, PermissionProfile};
 use just_agent_runtime::context::{AgenticContext, ContextStore, ContextSummarizer};
-use just_agent_runtime::deferred::DeferredQueue;
+use just_agent_runtime::deferred::DeferredActionStore;
 use just_agent_runtime::persistence;
 use just_agent_runtime::policy::{AgentPolicy, AuthorizedToolExecutor};
 use just_agent_runtime::provider::client_from_env;
@@ -22,13 +22,15 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use super::{CreateAgentRequest, CreateAgentResponse, ListAgentsResponse};
+use just_agent_common::types::{CreateAgentRequest, CreateAgentResponse};
+
+use super::ListAgentsResponse;
 use crate::bridge::bridge_task;
 use crate::state::{Agent, AgentEntry, AgentState, AgentSummary, SharedState};
 
 pub(crate) struct SpawnArgs {
     pub store: Arc<tokio::sync::Mutex<ContextStore>>,
-    pub deferred: Arc<tokio::sync::Mutex<DeferredQueue>>,
+    pub deferred: Arc<tokio::sync::Mutex<DeferredActionStore>>,
     pub session_dir: PathBuf,
     pub config: AgentConfig,
     pub initial_prompt: Option<String>,
@@ -161,7 +163,7 @@ pub async fn create_agent(
     }
 
     let store = Arc::new(tokio::sync::Mutex::new(ContextStore::new()));
-    let deferred = Arc::new(tokio::sync::Mutex::new(DeferredQueue::new()));
+    let deferred = Arc::new(tokio::sync::Mutex::new(DeferredActionStore::new()));
 
     for skill_name in &config.skills {
         let content =

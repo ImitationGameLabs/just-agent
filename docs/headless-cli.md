@@ -85,17 +85,48 @@ just-agent interrupt <ID>
 Gracefully interrupts the agent's current operation. The agent persists its
 state and stops processing. Use `stop` to stop the agent entirely.
 
-### `approve` — Respond to a deferred action
+### `approval` — Manage approvals
+
+Subcommands for listing, inspecting, and responding to deferred tool actions
+that require approval.
+
+#### `approval list` — List approvals
 
 ```bash
-just-agent approve <ID> <REQUEST_ID> <DECISION>
+just-agent approval list [--offset <N>] [--limit <N>] [--requested-by <ID>] [--status <STATUS>] [--all] [--reverse]
 ```
 
-Approve or deny a deferred tool call that is awaiting human approval.
-`DECISION` is `approve` or `deny`.
+Lists deferred actions across all agents visible to the authenticated identity.
+Default shows committed actions (awaiting approval); use `--all` to see every status or
+`--status` to filter by a specific status
+(committed, approved, denied, redeemed, cancelled).
 
 ```bash
-$ just-agent approve "$AGENT_ID" "req-abc123" approve
+$ just-agent approval list --limit 5 --status committed
+```
+
+#### `approval get` — Show approval details
+
+```bash
+just-agent approval get <APPROVAL_ID>
+```
+
+Shows full details for a single deferred action.
+
+```bash
+$ just-agent approval get "da_a1b2c3d4..."
+```
+
+#### `approval respond` — Approve or deny
+
+```bash
+just-agent approval respond <APPROVAL_ID> <DECISION>
+```
+
+Approve or deny a deferred action. `DECISION` is `approve` or `deny`.
+
+```bash
+$ just-agent approval respond "da_a1b2c3d4..." approve
 ```
 
 ## Scripting patterns
@@ -119,8 +150,8 @@ just-agent send "$AGENT_ID" "Run the test suite and report failures"
 ### Filter for approval requests
 
 ```bash
-just-agent events "$AGENT_ID" | jq -c 'select(.type == "DeferredCreated") |
-  {request_id, tool_name, summary, dangerous}'
+just-agent events "$AGENT_ID" | jq -c 'select(.type == "DeferredCommitted") |
+  {id, tool_name, reason, dangerous}'
 ```
 
 ## Multi-agent orchestration

@@ -36,7 +36,7 @@ Each agent is a pair of tokio tasks with completely isolated state:
 | `mpsc` prompt channel                            | Yes        |
 | `broadcast` SSE channel                          | Yes        |
 | `ContextStore`                                   | Yes        |
-| `DeferredQueue`                                  | Yes        |
+| `DeferredActionStore`                            | Yes        |
 | `AgentConfig` (workspace, skills, system prompt) | Yes        |
 | PTY shell backend                                | Yes        |
 
@@ -46,7 +46,7 @@ an `RwLock`; lookup is by UUID.
 ### Lifecycle
 
 1. **Create** — `POST /agents` spawns both tasks, returns the agent ID.
-2. **Interact** — send messages, stream events, approve/reject deferred actions.
+2. **Interact** — send messages, stream events, approve or deny deferred actions.
 3. **Delete** — `DELETE /agents/{id}` aborts both tokio tasks and removes the
    entry.
 
@@ -59,7 +59,9 @@ an `RwLock`; lookup is by UUID.
 | `DELETE` | `/agents/{id}`           | Stop and remove an agent                |
 | `POST`   | `/agents/{id}/message`   | Send a message (returns `202 Accepted`) |
 | `GET`    | `/agents/{id}/events`    | Subscribe to agent events via SSE       |
-| `POST`   | `/agents/{id}/approval`  | Approve or deny a deferred tool call    |
+| `GET`    | `/approvals`             | List deferred actions awaiting approval    |
+| `GET`    | `/approvals/{id}`        | Get a single deferred action               |
+| `POST`   | `/approvals/{id}`        | Approve or deny a deferred action          |
 | `GET`    | `/agents/{id}/status`    | Get context usage snapshot              |
 | `POST`   | `/agents/{id}/interrupt` | Interrupt current agent operation       |
 
@@ -92,7 +94,9 @@ Authorization rules:
 | `GET /agents/{id}/events`     | -        | -          | -        | Yes       |
 | `DELETE /agents/{id}`         | Yes      | -          | Yes      | -         |
 | `POST /agents/{id}/interrupt` | Yes      | -          | Yes      | -         |
-| `POST /agents/{id}/approval`  | Yes      | -          | Yes      | -         |
+| `GET /approvals`              | Yes      | -          | Yes      | -         |
+| `GET /approvals/{id}`         | Yes      | -          | Yes      | -         |
+| `POST /approvals/{id}`        | Yes      | -          | Yes      | -         |
 | `GET /agents/{id}/status`     | Yes      | -          | -        | Yes       |
 
 Message, event, and status endpoints are peer-to-peer: any authenticated agent
@@ -144,7 +148,7 @@ Tools go through a three-layer policy before execution:
 
 - **Allow** — dispatch immediately.
 - **Deny** — return an error to the LLM.
-- **Ask** — enqueue in `DeferredQueue`, return a deferred reference. The LLM
+- **Ask** — enqueue in `DeferredActionStore`, return a deferred reference. The LLM
   continues working and can redeem later after external approval.
 
 **Layer 3 — Shell command classifier** uses AST parsing (via `rable`) to
@@ -159,12 +163,12 @@ analyze shell commands:
 ### Deferred approval flow
 
 1. Agent calls a tool that policy classifies as "Ask".
-2. `DeferredQueue.enqueue()` stores the call and returns a deferred JSON to the LLM.
+2. `DeferredActionStore.enqueue()` stores the call and returns a deferred JSON to the LLM.
 3. A `DeferredCreated` event is emitted via SSE.
-4. Client sees the event and sends `POST /agents/{id}/approval` to approve or deny.
-5. `DeferredQueue.approve()` or `.deny()` pushes a notification.
+4. Client sees the event and sends `POST /approvals/{id}` to approve or deny.
+5. `DeferredActionStore.approve()` or `.deny()` pushes a notification.
 6. On the next agent round, the notification is drained into context.
-7. The LLM calls `approval_redeem` to execute the stored tool action.
+7. The LLM calls `deferred_action_redeem` to execute the stored tool action.
 
 ## Crate responsibilities
 

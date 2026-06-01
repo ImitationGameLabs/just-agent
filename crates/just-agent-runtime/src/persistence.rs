@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
+use time::{Duration as TimeDuration, OffsetDateTime};
 
 use crate::context::ContextStore;
-use crate::deferred::DeferredQueue;
+use crate::deferred::DeferredActionStore;
 use just_agent_common::types::AgentId;
 use just_llm_client::types::chat::ChatMessage;
 /// Resolve the base sessions directory.
@@ -78,7 +79,7 @@ pub fn persist_context(json: &str, dir: &Path) -> Result<()> {
     atomic_write(&dir.join("context.json"), json)
 }
 
-/// Serialize and write deferred queue to deferred.json.
+/// Serialize and write deferred store to deferred.json.
 pub fn persist_deferred(json: &str, dir: &Path) -> Result<()> {
     atomic_write(&dir.join("deferred.json"), json)
 }
@@ -91,9 +92,9 @@ pub fn persist_deferred(json: &str, dir: &Path) -> Result<()> {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub workspace_root: PathBuf,
-    /// Unix epoch seconds of the last successful restore.
-    #[serde(default)]
-    pub last_restored_at: Option<u64>,
+    /// Time of the last successful restore.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub last_restored_at: Option<OffsetDateTime>,
     /// Consecutive rapid restart counter (reset when outside the window).
     #[serde(default)]
     pub consecutive_restart_count: u32,
@@ -112,15 +113,8 @@ pub fn read_meta(agent_id: &AgentId) -> Result<SessionMeta> {
 
 /// Maximum consecutive rapid restarts before refusing restore.
 const MAX_CONSECUTIVE_RESTARTS: u32 = 3;
-/// Window in which restarts are considered consecutive (seconds).
-const CONSECUTIVE_RESTART_WINDOW_SECS: u64 = 60;
-
-fn now_epoch_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock before UNIX epoch")
-        .as_secs()
-}
+/// Window in which restarts are considered consecutive.
+const CONSECUTIVE_RESTART_WINDOW: TimeDuration = TimeDuration::seconds(60);
 
 /// Lightweight handle produced by scanning the sessions directory.
 pub struct PendingRestore {
@@ -135,7 +129,7 @@ pub struct RestorableSession {
     pub agent_id: AgentId,
     pub session_dir: PathBuf,
     pub store: ContextStore,
-    pub deferred: DeferredQueue,
+    pub deferred: DeferredActionStore,
 }
 
 /// Scan the sessions directory and return sessions eligible for restore.
@@ -189,10 +183,11 @@ fn check_meta(dir: &Path) -> Result<SessionMeta> {
     let meta_json = fs::read_to_string(dir.join("meta.json")).context("reading meta.json")?;
     let mut meta: SessionMeta = serde_json::from_str(&meta_json).context("parsing meta.json")?;
 
-    let now = now_epoch_secs();
-    let is_consecutive = meta
-        .last_restored_at
-        .is_some_and(|prev| now.saturating_sub(prev) < CONSECUTIVE_RESTART_WINDOW_SECS);
+    let now = OffsetDateTime::now_utc();
+    let is_consecutive = meta.last_restored_at.is_some_and(|prev| {
+        let elapsed = now - prev;
+        elapsed > TimeDuration::ZERO && elapsed < CONSECUTIVE_RESTART_WINDOW
+    });
 
     if is_consecutive {
         meta.consecutive_restart_count += 1;
@@ -226,9 +221,9 @@ pub fn restore_session(agent_id: &AgentId, dir: &Path) -> Result<RestorableSessi
         Err(_) => ContextStore::new(),
     };
 
-    let deferred: DeferredQueue = match fs::read_to_string(dir.join("deferred.json")) {
+    let deferred: DeferredActionStore = match fs::read_to_string(dir.join("deferred.json")) {
         Ok(json) => serde_json::from_str(&json).context("parsing deferred.json")?,
-        Err(_) => DeferredQueue::new(),
+        Err(_) => DeferredActionStore::new(),
     };
 
     fix_incomplete_turn(&mut store);

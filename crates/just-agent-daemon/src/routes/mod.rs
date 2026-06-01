@@ -1,15 +1,15 @@
 mod agent;
 pub use agent::restore_sessions;
-mod approval;
 mod context;
+mod deferred;
 mod message;
 
 use axum::Router;
+use just_agent_common::types::AgentId;
 use serde::{Deserialize, Serialize};
 use state::SharedState;
 
 use crate::state;
-use just_agent_common::types::{CreateAgentRequest, CreateAgentResponse};
 
 #[derive(Debug, Serialize)]
 pub struct ListAgentsResponse {
@@ -22,10 +22,13 @@ pub struct MessageRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ApprovalRequest {
-    pub request_id: String,
-    pub decision: String,
-    pub reason: Option<String>,
+pub struct ListDeferredActionsQuery {
+    pub offset: Option<u64>,
+    /// Page size. Clamped to [1, 20] by the handler; defaults to 5.
+    pub limit: Option<u64>,
+    pub requested_by: Option<AgentId>,
+    pub status: Option<String>,
+    pub order: Option<String>,
 }
 
 /// Build the full axum router with all agent routes.
@@ -43,10 +46,6 @@ pub fn router() -> Router<SharedState> {
             "/agents/{id}/events",
             axum::routing::get(message::sse_events),
         )
-        .route(
-            "/agents/{id}/approval",
-            axum::routing::post(approval::respond_approval),
-        )
         .route("/agents/{id}", axum::routing::delete(agent::delete_agent))
         .route(
             "/agents/{id}/interrupt",
@@ -55,5 +54,14 @@ pub fn router() -> Router<SharedState> {
         .route(
             "/agents/{id}/status",
             axum::routing::get(context::agent_status),
+        )
+        .route(
+            "/approvals",
+            axum::routing::get(deferred::list_deferred_actions),
+        )
+        .route(
+            "/approvals/{id}",
+            axum::routing::get(deferred::get_deferred_action)
+                .post(deferred::respond_deferred_action),
         )
 }

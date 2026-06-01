@@ -8,7 +8,7 @@ use futures_util::StreamExt;
 use just_agent_client::DaemonClient;
 use just_agent_common::types::AgentId;
 
-use args::{Cli, Commands};
+use args::{ApprovalCommand, Cli, Commands};
 
 fn build_client() -> DaemonClient {
     let url =
@@ -103,13 +103,61 @@ async fn main() -> Result<()> {
             client.interrupt_agent(&args.id).await?;
             println!("Agent {} interrupted.", args.id);
         }
-        Commands::Approve(args) => {
-            let client = build_client();
-            client
-                .respond_approval(&args.id, &args.request_id, &args.decision, None)
-                .await?;
-            println!("Approval sent.");
-        }
+        Commands::Approval(cmd) => match cmd {
+            ApprovalCommand::List(args) => {
+                let client = build_client();
+                let status = if args.all {
+                    None
+                } else {
+                    args.status.clone().or(Some("committed".into()))
+                };
+                let order = if args.reverse { "asc" } else { "desc" };
+                let resp = client
+                    .list_deferred_actions(&just_agent_client::ListDeferredActionsParams {
+                        offset: args.offset,
+                        limit: args.limit,
+                        requested_by: args.requested_by.clone(),
+                        status,
+                        order: Some(order.to_owned()),
+                    })
+                    .await?;
+                if resp.items.is_empty() {
+                    println!("No pending approvals.");
+                } else {
+                    for a in &resp.items {
+                        print_deferred_entry(a);
+                        println!("---");
+                    }
+                    println!("(total: {})", resp.total);
+                }
+            }
+            ApprovalCommand::Get(args) => {
+                let client = build_client();
+                let a = client.get_deferred_action(&args.id).await?;
+                print_deferred_entry(&a);
+            }
+            ApprovalCommand::Respond(args) => {
+                let client = build_client();
+                client
+                    .respond_deferred_action(&args.id, &args.decision, None)
+                    .await?;
+                println!("Decision sent.");
+            }
+        },
     }
     Ok(())
+}
+
+fn print_deferred_entry(a: &just_agent_common::types::DeferredActionEntry) {
+    println!("id: {}", a.id);
+    println!("status: {}", a.status);
+    println!("requested_by: {}", a.requested_by);
+    println!("tool: {}", a.content.tool_name);
+    println!("arguments: {}", a.content.arguments);
+    println!("reason: {}", a.reason);
+    println!("dangerous: {}", a.dangerous);
+    if let Some(r) = &a.deny_reason {
+        println!("deny_reason: {r}");
+    }
+    println!("created_at: {}", a.created_at);
 }

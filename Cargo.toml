@@ -34,6 +34,7 @@ futures-util = "0.3.32"
 regex = "1.12.3"
 reqwest = { version = "0.13.2", default-features = false, features = [
   "json",
+  "query",
   "rustls",
   "stream",
 ] }
@@ -68,3 +69,4 @@ syntect = "5.3"
 dirs = "6"
 unicode-width = "0.2.2"
 rpassword = "7.5"
+time = { version = "0.3", features = ["serde-well-known"] }

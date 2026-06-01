@@ -14,13 +14,13 @@ use crate::session::Session;
 enum PendingPrompt {
     None,
     QuitConfirm,
-    Approval { request_id: String },
+    DeferredAction { deferred_action_id: String },
 }
 
 enum Action {
     SendPrompt(String),
-    RespondApproval {
-        request_id: String,
+    RespondDeferred {
+        deferred_action_id: String,
         decision: String,
     },
 }
@@ -29,8 +29,8 @@ enum Action {
 enum StdinAction {
     None,
     SendPrompt(String),
-    RespondApproval {
-        request_id: String,
+    RespondDeferred {
+        deferred_action_id: String,
         decision: String,
     },
     Quit {
@@ -52,12 +52,12 @@ pub async fn run_stdio(session: Session) -> Result<()> {
             while let Some(action) = action_rx.recv().await {
                 let result = match action {
                     Action::SendPrompt(text) => client.post_message(&agent_id, &text).await,
-                    Action::RespondApproval {
-                        request_id,
+                    Action::RespondDeferred {
+                        deferred_action_id,
                         decision,
                     } => {
                         client
-                            .respond_approval(&agent_id, &request_id, &decision, None)
+                            .respond_deferred_action(&deferred_action_id, &decision, None)
                             .await
                     }
                 };
@@ -118,9 +118,9 @@ pub async fn run_stdio(session: Session) -> Result<()> {
                         busy = true;
                         action_tx.send(Action::SendPrompt(text)).await.ok();
                     }
-                    StdinAction::RespondApproval { request_id, decision } => {
+                    StdinAction::RespondDeferred { deferred_action_id, decision } => {
                         action_tx
-                            .send(Action::RespondApproval { request_id, decision })
+                            .send(Action::RespondDeferred { deferred_action_id, decision })
                             .await
                             .ok();
                     }
@@ -196,28 +196,39 @@ fn handle_sse_event(event: SseEvent, busy: &mut bool, pending: &mut PendingPromp
             *busy = true;
         }
         SseEvent::DeferredCreated {
-            request_id,
+            id: _,
             tool_name,
-            summary,
+            arguments: _,
+            reason: _,
+            dangerous: _,
+        } => {
+            eprintln!("[approval] tool: {tool_name}");
+        }
+        SseEvent::DeferredCommitted {
+            id,
+            tool_name,
+            arguments,
             reason,
             dangerous,
         } => {
             if !matches!(pending, PendingPrompt::None) {
-                eprintln!("[warning] dropping previous pending prompt for new approval request");
+                eprintln!("[warning] dropping previous pending prompt for new approval");
             }
             let label = if dangerous { "DANGER" } else { "approval" };
             eprintln!("[{label}] tool: {tool_name}");
+            eprintln!("[{label}] arguments: {}", format_json_value(&arguments));
             eprintln!("[{label}] reason: {reason}");
-            eprintln!("[{label}] cmd: {summary}");
             eprint!("[{label}] [1] Approve  [2] Deny: ");
             io::stderr().flush().ok();
-            *pending = PendingPrompt::Approval { request_id };
+            *pending = PendingPrompt::DeferredAction {
+                deferred_action_id: id,
+            };
         }
-        SseEvent::DeferredApproved { request_id } => {
-            println!("[deferred] {request_id} approved");
+        SseEvent::DeferredApproved { id } => {
+            println!("[approval] {id} approved");
         }
-        SseEvent::DeferredDenied { request_id, reason } => {
-            eprintln!("[deferred] {request_id} denied: {reason}");
+        SseEvent::DeferredDenied { id, reason } => {
+            eprintln!("[approval] {id} denied: {reason}");
         }
         SseEvent::Retrying {
             attempt,
@@ -265,6 +276,17 @@ async fn handle_command(cmd: SlashCommand, session: &Session, pending: &mut Pend
     }
 }
 
+/// Format a JSON value for display in stdio deferred action prompts.
+/// Objects and arrays are pretty-printed; scalars use compact form.
+fn format_json_value(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+            serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
+        }
+        _ => v.to_string(),
+    }
+}
+
 fn handle_stdin_line(line: &str, pending: &mut PendingPrompt) -> StdinAction {
     let trimmed = line.trim();
     match pending {
@@ -283,14 +305,14 @@ fn handle_stdin_line(line: &str, pending: &mut PendingPrompt) -> StdinAction {
                 StdinAction::None
             }
         },
-        PendingPrompt::Approval { request_id } => {
-            let rid = request_id.clone();
+        PendingPrompt::DeferredAction { deferred_action_id } => {
+            let rid = deferred_action_id.clone();
             match trimmed {
                 "1" | "2" => {
                     *pending = PendingPrompt::None;
                     let decision = if trimmed == "1" { "approve" } else { "deny" };
-                    StdinAction::RespondApproval {
-                        request_id: rid,
+                    StdinAction::RespondDeferred {
+                        deferred_action_id: rid,
                         decision: decision.to_owned(),
                     }
                 }

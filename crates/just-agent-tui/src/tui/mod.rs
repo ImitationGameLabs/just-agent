@@ -1,5 +1,5 @@
-mod approval;
 mod completion;
+mod deferred_action;
 mod events;
 mod history;
 mod input;
@@ -9,8 +9,8 @@ mod wrap;
 
 use ratatui_textarea::TextArea;
 
-use approval::ApprovalState;
 use completion::CompletionState;
+use deferred_action::DeferredActionState;
 
 /// A line in the chat output area.
 #[derive(Debug)]
@@ -44,7 +44,7 @@ pub struct App {
     pub kill_on_exit: bool,
     quit_confirm: bool,
     completion: CompletionState,
-    approval: ApprovalState,
+    deferred_action: DeferredActionState,
     history: history::InputHistory,
     scroll_pos: usize,
     content_length: usize,
@@ -76,7 +76,7 @@ impl App {
             kill_on_exit: false,
             quit_confirm: false,
             completion: CompletionState::new(),
-            approval: ApprovalState::new(),
+            deferred_action: DeferredActionState::new(),
             history: history::InputHistory::new(),
         }
     }

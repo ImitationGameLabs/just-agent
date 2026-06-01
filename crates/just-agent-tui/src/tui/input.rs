@@ -40,19 +40,19 @@ impl App {
             return;
         }
 
-        // Approval popup: intercept 1/2/Esc keys
-        if self.approval.is_pending() {
+        // Deferred action popup: intercept 1/2/Esc keys
+        if self.deferred_action.is_pending() {
             let decision = if let KeyCode::Char(ch) = key.code {
-                self.approval.handle_key(ch)
+                self.deferred_action.handle_key(ch)
             } else if key.code == KeyCode::Esc {
-                self.approval.cancel()
+                self.deferred_action.cancel()
             } else {
                 None
             };
             if let Some(decision_str) = decision
-                && let Some(request_id) = self.approval.last_request_id()
+                && let Some(id) = self.deferred_action.last_id()
                 && let Err(e) = client
-                    .respond_approval(agent_id, request_id, &decision_str, None)
+                    .respond_deferred_action(id, &decision_str, None)
                     .await
             {
                 self.chat_lines.push(ChatLine::Error(e.to_string()));

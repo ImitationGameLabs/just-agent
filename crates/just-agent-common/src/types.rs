@@ -96,9 +96,16 @@ pub enum AgentEvent {
     Status(String),
     Busy,
     DeferredCreated {
-        request_id: String,
+        id: String,
         tool_name: String,
-        summary: String,
+        arguments: serde_json::Value,
+        reason: String,
+        dangerous: bool,
+    },
+    DeferredCommitted {
+        id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
         reason: String,
         dangerous: bool,
     },
@@ -153,17 +160,24 @@ pub enum SseEvent {
     },
     Busy,
     DeferredCreated {
-        request_id: String,
+        id: String,
         tool_name: String,
-        summary: String,
+        arguments: serde_json::Value,
+        reason: String,
+        dangerous: bool,
+    },
+    DeferredCommitted {
+        id: String,
+        tool_name: String,
+        arguments: serde_json::Value,
         reason: String,
         dangerous: bool,
     },
     DeferredApproved {
-        request_id: String,
+        id: String,
     },
     DeferredDenied {
-        request_id: String,
+        id: String,
         reason: String,
     },
     Retrying {
@@ -192,15 +206,28 @@ impl From<AgentEvent> for SseEvent {
             AgentEvent::Status(msg) => SseEvent::Status { message: msg },
             AgentEvent::Busy => SseEvent::Busy,
             AgentEvent::DeferredCreated {
-                request_id,
+                id,
                 tool_name,
-                summary,
+                arguments,
                 reason,
                 dangerous,
             } => SseEvent::DeferredCreated {
-                request_id,
+                id,
                 tool_name,
-                summary,
+                arguments,
+                reason,
+                dangerous,
+            },
+            AgentEvent::DeferredCommitted {
+                id,
+                tool_name,
+                arguments,
+                reason,
+                dangerous,
+            } => SseEvent::DeferredCommitted {
+                id,
+                tool_name,
+                arguments,
                 reason,
                 dangerous,
             },
@@ -233,4 +260,83 @@ pub struct CreateAgentRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAgentResponse {
     pub id: AgentId,
+}
+
+/// Status of a deferred tool action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeferredActionStatus {
+    Pending,
+    Committed,
+    Approved,
+    Denied,
+    Redeemed,
+    Cancelled,
+}
+
+impl DeferredActionStatus {
+    /// Parse a status string (e.g. from a query parameter).
+    pub fn from_str_name(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "committed" => Some(Self::Committed),
+            "approved" => Some(Self::Approved),
+            "denied" => Some(Self::Denied),
+            "redeemed" => Some(Self::Redeemed),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Committed => "committed",
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+            Self::Redeemed => "redeemed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+impl std::fmt::Display for DeferredActionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Complete tool call content for a deferred action.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolCallContent {
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// A single deferred action entry in API responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeferredActionEntry {
+    pub id: String,
+    pub requested_by: AgentId,
+    pub content: ToolCallContent,
+    pub reason: String,
+    pub dangerous: bool,
+    pub status: DeferredActionStatus,
+    pub deny_reason: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: time::OffsetDateTime,
+}
+
+/// Response for listing deferred actions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListDeferredActionsResponse {
+    pub items: Vec<DeferredActionEntry>,
+    pub total: usize,
+}
+
+/// Request body for approving or denying a deferred action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeferredActionDecisionBody {
+    pub decision: String,
+    pub reason: Option<String>,
 }

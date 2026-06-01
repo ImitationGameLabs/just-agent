@@ -1,4 +1,4 @@
-//! Approval popup widget for TUI mode.
+//! Deferred action popup widget for TUI mode.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,24 +8,23 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use just_agent_client::DeferredInfo;
 
-/// Tracks pending approval state and renders the popup.
-pub struct ApprovalState {
+/// Tracks pending deferred action state and renders the popup.
+pub struct DeferredActionState {
     info: Option<DeferredInfo>,
-    /// Kept after resolve so the caller can retrieve the request_id.
-    last_request_id: Option<String>,
+    last_id: Option<String>,
 }
 
-impl ApprovalState {
+impl DeferredActionState {
     pub fn new() -> Self {
         Self {
             info: None,
-            last_request_id: None,
+            last_id: None,
         }
     }
 
-    /// Show the approval popup for the given deferred action.
+    /// Show the popup for the given deferred action.
     pub fn show(&mut self, info: DeferredInfo) {
-        self.last_request_id = Some(info.request_id.clone());
+        self.last_id = Some(info.id.clone());
         self.info = Some(info);
     }
 
@@ -33,9 +32,9 @@ impl ApprovalState {
         self.info.is_some()
     }
 
-    /// Return the request_id of the most recently shown deferred action.
-    pub fn last_request_id(&self) -> Option<&str> {
-        self.last_request_id.as_deref()
+    /// Return the id of the most recently shown deferred action.
+    pub fn last_id(&self) -> Option<&str> {
+        self.last_id.as_deref()
     }
 
     /// Try to handle a key press. Returns `Some(decision_string)` if resolved.
@@ -60,12 +59,12 @@ impl ApprovalState {
         None
     }
 
-    /// Render the approval popup as a floating overlay above the input area.
+    /// Render the popup as a floating overlay above the input area.
     pub fn render(&self, frame: &mut Frame, input_area: Rect) {
         let Some(info) = &self.info else { return };
 
         let width = (input_area.width).min(60);
-        let height = 8u16; // border(2) + tool + reason + summary + blank + options
+        let height = 7u16; // border(2) + tool + reason + cmd + blank + options
         let popup_area = Rect {
             x: input_area.x + 1,
             y: input_area.y.saturating_sub(height),
@@ -75,7 +74,17 @@ impl ApprovalState {
 
         frame.render_widget(Clear, popup_area);
 
-        let summary_preview = truncate_str(&info.summary, (width - 4) as usize - 10);
+        // Show command for shell tools, or compact JSON for others.
+        let cmd_preview = match info.tool_name.as_str() {
+            "shell_session_exec" => info
+                .arguments
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned(),
+            _ => info.arguments.to_string(),
+        };
+        let summary_preview = truncate_str(&cmd_preview, (width - 4) as usize - 10);
 
         let (border_color, title, reason_style, options) = if info.dangerous {
             (
