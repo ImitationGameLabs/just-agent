@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
+use just_agent_common::types::ToolPolicy;
 use serde::{Deserialize, Serialize};
 use time::{Duration as TimeDuration, OffsetDateTime};
 
@@ -82,6 +83,20 @@ pub fn persist_context(json: &str, dir: &Path) -> Result<()> {
 /// Serialize and write deferred store to deferred.json.
 pub fn persist_deferred(json: &str, dir: &Path) -> Result<()> {
     atomic_write(&dir.join("deferred.json"), json)
+}
+
+/// Serialize and write tool policy to policy.toml.
+pub fn persist_policy(dir: &Path, policy: &ToolPolicy) -> Result<()> {
+    let toml_str = toml::to_string_pretty(policy).context("serializing policy.toml")?;
+    atomic_write(&dir.join("policy.toml"), &toml_str)
+}
+
+/// Load tool policy from policy.toml.
+/// Errors on missing file, read failure, or parse failure.
+pub fn load_policy(dir: &Path) -> Result<ToolPolicy> {
+    let path = dir.join("policy.toml");
+    let content = fs::read_to_string(&path).context("reading policy.toml")?;
+    toml::from_str(&content).context("parsing policy.toml")
 }
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,14 @@ pub fn router() -> Router<SharedState> {
             axum::routing::get(context::agent_status),
         )
         .route(
+            "/agents/{id}/permissions",
+            axum::routing::get(context::agent_permissions),
+        )
+        .route(
+            "/agents/{id}/policy",
+            axum::routing::get(context::get_policy).put(context::update_policy),
+        )
+        .route(
             "/approvals",
             axum::routing::get(deferred::list_deferred_actions),
         )

@@ -70,3 +70,4 @@ dirs = "6"
 unicode-width = "0.2.2"
 rpassword = "7.5"
 time = { version = "0.3", features = ["serde-well-known"] }
+toml = "1"

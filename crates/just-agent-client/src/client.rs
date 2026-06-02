@@ -222,4 +222,58 @@ impl DaemonClient {
             .context("failed to parse status response")?;
         Ok(status)
     }
+
+    /// Get agent permission profile and tool policy rules.
+    pub async fn agent_permissions(&self, id: &AgentId) -> Result<AgentPermissionsResponse> {
+        let perms = self
+            .with_auth(
+                self.inner
+                    .http
+                    .get(self.url(&format!("/agents/{id}/permissions"))),
+            )
+            .send()
+            .await
+            .context("failed to get agent permissions")?
+            .error_for_status()
+            .context("daemon returned error")?
+            .json()
+            .await
+            .context("failed to parse permissions response")?;
+        Ok(perms)
+    }
+
+    /// Get the raw tool policy for an agent.
+    pub async fn get_policy(&self, id: &AgentId) -> Result<ToolPolicy> {
+        let policy = self
+            .with_auth(
+                self.inner
+                    .http
+                    .get(self.url(&format!("/agents/{id}/policy"))),
+            )
+            .send()
+            .await
+            .context("failed to get agent policy")?
+            .error_for_status()
+            .context("daemon returned error")?
+            .json()
+            .await
+            .context("failed to parse policy response")?;
+        Ok(policy)
+    }
+
+    /// Update the tool policy for an agent.
+    pub async fn update_policy(&self, id: &AgentId, policy: &ToolPolicy) -> Result<()> {
+        self.with_auth(
+            self.inner
+                .http
+                .put(self.url(&format!("/agents/{id}/policy")))
+                .json(policy),
+        )
+        .send()
+        .await
+        .context("failed to update agent policy")?
+        .error_for_status()
+        .context("daemon returned error")?;
+        Ok(())
+    }
 }

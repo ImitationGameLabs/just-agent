@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use just_agent_common::types::{AgentId, SseEvent};
+use just_agent_common::types::{AgentId, SseEvent, ToolPolicy};
 use just_agent_runtime::config::{AgentConfig, PermissionProfile};
 use just_agent_runtime::context::{AgenticContext, ContextStore, ContextSummarizer};
 use just_agent_runtime::deferred::DeferredActionStore;
@@ -39,6 +39,7 @@ pub(crate) struct SpawnArgs {
     pub auth_token: String,
     pub env: HashMap<String, String>,
     pub shared_state: SharedState,
+    pub tool_policy: Arc<std::sync::RwLock<ToolPolicy>>,
 }
 
 /// Reconstruct runtime resources shared by create and restore.
@@ -60,7 +61,7 @@ pub(crate) async fn spawn_agent(args: SpawnArgs) -> anyhow::Result<Agent> {
 
     let executor = AuthorizedToolExecutor::new(
         dispatch,
-        AgentPolicy::new(args.config.workspace_root.clone()),
+        AgentPolicy::new(args.tool_policy.clone()),
         args.deferred.clone(),
     );
     let tool_defs = executor.tool_definitions();
@@ -117,6 +118,7 @@ pub(crate) async fn spawn_agent(args: SpawnArgs) -> anyhow::Result<Agent> {
         state,
         auth_token: args.auth_token,
         env: args.env,
+        tool_policy: args.tool_policy,
     })
 }
 
@@ -142,6 +144,8 @@ pub async fn create_agent(
     let mut env = HashMap::new();
     env.insert("JUST_AGENT_ID".into(), id.to_string());
     env.insert("JUST_AGENT_AUTH_TOKEN".into(), auth_token.clone());
+
+    let mut tool_policy = ToolPolicy::default();
 
     // Subagent: validate supervisor and delegation constraints.
     if let Some(ref supervisor_id) = req.created_by {
@@ -170,7 +174,15 @@ pub async fn create_agent(
 
         config.created_by = Some(supervisor_id.clone());
         config.permissions = PermissionProfile::subagent(subagent_ws, supervisor_perms.max_depth);
+        tool_policy = supervisor
+            .agent
+            .tool_policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
     }
+
+    let tool_policy = Arc::new(std::sync::RwLock::new(tool_policy));
 
     let store = Arc::new(tokio::sync::Mutex::new(ContextStore::new()));
     let deferred = Arc::new(tokio::sync::Mutex::new(DeferredActionStore::new()));
@@ -193,6 +205,12 @@ pub async fn create_agent(
         persistence::create_session(&id, &config.workspace_root, config.created_by.as_ref())
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    persistence::persist_policy(
+        &session_dir,
+        &tool_policy.read().unwrap_or_else(|e| e.into_inner()),
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     let prompt = config.prompt.take();
     let log_ws = config.workspace_root.display().to_string();
     let log_depth = config.permissions.max_depth;
@@ -208,6 +226,7 @@ pub async fn create_agent(
         auth_token: auth_token.clone(),
         env,
         shared_state: state.clone(),
+        tool_policy: tool_policy.clone(),
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -358,6 +377,57 @@ fn validate_subagent_depth(
     Ok(just_agent_runtime::config::DEFAULT_MAX_DEPTH.saturating_sub(levels))
 }
 
+/// Validate that a restored policy is at least as strict as its supervisor chain.
+/// Root agents (no `created_by`) always pass.
+fn validate_policy_strictness(
+    agent_id: &AgentId,
+    policy: &just_agent_common::types::ToolPolicy,
+    created_by: Option<&AgentId>,
+) -> anyhow::Result<()> {
+    let mut visited = HashSet::new();
+    visited.insert(agent_id.clone());
+    validate_policy_strictness_inner(agent_id, policy, created_by, &mut visited)
+}
+
+fn validate_policy_strictness_inner(
+    agent_id: &AgentId,
+    policy: &just_agent_common::types::ToolPolicy,
+    created_by: Option<&AgentId>,
+    visited: &mut HashSet<AgentId>,
+) -> anyhow::Result<()> {
+    let Some(supervisor_id) = created_by else {
+        return Ok(());
+    };
+
+    if !visited.insert(supervisor_id.clone()) {
+        anyhow::bail!("circular supervisor chain detected during policy validation");
+    }
+
+    let supervisor_session =
+        persistence::session_dir(supervisor_id).context("cannot resolve supervisor session dir")?;
+    let supervisor_policy =
+        persistence::load_policy(&supervisor_session).context("cannot load supervisor policy")?;
+
+    policy
+        .validate_at_least_as_strict_as(&supervisor_policy)
+        .map_err(|violations| {
+            anyhow::anyhow!(
+                "agent {agent_id}: policy is less strict than supervisor: {}",
+                violations.join("; ")
+            )
+        })?;
+
+    // Recurse up the chain.
+    let supervisor_meta =
+        persistence::read_meta(supervisor_id).context("supervisor meta missing")?;
+    validate_policy_strictness_inner(
+        supervisor_id,
+        &supervisor_policy,
+        supervisor_meta.created_by.as_ref(),
+        visited,
+    )
+}
+
 /// Restore a single persisted session to a running agent.
 async fn restore_one(
     p: persistence::PendingRestore,
@@ -374,6 +444,9 @@ async fn restore_one(
         config.permissions.max_depth = validate_subagent_depth(&p.workspace_root, supervisor_id)?;
     }
 
+    let tool_policy = persistence::load_policy(&p.session_dir).context("failed to load policy")?;
+    validate_policy_strictness(&p.agent_id, &tool_policy, p.created_by.as_ref())?;
+
     let store = Arc::new(tokio::sync::Mutex::new(sess.store));
     let deferred = Arc::new(tokio::sync::Mutex::new(sess.deferred));
     let (events_tx, _) = broadcast::channel(256);
@@ -382,6 +455,8 @@ async fn restore_one(
     let mut env = HashMap::new();
     env.insert("JUST_AGENT_ID".into(), p.agent_id.to_string());
     env.insert("JUST_AGENT_AUTH_TOKEN".into(), auth_token.clone());
+
+    let tool_policy = Arc::new(std::sync::RwLock::new(tool_policy));
 
     let agent = spawn_agent(SpawnArgs {
         store,
@@ -394,6 +469,7 @@ async fn restore_one(
         auth_token: auth_token.clone(),
         env,
         shared_state,
+        tool_policy,
     })
     .await?;
 

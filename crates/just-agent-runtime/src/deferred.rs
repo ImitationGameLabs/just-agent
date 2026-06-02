@@ -14,8 +14,8 @@ pub struct DeferredAction {
     pub id: String,
     pub tool_name: String,
     pub args_json: String,
-    pub reason: String,
-    pub dangerous: bool,
+    /// Agent-provided justification set during commit.
+    pub commit_reason: Option<String>,
     pub status: DeferredActionStatus,
     pub deny_reason: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -27,8 +27,8 @@ pub struct DeferredAction {
 pub struct DeferredActionInfo {
     pub id: String,
     pub content: ToolCallContent,
-    pub reason: String,
-    pub dangerous: bool,
+    /// Agent-provided justification (set during commit, empty for pending).
+    pub commit_reason: Option<String>,
     pub status: DeferredActionStatus,
     pub deny_reason: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -41,8 +41,8 @@ pub struct DeferredCommittedInfo {
     pub id: String,
     pub tool_name: String,
     pub args_json: String,
-    pub reason: String,
-    pub dangerous: bool,
+    /// Agent-provided justification for why the tool call is necessary.
+    pub commit_reason: String,
 }
 
 /// Notification pushed when an external approval/denial arrives.
@@ -92,13 +92,7 @@ impl DeferredActionStore {
     }
 
     /// Enqueue a deferred action and return the id.
-    pub fn enqueue(
-        &mut self,
-        tool_name: &str,
-        args_json: &str,
-        reason: &str,
-        dangerous: bool,
-    ) -> String {
+    pub fn enqueue(&mut self, tool_name: &str, args_json: &str) -> String {
         // "da" prefix is short for "deferred action"
         let id = format!("da_{}", uuid::Uuid::new_v4().simple());
         let created_at = OffsetDateTime::now_utc();
@@ -106,8 +100,7 @@ impl DeferredActionStore {
             id: id.clone(),
             tool_name: tool_name.to_owned(),
             args_json: args_json.to_owned(),
-            reason: reason.to_owned(),
-            dangerous,
+            commit_reason: None,
             status: DeferredActionStatus::Pending,
             deny_reason: None,
             created_at,
@@ -211,9 +204,9 @@ impl DeferredActionStore {
 
     /// Commit a pending action with the agent's justification.
     ///
-    /// Overwrites the classifier reason with the agent-provided one and
-    /// transitions to `Committed` so the action becomes visible to superiors.
-    pub fn commit(&mut self, id: &str, reason: &str) -> Result<()> {
+    /// Stores the commit_reason and transitions to `Committed` so the action
+    /// becomes visible to superiors for approval.
+    pub fn commit(&mut self, id: &str, commit_reason: &str) -> Result<()> {
         let action = self
             .actions
             .get_mut(id)
@@ -224,14 +217,13 @@ impl DeferredActionStore {
                 action.status
             );
         }
-        action.reason = reason.to_owned();
+        action.commit_reason = Some(commit_reason.to_owned());
         action.status = DeferredActionStatus::Committed;
         self.last_committed = Some(DeferredCommittedInfo {
             id: id.to_owned(),
             tool_name: action.tool_name.clone(),
             args_json: action.args_json.clone(),
-            reason: reason.to_owned(),
-            dangerous: action.dangerous,
+            commit_reason: commit_reason.to_owned(),
         });
         Ok(())
     }
@@ -263,8 +255,7 @@ impl DeferredActionStore {
                     arguments: serde_json::from_str(&a.args_json)
                         .unwrap_or(serde_json::Value::Null),
                 },
-                reason: a.reason.clone(),
-                dangerous: a.dangerous,
+                commit_reason: a.commit_reason.clone(),
                 status: a.status,
                 deny_reason: a.deny_reason.clone(),
                 created_at: a.created_at,
@@ -285,8 +276,7 @@ impl DeferredActionStore {
                 tool_name: a.tool_name.clone(),
                 arguments: serde_json::from_str(&a.args_json).unwrap_or(serde_json::Value::Null),
             },
-            reason: a.reason.clone(),
-            dangerous: a.dangerous,
+            commit_reason: a.commit_reason.clone(),
             status: a.status,
             deny_reason: a.deny_reason.clone(),
             created_at: a.created_at,
@@ -300,14 +290,12 @@ impl DeferredActionStore {
 }
 
 /// Format a deferred tool result JSON returned to the LLM.
-pub fn deferred_result_json(id: &str, tool_name: &str, reason: &str, dangerous: bool) -> String {
+pub fn deferred_result_json(id: &str, tool_name: &str) -> String {
     serde_json::json!({
         "ok": true,
         "deferred": true,
         "tool_name": tool_name,
         "id": id,
-        "reason": reason,
-        "dangerous": dangerous,
         "next_steps": "This tool call requires approval. \
             Call deferred_action_commit with the id and a justification for why it is necessary, \
             or deferred_action_cancel to abandon it."
@@ -322,12 +310,7 @@ mod tests {
     #[test]
     fn enqueue_commit_approve_redeem() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue(
-            "shell_session_exec",
-            r#"{"command":"rm -rf /tmp"}"#,
-            "destructive",
-            true,
-        );
+        let id = q.enqueue("shell_session_exec", r#"{"command":"rm -rf /tmp"}"#);
         assert!(id.starts_with("da_"));
 
         let info = q.list(None);
@@ -337,21 +320,23 @@ mod tests {
 
         q.commit(&id, "need to clean up temp dir").unwrap();
         assert_eq!(q.list(None)[0].status, DeferredActionStatus::Committed);
-        assert_eq!(q.list(None)[0].reason, "need to clean up temp dir");
+        assert_eq!(
+            q.list(None)[0].commit_reason.as_deref(),
+            Some("need to clean up temp dir")
+        );
 
         q.approve(&id).unwrap();
         assert_eq!(q.list(None)[0].status, DeferredActionStatus::Approved);
 
         let action = q.take_for_redeem(&id).unwrap();
         assert_eq!(action.tool_name, "shell_session_exec");
-        assert_eq!(action.reason, "need to clean up temp dir");
         assert_eq!(q.list(None)[0].status, DeferredActionStatus::Redeemed);
     }
 
     #[test]
     fn deny_prevents_redeem() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         q.commit(&id, "justification").unwrap();
         q.deny(&id, "no").unwrap();
         assert!(q.take_for_redeem(&id).is_err());
@@ -360,7 +345,7 @@ mod tests {
     #[test]
     fn cancel_pending() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         let prev = q.cancel(&id).unwrap();
         assert_eq!(prev, DeferredActionStatus::Pending);
         assert_eq!(q.list(None)[0].status, DeferredActionStatus::Cancelled);
@@ -369,7 +354,7 @@ mod tests {
     #[test]
     fn cancel_committed() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         q.commit(&id, "justification").unwrap();
         let prev = q.cancel(&id).unwrap();
         assert_eq!(prev, DeferredActionStatus::Committed);
@@ -379,7 +364,7 @@ mod tests {
     #[test]
     fn cancel_approved() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         q.commit(&id, "justification").unwrap();
         q.approve(&id).unwrap();
         let prev = q.cancel(&id).unwrap();
@@ -390,7 +375,7 @@ mod tests {
     #[test]
     fn cancel_denied() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         q.commit(&id, "justification").unwrap();
         q.deny(&id, "no").unwrap();
         let prev = q.cancel(&id).unwrap();
@@ -401,7 +386,7 @@ mod tests {
     #[test]
     fn cannot_cancel_redeemed() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         q.commit(&id, "justification").unwrap();
         q.approve(&id).unwrap();
         q.take_for_redeem(&id).unwrap();
@@ -411,7 +396,7 @@ mod tests {
     #[test]
     fn cannot_cancel_already_cancelled() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         q.cancel(&id).unwrap();
         assert!(q.cancel(&id).is_err());
     }
@@ -419,7 +404,7 @@ mod tests {
     #[test]
     fn cannot_approve_non_committed() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         // Pending → cannot approve
         assert!(q.approve(&id).is_err());
         let _ = q.cancel(&id).unwrap();
@@ -430,25 +415,16 @@ mod tests {
     #[test]
     fn cannot_redeem_pending_or_committed() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         assert!(q.take_for_redeem(&id).is_err());
         q.commit(&id, "justification").unwrap();
         assert!(q.take_for_redeem(&id).is_err());
     }
 
     #[test]
-    fn commit_overwrites_reason() {
-        let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "classifier reason", false);
-        assert_eq!(q.list(None)[0].reason, "classifier reason");
-        q.commit(&id, "agent justification").unwrap();
-        assert_eq!(q.list(None)[0].reason, "agent justification");
-    }
-
-    #[test]
     fn cannot_commit_non_pending() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         q.commit(&id, "first").unwrap();
         // Already committed
         assert!(q.commit(&id, "second").is_err());
@@ -457,19 +433,19 @@ mod tests {
     #[test]
     fn take_last_committed_is_one_shot() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         q.commit(&id, "justification").unwrap();
         let info = q.take_last_committed().unwrap();
         assert_eq!(info.id, id);
-        assert_eq!(info.reason, "justification");
+        assert_eq!(info.commit_reason, "justification");
         assert!(q.take_last_committed().is_none());
     }
 
     #[test]
     fn drain_notifications() {
         let mut q = DeferredActionStore::new();
-        let id1 = q.enqueue("t1", "{}", "r1", false);
-        let id2 = q.enqueue("t2", "{}", "r2", true);
+        let id1 = q.enqueue("t1", "{}");
+        let id2 = q.enqueue("t2", "{}");
         q.commit(&id1, "j1").unwrap();
         q.commit(&id2, "j2").unwrap();
         q.approve(&id1).unwrap();
@@ -483,8 +459,8 @@ mod tests {
     #[test]
     fn list_filters_by_status() {
         let mut q = DeferredActionStore::new();
-        let id1 = q.enqueue("t1", "{}", "r", false);
-        let id2 = q.enqueue("t2", "{}", "r", false);
+        let id1 = q.enqueue("t1", "{}");
+        let id2 = q.enqueue("t2", "{}");
         q.commit(&id1, "j1").unwrap();
         q.commit(&id2, "j2").unwrap();
         q.approve(&id1).unwrap();
@@ -518,7 +494,7 @@ mod tests {
     #[test]
     fn contains_checks() {
         let mut q = DeferredActionStore::new();
-        let id = q.enqueue("t", "{}", "reason", false);
+        let id = q.enqueue("t", "{}");
         assert!(q.contains(&id));
         assert!(!q.contains("nonexistent"));
     }
@@ -526,7 +502,7 @@ mod tests {
     #[test]
     fn info_has_tool_call_content() {
         let mut q = DeferredActionStore::new();
-        q.enqueue("shell_session_exec", r#"{"command":"ls"}"#, "reason", false);
+        q.enqueue("shell_session_exec", r#"{"command":"ls"}"#);
         let info = &q.list(None)[0];
         assert_eq!(info.content.tool_name, "shell_session_exec");
         assert_eq!(info.content.arguments["command"], "ls");

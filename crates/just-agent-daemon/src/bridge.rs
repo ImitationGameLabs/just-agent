@@ -23,8 +23,8 @@ pub async fn bridge_task(
 
             Some(event) = agent_rx.recv() => {
                 match event {
-                    AgentEvent::DeferredCommitted { id, tool_name, arguments, reason, dangerous } => {
-                        route_to_superior(&shared_state, &agent_id, id.clone(), tool_name, arguments, reason, dangerous).await;
+                    AgentEvent::DeferredCommitted { id, tool_name, arguments, commit_reason } => {
+                        route_to_superior(&shared_state, &agent_id, id.clone(), tool_name, arguments, &commit_reason).await;
                         events_tx.send(SseEvent::DeferredActionUpdated {
                             id,
                             status: DeferredActionStatus::Committed,
@@ -76,8 +76,7 @@ async fn route_to_superior(
     deferred_action_id: String,
     tool_name: String,
     arguments: serde_json::Value,
-    reason: String,
-    dangerous: bool,
+    commit_reason: &str,
 ) {
     // Clone the sender inside the lock so we don't hold the read lock across the async send.
     let (superior_id, prompt_tx) = {
@@ -100,8 +99,7 @@ async fn route_to_superior(
         "[Approval Request] Subordinate agent {agent_id} requests approval for:\n\
          Tool: {tool_name}\n\
          Arguments: {arguments}\n\
-         Reason: {reason}\n\
-         Dangerous: {dangerous}\n\
+         Reason: {commit_reason}\n\
          Action ID: {deferred_action_id}\n\n\
          Use `just-agent approval approve {deferred_action_id}` to approve \
          or `just-agent approval deny {deferred_action_id} <reason>` to deny."

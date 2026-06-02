@@ -99,11 +99,6 @@ impl App {
             .enumerate()
             .flat_map(|(i, entry)| {
                 let id_short = &entry.id[..12.min(entry.id.len())];
-                let danger_label = if entry.dangerous {
-                    "dangerous".fg(Color::Red)
-                } else {
-                    String::new().into()
-                };
                 let age = format_age(entry.created_at);
 
                 let header = if i == state.selected {
@@ -117,10 +112,6 @@ impl App {
                             Style::default().add_modifier(Modifier::REVERSED),
                         ),
                         Span::styled(
-                            format!("{:<10} ", format!("{danger_label}")),
-                            Style::default().add_modifier(Modifier::REVERSED),
-                        ),
-                        Span::styled(
                             format!("{age} "),
                             Style::default().add_modifier(Modifier::REVERSED),
                         ),
@@ -129,18 +120,19 @@ impl App {
                     Line::from(vec![
                         format!(" {id_short}  ").into(),
                         format!("{:<20} ", entry.content.tool_name).into(),
-                        danger_label,
-                        " ".into(),
                         age.dim(),
                     ])
                 };
 
                 let args_str = format_json_compact(&entry.content.arguments, content_width);
-                let reason_str = entry.reason.clone();
                 let arg_line = Line::from(format!("   args: {args_str}").dim());
-                let reason_line = Line::from(format!("   reason: {reason_str}").dim());
 
-                vec![header, arg_line, reason_line]
+                let mut lines = vec![header, arg_line];
+                if let Some(ref reason) = entry.commit_reason {
+                    lines.push(Line::from(format!("   reason: {reason}").dim()));
+                }
+
+                lines
             })
             .collect();
 

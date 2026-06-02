@@ -60,6 +60,7 @@ pub async fn send_message(
     let session_dir = entry.agent.session_dir.clone().unwrap_or_default();
     let saved_token = entry.agent.auth_token.clone();
     let saved_env = entry.agent.env.clone();
+    let saved_policy = entry.agent.tool_policy.clone();
     entry.agent = spawn_agent(SpawnArgs {
         store: entry.agent.store.clone(),
         deferred: entry.agent.deferred.clone(),
@@ -71,6 +72,7 @@ pub async fn send_message(
         auth_token: saved_token,
         env: saved_env,
         shared_state: state.clone(),
+        tool_policy: saved_policy,
     })
     .await
     .map_err(|e| {

@@ -3,7 +3,7 @@ pub mod types;
 
 pub use client::DaemonClient;
 pub use just_agent_common::types::{
-    DeferredActionDecisionBody, DeferredActionEntry, DeferredActionStatus,
-    ListDeferredActionsResponse, ToolCallContent,
+    AgentPermissionsResponse, DeferredActionDecisionBody, DeferredActionEntry,
+    DeferredActionStatus, ListDeferredActionsResponse, PolicyDecision, ToolCallContent, ToolPolicy,
 };
 pub use types::{AgentSummary, ListDeferredActionsParams};

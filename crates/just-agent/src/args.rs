@@ -18,6 +18,9 @@ pub enum Commands {
     /// Manage approvals
     #[command(subcommand)]
     Approval(ApprovalCommand),
+    /// Manage agent tool policy
+    #[command(subcommand)]
+    Policy(PolicyCommand),
 }
 
 #[derive(Subcommand)]
@@ -34,6 +37,8 @@ pub enum AgentCommand {
     Events(IdArgs),
     /// Show agent context usage
     Status(IdArgs),
+    /// Show agent permissions and tool policy
+    Permissions(IdArgs),
     /// Interrupt current agent operation
     Interrupt(IdArgs),
 }
@@ -117,4 +122,22 @@ pub struct ApprovalDenyArgs {
     pub id: String,
     /// Reason for denial.
     pub reason: String,
+}
+
+#[derive(Subcommand)]
+pub enum PolicyCommand {
+    /// Show agent tool policy
+    Get(IdArgs),
+    /// Modify a single tool policy rule
+    Set(PolicySetArgs),
+}
+
+#[derive(Args)]
+pub struct PolicySetArgs {
+    /// Agent ID.
+    pub id: AgentId,
+    /// Tool name.
+    pub tool: String,
+    /// Decision: allow, ask, deny, classify.
+    pub decision: String,
 }

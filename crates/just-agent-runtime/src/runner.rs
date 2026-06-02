@@ -257,8 +257,7 @@ pub async fn run_agent_rounds(
                     id: info.id,
                     tool_name: info.tool_name,
                     arguments,
-                    reason: info.reason,
-                    dangerous: info.dangerous,
+                    commit_reason: info.commit_reason,
                 })
                 .await
                 .ok();

@@ -12,26 +12,7 @@ pub(super) fn stricter(a: ToolDecision, b: ToolDecision) -> ToolDecision {
         (ToolDecision::Deny { reason }, _) | (_, ToolDecision::Deny { reason }) => {
             ToolDecision::Deny { reason }
         }
-        (
-            ToolDecision::Ask {
-                reason: ra,
-                dangerous: da,
-            },
-            ToolDecision::Ask {
-                reason: rb,
-                dangerous: db,
-            },
-        ) => {
-            let reason = if ra.len() >= rb.len() { ra } else { rb };
-            ToolDecision::Ask {
-                reason,
-                dangerous: da || db,
-            }
-        }
-        (ToolDecision::Ask { reason, dangerous }, ToolDecision::Allow)
-        | (ToolDecision::Allow, ToolDecision::Ask { reason, dangerous }) => {
-            ToolDecision::Ask { reason, dangerous }
-        }
+        (ToolDecision::Ask, _) | (_, ToolDecision::Ask) => ToolDecision::Ask,
         (ToolDecision::Allow, ToolDecision::Allow) => ToolDecision::Allow,
     }
 }
@@ -68,21 +49,12 @@ pub(super) fn classify_redirect_node(node: &Node) -> ToolDecision {
         NodeKind::Redirect { op, target, .. } => {
             let op_dec = match op.as_str() {
                 "<" => ToolDecision::Allow,
-                ">" | ">>" | ">|" | "<>" | "&>" | "&>>" => ToolDecision::Ask {
-                    reason: "shell redirection may modify files".into(),
-                    dangerous: false,
-                },
-                _ => ToolDecision::Ask {
-                    reason: format!("redirect operator '{op}' requires approval"),
-                    dangerous: false,
-                },
+                ">" | ">>" | ">|" | "<>" | "&>" | "&>>" => ToolDecision::Ask,
+                _ => ToolDecision::Ask,
             };
             stricter(op_dec, super::walker::classify_node_ref(target))
         }
-        NodeKind::HereDoc { .. } => ToolDecision::Ask {
-            reason: "heredocs require approval".into(),
-            dangerous: false,
-        },
+        NodeKind::HereDoc { .. } => ToolDecision::Ask,
         _ => super::walker::classify_node_ref(node),
     }
 }
@@ -118,10 +90,7 @@ fn check_assignment_name(assignment: &Node) -> ToolDecision {
         .iter()
         .any(|v| v.eq_ignore_ascii_case(name))
     {
-        return ToolDecision::Ask {
-            reason: format!("assignment to '{name}' can affect security-critical behavior"),
-            dangerous: false,
-        };
+        return ToolDecision::Ask;
     }
     ToolDecision::Allow
 }

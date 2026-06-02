@@ -8,6 +8,7 @@ use just_agent_common::command::UserInput;
 pub use just_agent_common::types::AgentId;
 pub use just_agent_common::types::AgentState;
 use just_agent_common::types::SseEvent;
+use just_agent_common::types::ToolPolicy;
 use just_agent_runtime::config::AgentConfig;
 use just_agent_runtime::context::ContextStore;
 use just_agent_runtime::deferred::DeferredActionStore;
@@ -51,6 +52,8 @@ pub struct Agent {
     /// Environment variables injected into PTY sessions (JUST_AGENT_ID, JUST_AGENT_AUTH_TOKEN, etc.).
     /// Preserved across reactivation so the agent retains its identity.
     pub env: HashMap<String, String>,
+    /// Shared tool policy. The daemon updates this via API; the runtime reads it in evaluate().
+    pub tool_policy: Arc<std::sync::RwLock<ToolPolicy>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -283,6 +286,7 @@ mod tests {
                 state: Arc::new(AtomicU8::new(AgentState::IDLE)),
                 auth_token,
                 env: HashMap::new(),
+                tool_policy: Arc::new(std::sync::RwLock::new(ToolPolicy::default())),
             },
             subagent_ids: vec![],
         }

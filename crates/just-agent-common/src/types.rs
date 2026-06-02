@@ -1,5 +1,7 @@
 //! Shared types used across the agent crate.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Agent lifecycle state exposed via the status endpoint.
@@ -99,8 +101,7 @@ pub enum AgentEvent {
         id: String,
         tool_name: String,
         arguments: serde_json::Value,
-        reason: String,
-        dangerous: bool,
+        commit_reason: String,
     },
     Retrying {
         attempt: u32,
@@ -286,8 +287,8 @@ pub struct DeferredActionEntry {
     pub id: String,
     pub requested_by: AgentId,
     pub content: ToolCallContent,
-    pub reason: String,
-    pub dangerous: bool,
+    /// Agent-provided justification for the tool call.
+    pub commit_reason: Option<String>,
     pub status: DeferredActionStatus,
     pub deny_reason: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -306,4 +307,131 @@ pub struct ListDeferredActionsResponse {
 pub struct DeferredActionDecisionBody {
     pub decision: String,
     pub reason: Option<String>,
+}
+
+/// Decision for a tool in the policy.
+///
+/// Ordering (via derived `Ord`): Allow < Classify < Ask < Deny.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyDecision {
+    Allow,
+    Classify,
+    Ask,
+    Deny,
+}
+
+impl std::fmt::Display for PolicyDecision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Allow => "allow",
+            Self::Classify => "classify",
+            Self::Ask => "ask",
+            Self::Deny => "deny",
+        })
+    }
+}
+
+impl std::str::FromStr for PolicyDecision {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "allow" => Ok(Self::Allow),
+            "classify" => Ok(Self::Classify),
+            "ask" => Ok(Self::Ask),
+            "deny" => Ok(Self::Deny),
+            _ => Err(format!(
+                "invalid policy decision '{s}' (expected allow/ask/deny/classify)"
+            )),
+        }
+    }
+}
+
+/// Per-agent tool security policy.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPolicy {
+    pub default: PolicyDecision,
+    pub tools: BTreeMap<String, PolicyDecision>,
+}
+
+impl ToolPolicy {
+    pub fn new(default: PolicyDecision) -> Self {
+        Self {
+            default,
+            tools: BTreeMap::new(),
+        }
+    }
+
+    /// Default policy matching the current hardcoded behavior.
+    pub fn hardcoded_default() -> Self {
+        let mut tools = BTreeMap::new();
+        tools.insert("shell_session_list".into(), PolicyDecision::Allow);
+        tools.insert("shell_session_capture".into(), PolicyDecision::Allow);
+        tools.insert("shell_session_create".into(), PolicyDecision::Allow);
+        tools.insert("shell_session_kill".into(), PolicyDecision::Ask);
+        tools.insert("shell_session_restart".into(), PolicyDecision::Ask);
+        tools.insert("shell_session_exec".into(), PolicyDecision::Classify);
+        tools.insert("context_pin".into(), PolicyDecision::Allow);
+        tools.insert("context_unpin".into(), PolicyDecision::Allow);
+        tools.insert("context_status".into(), PolicyDecision::Allow);
+        tools.insert("context_evict".into(), PolicyDecision::Allow);
+        tools.insert("skill_load".into(), PolicyDecision::Allow);
+        Self {
+            default: PolicyDecision::Ask,
+            tools,
+        }
+    }
+
+    /// Look up the decision for a tool name.
+    pub fn decision_for(&self, tool_name: &str) -> PolicyDecision {
+        self.tools.get(tool_name).copied().unwrap_or(self.default)
+    }
+
+    /// Validate that this policy is at least as strict as `other`.
+    /// Checks the union of both maps' keys plus the default.
+    pub fn validate_at_least_as_strict_as(&self, other: &ToolPolicy) -> Result<(), Vec<String>> {
+        let mut violations = Vec::new();
+
+        if self.default < other.default {
+            violations.push(format!(
+                "default {} is less strict than parent's {}",
+                self.default, other.default,
+            ));
+        }
+
+        let all_keys: std::collections::BTreeSet<&String> =
+            self.tools.keys().chain(other.tools.keys()).collect();
+
+        for key in &all_keys {
+            let mine = self.decision_for(key);
+            let theirs = other.decision_for(key);
+            if mine < theirs {
+                violations.push(format!(
+                    "{key}: {} is less strict than parent's {}",
+                    mine, theirs,
+                ));
+            }
+        }
+
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(violations)
+        }
+    }
+}
+
+impl Default for ToolPolicy {
+    fn default() -> Self {
+        Self::hardcoded_default()
+    }
+}
+
+/// Response for GET /agents/{id}/permissions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPermissionsResponse {
+    pub max_depth: u8,
+    pub workspace_root: String,
+    pub created_by: Option<AgentId>,
+    pub tool_policy: ToolPolicy,
 }

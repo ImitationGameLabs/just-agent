@@ -1,98 +1,61 @@
 //! Agent policy: per-tool authorization decisions.
 
-use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
+use just_agent_common::types::{PolicyDecision, ToolPolicy};
 
-use crate::tools::shell::session::{CreateArgs, ExecArgs, KillArgs, RestartArgs};
+use crate::tools::shell::session::{ExecArgs, KillArgs};
 
 use super::ToolDecision;
 use super::classifier;
 
-/// A minimal policy layer inspired by Codex-style pre-execution gating.
+/// Policy layer that gates every tool call.
+///
+/// Wraps a shared `ToolPolicy` that can be updated at runtime by the daemon.
+/// A hardcoded safety override denies killing the main session regardless of
+/// the loaded policy.
 #[derive(Clone, Debug)]
 pub struct AgentPolicy {
-    workspace_root: PathBuf,
+    policy: Arc<RwLock<ToolPolicy>>,
 }
 
 impl AgentPolicy {
-    pub fn new(workspace_root: PathBuf) -> Self {
-        Self { workspace_root }
+    pub fn new(policy: Arc<RwLock<ToolPolicy>>) -> Self {
+        Self { policy }
     }
 
     pub fn evaluate(&self, tool_name: &str, args_json: &str) -> Result<ToolDecision> {
-        match tool_name {
-            "shell_session_list" | "shell_session_capture" => Ok(ToolDecision::Allow),
-            "shell_session_create" => self.evaluate_session_create(args_json),
-            "shell_session_restart" => self.evaluate_session_restart(args_json),
-            "shell_session_kill" => self.evaluate_session_kill(args_json),
-            "shell_session_exec" => self.evaluate_session_exec(args_json),
-            "context_pin" | "context_unpin" | "context_status" | "context_evict" | "skill_load" => {
-                Ok(ToolDecision::Allow)
+        // Safety override: main session kill always denied.
+        if tool_name == "shell_session_kill" {
+            let args: KillArgs = serde_json::from_str(args_json)?;
+            if args.name == "main" {
+                return Ok(ToolDecision::Deny {
+                    reason: "killing the main session is not allowed".into(),
+                });
             }
-            _ => Ok(ToolDecision::Ask {
-                reason: format!("tool '{tool_name}' requires approval"),
-                dangerous: false,
+        }
+
+        let decision = self
+            .policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .decision_for(tool_name);
+        match decision {
+            PolicyDecision::Allow => Ok(ToolDecision::Allow),
+            PolicyDecision::Deny => Ok(ToolDecision::Deny {
+                reason: format!("{tool_name} denied by policy"),
             }),
+            PolicyDecision::Ask => Ok(ToolDecision::Ask),
+            PolicyDecision::Classify => {
+                if tool_name == "shell_session_exec" {
+                    let args: ExecArgs = serde_json::from_str(args_json)?;
+                    Ok(classifier::classify_command(&args.command))
+                } else {
+                    Ok(ToolDecision::Ask)
+                }
+            }
         }
-    }
-
-    fn evaluate_session_create(&self, args_json: &str) -> Result<ToolDecision> {
-        let args: CreateArgs = serde_json::from_str(args_json)?;
-        let cwd = resolve_requested_path(args.cwd.as_deref(), &self.workspace_root);
-
-        if !cwd.starts_with(&self.workspace_root) {
-            return Ok(ToolDecision::Deny {
-                reason: format!(
-                    "session cwd {} is outside the workspace root {}",
-                    cwd.display(),
-                    self.workspace_root.display()
-                ),
-            });
-        }
-
-        Ok(ToolDecision::Allow)
-    }
-
-    fn evaluate_session_restart(&self, args_json: &str) -> Result<ToolDecision> {
-        let args: RestartArgs = serde_json::from_str(args_json)?;
-        Ok(ToolDecision::Ask {
-            reason: format!(
-                "restarting shell session '{}' discards its current state",
-                args.name
-            ),
-            dangerous: false,
-        })
-    }
-
-    fn evaluate_session_kill(&self, args_json: &str) -> Result<ToolDecision> {
-        let args: KillArgs = serde_json::from_str(args_json)?;
-        if args.name == "main" {
-            return Ok(ToolDecision::Deny {
-                reason: "killing the main session is not allowed".into(),
-            });
-        }
-
-        Ok(ToolDecision::Ask {
-            reason: format!(
-                "killing shell session '{}' terminates running processes",
-                args.name
-            ),
-            dangerous: false,
-        })
-    }
-
-    fn evaluate_session_exec(&self, args_json: &str) -> Result<ToolDecision> {
-        let args: ExecArgs = serde_json::from_str(args_json)?;
-        Ok(classifier::classify_command(&args.command))
-    }
-}
-
-fn resolve_requested_path(path: Option<&Path>, workspace_root: &Path) -> PathBuf {
-    match path {
-        Some(path) if path.is_absolute() => path.to_path_buf(),
-        Some(path) => workspace_root.join(path),
-        None => workspace_root.to_path_buf(),
     }
 }
 
@@ -100,9 +63,13 @@ fn resolve_requested_path(path: Option<&Path>, workspace_root: &Path) -> PathBuf
 mod tests {
     use super::*;
 
+    fn make_policy() -> AgentPolicy {
+        AgentPolicy::new(Arc::new(RwLock::new(ToolPolicy::default())))
+    }
+
     #[test]
     fn denies_killing_main_session() {
-        let policy = AgentPolicy::new(PathBuf::from("/tmp/workspace"));
+        let policy = make_policy();
         let decision = policy
             .evaluate("shell_session_kill", r#"{"name":"main"}"#)
             .unwrap();
@@ -110,11 +77,57 @@ mod tests {
     }
 
     #[test]
-    fn denies_sessions_outside_workspace() {
-        let policy = AgentPolicy::new(PathBuf::from("/tmp/workspace"));
+    fn allows_list_and_capture() {
+        let policy = make_policy();
+        assert!(matches!(
+            policy.evaluate("shell_session_list", "{}").unwrap(),
+            ToolDecision::Allow
+        ));
+        assert!(matches!(
+            policy.evaluate("shell_session_capture", "{}").unwrap(),
+            ToolDecision::Allow
+        ));
+    }
+
+    #[test]
+    fn classify_delegates_to_classifier_for_exec() {
+        let policy = make_policy();
+        // "ls" is on the read-only allowlist → Allow via classifier.
         let decision = policy
-            .evaluate("shell_session_create", r#"{"name":"tmp","cwd":"/etc"}"#)
+            .evaluate("shell_session_exec", r#"{"name":"main","command":"ls"}"#)
             .unwrap();
-        assert!(matches!(decision, ToolDecision::Deny { .. }));
+        assert!(matches!(decision, ToolDecision::Allow));
+    }
+
+    #[test]
+    fn unknown_tool_asks() {
+        let policy = make_policy();
+        let decision = policy.evaluate("some_new_tool", "{}").unwrap();
+        assert!(matches!(decision, ToolDecision::Ask));
+    }
+
+    #[test]
+    fn policy_update_takes_effect() {
+        let shared = Arc::new(RwLock::new(ToolPolicy::default()));
+        let policy = AgentPolicy::new(shared.clone());
+
+        // Default: shell_session_list is allow.
+        assert!(matches!(
+            policy.evaluate("shell_session_list", "{}").unwrap(),
+            ToolDecision::Allow
+        ));
+
+        // Update policy: set shell_session_list to deny.
+        {
+            let mut p = shared.write().unwrap();
+            p.tools
+                .insert("shell_session_list".into(), PolicyDecision::Deny);
+        }
+
+        // Now it should be denied.
+        assert!(matches!(
+            policy.evaluate("shell_session_list", "{}").unwrap(),
+            ToolDecision::Deny { .. }
+        ));
     }
 }

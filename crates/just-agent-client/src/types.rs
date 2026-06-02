@@ -2,10 +2,11 @@ use just_agent_common::context::ContextUsage;
 use just_agent_common::retry::RetryRecord;
 use just_agent_common::types::AgentId;
 use just_agent_common::types::AgentState;
-pub(crate) use just_agent_common::types::{CreateAgentRequest, CreateAgentResponse};
 pub use just_agent_common::types::{
-    DeferredActionDecisionBody, DeferredActionEntry, ListDeferredActionsResponse,
+    AgentPermissionsResponse, DeferredActionDecisionBody, DeferredActionEntry,
+    ListDeferredActionsResponse, PolicyDecision, ToolPolicy,
 };
+pub(crate) use just_agent_common::types::{CreateAgentRequest, CreateAgentResponse};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]

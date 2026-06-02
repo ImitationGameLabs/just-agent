@@ -70,10 +70,10 @@ impl AuthorizedToolExecutor {
             super::ToolDecision::Deny { reason } => {
                 error_result(tool_name, format!("tool denied: {reason}"))
             }
-            super::ToolDecision::Ask { reason, dangerous } => {
+            super::ToolDecision::Ask => {
                 let mut q = self.deferred.lock().await;
-                let id = q.enqueue(tool_name, args_json, &reason, dangerous);
-                deferred_result_json(&id, tool_name, &reason, dangerous)
+                let id = q.enqueue(tool_name, args_json);
+                deferred_result_json(&id, tool_name)
             }
         }
     }
@@ -88,8 +88,7 @@ impl AuthorizedToolExecutor {
                 json!({
                     "id": a.id,
                     "content": a.content,
-                    "reason": a.reason,
-                    "dangerous": a.dangerous,
+                    "commit_reason": a.commit_reason,
                     "status": a.status,
                     "deny_reason": a.deny_reason,
                     "created_at": a.created_at,

@@ -14,7 +14,7 @@ pub enum ApprovalDecision {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolDecision {
     Allow,
-    Ask { reason: String, dangerous: bool },
+    Ask,
     Deny { reason: String },
 }
 

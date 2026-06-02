@@ -6,9 +6,9 @@ use anyhow::Result;
 use clap::Parser;
 use futures_util::StreamExt;
 use just_agent_client::DaemonClient;
-use just_agent_common::types::AgentId;
+use just_agent_common::types::{AgentId, PolicyDecision};
 
-use args::{AgentCommand, ApprovalCommand, Cli, Commands};
+use args::{AgentCommand, ApprovalCommand, Cli, Commands, PolicyCommand};
 
 fn build_client() -> DaemonClient {
     let url =
@@ -99,6 +99,22 @@ async fn main() -> Result<()> {
                     }
                 }
             }
+            AgentCommand::Permissions(args) => {
+                let client = build_client();
+                let perms = client.agent_permissions(&args.id).await?;
+                println!("max_depth: {}", perms.max_depth);
+                println!("workspace_root: {}", perms.workspace_root);
+                if let Some(sup) = &perms.created_by {
+                    println!("created_by: {sup}");
+                }
+                println!();
+                println!("default: {}", perms.tool_policy.default);
+                println!();
+                println!("tool policy:");
+                for (tool, decision) in &perms.tool_policy.tools {
+                    println!("  {tool}: {decision}");
+                }
+            }
             AgentCommand::Interrupt(args) => {
                 let client = build_client();
                 client.interrupt_agent(&args.id).await?;
@@ -153,6 +169,28 @@ async fn main() -> Result<()> {
                 println!("Denied.");
             }
         },
+        Commands::Policy(cmd) => match cmd {
+            PolicyCommand::Get(args) => {
+                let client = build_client();
+                let policy = client.get_policy(&args.id).await?;
+                println!("default: {}", policy.default);
+                println!();
+                for (tool, decision) in &policy.tools {
+                    println!("{tool}: {decision}");
+                }
+            }
+            PolicyCommand::Set(args) => {
+                let decision: PolicyDecision = args
+                    .decision
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("invalid decision: {e}"))?;
+                let client = build_client();
+                let mut policy = client.get_policy(&args.id).await?;
+                policy.tools.insert(args.tool.clone(), decision);
+                client.update_policy(&args.id, &policy).await?;
+                println!("Updated {} = {}.", args.tool, decision);
+            }
+        },
     }
     Ok(())
 }
@@ -163,8 +201,9 @@ fn print_deferred_entry(a: &just_agent_common::types::DeferredActionEntry) {
     println!("requested_by: {}", a.requested_by);
     println!("tool: {}", a.content.tool_name);
     println!("arguments: {}", a.content.arguments);
-    println!("reason: {}", a.reason);
-    println!("dangerous: {}", a.dangerous);
+    if let Some(r) = &a.commit_reason {
+        println!("commit_reason: {r}");
+    }
     if let Some(r) = &a.deny_reason {
         println!("deny_reason: {r}");
     }
