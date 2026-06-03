@@ -61,28 +61,28 @@ When a tool call is classified as risky (e.g. `rm -rf`, `sudo`, `git push --forc
 the agent does not block waiting for a human. Instead, the call is deferred and
 the agent manages the lifecycle through tools:
 
-| Tool                     | What it does                                         |
-| ------------------------ | ---------------------------------------------------- |
-| `deferred_action_list`   | List deferred actions, optionally filtered by status |
-| `deferred_action_commit` | Submit a pending action for approval with justification |
-| `deferred_action_redeem` | Execute a previously approved action                 |
-| `deferred_action_cancel` | Abandon a deferred action that is no longer needed  |
+| Tool              | What it does                                            |
+| ----------------- | ------------------------------------------------------- |
+| `approval_list`   | List approvals, optionally filtered by status           |
+| `approval_commit` | Submit a pending action for approval with justification |
+| `approval_redeem` | Execute a previously approved action                    |
+| `approval_cancel` | Abandon an approval that is no longer needed            |
 
 The flow:
 
-1. The tool call is **deferred** — stored in a queue with a request ID.
+1. The tool call is **deferred** — stored in a queue with an approval ID.
 2. A deferred result is returned to the LLM immediately, so the agent can
    continue working on other things.
-3. The approval request is emitted as an SSE event, visible to any client
+3. An `ApprovalUpdated` SSE event is emitted, visible to any client
    (TUI, CLI, or a supervisor agent).
-4. The client approves or denies the request via the daemon API.
+4. The client approves or denies the request via the daemon's approval API
+   (`GET /approvals`, `POST /approvals/{id}`).
 5. On the next agent round, the approval notification is injected into context.
-   The agent then calls `deferred_action_redeem` to execute the stored action.
+   The agent then calls `approval_redeem` to execute the stored action.
 
 This design is intentional for multi-agent scenarios: a supervisor agent can monitor
-deferred actions from its subagents and make approval decisions programmatically,
+approvals from its subagents and make approval decisions programmatically,
 without a human in the loop. Or it can surface the decision to a human.
-
 ## Quick start
 
 ```bash

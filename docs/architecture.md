@@ -36,7 +36,7 @@ Each agent is a pair of tokio tasks with completely isolated state:
 | `mpsc` prompt channel                            | Yes        |
 | `broadcast` SSE channel                          | Yes        |
 | `ContextStore`                                   | Yes        |
-| `DeferredActionStore`                            | Yes        |
+| `ApprovalStore`                                  | Yes        |
 | `AgentConfig` (workspace, skills, system prompt) | Yes        |
 | PTY shell backend                                | Yes        |
 
@@ -46,24 +46,24 @@ an `RwLock`; lookup is by UUID.
 ### Lifecycle
 
 1. **Create** — `POST /agents` spawns both tasks, returns the agent ID.
-2. **Interact** — send messages, stream events, approve or deny deferred actions.
+2. **Interact** — send messages, stream events, approve or deny pending actions.
 3. **Delete** — `DELETE /agents/{id}` aborts both tokio tasks and removes the
    entry.
 
 ## HTTP API
 
-| Method   | Path                     | Purpose                                 |
-| -------- | ------------------------ | --------------------------------------- |
-| `POST`   | `/agents`                | Create a new agent instance             |
-| `GET`    | `/agents`                | List all running agents                 |
-| `DELETE` | `/agents/{id}`           | Stop and remove an agent                |
-| `POST`   | `/agents/{id}/message`   | Send a message (returns `202 Accepted`) |
-| `GET`    | `/agents/{id}/events`    | Subscribe to agent events via SSE       |
-| `GET`    | `/approvals`             | List deferred actions awaiting approval    |
-| `GET`    | `/approvals/{id}`        | Get a single deferred action               |
-| `POST`   | `/approvals/{id}`        | Approve or deny a deferred action          |
-| `GET`    | `/agents/{id}/status`    | Get context usage snapshot              |
-| `POST`   | `/agents/{id}/interrupt` | Interrupt current agent operation       |
+| Method   | Path                     | Purpose                                                         |
+| -------- | ------------------------ | --------------------------------------------------------------- |
+| `POST`   | `/agents`                | Create a new agent instance                                     |
+| `GET`    | `/agents`                | List all running agents                                         |
+| `DELETE` | `/agents/{id}`           | Stop and remove an agent                                        |
+| `POST`   | `/agents/{id}/message`   | Send a message (returns `202 Accepted`)                         |
+| `GET`    | `/agents/{id}/events`    | Subscribe to agent events via SSE                               |
+| `GET`    | `/approvals`             | List approvals (supervisor-facing view of pending tool actions) |
+| `GET`    | `/approvals/{id}`        | Get a single approval                                           |
+| `POST`   | `/approvals/{id}`        | Approve or deny an approval                                     |
+| `GET`    | `/agents/{id}/status`    | Get context usage snapshot                                      |
+| `POST`   | `/agents/{id}/interrupt` | Interrupt current agent operation                               |
 
 `post_message` returns immediately (`202 Accepted`). Actual processing is async.
 Clients subscribe to the SSE endpoint to receive streamed results.
@@ -74,7 +74,7 @@ All endpoints require a `Bearer` token in the `Authorization` header. The
 daemon generates two categories of token:
 
 - **Operator token** — printed once at daemon startup. Grants full access:
-  create root agents, manage any agent, approve/deny deferred actions.
+  create root agents, manage any agent, approve/deny approvals.
 - **Agent token** — generated per agent at creation, injected into the PTY as
   `JUST_AGENT_AUTH_TOKEN`. Agents use this to call back to the daemon.
 
@@ -122,7 +122,7 @@ supervisor.
 The core loop (`run_agent_rounds` in `just-agent-runtime`) iterates up to
 `max_tool_rounds` (default 32) per message:
 
-1. Drain deferred notifications into context as a synthetic user message.
+1. Drain approval notifications into context as a synthetic user message.
 2. Compose context from layers (pinned → summary → working turns).
 3. Check token budget — if over limit, summarize old turns and evict.
 4. Stream the LLM request with tool definitions.
@@ -130,7 +130,7 @@ The core loop (`run_agent_rounds` in `just-agent-runtime`) iterates up to
 6. Push the assistant message and tool results as a new turn.
 7. Repeat until no tool calls remain (finished) or max rounds exceeded.
 
-## Policy and deferred approval
+## Policy and approval
 
 Tools go through a three-layer policy before execution:
 
@@ -148,7 +148,7 @@ Tools go through a three-layer policy before execution:
 
 - **Allow** — dispatch immediately.
 - **Deny** — return an error to the LLM.
-- **Ask** — enqueue in `DeferredActionStore`, return a deferred reference. The LLM
+- **Ask** — enqueue in `ApprovalStore`, return a deferred reference. The LLM
   continues working and can redeem later after external approval.
 
 **Layer 3 — Shell command classifier** uses AST parsing (via `rable`) to
@@ -160,15 +160,15 @@ analyze shell commands:
 - Maintains an allowlist for read-only commands (`ls`, `cat`, `grep`, `find`,
   etc.)
 
-### Deferred approval flow
+### Approval flow
 
 1. Agent calls a tool that policy classifies as "Ask".
-2. `DeferredActionStore.enqueue()` stores the call and returns a deferred JSON to the LLM.
-3. A `DeferredCreated` event is emitted via SSE.
+2. `ApprovalStore.enqueue()` stores the call and returns a deferred JSON to the LLM.
+3. An `ApprovalUpdated` SSE event is emitted (supervisor-facing).
 4. Client sees the event and sends `POST /approvals/{id}` to approve or deny.
-5. `DeferredActionStore.approve()` or `.deny()` pushes a notification.
+5. `ApprovalStore.approve()` or `.deny()` pushes a notification.
 6. On the next agent round, the notification is drained into context.
-7. The LLM calls `deferred_action_redeem` to execute the stored tool action.
+7. The LLM calls `approval_redeem` to execute the stored tool action.
 
 ## Crate responsibilities
 

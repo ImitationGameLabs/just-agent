@@ -87,8 +87,8 @@ state and stops processing. Use `stop` to stop the agent entirely.
 
 ### `approval` — Manage approvals
 
-Subcommands for listing, inspecting, and responding to deferred tool actions
-that require approval.
+Subcommands for listing, inspecting, and responding to approvals
+(tool actions that require supervisor approval before execution).
 
 #### `approval list` — List approvals
 
@@ -96,7 +96,7 @@ that require approval.
 just-agent approval list [--offset <N>] [--limit <N>] [--requested-by <ID>] [--status <STATUS>] [--all] [--reverse]
 ```
 
-Lists deferred actions across all agents visible to the authenticated identity.
+Lists approvals across all agents visible to the authenticated identity.
 Default shows committed actions (awaiting approval); use `--all` to see every status or
 `--status` to filter by a specific status
 (committed, approved, denied, redeemed, cancelled).
@@ -111,22 +111,34 @@ $ just-agent approval list --limit 5 --status committed
 just-agent approval get <APPROVAL_ID>
 ```
 
-Shows full details for a single deferred action.
+Shows full details for a single approval.
 
 ```bash
-$ just-agent approval get "da_a1b2c3d4..."
+$ just-agent approval get "ap_a1b2c3d4..."
 ```
 
-#### `approval respond` — Approve or deny
+#### `approval approve` — Approve a committed action
 
 ```bash
-just-agent approval respond <APPROVAL_ID> <DECISION>
+just-agent approval approve <APPROVAL_ID>
 ```
 
-Approve or deny a deferred action. `DECISION` is `approve` or `deny`.
+Approve a committed approval. The agent will be notified and can redeem the action.
 
 ```bash
-$ just-agent approval respond "da_a1b2c3d4..." approve
+$ just-agent approval approve "ap_a1b2c3d4..."
+```
+
+#### `approval deny` — Deny a committed action
+
+```bash
+just-agent approval deny <APPROVAL_ID> [REASON]
+```
+
+Deny a committed approval with an optional reason.
+
+```bash
+$ just-agent approval deny "ap_a1b2c3d4..." "too risky"
 ```
 
 ## Scripting patterns
@@ -150,8 +162,8 @@ just-agent send "$AGENT_ID" "Run the test suite and report failures"
 ### Filter for approval requests
 
 ```bash
-just-agent events "$AGENT_ID" | jq -c 'select(.type == "DeferredCommitted") |
-  {id, tool_name, reason, dangerous}'
+just-agent events "$AGENT_ID" | jq -c 'select(.type == "approvalUpdated" and .status == "committed") |
+  {id, status}'
 ```
 
 ## Multi-agent orchestration

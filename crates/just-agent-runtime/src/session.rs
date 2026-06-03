@@ -11,7 +11,7 @@ use just_agent_common::types::{AgentEvent, AgentOutcome};
 
 use crate::config::AgentConfig;
 use crate::context::{AgenticContext, ContextStore, ContextSummarizer};
-use crate::deferred::DeferredActionStore;
+use crate::approval::ApprovalStore;
 use crate::policy::AuthorizedToolExecutor;
 use crate::runner;
 use just_llm_client::types::chat::ChatMessage;
@@ -20,7 +20,7 @@ use just_llm_client::types::chat::ChatMessage;
 pub struct AgentContext {
     pub client: just_llm_client::ChatClient,
     pub store: Arc<Mutex<ContextStore>>,
-    pub deferred: Arc<Mutex<DeferredActionStore>>,
+    pub approvals: Arc<Mutex<ApprovalStore>>,
     pub executor: AuthorizedToolExecutor,
     pub summarizer: ContextSummarizer,
     pub config: AgentConfig,
@@ -31,7 +31,7 @@ pub struct AgentContext {
 }
 
 impl AgentContext {
-    /// Persist context and deferred state to disk. Logs warnings on failure.
+    /// Persist context and approval state to disk. Logs warnings on failure.
     pub async fn persist(&self) {
         let Some(ref dir) = self.session_dir else {
             return;
@@ -46,11 +46,11 @@ impl AgentContext {
             }
         }
         {
-            let guard = self.deferred.lock().await;
+            let guard = self.approvals.lock().await;
             if let Ok(json) = serde_json::to_string(&*guard)
-                && let Err(e) = crate::persistence::persist_deferred(&json, dir)
+                && let Err(e) = crate::persistence::persist_approvals(&json, dir)
             {
-                tracing::error!("deferred persist failed: {e:#}");
+                tracing::error!("approval persist failed: {e:#}");
             }
         }
     }

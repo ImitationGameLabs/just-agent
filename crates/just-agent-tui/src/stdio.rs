@@ -170,7 +170,7 @@ fn handle_sse_event(event: SseEvent, busy: &mut bool) {
         SseEvent::Busy => {
             *busy = true;
         }
-        SseEvent::DeferredActionUpdated { id, status } => {
+        SseEvent::ApprovalUpdated { id, status } => {
             println!("[approval] {id} {status}");
         }
         SseEvent::Retrying {
@@ -222,7 +222,7 @@ async fn handle_command(cmd: SlashCommand, session: &Session, pending: &mut Pend
     }
 }
 
-/// Format a JSON value for display in stdio deferred action prompts.
+/// Format a JSON value for display in stdio approval prompts.
 /// Objects and arrays are pretty-printed; scalars use compact form.
 fn handle_stdin_line(line: &str, pending: &mut PendingPrompt) -> StdinAction {
     let trimmed = line.trim();

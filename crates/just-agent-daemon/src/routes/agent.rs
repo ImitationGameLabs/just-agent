@@ -11,7 +11,7 @@ use axum::response::IntoResponse;
 use just_agent_common::types::{AgentId, SseEvent, ToolPolicy};
 use just_agent_runtime::config::{AgentConfig, PermissionProfile};
 use just_agent_runtime::context::{AgenticContext, ContextStore, ContextSummarizer};
-use just_agent_runtime::deferred::DeferredActionStore;
+use just_agent_runtime::approval::ApprovalStore;
 use just_agent_runtime::persistence;
 use just_agent_runtime::policy::{AgentPolicy, AuthorizedToolExecutor};
 use just_agent_runtime::provider::client_from_env;
@@ -30,7 +30,7 @@ use crate::state::{Agent, AgentEntry, AgentState, AgentSummary, SharedState};
 
 pub(crate) struct SpawnArgs {
     pub store: Arc<tokio::sync::Mutex<ContextStore>>,
-    pub deferred: Arc<tokio::sync::Mutex<DeferredActionStore>>,
+    pub approvals: Arc<tokio::sync::Mutex<ApprovalStore>>,
     pub session_dir: PathBuf,
     pub config: AgentConfig,
     pub initial_prompt: Option<String>,
@@ -62,7 +62,7 @@ pub(crate) async fn spawn_agent(args: SpawnArgs) -> anyhow::Result<Agent> {
     let executor = AuthorizedToolExecutor::new(
         dispatch,
         AgentPolicy::new(args.tool_policy.clone()),
-        args.deferred.clone(),
+        args.approvals.clone(),
     );
     let tool_defs = executor.tool_definitions();
     args.store.lock().await.set_tool_definitions(tool_defs);
@@ -74,7 +74,7 @@ pub(crate) async fn spawn_agent(args: SpawnArgs) -> anyhow::Result<Agent> {
     let ctx = AgentContext {
         client,
         store: args.store.clone(),
-        deferred: args.deferred.clone(),
+        approvals: args.approvals.clone(),
         executor,
         summarizer,
         config: args.config.clone(),
@@ -108,7 +108,7 @@ pub(crate) async fn spawn_agent(args: SpawnArgs) -> anyhow::Result<Agent> {
     Ok(Agent {
         prompt_tx,
         events_tx: args.events_tx,
-        deferred: args.deferred,
+        approvals: args.approvals,
         config: args.config,
         agent_handle,
         bridge_handle,
@@ -185,7 +185,7 @@ pub async fn create_agent(
     let tool_policy = Arc::new(std::sync::RwLock::new(tool_policy));
 
     let store = Arc::new(tokio::sync::Mutex::new(ContextStore::new()));
-    let deferred = Arc::new(tokio::sync::Mutex::new(DeferredActionStore::new()));
+    let approvals = Arc::new(tokio::sync::Mutex::new(ApprovalStore::new()));
 
     for skill_name in &config.skills {
         let content =
@@ -217,7 +217,7 @@ pub async fn create_agent(
     let (events_tx, _) = broadcast::channel(256);
     let agent = spawn_agent(SpawnArgs {
         store,
-        deferred,
+        approvals,
         session_dir,
         config,
         initial_prompt: prompt,
@@ -501,7 +501,7 @@ async fn restore_one(
     }
 
     let store = Arc::new(tokio::sync::Mutex::new(sess.store));
-    let deferred = Arc::new(tokio::sync::Mutex::new(sess.deferred));
+    let approvals = Arc::new(tokio::sync::Mutex::new(sess.approvals));
     let (events_tx, _) = broadcast::channel(256);
 
     let auth_token = uuid::Uuid::new_v4().to_string();
@@ -513,7 +513,7 @@ async fn restore_one(
 
     let agent = spawn_agent(SpawnArgs {
         store,
-        deferred,
+        approvals,
         session_dir: sess.session_dir,
         config,
         initial_prompt: None,

@@ -8,7 +8,7 @@ use futures_util::StreamExt;
 use tracing::{info, warn};
 
 use crate::context::{AgenticContext, compose_context};
-use crate::deferred::DeferredNotification;
+use crate::approval::ApprovalNotification;
 use crate::session::AgentContext;
 use just_agent_common::types::{AgentEvent, AgentOutcome};
 use just_llm_client::types::chat::{
@@ -25,10 +25,10 @@ pub async fn run_agent_rounds(
     let context_window = ctx.config.context_window_tokens;
 
     for _round in 0..ctx.config.max_tool_rounds {
-        // Inject deferred approval notifications into context.
-        let notifications = ctx.deferred.lock().await.drain_notifications();
+        // Inject approval notifications into context.
+        let notifications = ctx.approvals.lock().await.drain_notifications();
         if !notifications.is_empty() {
-            let msg = format_deferred_notifications(&notifications);
+            let msg = format_approval_notifications(&notifications);
             ctx.store
                 .lock()
                 .await
@@ -241,9 +241,9 @@ pub async fn run_agent_rounds(
                 }
             };
 
-            // Check deferred action state transitions (single lock acquisition).
+            // Check approval state transitions (single lock acquisition).
             let (committed, redeemed, cancelled) = {
-                let mut d = ctx.deferred.lock().await;
+                let mut d = ctx.approvals.lock().await;
                 (
                     d.take_last_committed(),
                     d.take_last_redeemed(),
@@ -253,7 +253,7 @@ pub async fn run_agent_rounds(
             if let Some(info) = committed {
                 let arguments =
                     serde_json::from_str(&info.args_json).unwrap_or(serde_json::Value::Null);
-                tx.send(AgentEvent::DeferredCommitted {
+                tx.send(AgentEvent::ApprovalCommitted {
                     id: info.id,
                     tool_name: info.tool_name,
                     arguments,
@@ -263,10 +263,10 @@ pub async fn run_agent_rounds(
                 .ok();
             }
             if let Some(id) = redeemed {
-                tx.send(AgentEvent::DeferredRedeemed { id }).await.ok();
+                tx.send(AgentEvent::ApprovalRedeemed { id }).await.ok();
             }
             if let Some(id) = cancelled {
-                tx.send(AgentEvent::DeferredCancelled { id }).await.ok();
+                tx.send(AgentEvent::ApprovalCancelled { id }).await.ok();
             }
 
             tx.send(AgentEvent::ToolResult(result.clone())).await.ok();
@@ -437,18 +437,18 @@ pub async fn compact_if_needed(ctx: &AgentContext) -> Result<bool> {
     summarize_and_evict(ctx).await
 }
 
-fn format_deferred_notifications(notifications: &[DeferredNotification]) -> String {
+fn format_approval_notifications(notifications: &[ApprovalNotification]) -> String {
     let mut parts = Vec::new();
     for n in notifications {
         match n {
-            DeferredNotification::Approved { id } => {
+            ApprovalNotification::Approved { id } => {
                 parts.push(format!(
-                    "Deferred action {id} has been approved. \
-                     Call deferred_action_redeem with this id to execute."
+                    "Approval {id} has been approved. \
+                     Call approval_redeem with this id to execute."
                 ));
             }
-            DeferredNotification::Denied { id, reason } => {
-                parts.push(format!("Deferred action {id} has been denied: {reason}"));
+            ApprovalNotification::Denied { id, reason } => {
+                parts.push(format!("Approval {id} has been denied: {reason}"));
             }
         }
     }

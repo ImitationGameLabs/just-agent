@@ -97,7 +97,7 @@ pub enum AgentEvent {
     Error(String),
     Status(String),
     Busy,
-    DeferredCommitted {
+    ApprovalCommitted {
         id: String,
         tool_name: String,
         arguments: serde_json::Value,
@@ -109,10 +109,10 @@ pub enum AgentEvent {
         error: String,
         delay_secs: f64,
     },
-    DeferredRedeemed {
+    ApprovalRedeemed {
         id: String,
     },
-    DeferredCancelled {
+    ApprovalCancelled {
         id: String,
     },
     Cancelled,
@@ -159,9 +159,9 @@ pub enum SseEvent {
         message: String,
     },
     Busy,
-    DeferredActionUpdated {
+    ApprovalUpdated {
         id: String,
-        status: DeferredActionStatus,
+        status: ApprovalStatus,
     },
     Retrying {
         attempt: u32,
@@ -177,14 +177,14 @@ impl SseEvent {
     /// Returns `None` for events handled by other means (e.g., routed to superiors).
     pub fn try_from_agent(event: AgentEvent) -> Option<Self> {
         match event {
-            AgentEvent::DeferredCommitted { .. } => None,
-            AgentEvent::DeferredRedeemed { id } => Some(Self::DeferredActionUpdated {
+            AgentEvent::ApprovalCommitted { .. } => None,
+            AgentEvent::ApprovalRedeemed { id } => Some(Self::ApprovalUpdated {
                 id,
-                status: DeferredActionStatus::Redeemed,
+                status: ApprovalStatus::Redeemed,
             }),
-            AgentEvent::DeferredCancelled { id } => Some(Self::DeferredActionUpdated {
+            AgentEvent::ApprovalCancelled { id } => Some(Self::ApprovalUpdated {
                 id,
-                status: DeferredActionStatus::Cancelled,
+                status: ApprovalStatus::Cancelled,
             }),
             AgentEvent::Reasoning(content) => Some(Self::Reasoning { content }),
             AgentEvent::AssistantContent(content) => Some(Self::AssistantContent { content }),
@@ -230,10 +230,10 @@ pub struct CreateAgentResponse {
     pub id: AgentId,
 }
 
-/// Status of a deferred tool action.
+/// Status of an approval request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DeferredActionStatus {
+pub enum ApprovalStatus {
     Pending,
     Committed,
     Approved,
@@ -242,7 +242,7 @@ pub enum DeferredActionStatus {
     Cancelled,
 }
 
-impl DeferredActionStatus {
+impl ApprovalStatus {
     /// Parse a status string (e.g. from a query parameter).
     pub fn from_str_name(s: &str) -> Option<Self> {
         match s {
@@ -268,43 +268,43 @@ impl DeferredActionStatus {
     }
 }
 
-impl std::fmt::Display for DeferredActionStatus {
+impl std::fmt::Display for ApprovalStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-/// Complete tool call content for a deferred action.
+/// Complete tool call content for an approval.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolCallContent {
     pub tool_name: String,
     pub arguments: serde_json::Value,
 }
 
-/// A single deferred action entry in API responses.
+/// A single approval entry in API responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeferredActionEntry {
+pub struct ApprovalEntry {
     pub id: String,
     pub requested_by: AgentId,
     pub content: ToolCallContent,
     /// Agent-provided justification for the tool call.
     pub commit_reason: Option<String>,
-    pub status: DeferredActionStatus,
+    pub status: ApprovalStatus,
     pub deny_reason: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
 }
 
-/// Response for listing deferred actions.
+/// Response for listing approvals.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListDeferredActionsResponse {
-    pub items: Vec<DeferredActionEntry>,
+pub struct ListApprovalsResponse {
+    pub items: Vec<ApprovalEntry>,
     pub total: usize,
 }
 
-/// Request body for approving or denying a deferred action.
+/// Request body for approving or denying an approval.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeferredActionDecisionBody {
+pub struct ApprovalDecisionBody {
     pub decision: String,
     pub reason: Option<String>,
 }

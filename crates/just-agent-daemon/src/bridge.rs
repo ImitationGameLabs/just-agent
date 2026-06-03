@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use just_agent_common::command::UserInput;
-use just_agent_common::types::{AgentEvent, AgentId, AgentState, DeferredActionStatus, SseEvent};
+use just_agent_common::types::{AgentEvent, AgentId, AgentState, ApprovalStatus, SseEvent};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -23,11 +23,11 @@ pub async fn bridge_task(
 
             Some(event) = agent_rx.recv() => {
                 match event {
-                    AgentEvent::DeferredCommitted { id, tool_name, arguments, commit_reason } => {
+                    AgentEvent::ApprovalCommitted { id, tool_name, arguments, commit_reason } => {
                         route_to_superior(&shared_state, &agent_id, id.clone(), tool_name, arguments, &commit_reason).await;
-                        events_tx.send(SseEvent::DeferredActionUpdated {
+                        events_tx.send(SseEvent::ApprovalUpdated {
                             id,
-                            status: DeferredActionStatus::Committed,
+                            status: ApprovalStatus::Committed,
                         }).ok();
                     }
                     other => {
@@ -73,7 +73,7 @@ pub async fn bridge_task(
 async fn route_to_superior(
     shared_state: &SharedState,
     agent_id: &AgentId,
-    deferred_action_id: String,
+    approval_id: String,
     tool_name: String,
     arguments: serde_json::Value,
     commit_reason: &str,
@@ -100,9 +100,9 @@ async fn route_to_superior(
          Tool: {tool_name}\n\
          Arguments: {arguments}\n\
          Reason: {commit_reason}\n\
-         Action ID: {deferred_action_id}\n\n\
-         Use `just-agent approval approve {deferred_action_id}` to approve \
-         or `just-agent approval deny {deferred_action_id} <reason>` to deny."
+         Action ID: {approval_id}\n\n\
+         Use `just-agent approval approve {approval_id}` to approve \
+         or `just-agent approval deny {approval_id} <reason>` to deny."
     );
     if prompt_tx
         .send(UserInput::Prompt(notification))

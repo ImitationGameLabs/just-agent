@@ -48,7 +48,7 @@ const COMMANDS: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "/approvals",
-        description: "View and manage deferred actions",
+        description: "View and manage approval requests",
         has_arg: false,
     },
 ];

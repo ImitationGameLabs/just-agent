@@ -39,18 +39,18 @@ pub async fn build_tool_dispatch(
 }
 
 // ---------------------------------------------------------------------------
-// Deferred action meta-tool definitions (handled by executor, not dispatcher)
+// Approval meta-tool definitions (handled by executor, not dispatcher)
 // ---------------------------------------------------------------------------
 
-pub fn deferred_action_list_definition() -> ToolDefinition {
+pub fn approval_list_definition() -> ToolDefinition {
     ToolDefinition {
         kind: ToolType::Function,
         function: FunctionDefinition {
-            name: "deferred_action_list".into(),
+            name: "approval_list".into(),
             description: Some(
-                "List deferred tool actions awaiting or having received approval. \
+                "List approval requests awaiting or having received a decision. \
                  Filter by status: pending, committed, approved, denied, redeemed, cancelled. \
-                 Returns action details including id needed for commit/redeem/cancel."
+                 Returns approval details including id needed for commit/redeem/cancel."
                     .into(),
             ),
             parameters: Some(json!({
@@ -68,15 +68,15 @@ pub fn deferred_action_list_definition() -> ToolDefinition {
     }
 }
 
-pub fn deferred_action_commit_definition() -> ToolDefinition {
+pub fn approval_commit_definition() -> ToolDefinition {
     ToolDefinition {
         kind: ToolType::Function,
         function: FunctionDefinition {
-            name: "deferred_action_commit".into(),
+            name: "approval_commit".into(),
             description: Some(
-                "Submit a deferred action for approval with your justification for \
-                 why this tool call is necessary. After committing, the action becomes \
-                 visible to an approver. Only works on actions with 'pending' status."
+                "Submit an approval request with your justification for \
+                 why this tool call is necessary. After committing, the request becomes \
+                 visible to an approver. Only works on approvals with 'pending' status."
                     .into(),
             ),
             parameters: Some(json!({
@@ -84,7 +84,7 @@ pub fn deferred_action_commit_definition() -> ToolDefinition {
                 "properties": {
                     "id": {
                         "type": "string",
-                        "description": "The id of the deferred action to commit."
+                        "description": "The id of the approval to commit."
                     },
                     "reason": {
                         "type": "string",
@@ -98,15 +98,15 @@ pub fn deferred_action_commit_definition() -> ToolDefinition {
     }
 }
 
-pub fn deferred_action_redeem_definition() -> ToolDefinition {
+pub fn approval_redeem_definition() -> ToolDefinition {
     ToolDefinition {
         kind: ToolType::Function,
         function: FunctionDefinition {
-            name: "deferred_action_redeem".into(),
+            name: "approval_redeem".into(),
             description: Some(
-                "Execute a previously deferred tool action that has been approved. \
+                "Execute a previously approved tool action. \
                  The stored tool call runs and returns its result. \
-                 Only works on actions with 'approved' status."
+                 Only works on approvals with 'approved' status."
                     .into(),
             ),
             parameters: Some(json!({
@@ -114,7 +114,7 @@ pub fn deferred_action_redeem_definition() -> ToolDefinition {
                 "properties": {
                     "id": {
                         "type": "string",
-                        "description": "The id of the deferred action to redeem."
+                        "description": "The id of the approval to redeem."
                     }
                 },
                 "required": ["id"]
@@ -124,14 +124,14 @@ pub fn deferred_action_redeem_definition() -> ToolDefinition {
     }
 }
 
-pub fn deferred_action_cancel_definition() -> ToolDefinition {
+pub fn approval_cancel_definition() -> ToolDefinition {
     ToolDefinition {
         kind: ToolType::Function,
         function: FunctionDefinition {
-            name: "deferred_action_cancel".into(),
+            name: "approval_cancel".into(),
             description: Some(
-                "Cancel a deferred action that is no longer needed. \
-                 Works on pending, committed, approved, and denied actions."
+                "Cancel an approval that is no longer needed. \
+                 Works on pending, committed, approved, and denied approvals."
                     .into(),
             ),
             parameters: Some(json!({
@@ -139,7 +139,7 @@ pub fn deferred_action_cancel_definition() -> ToolDefinition {
                 "properties": {
                     "id": {
                         "type": "string",
-                        "description": "The id of the deferred action to cancel."
+                        "description": "The id of the approval to cancel."
                     }
                 },
                 "required": ["id"]

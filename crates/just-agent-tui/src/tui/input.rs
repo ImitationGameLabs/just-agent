@@ -2,7 +2,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use tokio::sync::mpsc;
 
 use just_agent_client::DaemonClient;
-use just_agent_client::ListDeferredActionsParams;
+use just_agent_client::ListApprovalsParams;
 use just_agent_common::command::{self, SlashCommand};
 use just_agent_common::types::AgentId;
 
@@ -212,7 +212,7 @@ impl App {
             ApprovalPhase::Deciding => match key.code {
                 KeyCode::Char('1') => {
                     let id = state.entries[state.selected].id.clone();
-                    match client.respond_deferred_action(&id, "approve", None).await {
+                    match client.respond_approval(&id, "approve", None).await {
                         Ok(()) => self.refresh_approvals(client).await,
                         Err(e) => {
                             state.phase = ApprovalPhase::Browsing;
@@ -236,7 +236,7 @@ impl App {
                         let reason = std::mem::take(buffer);
                         let id = state.entries[state.selected].id.clone();
                         match client
-                            .respond_deferred_action(&id, "deny", Some(&reason))
+                            .respond_approval(&id, "deny", Some(&reason))
                             .await
                         {
                             Ok(()) => self.refresh_approvals(client).await,
@@ -261,10 +261,10 @@ impl App {
         }
     }
 
-    /// Re-fetch committed deferred actions and update approvals state.
+    /// Re-fetch pending approvals from the daemon.
     async fn refresh_approvals(&mut self, client: &DaemonClient) {
         match client
-            .list_deferred_actions(&ListDeferredActionsParams {
+            .list_approvals(&ListApprovalsParams {
                 status: Some("committed".into()),
                 limit: Some(20),
                 ..Default::default()
@@ -333,7 +333,7 @@ impl App {
             },
             SlashCommand::Approvals => {
                 match client
-                    .list_deferred_actions(&ListDeferredActionsParams {
+                    .list_approvals(&ListApprovalsParams {
                         status: Some("committed".into()),
                         limit: Some(20),
                         ..Default::default()

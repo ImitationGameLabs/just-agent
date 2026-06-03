@@ -1,7 +1,7 @@
 mod agent;
 pub use agent::restore_sessions;
 mod context;
-mod deferred;
+mod approval;
 mod message;
 
 use axum::Router;
@@ -22,7 +22,7 @@ pub struct MessageRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ListDeferredActionsQuery {
+pub struct ListApprovalsQuery {
     pub offset: Option<u64>,
     /// Page size. Clamped to [1, 20] by the handler; defaults to 5.
     pub limit: Option<u64>,
@@ -65,11 +65,11 @@ pub fn router() -> Router<SharedState> {
         )
         .route(
             "/approvals",
-            axum::routing::get(deferred::list_deferred_actions),
+            axum::routing::get(approval::list_approvals),
         )
         .route(
             "/approvals/{id}",
-            axum::routing::get(deferred::get_deferred_action)
-                .post(deferred::respond_deferred_action),
+            axum::routing::get(approval::get_approval)
+                .post(approval::respond_approval),
         )
 }

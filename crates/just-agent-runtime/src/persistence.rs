@@ -1,6 +1,6 @@
 //! Session persistence: atomic JSON serialization to disk.
 //!
-//! Writes context and deferred state to per-agent session directories.
+//! Writes context and approval state to per-agent session directories.
 //! All writes use atomic rename (temp file + rename) to prevent corruption
 //! on crash. On daemon restart, [`scan_sessions`] scans for sessions
 //! that can be recovered.
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use time::{Duration as TimeDuration, OffsetDateTime};
 
 use crate::context::ContextStore;
-use crate::deferred::DeferredActionStore;
+use crate::approval::ApprovalStore;
 use just_agent_common::types::AgentId;
 use just_llm_client::types::chat::ChatMessage;
 /// Resolve the base sessions directory.
@@ -80,9 +80,9 @@ pub fn persist_context(json: &str, dir: &Path) -> Result<()> {
     atomic_write(&dir.join("context.json"), json)
 }
 
-/// Serialize and write deferred store to deferred.json.
-pub fn persist_deferred(json: &str, dir: &Path) -> Result<()> {
-    atomic_write(&dir.join("deferred.json"), json)
+/// Serialize and write approval store to approvals.json.
+pub fn persist_approvals(json: &str, dir: &Path) -> Result<()> {
+    atomic_write(&dir.join("approvals.json"), json)
 }
 
 /// Serialize and write tool policy to policy.toml.
@@ -143,7 +143,7 @@ pub struct RestorableSession {
     pub agent_id: AgentId,
     pub session_dir: PathBuf,
     pub store: ContextStore,
-    pub deferred: DeferredActionStore,
+    pub approvals: ApprovalStore,
 }
 
 /// Scan the sessions directory and return sessions eligible for restore.
@@ -226,7 +226,7 @@ fn check_meta(dir: &Path) -> Result<SessionMeta> {
 
 /// Deserialize a single session from its directory.
 ///
-/// Reads context.json and deferred.json, fixes incomplete turns, and
+/// Reads context.json and approvals.json, fixes incomplete turns, and
 /// injects the restart message.
 pub fn restore_session(agent_id: &AgentId, dir: &Path) -> Result<RestorableSession> {
     let mut store: ContextStore = match fs::read_to_string(dir.join("context.json")) {
@@ -234,9 +234,9 @@ pub fn restore_session(agent_id: &AgentId, dir: &Path) -> Result<RestorableSessi
         Err(_) => ContextStore::new(),
     };
 
-    let deferred: DeferredActionStore = match fs::read_to_string(dir.join("deferred.json")) {
-        Ok(json) => serde_json::from_str(&json).context("parsing deferred.json")?,
-        Err(_) => DeferredActionStore::new(),
+    let approvals: ApprovalStore = match fs::read_to_string(dir.join("approvals.json")) {
+        Ok(json) => serde_json::from_str(&json).context("parsing approvals.json")?,
+        Err(_) => ApprovalStore::new(),
     };
 
     fix_incomplete_turn(&mut store);
@@ -250,7 +250,7 @@ pub fn restore_session(agent_id: &AgentId, dir: &Path) -> Result<RestorableSessi
         agent_id: agent_id.clone(),
         session_dir: dir.to_owned(),
         store,
-        deferred,
+        approvals,
     })
 }
 

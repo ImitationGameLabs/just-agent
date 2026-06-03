@@ -144,18 +144,18 @@ impl DaemonClient {
         JsonEventStream::from_response(response).context("failed to parse SSE stream")
     }
 
-    /// Send a decision (approve/deny) for a deferred action.
-    pub async fn respond_deferred_action(
+    /// Send a decision (approve/deny) for an approval.
+    pub async fn respond_approval(
         &self,
-        deferred_action_id: &str,
+        approval_id: &str,
         decision: &str,
         reason: Option<&str>,
     ) -> Result<()> {
         self.with_auth(
             self.inner
                 .http
-                .post(self.url(&format!("/approvals/{deferred_action_id}")))
-                .json(&DeferredActionDecisionBody {
+                .post(self.url(&format!("/approvals/{approval_id}")))
+                .json(&ApprovalDecisionBody {
                     decision: decision.to_owned(),
                     reason: reason.map(|s| s.to_owned()),
                 }),
@@ -168,14 +168,14 @@ impl DaemonClient {
         Ok(())
     }
 
-    /// List deferred actions with optional filtering and pagination.
-    pub async fn list_deferred_actions(
+    /// List approvals with optional filtering and pagination.
+    pub async fn list_approvals(
         &self,
-        params: &ListDeferredActionsParams,
-    ) -> Result<ListDeferredActionsResponse> {
+        params: &ListApprovalsParams,
+    ) -> Result<ListApprovalsResponse> {
         let req = self.inner.http.get(self.url("/approvals")).query(params);
 
-        let resp: ListDeferredActionsResponse = self
+        let resp: ListApprovalsResponse = self
             .with_auth(req)
             .send()
             .await
@@ -188,10 +188,10 @@ impl DaemonClient {
         Ok(resp)
     }
 
-    /// Get a single deferred action by id.
-    pub async fn get_deferred_action(&self, id: &str) -> Result<DeferredActionEntry> {
+    /// Get a single approval by id.
+    pub async fn get_approval(&self, id: &str) -> Result<ApprovalEntry> {
         let req = self.inner.http.get(self.url(&format!("/approvals/{id}")));
-        let entry: DeferredActionEntry = self
+        let entry: ApprovalEntry = self
             .with_auth(req)
             .send()
             .await

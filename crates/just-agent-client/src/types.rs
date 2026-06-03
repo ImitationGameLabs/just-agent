@@ -3,8 +3,8 @@ use just_agent_common::retry::RetryRecord;
 use just_agent_common::types::AgentId;
 use just_agent_common::types::AgentState;
 pub use just_agent_common::types::{
-    AgentPermissionsResponse, DeferredActionDecisionBody, DeferredActionEntry,
-    ListDeferredActionsResponse, PolicyDecision, ToolPolicy,
+    AgentPermissionsResponse, ApprovalDecisionBody, ApprovalEntry,
+    ListApprovalsResponse, PolicyDecision, ToolPolicy,
 };
 pub(crate) use just_agent_common::types::{CreateAgentRequest, CreateAgentResponse};
 use serde::{Deserialize, Serialize};
@@ -35,9 +35,9 @@ pub struct AgentStatusResponse {
     pub recent_retries: Vec<RetryRecord>,
 }
 
-/// Query parameters for listing deferred actions.
+/// Query parameters for listing approvals.
 #[derive(Debug, Default, Serialize)]
-pub struct ListDeferredActionsParams {
+pub struct ListApprovalsParams {
     pub offset: Option<u64>,
     /// Page size. Server clamps to [1, 20]; defaults to 5 when unset.
     pub limit: Option<u64>,

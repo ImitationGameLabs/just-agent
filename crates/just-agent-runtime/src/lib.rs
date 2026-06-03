@@ -1,6 +1,6 @@
 pub mod config;
 pub mod context;
-pub mod deferred;
+pub mod approval;
 pub mod persistence;
 pub mod policy;
 pub mod provider;

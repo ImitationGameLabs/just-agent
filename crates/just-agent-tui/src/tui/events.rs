@@ -77,14 +77,14 @@ impl App {
                 self.streaming_content = false;
                 self.streaming_reasoning = false;
             }
-            SseEvent::DeferredActionUpdated { id, status } => {
+            SseEvent::ApprovalUpdated { id, status } => {
                 if matches!(self.mode, AppMode::Approvals) {
                     if let Some(state) = self.approvals.as_mut() {
                         state.stale = true;
                     }
                 } else {
                     self.chat_lines
-                        .push(ChatLine::Status(format!("deferred action {id}: {status}")));
+.push(ChatLine::Status(format!("[approval] {id}: {status}")));
                     self.auto_scroll = true;
                 }
             }

@@ -11,7 +11,7 @@ use just_agent_common::types::SseEvent;
 use just_agent_common::types::ToolPolicy;
 use just_agent_runtime::config::AgentConfig;
 use just_agent_runtime::context::ContextStore;
-use just_agent_runtime::deferred::DeferredActionStore;
+use just_agent_runtime::approval::ApprovalStore;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
@@ -40,7 +40,7 @@ pub struct AgentEntry {
 pub struct Agent {
     pub prompt_tx: mpsc::Sender<UserInput>,
     pub events_tx: broadcast::Sender<SseEvent>,
-    pub deferred: Arc<Mutex<DeferredActionStore>>,
+    pub approvals: Arc<Mutex<ApprovalStore>>,
     pub config: AgentConfig,
     pub agent_handle: JoinHandle<()>,
     pub bridge_handle: JoinHandle<()>,
@@ -257,7 +257,7 @@ mod tests {
             agent: Agent {
                 prompt_tx,
                 events_tx,
-                deferred: Arc::new(Mutex::new(DeferredActionStore::new())),
+                approvals: Arc::new(Mutex::new(ApprovalStore::new())),
                 config,
                 agent_handle: tokio::spawn(async {}),
                 bridge_handle: tokio::spawn(async {}),

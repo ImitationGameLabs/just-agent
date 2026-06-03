@@ -330,7 +330,7 @@ impl App {
 
 /// Format an OffsetDateTime as a human-readable relative age.
 /// Format a timestamp as a short relative age string (e.g. "3s", "5m", "2h", "1d").
-/// Used in the approvals list to show when each deferred action was created.
+/// Used in the approvals list to show when each approval was created.
 /// Returns "0s" for timestamps at or after the current time.
 fn format_age(t: time::OffsetDateTime) -> String {
     let now = time::OffsetDateTime::now_utc();

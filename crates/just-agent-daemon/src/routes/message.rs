@@ -63,7 +63,7 @@ pub async fn send_message(
     let saved_policy = entry.agent.tool_policy.clone();
     entry.agent = spawn_agent(SpawnArgs {
         store: entry.agent.store.clone(),
-        deferred: entry.agent.deferred.clone(),
+        approvals: entry.agent.approvals.clone(),
         session_dir,
         config: entry.agent.config.clone(),
         initial_prompt: Some(req.text),

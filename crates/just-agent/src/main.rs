@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
                 };
                 let order = if args.reverse { "asc" } else { "desc" };
                 let resp = client
-                    .list_deferred_actions(&just_agent_client::ListDeferredActionsParams {
+                    .list_approvals(&just_agent_client::ListApprovalsParams {
                         offset: args.offset,
                         limit: args.limit,
                         requested_by: args.requested_by.clone(),
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
                     println!("No pending approvals.");
                 } else {
                     for a in &resp.items {
-                        print_deferred_entry(a);
+                        print_approval_entry(a);
                         println!("---");
                     }
                     println!("(total: {})", resp.total);
@@ -151,20 +151,20 @@ async fn main() -> Result<()> {
             }
             ApprovalCommand::Get(args) => {
                 let client = build_client();
-                let a = client.get_deferred_action(&args.id).await?;
-                print_deferred_entry(&a);
+                let a = client.get_approval(&args.id).await?;
+                print_approval_entry(&a);
             }
             ApprovalCommand::Approve(args) => {
                 let client = build_client();
                 client
-                    .respond_deferred_action(&args.id, "approve", None)
+                    .respond_approval(&args.id, "approve", None)
                     .await?;
                 println!("Approved.");
             }
             ApprovalCommand::Deny(args) => {
                 let client = build_client();
                 client
-                    .respond_deferred_action(&args.id, "deny", Some(&args.reason))
+                    .respond_approval(&args.id, "deny", Some(&args.reason))
                     .await?;
                 println!("Denied.");
             }
@@ -195,7 +195,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn print_deferred_entry(a: &just_agent_common::types::DeferredActionEntry) {
+fn print_approval_entry(a: &just_agent_common::types::ApprovalEntry) {
     println!("id: {}", a.id);
     println!("status: {}", a.status);
     println!("requested_by: {}", a.requested_by);

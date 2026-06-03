@@ -6,7 +6,7 @@ mod markdown;
 mod render;
 mod wrap;
 
-use just_agent_common::types::DeferredActionEntry;
+use just_agent_common::types::ApprovalEntry;
 use ratatui_textarea::TextArea;
 
 use completion::CompletionState;
@@ -41,7 +41,7 @@ pub enum AppMode {
 
 /// Phase within the approvals view.
 pub enum ApprovalPhase {
-    /// Navigating the list of committed deferred actions.
+    /// Navigating the approvals list.
     Browsing,
     /// Selected an action — showing approve/deny options.
     Deciding,
@@ -51,15 +51,15 @@ pub enum ApprovalPhase {
 
 /// State for the approvals view.
 pub struct ApprovalsState {
-    entries: Vec<DeferredActionEntry>,
+    entries: Vec<ApprovalEntry>,
     selected: usize,
     phase: ApprovalPhase,
-    /// Set when a DeferredActionUpdated SSE event arrives; triggers re-fetch on next key.
+    /// Set when an ApprovalUpdated SSE event arrives; triggers re-fetch on next key.
     stale: bool,
 }
 
 impl ApprovalsState {
-    fn new(entries: Vec<DeferredActionEntry>) -> Self {
+    fn new(entries: Vec<ApprovalEntry>) -> Self {
         Self {
             entries,
             selected: 0,
