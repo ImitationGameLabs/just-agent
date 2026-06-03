@@ -8,11 +8,11 @@ use just_agent_common::command::UserInput;
 pub use just_agent_common::types::AgentId;
 pub use just_agent_common::types::AgentState;
 use just_agent_common::types::SseEvent;
+pub use just_agent_common::types::AgentSummary;
 use just_agent_common::types::ToolPolicy;
 use just_agent_runtime::config::AgentConfig;
 use just_agent_runtime::context::ContextStore;
 use just_agent_runtime::approval::ApprovalStore;
-use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -54,14 +54,6 @@ pub struct Agent {
     pub env: HashMap<String, String>,
     /// Shared tool policy. The daemon updates this via API; the runtime reads it in evaluate().
     pub tool_policy: Arc<std::sync::RwLock<ToolPolicy>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AgentSummary {
-    pub id: AgentId,
-    pub workspace_root: String,
-    pub state: AgentState,
-    pub created_by: Option<AgentId>,
 }
 
 impl Agent {

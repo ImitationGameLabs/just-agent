@@ -2,25 +2,11 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use just_agent_common::context::ContextUsage;
-use just_agent_common::retry::RetryRecord;
-use just_agent_common::types::AgentId;
-use just_agent_common::types::AgentPermissionsResponse;
-use just_agent_common::types::AgentState;
-use just_agent_common::types::ToolPolicy;
+use just_agent_common::types::{AgentId, AgentPermissionsResponse, AgentStatusResponse, ToolPolicy};
 use just_agent_runtime::context::AgenticContext;
 use just_agent_runtime::persistence;
 
 use crate::state::SharedState;
-use serde::Serialize;
-
-/// Combined status response: context usage + recent retry history.
-#[derive(Serialize)]
-pub struct AgentStatus {
-    pub state: AgentState,
-    pub context: ContextUsage,
-    pub recent_retries: Vec<RetryRecord>,
-}
 
 /// GET /agents/{id}/status — return context usage and retry history.
 /// Any authenticated identity may query any agent's status.
@@ -42,7 +28,7 @@ pub async fn agent_status(
         .take(20)
         .cloned()
         .collect::<Vec<_>>();
-    Ok(Json(AgentStatus {
+    Ok(Json(AgentStatusResponse {
         state: entry.agent.get_state(),
         context,
         recent_retries,

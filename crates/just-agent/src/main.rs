@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
                     .list_approvals(&just_agent_client::ListApprovalsParams {
                         offset: args.offset,
                         limit: args.limit,
-                        requested_by: args.requested_by.clone(),
+                        requested_by: args.requested_by.clone().map(AgentId::from),
                         status,
                         order: Some(order.to_owned()),
                     })

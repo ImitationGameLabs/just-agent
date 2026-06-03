@@ -5,7 +5,12 @@ use just_agent_common::types::AgentId;
 use just_agent_common::types::SseEvent;
 use just_llm_client::JsonEventStream;
 
-use crate::types::*;
+use crate::types::{ListApprovalsParams, MessageRequest};
+use crate::{
+    AgentPermissionsResponse, AgentStatusResponse, AgentSummary, ApprovalDecisionBody,
+    ApprovalEntry, CreateAgentRequest, CreateAgentResponse, ListAgentsResponse,
+    ListApprovalsResponse, ToolPolicy,
+};
 
 struct Inner {
     base_url: String,

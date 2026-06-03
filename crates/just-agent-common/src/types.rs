@@ -435,3 +435,43 @@ pub struct AgentPermissionsResponse {
     pub created_by: Option<AgentId>,
     pub tool_policy: ToolPolicy,
 }
+
+/// Summary of an agent instance returned in list responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSummary {
+    pub id: AgentId,
+    pub workspace_root: String,
+    pub state: AgentState,
+    pub created_by: Option<AgentId>,
+}
+
+/// Combined agent status: lifecycle state + context usage + recent retry history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStatusResponse {
+    pub state: AgentState,
+    pub context: crate::context::ContextUsage,
+    pub recent_retries: Vec<crate::retry::RetryRecord>,
+}
+
+/// Request body for sending a message to an agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageRequest {
+    pub text: String,
+}
+
+/// Response body for listing agents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListAgentsResponse {
+    pub agents: Vec<AgentSummary>,
+}
+
+/// Query parameters for listing approvals.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ListApprovalsQuery {
+    pub offset: Option<u64>,
+    /// Page size. Server clamps to [1, 20]; defaults to 5 when unset.
+    pub limit: Option<u64>,
+    pub requested_by: Option<AgentId>,
+    pub status: Option<String>,
+    pub order: Option<String>,
+}

@@ -5,31 +5,10 @@ mod approval;
 mod message;
 
 use axum::Router;
-use just_agent_common::types::AgentId;
-use serde::{Deserialize, Serialize};
+use just_agent_common::types::{ListAgentsResponse, ListApprovalsQuery, MessageRequest};
 use state::SharedState;
 
 use crate::state;
-
-#[derive(Debug, Serialize)]
-pub struct ListAgentsResponse {
-    pub agents: Vec<state::AgentSummary>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MessageRequest {
-    pub text: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListApprovalsQuery {
-    pub offset: Option<u64>,
-    /// Page size. Clamped to [1, 20] by the handler; defaults to 5.
-    pub limit: Option<u64>,
-    pub requested_by: Option<AgentId>,
-    pub status: Option<String>,
-    pub order: Option<String>,
-}
 
 /// Build the full axum router with all agent routes.
 pub fn router() -> Router<SharedState> {
