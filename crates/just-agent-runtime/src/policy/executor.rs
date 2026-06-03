@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use just_llm_client::{ToolDispatcher, types::chat::ToolDefinition};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 use tokio::sync::Mutex;
 
 use super::AgentPolicy;
@@ -81,21 +82,20 @@ impl AuthorizedToolExecutor {
     async fn handle_list(&self, args_json: &str) -> String {
         let status_filter = parse_status_filter(args_json);
         let q = self.approvals.lock().await;
-        let items: Vec<Value> = q
+        let items: Vec<_> = q
             .list(status_filter.as_ref())
             .into_iter()
-            .map(|a| {
-                json!({
-                    "id": a.id,
-                    "content": a.content,
-                    "commit_reason": a.commit_reason,
-                    "status": a.status,
-                    "deny_reason": a.deny_reason,
-                    "created_at": a.created_at,
-                })
+            .map(|a| ApprovalListItem {
+                id: a.id,
+                content: a.content,
+                commit_reason: a.commit_reason,
+                status: a.status,
+                deny_reason: a.deny_reason,
+                created_at: a.created_at,
             })
             .collect();
-        json!({"ok": true, "actions": items}).to_string()
+        serde_json::to_string(&ApprovalListResponse { ok: true, actions: items })
+            .unwrap_or_else(|e| error_result("approval_list", e.to_string()))
     }
 
     async fn handle_commit(&self, args_json: &str) -> String {
@@ -105,7 +105,12 @@ impl AuthorizedToolExecutor {
         };
         let mut q = self.approvals.lock().await;
         match q.commit(&id, &reason) {
-            Ok(()) => json!({"ok": true, "committed": true, "id": id}).to_string(),
+            Ok(()) => serde_json::to_string(&ApprovalCommitResponse {
+                ok: true,
+                committed: true,
+                id,
+            })
+            .unwrap_or_else(|e| error_result("approval_commit", e.to_string())),
             Err(e) => error_result("approval_commit", e.to_string()),
         }
     }
@@ -139,12 +144,12 @@ impl AuthorizedToolExecutor {
         };
         let mut q = self.approvals.lock().await;
         match q.cancel(&id) {
-            Ok(prev) => json!({
-                "ok": true,
-                "cancelled": id,
-                "previous_status": prev.to_string(),
+            Ok(prev) => serde_json::to_string(&ApprovalCancelResponse {
+                ok: true,
+                cancelled: id,
+                previous_status: prev.to_string(),
             })
-            .to_string(),
+            .unwrap_or_else(|e| error_result("approval_cancel", e.to_string())),
             Err(e) => error_result("approval_cancel", e.to_string()),
         }
     }
@@ -181,19 +186,66 @@ fn parse_commit_args(args_json: &str) -> Result<(String, String)> {
 
 fn success_result(tool_name: &str, output: String) -> String {
     let parsed = serde_json::from_str::<Value>(&output).unwrap_or(Value::String(output));
-    json!({
-        "ok": true,
-        "tool_name": tool_name,
-        "result": parsed,
+    serde_json::to_string(&ToolResultResponse {
+        ok: true,
+        tool_name: tool_name.to_owned(),
+        result: parsed,
     })
-    .to_string()
+    .unwrap_or_else(|e| error_result(tool_name, e.to_string()))
 }
 
 fn error_result(tool_name: &str, error: String) -> String {
-    json!({
-        "ok": false,
-        "tool_name": tool_name,
-        "error": error,
+    serde_json::to_string(&ToolErrorResponse {
+        ok: false,
+        tool_name: tool_name.to_owned(),
+        error,
     })
-    .to_string()
+    .unwrap_or_else(|_| r#"{"ok":false,"error":"serialization failed"}"#.to_owned())
+}
+
+// -- Typed response structs --
+
+#[derive(Serialize)]
+struct ToolResultResponse {
+    ok: bool,
+    tool_name: String,
+    result: Value,
+}
+
+#[derive(Serialize)]
+struct ToolErrorResponse {
+    ok: bool,
+    tool_name: String,
+    error: String,
+}
+
+#[derive(Serialize)]
+struct ApprovalListResponse {
+    ok: bool,
+    actions: Vec<ApprovalListItem>,
+}
+
+#[derive(Serialize)]
+struct ApprovalListItem {
+    id: String,
+    content: just_agent_common::types::ToolCallContent,
+    commit_reason: Option<String>,
+    status: ApprovalStatus,
+    deny_reason: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    created_at: time::OffsetDateTime,
+}
+
+#[derive(Serialize)]
+struct ApprovalCommitResponse {
+    ok: bool,
+    committed: bool,
+    id: String,
+}
+
+#[derive(Serialize)]
+struct ApprovalCancelResponse {
+    ok: bool,
+    cancelled: String,
+    previous_status: String,
 }

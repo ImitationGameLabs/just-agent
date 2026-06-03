@@ -286,16 +286,26 @@ impl ApprovalStore {
 
 /// Format an approval-deferred tool result JSON returned to the LLM.
 pub fn approval_result_json(id: &str, tool_name: &str) -> String {
-    serde_json::json!({
-        "ok": true,
-        "pending_approval": true,
-        "tool_name": tool_name,
-        "id": id,
-        "next_steps": "This tool call was deferred because it requires approval. \
+    serde_json::to_string(&ApprovalDeferredResponse {
+        ok: true,
+        pending_approval: true,
+        tool_name: tool_name.to_owned(),
+        id: id.to_owned(),
+        next_steps: "This tool call was deferred because it requires approval. \
             Call approval_commit with the id and a justification for why it is necessary, \
             or approval_cancel to abandon it."
+            .to_owned(),
     })
-    .to_string()
+    .unwrap_or_else(|_| r#"{"ok":true,"pending_approval":true}"#.to_owned())
+}
+
+#[derive(serde::Serialize)]
+struct ApprovalDeferredResponse {
+    ok: bool,
+    pending_approval: bool,
+    tool_name: String,
+    id: String,
+    next_steps: String,
 }
 
 #[cfg(test)]
