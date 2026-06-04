@@ -1,9 +1,11 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use just_agent_common::agentid::AgentId;
 use just_agent_common::approval::ApprovalStatus;
 use just_agent_common::command::UserInput;
+use just_agent_common::policy::PolicyDecision;
 use just_agent_common::protocol::{AgentState, SseEvent};
 use just_agent_runtime::event::AgentEvent;
 use tokio::sync::broadcast;
@@ -123,8 +125,20 @@ async fn route_to_superior(
     arguments: serde_json::Value,
     commit_reason: &str,
 ) {
-    // Clone the sender inside the lock so we don't hold the read lock across the async send.
-    let (superior_id, prompt_tx) = {
+    // Collect all data inside the lock so we don't hold it across the async send.
+    struct SuperiorContext {
+        superior_id: AgentId,
+        prompt_tx: tokio::sync::mpsc::Sender<UserInput>,
+        superior_decision: PolicyDecision,
+        /// Nearest upper-level superior with `Allow` for this tool.
+        allow_superior_id: Option<AgentId>,
+        /// Root agent ID (can contact the Operator directly).
+        root_agent_id: Option<AgentId>,
+        /// Whether the direct superior is itself the root agent.
+        is_superior_root: bool,
+    }
+
+    let ctx = {
         let registry = shared_state.registry.read().await;
         let Some(entry) = registry.get(agent_id) else {
             warn!(id = %agent_id, "agent not found in registry during superior routing");
@@ -137,7 +151,101 @@ async fn route_to_superior(
             warn!(id = %superior_id, "superior not found in registry");
             return;
         };
-        (superior_id.clone(), superior_entry.agent.prompt_tx.clone())
+
+        let superior_decision = superior_entry
+            .agent
+            .tool_policy
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .decision_for(&tool_name);
+
+        // Walk the supervisor chain to find the nearest upper-level superior
+        // with Allow, and the root agent ID. Only walk when the direct superior
+        // lacks Allow — otherwise no escalation needed.
+        // A visited-set guards against cycles (defense-in-depth; chains are
+        // validated at creation time but restoration could bypass that).
+        let mut allow_superior_id = None;
+        let mut root_agent_id: Option<AgentId> = None;
+        let mut is_superior_root = false;
+        if superior_decision != PolicyDecision::Allow {
+            let mut visited = HashSet::new();
+            let mut current_id = superior_id.clone();
+            loop {
+                if !visited.insert(current_id.clone()) {
+                    break; // cycle detected
+                }
+                let Some(entry) = registry.get(&current_id) else {
+                    break;
+                };
+                let is_root = entry.agent.config.created_by.is_none();
+                if is_root {
+                    root_agent_id = Some(current_id.clone());
+                    is_superior_root = current_id == *superior_id;
+                }
+                // Check policy for upper-level superiors (skip the direct superior
+                // whose decision we already know is non-Allow).
+                if current_id != *superior_id {
+                    let decision = entry
+                        .agent
+                        .tool_policy
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .decision_for(&tool_name);
+                    if decision == PolicyDecision::Allow && allow_superior_id.is_none() {
+                        allow_superior_id = Some(current_id.clone());
+                    }
+                }
+                if is_root {
+                    break;
+                }
+                // Safe: `is_root` is false, so `created_by` is `Some`.
+                current_id = entry.agent.config.created_by.as_ref().unwrap().clone();
+            }
+        }
+
+        SuperiorContext {
+            superior_id: superior_id.clone(),
+            prompt_tx: superior_entry.agent.prompt_tx.clone(),
+            superior_decision,
+            allow_superior_id,
+            root_agent_id,
+            is_superior_root,
+        }
+    };
+
+    // Build the policy context section for the notification.
+    let policy_section = if ctx.superior_decision == PolicyDecision::Allow {
+        // Superior can approve directly — no escalation needed.
+        format!(
+            "\nPolicy context:\n  Your policy for '{tool_name}': allow \
+             (you can approve this request)"
+        )
+    } else if let Some(ref allow_id) = ctx.allow_superior_id {
+        format!(
+            "\nPolicy context:\n  Your policy for '{tool_name}': {}\n  \
+             Upper-level superior '{}' has Allow for this tool.",
+            ctx.superior_decision, allow_id
+        )
+    } else if ctx.is_superior_root {
+        // The direct superior IS the root agent — tell it directly.
+        format!(
+            "\nPolicy context:\n  Your policy for '{tool_name}': {}\n  \
+             You are the root agent. Only the Operator can approve this request.",
+            ctx.superior_decision
+        )
+    } else if let Some(ref root_id) = ctx.root_agent_id {
+        format!(
+            "\nPolicy context:\n  Your policy for '{tool_name}': {}\n  \
+             No superior has Allow for this tool. \
+             Root agent '{}' can contact the Operator to approve.",
+            ctx.superior_decision, root_id
+        )
+    } else {
+        format!(
+            "\nPolicy context:\n  Your policy for '{tool_name}': {}\n  \
+             No superior has Allow for this tool. Only the Operator can approve this request.",
+            ctx.superior_decision
+        )
     };
 
     let notification = format!(
@@ -145,15 +253,207 @@ async fn route_to_superior(
          Tool: {tool_name}\n\
          Arguments: {arguments}\n\
          Reason: {commit_reason}\n\
-         Action ID: {approval_id}\n\n\
+         Action ID: {approval_id}\n\
+         {policy_section}\n\n\
          Use `just-agent approval approve {approval_id}` to approve \
          or `just-agent approval deny {approval_id} <reason>` to deny."
     );
-    if prompt_tx
+    if ctx
+        .prompt_tx
         .send(UserInput::Prompt(notification))
         .await
         .is_err()
     {
-        warn!(id = %superior_id, "superior prompt channel closed, approval notification dropped");
+        warn!(id = %ctx.superior_id, "superior prompt channel closed, approval notification dropped");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use just_agent_common::agentid::AgentId;
+    use just_agent_common::command::UserInput;
+    use just_agent_common::policy::PolicyDecision;
+
+    use crate::test_helpers::*;
+
+    /// Helper: receive a notification from the prompt channel within a timeout.
+    async fn recv_notification(rx: &mut tokio::sync::mpsc::Receiver<UserInput>) -> String {
+        match tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
+            Ok(Some(UserInput::Prompt(text))) => text,
+            Ok(Some(_)) => panic!("expected UserInput::Prompt, got a different variant"),
+            Ok(None) => panic!("prompt channel closed unexpectedly"),
+            Err(_) => panic!("timed out waiting for notification"),
+        }
+    }
+
+    #[tokio::test]
+    async fn notification_includes_allow_when_superior_can_approve() {
+        let state = make_state();
+        let parent = AgentId::random();
+        let child = AgentId::random();
+
+        // Register parent with Allow for the tool, capturing prompt_rx.
+        let (parent_entry, mut prompt_rx) = make_entry_with_policy_rx(
+            None,
+            format!("agent-{parent}"),
+            policy_allow_tool("dangerous_tool"),
+        );
+        {
+            let mut reg = state.registry.write().await;
+            reg.register(parent.clone(), format!("tok-{parent}"), parent_entry);
+            add_sub(&mut reg, &child, &parent);
+        }
+
+        super::route_to_superior(
+            &state,
+            &child,
+            "approval-1".into(),
+            "dangerous_tool".into(),
+            serde_json::json!({}),
+            "test reason",
+        )
+        .await;
+
+        let notification = recv_notification(&mut prompt_rx).await;
+        assert!(notification.contains("allow"));
+        assert!(notification.contains("you can approve this request"));
+        assert!(!notification.contains("Upper-level"));
+        assert!(!notification.contains("Operator"));
+    }
+
+    #[tokio::test]
+    async fn notification_shows_upper_superior_with_allow() {
+        let state = make_state();
+        let root = AgentId::random();
+        let parent = AgentId::random();
+        let child = AgentId::random();
+
+        let (parent_entry, mut prompt_rx) = make_entry_with_policy_rx(
+            Some(root.clone()),
+            format!("agent-{parent}"),
+            policy_for_tool("dangerous_tool", PolicyDecision::Ask),
+        );
+        {
+            let mut reg = state.registry.write().await;
+            add_root_with_policy(&mut reg, &root, policy_allow_tool("dangerous_tool"));
+            reg.register(parent.clone(), format!("tok-{parent}"), parent_entry);
+            add_sub(&mut reg, &child, &parent);
+        }
+
+        super::route_to_superior(
+            &state,
+            &child,
+            "approval-2".into(),
+            "dangerous_tool".into(),
+            serde_json::json!({}),
+            "test reason",
+        )
+        .await;
+
+        let notification = recv_notification(&mut prompt_rx).await;
+        assert!(notification.contains("ask"));
+        assert!(notification.contains("Upper-level superior"));
+        assert!(notification.contains(&format!("{root}")));
+    }
+
+    #[tokio::test]
+    async fn notification_shows_root_agent_when_no_allow_in_chain() {
+        let state = make_state();
+        let root = AgentId::random();
+        let parent = AgentId::random();
+        let child = AgentId::random();
+
+        // Both root and parent have Deny for the tool.
+        let (parent_entry, mut prompt_rx) = make_entry_with_policy_rx(
+            Some(root.clone()),
+            format!("agent-{parent}"),
+            policy_for_tool("dangerous_tool", PolicyDecision::Deny),
+        );
+        {
+            let mut reg = state.registry.write().await;
+            add_root_with_policy(
+                &mut reg,
+                &root,
+                policy_for_tool("dangerous_tool", PolicyDecision::Deny),
+            );
+            reg.register(parent.clone(), format!("tok-{parent}"), parent_entry);
+            add_sub(&mut reg, &child, &parent);
+        }
+
+        super::route_to_superior(
+            &state,
+            &child,
+            "approval-3".into(),
+            "dangerous_tool".into(),
+            serde_json::json!({}),
+            "test reason",
+        )
+        .await;
+
+        let notification = recv_notification(&mut prompt_rx).await;
+        assert!(notification.contains("deny"));
+        assert!(notification.contains("No superior has Allow"));
+        assert!(notification.contains(&format!("{root}")));
+        assert!(notification.contains("Operator"));
+    }
+
+    #[tokio::test]
+    async fn no_notification_when_agent_has_no_superior() {
+        let state = make_state();
+        let root = AgentId::random();
+
+        {
+            let mut reg = state.registry.write().await;
+            add_root(&mut reg, &root);
+        }
+
+        super::route_to_superior(
+            &state,
+            &root,
+            "approval-4".into(),
+            "some_tool".into(),
+            serde_json::json!({}),
+            "test reason",
+        )
+        .await;
+
+        // No notification should be sent — function returns early.
+        // We just verify it completes without panic.
+    }
+
+    #[tokio::test]
+    async fn notification_tells_root_superior_it_is_root() {
+        let state = make_state();
+        let root = AgentId::random();
+        let child = AgentId::random();
+
+        // Root is the direct superior with Deny — no upper-level superiors exist.
+        let (root_entry, mut prompt_rx) = make_entry_with_policy_rx(
+            None,
+            format!("agent-{root}"),
+            policy_for_tool("dangerous_tool", PolicyDecision::Deny),
+        );
+        {
+            let mut reg = state.registry.write().await;
+            reg.register(root.clone(), format!("tok-{root}"), root_entry);
+            add_sub(&mut reg, &child, &root);
+        }
+
+        super::route_to_superior(
+            &state,
+            &child,
+            "approval-5".into(),
+            "dangerous_tool".into(),
+            serde_json::json!({}),
+            "test reason",
+        )
+        .await;
+
+        let notification = recv_notification(&mut prompt_rx).await;
+        assert!(notification.contains("deny"));
+        assert!(notification.contains("You are the root agent"));
+        assert!(notification.contains("Only the Operator can approve"));
+        // Should NOT mention "Root agent '<id>'" in third person.
+        assert!(!notification.contains(&format!("Root agent '{root}'")));
     }
 }

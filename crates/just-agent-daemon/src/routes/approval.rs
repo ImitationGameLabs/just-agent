@@ -2,6 +2,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use just_agent_common::approval::ApprovalStatus;
+use just_agent_common::policy::PolicyDecision;
 use just_agent_common::protocol::{
     ApprovalDecisionBody, ApprovalEntry, ListApprovalsResponse, SseEvent,
 };
@@ -106,6 +107,19 @@ pub async fn get_approval(
     Err((StatusCode::NOT_FOUND, "approval not found".into()))
 }
 
+/// Approve or deny a pending approval request.
+///
+/// # Authorization
+///
+/// The caller must be a superior of the agent that owns the approval
+/// (checked via [`AgentRegistry::require_superior`]).
+///
+/// For **approve** decisions, an additional policy gate applies: the caller's
+/// own [`ToolPolicy`] must permit the tool with `PolicyDecision::Allow`.
+/// This prevents a superior from using subordinates as proxies to bypass its
+/// own tool restrictions. The operator identity is exempt from this check.
+///
+/// For **deny** decisions, no policy check is required — any superior may deny.
 pub async fn respond_approval(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
@@ -124,8 +138,35 @@ pub async fn respond_approval(
 
         registry.require_superior(auth.identity(), agent_id)?;
 
+        let info = approvals.get(&id).expect("contains checked above");
+
         let json = match req.decision.as_str() {
             "approve" => {
+                // Policy gate: a superior may only approve if its own policy
+                // allows the tool unilaterally. Operator is exempt.
+                if let crate::auth::Identity::Agent { id: caller_id } = auth.identity() {
+                    let caller_entry = registry.get(caller_id).ok_or((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "caller agent not found in registry".into(),
+                    ))?;
+                    let caller_decision = caller_entry
+                        .agent
+                        .tool_policy
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .decision_for(&info.content.tool_name);
+                    if caller_decision != PolicyDecision::Allow {
+                        return Err((
+                            StatusCode::FORBIDDEN,
+                            format!(
+                                "cannot approve '{}': caller policy is '{caller_decision}' \
+                                 (only 'allow' permits unilateral delegation)",
+                                info.content.tool_name,
+                            ),
+                        ));
+                    }
+                }
+
                 approvals
                     .approve(&id)
                     .map_err(|e| (StatusCode::CONFLICT, e.to_string()))?;

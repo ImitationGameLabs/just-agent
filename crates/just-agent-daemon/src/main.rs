@@ -6,6 +6,9 @@ mod skill_promote;
 mod sse;
 mod state;
 
+#[cfg(test)]
+mod test_helpers;
+
 use anyhow::Result;
 use clap::Parser;
 use state::AppState;

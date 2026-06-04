@@ -26,6 +26,12 @@ impl AuthIdentity {
     pub fn identity(&self) -> &Identity {
         &self.0
     }
+
+    /// Construct an [`AuthIdentity`] for testing.
+    #[cfg(test)]
+    pub(crate) fn test_new(identity: Identity) -> Self {
+        Self(identity)
+    }
 }
 
 impl FromRequestParts<SharedState> for AuthIdentity {

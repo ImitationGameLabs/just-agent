@@ -1,6 +1,9 @@
 mod agent;
 mod restore;
 pub use restore::restore_sessions;
+#[cfg(test)]
+pub(crate) mod approval;
+#[cfg(not(test))]
 mod approval;
 mod context;
 mod message;
