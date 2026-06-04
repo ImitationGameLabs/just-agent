@@ -211,14 +211,7 @@ just-agent interrupt $AGENT_ID
 
 ## Environment variables
 
-| Variable                    | Purpose                                           |
-| --------------------------- | ------------------------------------------------- |
-| `JUST_AGENT_AUTH_TOKEN`     | Auth token (required, provided by daemon startup) |
-| `JUST_AGENT_DAEMON_URL`     | Daemon address (default `http://127.0.0.1:3000`)  |
-| `JUST_LLM_PROVIDER`         | LLM provider (e.g. `deepseek`)                    |
-| `JUST_LLM_MODEL`            | Model name (e.g. `deepseek-v4-flash`)             |
-| `JUST_LLM_DEEPSEEK_API_KEY` | API key for DeepSeek provider                     |
-| `RUST_LOG`                  | Tracing filter (e.g. `just_agent_client=debug`)   |
+`JUST_AGENT_AUTH_TOKEN` (required) and `JUST_AGENT_DAEMON_URL` (default `http://127.0.0.1:3000`) are the primary variables for headless CLI usage. For the complete reference including LLM provider configuration and agent tuning parameters, see [env-reference.md](env-reference.md).
 
 ## Client library
 
