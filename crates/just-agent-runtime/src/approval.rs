@@ -299,6 +299,25 @@ pub fn approval_result_json(id: &str, tool_name: &str) -> String {
     .unwrap_or_else(|_| r#"{"ok":true,"pending_approval":true}"#.to_owned())
 }
 
+/// Format approval notifications into a `[system]` message for LLM context injection.
+pub(super) fn format_approval_notifications(notifications: &[ApprovalNotification]) -> String {
+    let mut parts = Vec::new();
+    for n in notifications {
+        match n {
+            ApprovalNotification::Approved { id } => {
+                parts.push(format!(
+                    "Approval {id} has been approved. \
+                     Call approval_redeem with this id to execute."
+                ));
+            }
+            ApprovalNotification::Denied { id, reason } => {
+                parts.push(format!("Approval {id} has been denied: {reason}"));
+            }
+        }
+    }
+    format!("[system]\n{}", parts.join("\n"))
+}
+
 #[derive(Serialize)]
 struct ApprovalDeferredResponse {
     ok: bool,

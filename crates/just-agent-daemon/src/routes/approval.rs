@@ -216,3 +216,279 @@ pub async fn respond_approval(
 
     Err((StatusCode::NOT_FOUND, "approval not found".into()))
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::Json;
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use just_agent_common::agentid::AgentId;
+    use just_agent_common::policy::{PolicyDecision, ToolPolicy};
+    use just_agent_common::protocol::ApprovalDecisionBody;
+    use std::collections::BTreeMap;
+
+    use crate::auth::{AuthIdentity, Identity};
+    use crate::test_helpers::*;
+
+    // -- Approval policy gate: respond_approval --
+
+    #[tokio::test]
+    async fn approval_policy_gate_allows_when_superior_has_allow() {
+        let state = make_state();
+        let parent = AgentId::random();
+        let child = AgentId::random();
+
+        {
+            let mut reg = state.registry.write().await;
+            add_root_with_policy(&mut reg, &parent, policy_allow_tool("dangerous_tool"));
+            add_sub(&mut reg, &child, &parent);
+        }
+
+        let approval_id =
+            enqueue_committed_approval(&state.registry.read().await, &child, "dangerous_tool")
+                .await;
+
+        let result = super::respond_approval(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: parent }),
+            Path(approval_id),
+            Json(ApprovalDecisionBody {
+                decision: "approve".into(),
+                reason: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn approval_policy_gate_rejects_when_superior_has_ask() {
+        let state = make_state();
+        let parent = AgentId::random();
+        let child = AgentId::random();
+
+        {
+            let mut reg = state.registry.write().await;
+            add_root_with_policy(
+                &mut reg,
+                &parent,
+                policy_for_tool("dangerous_tool", PolicyDecision::Ask),
+            );
+            add_sub(&mut reg, &child, &parent);
+        }
+
+        let approval_id =
+            enqueue_committed_approval(&state.registry.read().await, &child, "dangerous_tool")
+                .await;
+
+        let result = super::respond_approval(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: parent }),
+            Path(approval_id),
+            Json(ApprovalDecisionBody {
+                decision: "approve".into(),
+                reason: None,
+            }),
+        )
+        .await;
+
+        match result {
+            Err((status, msg)) => {
+                assert_eq!(status, StatusCode::FORBIDDEN);
+                assert!(msg.contains("dangerous_tool"));
+                assert!(msg.contains("ask"));
+            }
+            Ok(_) => panic!("expected FORBIDDEN for superior with Ask policy"),
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_policy_gate_rejects_when_superior_has_deny() {
+        let state = make_state();
+        let parent = AgentId::random();
+        let child = AgentId::random();
+
+        {
+            let mut reg = state.registry.write().await;
+            add_root_with_policy(
+                &mut reg,
+                &parent,
+                policy_for_tool("dangerous_tool", PolicyDecision::Deny),
+            );
+            add_sub(&mut reg, &child, &parent);
+        }
+
+        let approval_id =
+            enqueue_committed_approval(&state.registry.read().await, &child, "dangerous_tool")
+                .await;
+
+        let result = super::respond_approval(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: parent }),
+            Path(approval_id),
+            Json(ApprovalDecisionBody {
+                decision: "approve".into(),
+                reason: None,
+            }),
+        )
+        .await;
+
+        match result {
+            Err((status, msg)) => {
+                assert_eq!(status, StatusCode::FORBIDDEN);
+                assert!(msg.contains("deny"));
+            }
+            Ok(_) => panic!("expected FORBIDDEN for superior with Deny policy"),
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_policy_gate_rejects_when_superior_has_classify() {
+        let state = make_state();
+        let parent = AgentId::random();
+        let child = AgentId::random();
+
+        {
+            let mut reg = state.registry.write().await;
+            add_root_with_policy(
+                &mut reg,
+                &parent,
+                policy_for_tool("dangerous_tool", PolicyDecision::Classify),
+            );
+            add_sub(&mut reg, &child, &parent);
+        }
+
+        let approval_id =
+            enqueue_committed_approval(&state.registry.read().await, &child, "dangerous_tool")
+                .await;
+
+        let result = super::respond_approval(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: parent }),
+            Path(approval_id),
+            Json(ApprovalDecisionBody {
+                decision: "approve".into(),
+                reason: None,
+            }),
+        )
+        .await;
+
+        match result {
+            Err((status, msg)) => {
+                assert_eq!(status, StatusCode::FORBIDDEN);
+                assert!(msg.contains("classify"));
+            }
+            Ok(_) => panic!("expected FORBIDDEN for superior with Classify policy"),
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_policy_gate_operator_exempt() {
+        let state = make_state();
+        let child = AgentId::random();
+
+        {
+            let mut reg = state.registry.write().await;
+            add_root(&mut reg, &child);
+        }
+
+        let approval_id =
+            enqueue_committed_approval(&state.registry.read().await, &child, "dangerous_tool")
+                .await;
+
+        let result = super::respond_approval(
+            State(state),
+            AuthIdentity::test_new(Identity::Operator),
+            Path(approval_id),
+            Json(ApprovalDecisionBody {
+                decision: "approve".into(),
+                reason: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn approval_deny_always_allowed_regardless_of_policy() {
+        let state = make_state();
+        let parent = AgentId::random();
+        let child = AgentId::random();
+
+        {
+            let mut reg = state.registry.write().await;
+            add_root_with_policy(
+                &mut reg,
+                &parent,
+                policy_for_tool("dangerous_tool", PolicyDecision::Deny),
+            );
+            add_sub(&mut reg, &child, &parent);
+        }
+
+        let approval_id =
+            enqueue_committed_approval(&state.registry.read().await, &child, "dangerous_tool")
+                .await;
+
+        let result = super::respond_approval(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: parent }),
+            Path(approval_id),
+            Json(ApprovalDecisionBody {
+                decision: "deny".into(),
+                reason: Some("test deny".into()),
+            }),
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn approval_policy_gate_checks_specific_tool_not_any_allow() {
+        let state = make_state();
+        let parent = AgentId::random();
+        let child = AgentId::random();
+
+        let mut tools = BTreeMap::new();
+        tools.insert("safe_tool".to_string(), PolicyDecision::Allow);
+        tools.insert("dangerous_tool".to_string(), PolicyDecision::Ask);
+        let policy = ToolPolicy {
+            default: PolicyDecision::Ask,
+            tools,
+        };
+
+        {
+            let mut reg = state.registry.write().await;
+            add_root_with_policy(&mut reg, &parent, policy);
+            add_sub(&mut reg, &child, &parent);
+        }
+
+        let approval_id =
+            enqueue_committed_approval(&state.registry.read().await, &child, "dangerous_tool")
+                .await;
+
+        let result = super::respond_approval(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: parent }),
+            Path(approval_id),
+            Json(ApprovalDecisionBody {
+                decision: "approve".into(),
+                reason: None,
+            }),
+        )
+        .await;
+
+        match result {
+            Err((status, msg)) => {
+                assert_eq!(status, StatusCode::FORBIDDEN);
+                assert!(msg.contains("dangerous_tool"));
+                assert!(msg.contains("ask"));
+            }
+            Ok(_) => {
+                panic!("expected FORBIDDEN — gate must check the specific tool, not any Allow")
+            }
+        }
+    }
+}

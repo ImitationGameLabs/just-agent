@@ -1,20 +1,115 @@
 //! Agent round execution loop.
 
-use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::approval::ApprovalNotification;
+use crate::approval::format_approval_notifications;
 use crate::context::{AgenticContext, compose_context};
 use crate::event::{AgentEvent, AgentOutcome};
 use crate::session::AgentContext;
 use just_llm_client::types::chat::{
-    ChatCompletionChunkToolCall, ChatMessage, ChatToolCall, FunctionCall, StreamOptions,
-    ToolCallsMessage, ToolChoice, ToolChoiceMode, ToolType,
+    ChatMessage, ChatToolCall, StreamOptions, ToolCallsMessage, ToolChoice, ToolChoiceMode,
 };
+
+use crate::stream_accumulator::ToolCallAccumulator;
+
+// ---------------------------------------------------------------------------
+// Stream consumption types
+// ---------------------------------------------------------------------------
+
+/// Outcome of consuming an LLM response stream.
+enum StreamOutcome {
+    /// The stream was cancelled mid-stream.
+    Cancelled,
+    /// The stream completed normally.
+    Completed(StreamConsumed),
+}
+
+/// Data accumulated from a completed LLM response stream.
+struct StreamConsumed {
+    content: String,
+    reasoning: String,
+    tool_calls: Vec<ChatToolCall>,
+    usage: Option<just_llm_client::types::chat::Usage>,
+}
+
+/// Consume an SSE stream, accumulating content, reasoning, tool calls, and usage.
+///
+/// Takes ownership of the stream and pins it internally.
+/// Returns `Cancelled` if the cancellation token fires mid-stream.
+async fn consume_stream(
+    stream: just_llm_client::ChatCompletionStream,
+    tx: &tokio::sync::mpsc::Sender<AgentEvent>,
+    cancel: &CancellationToken,
+) -> StreamOutcome {
+    let mut content = String::new();
+    let mut reasoning = String::new();
+    let mut tool_acc = ToolCallAccumulator::new();
+    let mut response_usage: Option<just_llm_client::types::chat::Usage> = None;
+
+    tokio::pin!(stream);
+    loop {
+        tokio::select! {
+            chunk_result = stream.next() => {
+                let chunk = match chunk_result {
+                    Some(Ok(c)) => c,
+                    Some(Err(e)) => {
+                        warn!("stream chunk error: {e:#}");
+                        break;
+                    }
+                    None => break,
+                };
+                let choice = match chunk.choices.first() {
+                    Some(c) => c,
+                    None => continue,
+                };
+
+                if let Some(delta) = &choice.delta.content {
+                    content.push_str(delta);
+                    tx.send(AgentEvent::AssistantContentDelta { delta: delta.clone() })
+                        .await
+                        .ok();
+                }
+
+                if let Some(delta) = &choice.delta.reasoning_content {
+                    reasoning.push_str(delta);
+                    tx.send(AgentEvent::ReasoningDelta { delta: delta.clone() })
+                        .await
+                        .ok();
+                }
+
+                if let Some(deltas) = &choice.delta.tool_calls {
+                    for tc in deltas {
+                        tool_acc.push(tc);
+                    }
+                }
+
+                if let Some(usage) = chunk.usage.clone() {
+                    response_usage = Some(usage);
+                }
+            }
+            _ = cancel.cancelled() => {
+                tracing::info!("LLM stream cancelled mid-stream");
+                return StreamOutcome::Cancelled;
+            }
+        }
+    }
+
+    StreamOutcome::Completed(StreamConsumed {
+        content,
+        reasoning,
+        tool_calls: tool_acc.finish(),
+        usage: response_usage,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Agent round loop
+// ---------------------------------------------------------------------------
 
 /// Run the agent round loop until completion or max rounds.
 pub async fn run_agent_rounds(
@@ -25,7 +120,7 @@ pub async fn run_agent_rounds(
     let context_window = ctx.config.context_window_tokens;
 
     for _round in 0..ctx.config.max_tool_rounds {
-        // Inject approval notifications into context.
+        // -- Approval notification injection --
         let notifications = ctx.approvals.lock().await.drain_notifications();
         if !notifications.is_empty() {
             let msg = format_approval_notifications(&notifications);
@@ -35,6 +130,7 @@ pub async fn run_agent_rounds(
                 .push_turn(vec![ChatMessage::user(&msg)]);
         }
 
+        // -- Context composition and LLM request --
         let messages = compose_context(ctx.store.clone()).await;
 
         let mut request = ctx
@@ -43,6 +139,7 @@ pub async fn run_agent_rounds(
             .with_tools(ctx.store.lock().await.tool_definitions().to_vec())
             .with_tool_choice(ToolChoice::Mode(ToolChoiceMode::Auto));
 
+        // -- Token budget check --
         let prompt_tokens = {
             let estimate = estimate_prompt_tokens(&ctx.client, &request);
             tokio::select! {
@@ -57,7 +154,6 @@ pub async fn run_agent_rounds(
             }
         };
 
-        // Two-phase threshold check: progressive warnings, then auto-compact.
         if prompt_tokens > 0 {
             let effective_budget = ctx.config.effective_budget();
             let usage_pct = prompt_tokens * 100 / effective_budget;
@@ -82,7 +178,7 @@ pub async fn run_agent_rounds(
             }
         }
 
-        // Enable streaming
+        // -- Stream request with retry --
         request.stream = Some(true);
         request.stream_options = Some(StreamOptions {
             include_usage: Some(true),
@@ -131,88 +227,44 @@ pub async fn run_agent_rounds(
         }
         let stream = stream_result?;
 
-        let mut content = String::new();
-        let mut reasoning = String::new();
-        let mut tool_acc = ToolCallAccumulator::new();
-        let mut response_usage: Option<just_llm_client::types::chat::Usage> = None;
+        // -- Stream consumption --
+        let consumed = match consume_stream(stream, tx, &ctx.cancel).await {
+            StreamOutcome::Cancelled => return Ok(AgentOutcome::Cancelled),
+            StreamOutcome::Completed(c) => c,
+        };
 
-        tokio::pin!(stream);
-        loop {
-            tokio::select! {
-                chunk_result = stream.next() => {
-                    let chunk = match chunk_result {
-                        Some(Ok(c)) => c,
-                        Some(Err(e)) => {
-                            warn!("stream chunk error: {e:#}");
-                            break;
-                        }
-                        None => break,
-                    };
-                    let choice = match chunk.choices.first() {
-                        Some(c) => c,
-                        None => continue,
-                    };
-
-                    if let Some(delta) = &choice.delta.content {
-                        content.push_str(delta);
-                        tx.send(AgentEvent::AssistantContentDelta { delta: delta.clone() })
-                            .await
-                            .ok();
-                    }
-
-                    if let Some(delta) = &choice.delta.reasoning_content {
-                        reasoning.push_str(delta);
-                        tx.send(AgentEvent::ReasoningDelta { delta: delta.clone() })
-                            .await
-                            .ok();
-                    }
-
-                    if let Some(deltas) = &choice.delta.tool_calls {
-                        for tc in deltas {
-                            tool_acc.push(tc);
-                        }
-                    }
-
-                    if let Some(usage) = chunk.usage.clone() {
-                        response_usage = Some(usage);
-                    }
-                }
-                _ = ctx.cancel.cancelled() => {
-                    tracing::info!("LLM stream cancelled mid-stream");
-                    return Ok(AgentOutcome::Cancelled);
-                }
-            }
-        }
-
-        if let Some(usage) = response_usage {
+        // -- Post-stream: usage accumulation and final content check --
+        if let Some(usage) = consumed.usage {
             ctx.store.lock().await.accumulate_usage(&usage);
         }
 
-        let tool_calls = tool_acc.finish();
-        if tool_calls.is_empty() {
-            if !content.is_empty() {
-                return Ok(AgentOutcome::Finished { content });
+        if consumed.tool_calls.is_empty() {
+            if !consumed.content.is_empty() {
+                return Ok(AgentOutcome::Finished {
+                    content: consumed.content,
+                });
             }
             bail!("assistant returned neither tool calls nor final content");
         }
 
+        // -- Tool execution loop --
         let mut turn_messages = vec![ChatMessage::ToolCalls(ToolCallsMessage {
             role: "assistant".into(),
-            content: if content.is_empty() {
+            content: if consumed.content.is_empty() {
                 None
             } else {
-                Some(content)
+                Some(consumed.content)
             },
             name: None,
-            tool_calls: tool_calls.clone(),
-            reasoning_content: if reasoning.is_empty() {
+            tool_calls: consumed.tool_calls.clone(),
+            reasoning_content: if consumed.reasoning.is_empty() {
                 None
             } else {
-                Some(reasoning)
+                Some(consumed.reasoning)
             },
         })];
 
-        for call in tool_calls {
+        for call in consumed.tool_calls {
             tx.send(AgentEvent::ToolCall {
                 name: call.function.name.clone(),
                 args: call.function.arguments.clone(),
@@ -280,6 +332,10 @@ pub async fn run_agent_rounds(
     Ok(AgentOutcome::MaxRoundsExceeded)
 }
 
+// ---------------------------------------------------------------------------
+// Token estimation
+// ---------------------------------------------------------------------------
+
 /// Estimate prompt tokens via the ChatClient pipeline.
 async fn estimate_prompt_tokens(
     client: &just_llm_client::ChatClient,
@@ -292,6 +348,10 @@ async fn estimate_prompt_tokens(
     let estimate = estimator.estimate_tokens(&prepared).await?;
     Ok(estimate.prompt_tokens as usize)
 }
+
+// ---------------------------------------------------------------------------
+// Context compaction
+// ---------------------------------------------------------------------------
 
 /// Summarize turns to bring context within budget.
 ///
@@ -435,83 +495,4 @@ pub async fn compact_if_needed(ctx: &AgentContext) -> Result<bool> {
 
     info!(total_tokens, effective_budget, "pre-loop compaction needed");
     summarize_and_evict(ctx).await
-}
-
-fn format_approval_notifications(notifications: &[ApprovalNotification]) -> String {
-    let mut parts = Vec::new();
-    for n in notifications {
-        match n {
-            ApprovalNotification::Approved { id } => {
-                parts.push(format!(
-                    "Approval {id} has been approved. \
-                     Call approval_redeem with this id to execute."
-                ));
-            }
-            ApprovalNotification::Denied { id, reason } => {
-                parts.push(format!("Approval {id} has been denied: {reason}"));
-            }
-        }
-    }
-    format!("[system]\n{}", parts.join("\n"))
-}
-
-// ---------------------------------------------------------------------------
-// Streaming tool-call accumulator
-// ---------------------------------------------------------------------------
-
-struct AccumulatedToolCall {
-    id: Option<String>,
-    kind: Option<ToolType>,
-    name: Option<String>,
-    arguments: String,
-}
-
-struct ToolCallAccumulator {
-    calls: BTreeMap<u32, AccumulatedToolCall>,
-}
-
-impl ToolCallAccumulator {
-    fn new() -> Self {
-        Self {
-            calls: BTreeMap::new(),
-        }
-    }
-
-    fn push(&mut self, delta: &ChatCompletionChunkToolCall) {
-        let index = delta.index.unwrap_or(0);
-        let entry = self.calls.entry(index).or_insert(AccumulatedToolCall {
-            id: None,
-            kind: None,
-            name: None,
-            arguments: String::new(),
-        });
-        if let Some(id) = &delta.id {
-            entry.id = Some(id.clone());
-        }
-        if let Some(kind) = &delta.kind {
-            entry.kind = Some(kind.clone());
-        }
-        if let Some(func) = &delta.function {
-            if let Some(name) = &func.name {
-                entry.name = Some(name.clone());
-            }
-            if let Some(args) = &func.arguments {
-                entry.arguments.push_str(args);
-            }
-        }
-    }
-
-    fn finish(self) -> Vec<ChatToolCall> {
-        self.calls
-            .into_values()
-            .map(|acc| ChatToolCall {
-                id: acc.id.unwrap_or_default(),
-                kind: acc.kind.unwrap_or(ToolType::Function),
-                function: FunctionCall {
-                    name: acc.name.unwrap_or_default(),
-                    arguments: acc.arguments,
-                },
-            })
-            .collect()
-    }
 }

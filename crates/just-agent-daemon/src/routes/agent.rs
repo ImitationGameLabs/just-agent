@@ -30,6 +30,7 @@ use crate::bridge::bridge_task;
 use crate::state::{Agent, AgentEntry, AgentState, AgentSummary, SharedState};
 
 pub(crate) struct SpawnArgs {
+    pub agent_id: AgentId,
     pub store: Arc<tokio::sync::Mutex<ContextStore>>,
     pub approvals: Arc<tokio::sync::Mutex<ApprovalStore>>,
     pub session_dir: PathBuf,
@@ -41,6 +42,16 @@ pub(crate) struct SpawnArgs {
     pub env: HashMap<String, String>,
     pub shared_state: SharedState,
     pub tool_policy: Arc<std::sync::RwLock<ToolPolicy>>,
+}
+
+impl SpawnArgs {
+    /// Build the standard env map for an agent.
+    pub fn default_env(agent_id: &AgentId, auth_token: &str) -> HashMap<String, String> {
+        let mut env = HashMap::new();
+        env.insert("JUST_AGENT_ID".into(), agent_id.to_string());
+        env.insert("JUST_AGENT_AUTH_TOKEN".into(), auth_token.to_owned());
+        env
+    }
 }
 
 /// Reconstruct runtime resources shared by create and restore.
@@ -90,15 +101,9 @@ pub(crate) async fn spawn_agent(args: SpawnArgs) -> anyhow::Result<Agent> {
         agent_tx,
     ));
     let state = Arc::new(AtomicU8::new(AgentState::IDLE));
-    // TODO: extract agent_id from SpawnArgs as a required field so the type system
-    // enforces this invariant instead of relying on callers to set config.agent_id.
-    let agent_id = args
-        .config
-        .agent_id
-        .clone()
-        .expect("agent_id must be set before spawn");
+    let agent_id = args.agent_id;
     let bridge_handle = tokio::spawn(bridge_task(
-        agent_id,
+        agent_id.clone(),
         agent_rx,
         args.events_tx.clone(),
         args.shutdown_cancel.clone(),
@@ -142,47 +147,23 @@ pub async fn create_agent(
             .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
     };
     config.agent_id = Some(id.clone());
-    let mut env = HashMap::new();
-    env.insert("JUST_AGENT_ID".into(), id.to_string());
-    env.insert("JUST_AGENT_AUTH_TOKEN".into(), auth_token.clone());
+    let env = SpawnArgs::default_env(&id, &auth_token);
 
-    let mut tool_policy = tool_policy_from_env();
-
-    // Subagent: validate supervisor and delegation constraints.
-    if let Some(ref supervisor_id) = req.created_by {
+    // Subagent: validate supervisor and delegation constraints, or use default policy.
+    let tool_policy = if let Some(ref supervisor_id) = req.created_by {
         let registry = state.registry.read().await;
-        let supervisor = registry.require_supervisor(auth.identity(), supervisor_id)?;
-
-        let supervisor_perms = &supervisor.agent.config.permissions;
-        if supervisor_perms.max_depth == 0 {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "supervisor has no remaining delegation depth".into(),
-            ));
-        }
-        let subagent_ws = config.workspace_root.canonicalize().map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                format!("invalid workspace_root: {e}"),
-            )
-        })?;
-        if !subagent_ws.starts_with(&supervisor_perms.workspace_root) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "workspace_root must be within supervisor's workspace".into(),
-            ));
-        }
-
+        let (permissions, policy) = validate_subagent_request(
+            &registry,
+            auth.identity(),
+            supervisor_id,
+            &config.workspace_root,
+        )?;
         config.created_by = Some(supervisor_id.clone());
-        config.permissions = PermissionProfile::subagent(subagent_ws, supervisor_perms.max_depth);
-        tool_policy = supervisor
-            .agent
-            .tool_policy
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-    }
-
+        config.permissions = permissions;
+        policy
+    } else {
+        tool_policy_from_env()
+    };
     let tool_policy = Arc::new(std::sync::RwLock::new(tool_policy));
 
     let store = Arc::new(tokio::sync::Mutex::new(ContextStore::new()));
@@ -219,6 +200,7 @@ pub async fn create_agent(
     let log_depth = config.permissions.max_depth;
     let (events_tx, _) = broadcast::channel(256);
     let agent = spawn_agent(SpawnArgs {
+        agent_id: id.clone(),
         store,
         approvals,
         session_dir,
@@ -350,4 +332,46 @@ pub async fn interrupt_agent(
     };
     entry.agent.cancel.cancel();
     Ok(StatusCode::ACCEPTED)
+}
+
+/// Validate supervisor constraints for a subagent creation request.
+///
+/// Returns `(PermissionProfile, ToolPolicy)` for the new subagent if valid.
+fn validate_subagent_request(
+    registry: &crate::state::AgentRegistry,
+    identity: &crate::auth::Identity,
+    supervisor_id: &AgentId,
+    workspace_root: &std::path::Path,
+) -> Result<(PermissionProfile, ToolPolicy), (StatusCode, String)> {
+    let supervisor = registry.require_supervisor(identity, supervisor_id)?;
+
+    let supervisor_perms = &supervisor.agent.config.permissions;
+    if supervisor_perms.max_depth == 0 {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "supervisor has no remaining delegation depth".into(),
+        ));
+    }
+    let subagent_ws = workspace_root.canonicalize().map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid workspace_root: {e}"),
+        )
+    })?;
+    if !subagent_ws.starts_with(&supervisor_perms.workspace_root) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "workspace_root must be within supervisor's workspace".into(),
+        ));
+    }
+
+    let permissions = PermissionProfile::subagent(subagent_ws, supervisor_perms.max_depth);
+    let tool_policy = supervisor
+        .agent
+        .tool_policy
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+
+    Ok((permissions, tool_policy))
 }

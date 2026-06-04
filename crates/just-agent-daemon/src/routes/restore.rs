@@ -176,13 +176,12 @@ async fn restore_one(
     let (events_tx, _) = broadcast::channel(256);
 
     let auth_token = uuid::Uuid::new_v4().to_string();
-    let mut env = HashMap::new();
-    env.insert("JUST_AGENT_ID".into(), p.agent_id.to_string());
-    env.insert("JUST_AGENT_AUTH_TOKEN".into(), auth_token.clone());
+    let env = SpawnArgs::default_env(&p.agent_id, &auth_token);
 
     let tool_policy = Arc::new(std::sync::RwLock::new(tool_policy));
 
     let agent = spawn_agent(SpawnArgs {
+        agent_id: p.agent_id.clone(),
         store,
         approvals,
         session_dir: sess.session_dir,
