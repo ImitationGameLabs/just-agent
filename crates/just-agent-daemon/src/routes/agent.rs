@@ -274,7 +274,7 @@ pub async fn delete_agent(
         let mut registry = state.registry.write().await;
         registry.require_superior(auth.identity(), &id)?;
         let Some(entry) = registry.get(&id) else {
-            return Ok(StatusCode::NOT_FOUND);
+            return Err((StatusCode::NOT_FOUND, "agent not found".into()));
         };
         // Agent must be idle and have no subagents.
         if entry.agent.get_state() != AgentState::Idle {
@@ -328,7 +328,7 @@ pub async fn interrupt_agent(
     let registry = state.registry.read().await;
     registry.require_superior(auth.identity(), &id)?;
     let Some(entry) = registry.get(&id) else {
-        return Ok(StatusCode::NOT_FOUND);
+        return Err((StatusCode::NOT_FOUND, "agent not found".into()));
     };
     entry.agent.cancel.cancel();
     Ok(StatusCode::ACCEPTED)
