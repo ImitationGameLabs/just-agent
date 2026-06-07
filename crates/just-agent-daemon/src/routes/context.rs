@@ -30,10 +30,13 @@ pub async fn agent_status(
         .take(20)
         .cloned()
         .collect::<Vec<_>>();
+    let snap = state.token_budget.snapshot();
     Ok(Json(AgentStatusResponse {
         state: entry.agent.get_state(),
         context,
         recent_retries,
+        token_budget: snap.budget,
+        token_consumed: snap.consumed,
     }))
 }
 

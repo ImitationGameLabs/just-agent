@@ -9,4 +9,5 @@ pub mod retry;
 pub mod runner;
 pub mod session;
 mod stream_accumulator;
+pub mod token_budget;
 pub mod tools;

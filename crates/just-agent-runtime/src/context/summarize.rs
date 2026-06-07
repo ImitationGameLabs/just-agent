@@ -46,13 +46,16 @@ impl ContextSummarizer {
     }
 
     /// Summarize the given turns via an LLM call.
+    ///
+    /// Returns `(Summary, Option<Usage>)` — the summary text and the exact
+    /// token usage from the provider response (for budget tracking).
     pub async fn summarize(
         &self,
         turns: &[Turn],
         existing_summary: Option<&str>,
         available: usize,
         client: &ChatClient,
-    ) -> Result<Summary> {
+    ) -> Result<(Summary, Option<just_llm_client::types::chat::Usage>)> {
         let mut messages: Vec<ChatMessage> = Vec::new();
         let mut input_budget = available.saturating_sub(self.max_tokens as usize);
 
@@ -80,6 +83,7 @@ impl ContextSummarizer {
         let request = client.request(messages).with_max_tokens(self.max_tokens);
 
         let response = client.create_chat_completion(request).await?;
+        let usage = response.usage.clone();
 
         let text = match response
             .first_choice_content()
@@ -91,10 +95,13 @@ impl ContextSummarizer {
         };
         let estimated_tokens = text.chars().count() / 4 + 16;
 
-        Ok(Summary {
-            text,
-            estimated_tokens,
-            source_turns: turns_used,
-        })
+        Ok((
+            Summary {
+                text,
+                estimated_tokens,
+                source_turns: turns_used,
+            },
+            usage,
+        ))
     }
 }

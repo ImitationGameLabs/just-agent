@@ -96,6 +96,8 @@ pub(crate) async fn spawn_agent(args: SpawnArgs) -> anyhow::Result<Agent> {
     args.store.lock().await.set_pinned_budget(pinned_budget);
     let summarizer = ContextSummarizer::new(args.config.summary_max_tokens);
 
+    let token_budget = args.shared_state.token_budget.clone();
+
     let ctx = AgentContext {
         client,
         store: args.store.clone(),
@@ -105,6 +107,7 @@ pub(crate) async fn spawn_agent(args: SpawnArgs) -> anyhow::Result<Agent> {
         config: args.config.clone(),
         session_dir: Some(args.session_dir.clone()),
         cancel: cancel.clone(),
+        token_budget: token_budget.clone(),
     };
 
     let agent_handle = tokio::spawn(session::agent_task(

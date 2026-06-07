@@ -79,7 +79,7 @@ impl SkillPromoteStore {
     ///
     /// Validates that the request exists and is still `Pending`. Returns a
     /// clone of the record for the caller to perform file I/O (consistency
-    /// check + promotion). The caller must call [`commit_approved`] after
+    /// check + promotion). The caller must call [`Self::commit_approved`] after
     /// the I/O succeeds to finalize the state transition.
     ///
     /// This two-step approach prevents orphaned `Approved` records when

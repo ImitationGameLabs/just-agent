@@ -9,6 +9,7 @@ use just_agent_client::{DaemonClient, PromoteDecision};
 use just_agent_common::agentid::AgentId;
 use just_agent_common::policy::PolicyDecision;
 use just_agent_common::promote::{NO_REASON_PROVIDED, SkillPromoteStatus};
+use just_agent_common::tokens::parse_token_amount;
 
 /// Returns the deny reason string, or the placeholder when absent.
 /// Only meaningful when `status == Denied`.
@@ -17,8 +18,8 @@ fn deny_reason_display(reason: &Option<String>) -> &str {
 }
 
 use args::{
-    AgentCommand, ApprovalCommand, Cli, Commands, PolicyCommand, PromoteRequestCommand,
-    SkillCommand,
+    AgentCommand, ApprovalCommand, BudgetCommand, Cli, Commands, PolicyCommand,
+    PromoteRequestCommand, SkillCommand,
 };
 
 fn build_client() -> DaemonClient {
@@ -301,6 +302,35 @@ async fn main() -> Result<()> {
                     .respond_promote_request(&id, PromoteDecision::Deny, reason.as_deref())
                     .await?;
                 println!("Denied.");
+            }
+        },
+        Commands::Budget(cmd) => match cmd {
+            BudgetCommand::Get => {
+                let client = build_client();
+                let resp = client.get_token_budget().await?;
+                println!("{}", resp.format_display());
+            }
+            BudgetCommand::Increase(args) => {
+                let amount = parse_token_amount(&args.amount).map_err(|e| anyhow::anyhow!(e))?;
+                let delta = i64::try_from(amount)
+                    .map_err(|_| anyhow::anyhow!("token amount {amount} exceeds maximum delta"))?;
+                let client = build_client();
+                let resp = client.adjust_token_budget(delta).await?;
+                println!("Budget increased. {}", resp.format_display());
+            }
+            BudgetCommand::Decrease(args) => {
+                let amount = parse_token_amount(&args.amount).map_err(|e| anyhow::anyhow!(e))?;
+                let delta = i64::try_from(amount)
+                    .map_err(|_| anyhow::anyhow!("token amount {amount} exceeds maximum delta"))?;
+                let client = build_client();
+                let resp = client.adjust_token_budget(-delta).await?;
+                println!("Budget decreased. {}", resp.format_display());
+            }
+            BudgetCommand::Set(args) => {
+                let value = parse_token_amount(&args.amount).map_err(|e| anyhow::anyhow!(e))?;
+                let client = build_client();
+                let resp = client.set_token_budget(value).await?;
+                println!("Budget set. {}", resp.format_display());
             }
         },
     }

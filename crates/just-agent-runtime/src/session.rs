@@ -28,6 +28,9 @@ pub struct AgentContext {
     pub session_dir: Option<PathBuf>,
     /// Cancellation signal for graceful interruption.
     pub cancel: CancellationToken,
+    /// Daemon-wide token budget shared by all agents.
+    /// Cloned from `AppState` — same underlying Arc counters across all agents.
+    pub token_budget: crate::token_budget::TokenBudget,
 }
 
 impl AgentContext {
@@ -148,6 +151,14 @@ pub async fn run_and_report(
             ctx.persist().await;
             agent_tx.send(AgentEvent::Cancelled).await.ok();
             Some(outcome)
+        }
+        Ok(AgentOutcome::TokenBudgetExceeded { consumed, budget }) => {
+            ctx.persist().await;
+            agent_tx
+                .send(AgentEvent::TokenBudgetExceeded { consumed, budget })
+                .await
+                .ok();
+            Some(AgentOutcome::TokenBudgetExceeded { consumed, budget })
         }
         Err(e) => {
             agent_tx

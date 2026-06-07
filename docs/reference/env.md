@@ -35,6 +35,7 @@ Runtime tuning parameters. All are optional with sensible defaults.
 | `JUST_AGENT_MAX_RETRIES`           | `3`                             | —                                                      | Maximum retries for LLM API calls.                                                                                                                                                                                                                                |
 | `JUST_AGENT_RETRY_BASE_DELAY_SECS` | `1`                             | > 0                                                    | Base delay in seconds for exponential retry backoff.                                                                                                                                                                                                              |
 | `JUST_AGENT_ALLOW_TOOLS`           | _(unset — uses default policy)_ | Comma-separated tool names                             | Debug override: comma-separated list of tool names to force-allow. Disables `Classify` behavior for `shell_session_exec`; all unlisted tools default to `Ask`. Not a full policy language. Only affects root agents. Subagents inherit their supervisor's policy. |
+| `JUST_AGENT_TOKEN_BUDGET_WARNINGS` | `80,95`                         | Comma-separated `1`–`99`, sorted ascending, ≥ 1 value  | Token budget usage thresholds (percentage) at which the agent receives a warning message.                                                                                                                                                                         |
 
 Source: [`crates/just-agent-runtime/src/config.rs`](../../crates/just-agent-runtime/src/config.rs).
 
@@ -45,6 +46,7 @@ Some variables have cross-validation rules enforced at startup:
 - `OUTPUT_RESERVE_TOKENS` must be strictly less than `CONTEXT_WINDOW_TOKENS`.
 - `SUMMARY_MAX_TOKENS` must not exceed the pinned budget, calculated as `(CONTEXT_WINDOW_TOKENS − OUTPUT_RESERVE_TOKENS) × PINNED_BUDGET_RATIO`.
 - `CONTEXT_THRESHOLDS` must have at least 2 values, sorted ascending, each in `1`–`99`.
+- `TOKEN_BUDGET_WARNINGS` must have at least 1 value, sorted ascending, each in `1`–`99`.
 
 ## Daemon
 

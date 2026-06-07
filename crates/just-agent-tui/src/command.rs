@@ -1,6 +1,7 @@
 //! TUI-local slash command parsing, completion, and help.
 
-use just_agent_common::command::SlashCommand;
+use just_agent_common::command::{BudgetOp, SlashCommand};
+use just_agent_common::tokens::parse_token_amount;
 
 /// Static descriptor for a known command.
 pub struct CommandInfo {
@@ -35,6 +36,11 @@ const COMMANDS: &[CommandInfo] = &[
         description: "View and manage approval requests",
         has_arg: false,
     },
+    CommandInfo {
+        name: "/budget",
+        description: "Show or adjust token budget (+N/-N/=N, =N sets remaining)",
+        has_arg: true,
+    },
 ];
 
 /// Returns the full command registry.
@@ -55,7 +61,7 @@ pub fn parse(input: &str) -> Option<Result<SlashCommand, String>> {
     }
 
     // Split into command word and the rest
-    let (cmd, _rest) = trimmed.split_once(' ').unwrap_or((trimmed, ""));
+    let (cmd, rest) = trimmed.split_once(' ').unwrap_or((trimmed, ""));
     let cmd = cmd.to_ascii_lowercase();
 
     let result = match cmd.as_str() {
@@ -64,10 +70,42 @@ pub fn parse(input: &str) -> Option<Result<SlashCommand, String>> {
         "/clear" => SlashCommand::Clear,
         "/status" => SlashCommand::Status,
         "/approvals" => SlashCommand::Approvals,
+        "/budget" => return Some(parse_budget(rest)),
         _ => return Some(Err(format!("unknown command: {cmd}"))),
     };
 
     Some(Ok(result))
+}
+
+/// Parse the argument portion of `/budget [args]`.
+fn parse_budget(arg: &str) -> Result<SlashCommand, String> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return Ok(SlashCommand::Budget { op: None });
+    }
+
+    if let Some(num_str) = arg.strip_prefix('+') {
+        let amount = parse_token_amount(num_str)?;
+        let delta = i64::try_from(amount)
+            .map_err(|_| format!("token amount {amount} exceeds maximum delta"))?;
+        Ok(SlashCommand::Budget {
+            op: Some(BudgetOp::Adjust(delta)),
+        })
+    } else if let Some(num_str) = arg.strip_prefix('-') {
+        let amount = parse_token_amount(num_str)?;
+        let delta = i64::try_from(amount)
+            .map_err(|_| format!("token amount {amount} exceeds maximum delta"))?;
+        Ok(SlashCommand::Budget {
+            op: Some(BudgetOp::Adjust(-delta)),
+        })
+    } else if let Some(num_str) = arg.strip_prefix('=') {
+        let value = parse_token_amount(num_str)?;
+        Ok(SlashCommand::Budget {
+            op: Some(BudgetOp::Set(value)),
+        })
+    } else {
+        Err("budget requires +, -, or = prefix (e.g. +100M, -50M, =500M)".into())
+    }
 }
 
 /// Return command descriptors whose names start with `prefix`.

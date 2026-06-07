@@ -46,8 +46,10 @@ pub trait AgenticContext: Send + Sync {
     fn usage_snapshot(&self) -> ContextUsage;
     /// Evict the oldest `count` turns. Returns actual count evicted.
     fn evict_turns(&mut self, count: usize) -> EvictResult;
-    /// Reset progressive warning state. Called after compaction or eviction.
-    fn reset_warnings(&mut self);
+    /// Reset context-window progressive warning state. Called after compaction
+    /// or eviction. Does **not** reset token-budget warnings — those track
+    /// daemon-wide consumption and must never be reset by a single agent.
+    fn reset_context_warnings(&mut self);
 }
 
 /// Single source of truth for all context data in an agent session.
@@ -87,6 +89,9 @@ pub struct ContextStore {
     /// Highest warning threshold already fired in this session. Not persisted.
     #[serde(skip)]
     highest_warned_pct: Option<u8>,
+    /// Highest token-budget warning threshold already fired. Not persisted.
+    #[serde(skip)]
+    highest_budget_warned_pct: Option<u8>,
 }
 
 impl AgenticContext for ContextStore {
@@ -182,7 +187,7 @@ impl AgenticContext for ContextStore {
         Ok(())
     }
 
-    fn reset_warnings(&mut self) {
+    fn reset_context_warnings(&mut self) {
         self.highest_warned_pct = None;
     }
 }
@@ -207,6 +212,7 @@ impl ContextStore {
             retry_log: Vec::new(),
             pinned_token_budget: 0,
             highest_warned_pct: None,
+            highest_budget_warned_pct: None,
         }
     }
 
@@ -228,6 +234,11 @@ impl ContextStore {
             self.cumulative_usage.cache_hit_tokens += hit as u64;
         }
         self.last_prompt_tokens = Some(usage.prompt_tokens);
+    }
+
+    /// Returns the cumulative token usage snapshot.
+    pub fn cumulative_usage(&self) -> &CumulativeUsage {
+        &self.cumulative_usage
     }
 
     /// Append a new turn from the given messages.
@@ -305,6 +316,17 @@ impl ContextStore {
     /// Record that a warning has been fired at the given threshold.
     pub fn mark_warned(&mut self, pct: u8) {
         self.highest_warned_pct = Some(self.highest_warned_pct.unwrap_or(0).max(pct));
+    }
+
+    /// Check if a token-budget warning at the given threshold should fire.
+    pub fn should_warn_budget(&self, threshold_pct: u8) -> bool {
+        self.highest_budget_warned_pct
+            .is_none_or(|prev| threshold_pct > prev)
+    }
+
+    /// Record that a token-budget warning has been fired at the given threshold.
+    pub fn mark_budget_warned(&mut self, pct: u8) {
+        self.highest_budget_warned_pct = Some(self.highest_budget_warned_pct.unwrap_or(0).max(pct));
     }
 }
 
@@ -396,7 +418,7 @@ mod tests {
         assert!(!store.should_warn(50));
         assert!(!store.should_warn(60));
         assert!(store.should_warn(70));
-        store.reset_warnings();
+        store.reset_context_warnings();
         assert!(store.should_warn(50));
     }
 }

@@ -27,6 +27,9 @@ pub enum Commands {
     /// Manage skill promote requests (review-based promote flow)
     #[command(subcommand)]
     PromoteRequest(PromoteRequestCommand),
+    /// Manage agent token budget
+    #[command(subcommand)]
+    Budget(BudgetCommand),
 }
 
 #[derive(Subcommand)]
@@ -203,4 +206,27 @@ pub enum PromoteRequestCommand {
 pub struct PromoteRequestSubmitArgs {
     /// Skill name to promote (supports nested paths like code/refactoring).
     pub name: String,
+}
+
+// ---------------------------------------------------------------------------
+// Budget commands
+// ---------------------------------------------------------------------------
+
+/// Manage daemon-wide token budget.
+#[derive(Subcommand)]
+pub enum BudgetCommand {
+    /// Show daemon-wide token budget status
+    Get,
+    /// Increase daemon-wide token budget
+    Increase(BudgetAmountArgs),
+    /// Decrease daemon-wide token budget
+    Decrease(BudgetAmountArgs),
+    /// Set remaining daemon-wide token budget (=0 pauses all agents)
+    Set(BudgetAmountArgs),
+}
+
+#[derive(Args)]
+pub struct BudgetAmountArgs {
+    /// Token amount (supports K, M, G suffixes, e.g. 100M, 500K, 1G).
+    pub amount: String,
 }

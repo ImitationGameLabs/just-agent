@@ -1,6 +1,7 @@
 use ratatui::crossterm::event::{MouseEvent, MouseEventKind};
 
 use just_agent_common::protocol::SseEvent;
+use just_agent_common::tokens::format_tokens_m;
 
 use super::{App, AppMode, ChatLine};
 
@@ -105,6 +106,17 @@ impl App {
             SseEvent::Cancelled => {
                 self.chat_lines
                     .push(ChatLine::System("Operation cancelled".into()));
+                self.agent_busy = false;
+                self.streaming_content = false;
+                self.streaming_reasoning = false;
+                self.auto_scroll = true;
+            }
+            SseEvent::TokenBudgetExceeded { consumed, budget } => {
+                self.chat_lines.push(ChatLine::Error(format!(
+                    "Token budget exceeded: {} / {}",
+                    format_tokens_m(consumed),
+                    format_tokens_m(budget)
+                )));
                 self.agent_busy = false;
                 self.streaming_content = false;
                 self.streaming_reasoning = false;

@@ -41,7 +41,8 @@ pub async fn bridge_task(
                             AgentEvent::Finished(_)
                             | AgentEvent::MaxRoundsExceeded
                             | AgentEvent::Error(_)
-                            | AgentEvent::Cancelled => {
+                            | AgentEvent::Cancelled
+                            | AgentEvent::TokenBudgetExceeded { .. } => {
                                 state.store(AgentState::IDLE, Ordering::Relaxed)
                             }
                             _ => {}
@@ -114,6 +115,9 @@ fn convert_event(event: AgentEvent) -> Option<SseEvent> {
             delay_secs,
         }),
         AgentEvent::Cancelled => Some(SseEvent::Cancelled),
+        AgentEvent::TokenBudgetExceeded { consumed, budget } => {
+            Some(SseEvent::TokenBudgetExceeded { consumed, budget })
+        }
     }
 }
 

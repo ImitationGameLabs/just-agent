@@ -63,14 +63,12 @@ impl FromRequestParts<SharedState> for AuthIdentity {
 // Layer 2: Authorization helpers
 // ---------------------------------------------------------------------------
 
-/// Only the operator may proceed. Used for root agent creation.
+/// Only the operator may proceed. Used for root agent creation and
+/// daemon-wide resource management (e.g. token budget).
 pub fn require_operator(identity: &Identity) -> Result<(), (StatusCode, String)> {
     match identity {
         Identity::Operator => Ok(()),
-        Identity::Agent { .. } => Err((
-            StatusCode::FORBIDDEN,
-            "only operators can create root agents".into(),
-        )),
+        Identity::Agent { .. } => Err((StatusCode::FORBIDDEN, "operator access required".into())),
     }
 }
 

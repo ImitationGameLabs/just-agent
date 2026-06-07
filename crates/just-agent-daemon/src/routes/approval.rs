@@ -112,10 +112,10 @@ pub async fn get_approval(
 /// # Authorization
 ///
 /// The caller must be a superior of the agent that owns the approval
-/// (checked via [`AgentRegistry::require_superior`]).
+/// (checked via the [`AgentRegistry`](crate::state::AgentRegistry)'s `require_superior` method).
 ///
 /// For **approve** decisions, an additional policy gate applies: the caller's
-/// own [`ToolPolicy`] must permit the tool with `PolicyDecision::Allow`.
+/// own [`ToolPolicy`](just_agent_common::policy::ToolPolicy) must permit the tool with `PolicyDecision::Allow`.
 /// This prevents a superior from using subordinates as proxies to bypass its
 /// own tool restrictions. The operator identity is exempt from this check.
 ///

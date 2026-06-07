@@ -5,7 +5,7 @@ use crate::command;
 use just_agent_client::DaemonClient;
 use just_agent_client::ListApprovalsParams;
 use just_agent_common::agentid::AgentId;
-use just_agent_common::command::SlashCommand;
+use just_agent_common::command::{BudgetOp, SlashCommand};
 
 use super::super::Action;
 use super::{App, AppMode, ApprovalPhase, ChatLine};
@@ -348,6 +348,48 @@ impl App {
                     }
                 }
             }
+            SlashCommand::Budget { op } => match op {
+                None => match client.get_token_budget().await {
+                    Ok(resp) => {
+                        self.chat_lines
+                            .push(ChatLine::Status(resp.format_display()));
+                        self.auto_scroll = true;
+                    }
+                    Err(e) => {
+                        self.chat_lines.push(ChatLine::Error(e.to_string()));
+                        self.auto_scroll = true;
+                    }
+                },
+                Some(BudgetOp::Adjust(delta)) => match client.adjust_token_budget(delta).await {
+                    Ok(resp) => {
+                        let direction = if delta > 0 { "increased" } else { "decreased" };
+                        self.chat_lines.push(ChatLine::Status(format!(
+                            "Budget {direction}. {}",
+                            resp.format_display()
+                        )));
+                        self.auto_scroll = true;
+                    }
+                    Err(e) => {
+                        self.chat_lines
+                            .push(ChatLine::Error(format!("Failed to adjust budget: {e}")));
+                        self.auto_scroll = true;
+                    }
+                },
+                Some(BudgetOp::Set(value)) => match client.set_token_budget(value).await {
+                    Ok(resp) => {
+                        self.chat_lines.push(ChatLine::Status(format!(
+                            "Budget set. {}",
+                            resp.format_display()
+                        )));
+                        self.auto_scroll = true;
+                    }
+                    Err(e) => {
+                        self.chat_lines
+                            .push(ChatLine::Error(format!("Failed to set budget: {e}")));
+                        self.auto_scroll = true;
+                    }
+                },
+            },
         }
     }
 }

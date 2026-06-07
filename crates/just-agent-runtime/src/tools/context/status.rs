@@ -40,7 +40,7 @@ impl LlmTool for ContextStatusTool {
         let ctx = self.ctx.lock().await;
         let usage = ctx.usage_snapshot();
         let pinned_tokens: usize = usage.pinned_items.iter().map(|(_, t)| *t).sum();
-        Ok(serde_json::to_string(&json!({
+        let result = json!({
             "last_prompt_tokens": usage.last_prompt_tokens,
             "usage": {
                 "pinned_tokens": pinned_tokens,
@@ -48,6 +48,15 @@ impl LlmTool for ContextStatusTool {
             },
             "pinned_items": usage.pinned_items,
             "turn_count": usage.turn_count,
-        }))?)
+            "cumulative_usage": {
+                "prompt_tokens": usage.cumulative_usage.prompt_tokens,
+                "completion_tokens": usage.cumulative_usage.completion_tokens,
+                "consumed": usage.cumulative_usage.consumed(),
+            },
+        });
+        // Token budget is stored outside ContextStore, so it is not available
+        // through the AgenticContext trait. The runner injects budget warnings
+        // as system messages when approaching the limit.
+        Ok(serde_json::to_string(&result)?)
     }
 }

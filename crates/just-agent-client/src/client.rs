@@ -11,7 +11,7 @@ use crate::{
     ApprovalEntry, CreateAgentRequest, CreateAgentResponse, ListAgentsResponse,
     ListApprovalsResponse, ListSkillPromoteRecordsResponse, PromoteDecision, SkillMeta,
     SkillPathsResponse, SkillPromoteDecisionBody, SkillPromoteShowResponse,
-    SkillPromoteSubmitResponse, ToolPolicy,
+    SkillPromoteSubmitResponse, TokenBudgetResponse, TokenBudgetUpdateRequest, ToolPolicy,
 };
 
 struct Inner {
@@ -434,5 +434,69 @@ impl DaemonClient {
         .error_for_status()
         .context("daemon returned error")?;
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Token budget
+    // -----------------------------------------------------------------------
+
+    /// Get the daemon-wide token budget status.
+    pub async fn get_token_budget(&self) -> Result<TokenBudgetResponse> {
+        let resp = self
+            .with_auth(self.inner.http.get(self.url("/budget")))
+            .send()
+            .await
+            .context("failed to get token budget")?
+            .error_for_status()
+            .context("daemon returned error")?
+            .json()
+            .await
+            .context("failed to parse budget response")?;
+        Ok(resp)
+    }
+
+    /// Adjust the daemon-wide token budget by a signed delta.
+    ///
+    /// Positive delta increases, negative delta decreases.
+    pub async fn adjust_token_budget(&self, delta: i64) -> Result<TokenBudgetResponse> {
+        let resp =
+            self.with_auth(self.inner.http.post(self.url("/budget")).json(
+                &TokenBudgetUpdateRequest {
+                    set_remaining: None,
+                    delta: Some(delta),
+                },
+            ))
+            .send()
+            .await
+            .context("failed to adjust token budget")?
+            .error_for_status()
+            .context("daemon returned error")?
+            .json()
+            .await
+            .context("failed to parse budget response")?;
+        Ok(resp)
+    }
+
+    /// Set the remaining daemon-wide token budget.
+    ///
+    /// The daemon computes `new_total = consumed + value`. Use `value == 0`
+    /// to pause all agents (remaining = 0 triggers immediate budget exceeded).
+    pub async fn set_token_budget(&self, value: u64) -> Result<TokenBudgetResponse> {
+        let resp =
+            self.with_auth(self.inner.http.post(self.url("/budget")).json(
+                &TokenBudgetUpdateRequest {
+                    set_remaining: Some(value),
+                    delta: None,
+                },
+            ))
+            .send()
+            .await
+            .context("failed to set token budget")?
+            .error_for_status()
+            .context("daemon returned error")?
+            .json()
+            .await
+            .context("failed to parse budget response")?;
+        Ok(resp)
     }
 }

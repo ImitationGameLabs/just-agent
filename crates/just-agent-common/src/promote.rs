@@ -48,7 +48,7 @@ impl std::fmt::Display for SkillPromoteStatus {
 /// Input for creating a new promote request.
 ///
 /// Self-documenting alternative to passing many positional parameters to
-/// [`SkillPromoteStore::create`].
+/// the skill-promote store's `create` method.
 pub struct CreatePromoteRequest {
     /// Skill path relative to the skills root (e.g. `code/refactoring`).
     pub skill_name: String,

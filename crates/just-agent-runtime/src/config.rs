@@ -16,6 +16,7 @@ const DEFAULT_MAX_RETRIES: u32 = 3;
 const DEFAULT_RETRY_BASE_DELAY_SECS: u64 = 1;
 const DEFAULT_PINNED_BUDGET_RATIO: f64 = 0.25;
 const DEFAULT_CONTEXT_THRESHOLDS: &[u8] = &[50, 60, 70, 80];
+const DEFAULT_TOKEN_BUDGET_WARNINGS: &[u8] = &[80, 95];
 
 /// Default tool policy matching the current hardcoded behavior.
 ///
@@ -107,6 +108,9 @@ pub struct AgentConfig {
     pub retry_policy: RetryPolicy,
     pub pinned_budget_ratio: f64,
     pub context_thresholds: Vec<u8>,
+    /// Thresholds (as percentages 1-99) at which to warn the LLM about
+    /// approaching token budget exhaustion.
+    pub token_budget_warnings: Vec<u8>,
     pub agent_id: Option<AgentId>,
     pub created_by: Option<AgentId>,
     pub permissions: PermissionProfile,
@@ -143,6 +147,8 @@ impl AgentConfig {
             .unwrap_or(DEFAULT_PINNED_BUDGET_RATIO);
         let context_thresholds = parse_env_list::<u8>("JUST_AGENT_CONTEXT_THRESHOLDS")?
             .unwrap_or_else(|| DEFAULT_CONTEXT_THRESHOLDS.to_vec());
+        let token_budget_warnings = parse_env_list::<u8>("JUST_AGENT_TOKEN_BUDGET_WARNINGS")?
+            .unwrap_or_else(|| DEFAULT_TOKEN_BUDGET_WARNINGS.to_vec());
         let max_retries =
             parse_env::<u32>("JUST_AGENT_MAX_RETRIES")?.unwrap_or(DEFAULT_MAX_RETRIES);
         let retry_base_delay_secs = parse_env::<u64>("JUST_AGENT_RETRY_BASE_DELAY_SECS")?
@@ -203,6 +209,18 @@ impl AgentConfig {
         if context_thresholds.iter().any(|&t| !(1..=99).contains(&t)) {
             bail!("JUST_AGENT_CONTEXT_THRESHOLDS values must be 1-99");
         }
+        if token_budget_warnings.is_empty() {
+            bail!("JUST_AGENT_TOKEN_BUDGET_WARNINGS must have at least 1 value");
+        }
+        if !token_budget_warnings.is_sorted() {
+            bail!("JUST_AGENT_TOKEN_BUDGET_WARNINGS must be sorted ascending");
+        }
+        if token_budget_warnings
+            .iter()
+            .any(|&t| !(1..=99).contains(&t))
+        {
+            bail!("JUST_AGENT_TOKEN_BUDGET_WARNINGS values must be 1-99");
+        }
 
         Ok(Self {
             prompt,
@@ -217,6 +235,7 @@ impl AgentConfig {
             retry_policy,
             pinned_budget_ratio,
             context_thresholds,
+            token_budget_warnings,
             agent_id: None,
             created_by: None,
             permissions: PermissionProfile::new(workspace_root),

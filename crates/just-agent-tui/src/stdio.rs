@@ -5,8 +5,9 @@ use std::io::{self, Write};
 use crate::command;
 use anyhow::Result;
 use futures_util::StreamExt;
-use just_agent_common::command::SlashCommand;
+use just_agent_common::command::{BudgetOp, SlashCommand};
 use just_agent_common::protocol::SseEvent;
+use just_agent_common::tokens::format_tokens_m;
 use tokio::sync::mpsc;
 
 use crate::session::Session;
@@ -186,6 +187,14 @@ fn handle_sse_event(event: SseEvent, busy: &mut bool) {
             eprintln!("[cancelled]");
             *busy = false;
         }
+        SseEvent::TokenBudgetExceeded { consumed, budget } => {
+            eprintln!(
+                "[token-budget-exceeded] consumed {} of {}",
+                format_tokens_m(consumed),
+                format_tokens_m(budget)
+            );
+            *busy = false;
+        }
     }
 }
 
@@ -220,6 +229,25 @@ async fn handle_command(cmd: SlashCommand, session: &Session, pending: &mut Pend
         SlashCommand::Approvals => {
             eprintln!("[system] /approvals is only available in TUI mode");
         }
+        SlashCommand::Budget { op } => match op {
+            None => match session.client.get_token_budget().await {
+                Ok(resp) => println!("{}", resp.format_display()),
+                Err(e) => eprintln!("[error] {e}"),
+            },
+            Some(BudgetOp::Adjust(delta)) => {
+                match session.client.adjust_token_budget(delta).await {
+                    Ok(resp) => {
+                        let direction = if delta > 0 { "increased" } else { "decreased" };
+                        println!("Budget {direction}. {}", resp.format_display());
+                    }
+                    Err(e) => eprintln!("[error] {e}"),
+                }
+            }
+            Some(BudgetOp::Set(value)) => match session.client.set_token_budget(value).await {
+                Ok(resp) => println!("Budget set. {}", resp.format_display()),
+                Err(e) => eprintln!("[error] {e}"),
+            },
+        },
     }
 }
 

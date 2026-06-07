@@ -18,6 +18,7 @@ use crate::approval::ApprovalStore;
 use crate::context::ContextStore;
 use just_agent_common::AgentId;
 use just_llm_client::types::chat::ChatMessage;
+
 /// Resolve the base sessions directory.
 fn sessions_base() -> Result<PathBuf> {
     let base = if let Ok(dir) = std::env::var("JUST_AGENT_DATA_DIR") {
@@ -42,12 +43,12 @@ pub fn create_session(
     let dir = session_dir(agent_id)?;
     std::fs::create_dir_all(&dir)?;
 
-    let mut meta = serde_json::json!({
-        "workspace_root": workspace_root.to_string_lossy(),
-    });
-    if let Some(supervisor_id) = created_by {
-        meta["created_by"] = serde_json::to_value(supervisor_id)?;
-    }
+    let meta = SessionMeta {
+        workspace_root: workspace_root.to_path_buf(),
+        last_restored_at: None,
+        consecutive_restart_count: 0,
+        created_by: created_by.cloned(),
+    };
     atomic_write(
         &dir.join("meta.json"),
         &serde_json::to_string_pretty(&meta)?,
@@ -123,6 +124,14 @@ pub struct SessionMeta {
 pub fn read_meta(agent_id: &AgentId) -> Result<SessionMeta> {
     let path = session_dir(agent_id)?.join("meta.json");
     let json = fs::read_to_string(&path).context("reading meta.json")?;
+    serde_json::from_str(&json).context("parsing meta.json")
+}
+
+/// Read a session's meta.json directly from its session directory.
+/// Use when the directory path is already known (e.g., budget updates)
+/// to avoid re-deriving the path from the agent ID.
+pub fn read_meta_from_dir(dir: &Path) -> Result<SessionMeta> {
+    let json = fs::read_to_string(dir.join("meta.json")).context("reading meta.json")?;
     serde_json::from_str(&json).context("parsing meta.json")
 }
 

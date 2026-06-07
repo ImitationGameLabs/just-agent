@@ -14,6 +14,17 @@ pub struct CumulativeUsage {
     pub cache_hit_tokens: u64,
 }
 
+impl CumulativeUsage {
+    /// Total tokens consumed (prompt + completion).
+    ///
+    /// Uses exact provider-reported values from `Usage`, not heuristic
+    /// estimates. Semantically equivalent to `Usage.total_tokens` for
+    /// every major provider.
+    pub fn consumed(&self) -> u64 {
+        self.prompt_tokens + self.completion_tokens
+    }
+}
+
 /// Snapshot of current context layer breakdown and token usage.
 ///
 /// `last_prompt_tokens` and `cumulative_usage` come from the provider's

@@ -73,7 +73,7 @@ impl LlmTool for ContextEvictTool {
 
         ctx.replace_pin("context_summary", ChatMessage::assistant(&args.summary))?;
         let result = ctx.evict_turns(turn_count);
-        ctx.reset_warnings();
+        ctx.reset_context_warnings();
 
         Ok(serde_json::to_string(&json!({
             "evicted": result.evicted,

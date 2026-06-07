@@ -10,6 +10,6 @@ pub use just_agent_common::protocol::{
     ApprovalEntry, CreateAgentRequest, CreateAgentResponse, ListAgentsResponse, ListApprovalsQuery,
     ListApprovalsResponse, ListSkillPromoteRecordsResponse, MessageResponse, PromoteDecision,
     SkillMeta, SkillPathsResponse, SkillPromoteDecisionBody, SkillPromoteShowResponse,
-    SkillPromoteSubmitResponse,
+    SkillPromoteSubmitResponse, TokenBudgetResponse, TokenBudgetUpdateRequest,
 };
 pub use types::ListApprovalsParams;

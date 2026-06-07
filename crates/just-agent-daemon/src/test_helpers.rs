@@ -49,6 +49,7 @@ pub fn make_entry_with_rx(
         retry_policy: RetryPolicy::default(),
         pinned_budget_ratio: 0.25,
         context_thresholds: vec![50, 80],
+        token_budget_warnings: vec![80, 95],
         agent_id: None,
         created_by,
         permissions: PermissionProfile::new(PathBuf::from("/tmp")),

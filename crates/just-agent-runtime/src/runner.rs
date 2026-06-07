@@ -16,6 +16,17 @@ use just_llm_client::types::chat::{
 };
 
 use crate::stream_accumulator::ToolCallAccumulator;
+use just_agent_common::tokens::format_tokens_m;
+
+/// Outcome of context compaction via [`summarize_and_evict`].
+pub(crate) enum CompactOutcome {
+    /// Some turns were summarized and evicted.
+    Compacted,
+    /// No turns to compact (context already within budget).
+    NothingToCompact,
+    /// Token budget exceeded during summarization.
+    BudgetExceeded { consumed: u64, budget: u64 },
+}
 
 // ---------------------------------------------------------------------------
 // Stream consumption types
@@ -120,6 +131,15 @@ pub async fn run_agent_rounds(
     let context_window = ctx.config.context_window_tokens;
 
     for _round in 0..ctx.config.max_tool_rounds {
+        // -- Pre-call token budget check (shared tree-wide counter) --
+        let snap = ctx.token_budget.snapshot();
+        if snap.is_exceeded() {
+            return Ok(AgentOutcome::TokenBudgetExceeded {
+                consumed: snap.consumed,
+                budget: snap.budget,
+            });
+        }
+
         // -- Approval notification injection --
         let notifications = ctx.approvals.lock().await.drain_notifications();
         if !notifications.is_empty() {
@@ -168,8 +188,11 @@ pub async fn run_agent_rounds(
             if usage_pct >= auto_threshold {
                 info!(prompt_tokens, context_window, "context exceeds budget");
                 match summarize_and_evict(ctx).await {
-                    Ok(true) => continue,
-                    Ok(false) => {} // nothing to compact, fall through
+                    Ok(CompactOutcome::Compacted) => continue,
+                    Ok(CompactOutcome::NothingToCompact) => {} // fall through
+                    Ok(CompactOutcome::BudgetExceeded { consumed, budget }) => {
+                        return Ok(AgentOutcome::TokenBudgetExceeded { consumed, budget });
+                    }
                     Err(e) => warn!("summarize_and_evict failed: {e:#}"),
                 }
                 if ctx.cancel.is_cancelled() {
@@ -233,9 +256,27 @@ pub async fn run_agent_rounds(
             StreamOutcome::Completed(c) => c,
         };
 
-        // -- Post-stream: usage accumulation and final content check --
+        // -- Post-stream: usage accumulation and token budget check --
         if let Some(usage) = consumed.usage {
             ctx.store.lock().await.accumulate_usage(&usage);
+            ctx.token_budget
+                .record_usage(usage.prompt_tokens as u64, usage.completion_tokens as u64);
+        }
+
+        // Reload budget — the operator may have increased it via API mid-round.
+        let snap = ctx.token_budget.snapshot();
+
+        // Token budget warning injection (before exhaustion check).
+        if check_token_budget_warnings(ctx, &snap).await {
+            continue;
+        }
+
+        // Token budget exhaustion check (shared tree-wide counter).
+        if snap.is_exceeded() {
+            return Ok(AgentOutcome::TokenBudgetExceeded {
+                consumed: snap.consumed,
+                budget: snap.budget,
+            });
         }
 
         if consumed.tool_calls.is_empty() {
@@ -359,9 +400,7 @@ async fn estimate_prompt_tokens(
 /// in the summarizer input budget, accumulates into the existing summary,
 /// and evicts the summarized turns. Repeats until context fits or no
 /// progress can be made.
-///
-/// Returns `Ok(true)` if any summarization was performed.
-pub(crate) async fn summarize_and_evict(ctx: &AgentContext) -> Result<bool> {
+pub(crate) async fn summarize_and_evict(ctx: &AgentContext) -> Result<CompactOutcome> {
     let effective_budget = ctx.config.effective_budget();
     let summarizer_input_budget =
         effective_budget.saturating_sub(ctx.summarizer.max_tokens as usize);
@@ -400,7 +439,7 @@ pub(crate) async fn summarize_and_evict(ctx: &AgentContext) -> Result<bool> {
         };
 
         // LLM call — lock released during this potentially long await.
-        let result = ctx
+        let (result, usage) = ctx
             .summarizer
             .summarize(
                 &window,
@@ -415,12 +454,29 @@ pub(crate) async fn summarize_and_evict(ctx: &AgentContext) -> Result<bool> {
             let mut guard = ctx.store.lock().await;
             guard.replace_pin("context_summary", ChatMessage::assistant(&result.text))?;
             guard.evict_turns(result.source_turns);
-            guard.reset_warnings();
+            guard.reset_context_warnings();
             info!(
                 source_turns = result.source_turns,
                 estimated_tokens = result.estimated_tokens,
                 "summarize pass completed"
             );
+        }
+
+        // Accumulate exact usage from the summarization LLM call.
+        if let Some(u) = &usage {
+            ctx.store.lock().await.accumulate_usage(u);
+            ctx.token_budget
+                .record_usage(u.prompt_tokens as u64, u.completion_tokens as u64);
+        }
+
+        // Check token budget after accumulating summarization usage.
+        let snap = ctx.token_budget.snapshot();
+        if snap.is_exceeded() {
+            ctx.persist().await;
+            return Ok(CompactOutcome::BudgetExceeded {
+                consumed: snap.consumed,
+                budget: snap.budget,
+            });
         }
 
         any_summarized = true;
@@ -430,7 +486,11 @@ pub(crate) async fn summarize_and_evict(ctx: &AgentContext) -> Result<bool> {
         ctx.persist().await;
     }
 
-    Ok(any_summarized)
+    Ok(if any_summarized {
+        CompactOutcome::Compacted
+    } else {
+        CompactOutcome::NothingToCompact
+    })
 }
 
 /// Check progressive warning thresholds and inject a [system] message if crossed.
@@ -450,7 +510,7 @@ async fn check_progressive_warnings(
     // If usage is below the lowest threshold, reset warning state.
     let lowest = warnings[0] as usize;
     if usage_pct < lowest {
-        guard.reset_warnings();
+        guard.reset_context_warnings();
         return false;
     }
 
@@ -480,6 +540,56 @@ async fn check_progressive_warnings(
     true
 }
 
+/// Check token budget warning thresholds and inject a [system] message if crossed.
+/// Returns `true` if a warning was injected (caller should continue to re-compose).
+async fn check_token_budget_warnings(
+    ctx: &mut AgentContext,
+    snap: &crate::token_budget::TokenBudgetSnapshot,
+) -> bool {
+    let warnings = &ctx.config.token_budget_warnings;
+    if warnings.is_empty() {
+        return false;
+    }
+
+    let pct = snap.usage_pct();
+    // usage_pct() returns 0 when budget is 0, so no warnings fire.
+    if pct == 0 {
+        return false;
+    }
+
+    let mut guard = ctx.store.lock().await;
+
+    // Find the highest crossed threshold that hasn't been warned yet.
+    let Some(threshold) = warnings
+        .iter()
+        .rev()
+        .find(|&&t| pct >= t && guard.should_warn_budget(t))
+        .copied()
+    else {
+        return false;
+    };
+
+    let msg = format!(
+        "[system]\nToken budget usage is at {}% ({} consumed, {} remaining of {}). \
+         Wrap up your current work concisely.",
+        threshold,
+        format_tokens_m(snap.consumed),
+        format_tokens_m(snap.remaining()),
+        format_tokens_m(snap.budget)
+    );
+
+    guard.mark_budget_warned(threshold);
+    guard.push_turn(vec![ChatMessage::user(&msg)]);
+    drop(guard);
+    info!(
+        threshold,
+        consumed = snap.consumed,
+        budget = snap.budget,
+        "injected token budget warning"
+    );
+    true
+}
+
 /// Compact context if it exceeds the budget.
 /// Called at agent startup for restored sessions.
 pub async fn compact_if_needed(ctx: &AgentContext) -> Result<bool> {
@@ -494,5 +604,17 @@ pub async fn compact_if_needed(ctx: &AgentContext) -> Result<bool> {
     }
 
     info!(total_tokens, effective_budget, "pre-loop compaction needed");
-    summarize_and_evict(ctx).await
+    match summarize_and_evict(ctx).await? {
+        CompactOutcome::Compacted => Ok(true),
+        CompactOutcome::NothingToCompact => Ok(false),
+        // Budget exceeded during pre-loop compaction — log and proceed.
+        // The pre-call budget check at the top of the first round will catch it.
+        CompactOutcome::BudgetExceeded { consumed, budget } => {
+            warn!(
+                consumed,
+                budget, "token budget exceeded during pre-loop compaction"
+            );
+            Ok(true)
+        }
+    }
 }

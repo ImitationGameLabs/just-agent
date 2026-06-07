@@ -1,4 +1,5 @@
 mod agent;
+mod budget;
 mod restore;
 pub use restore::restore_sessions;
 #[cfg(test)]
@@ -47,6 +48,10 @@ pub fn router() -> Router<SharedState> {
         .route(
             "/agents/{id}/policy",
             axum::routing::get(context::get_policy).put(context::update_policy),
+        )
+        .route(
+            "/budget",
+            axum::routing::get(budget::get_budget).post(budget::update_budget),
         )
         .route("/approvals", axum::routing::get(approval::list_approvals))
         .route(

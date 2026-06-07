@@ -42,6 +42,8 @@ pub struct AppState {
     pub max_subagents: usize,
     /// Message channel capacity per agent.
     pub prompt_queue_size: usize,
+    /// Daemon-wide token budget shared by all agents.
+    pub token_budget: just_agent_runtime::token_budget::TokenBudget,
 }
 
 /// Combined index: agent map + token→id lookup + subagent reverse pointers.
@@ -97,6 +99,10 @@ impl AppState {
             max_agents: crate::args::MAX_AGENTS_LIMIT,
             max_subagents: crate::args::MAX_SUBAGENTS_LIMIT,
             prompt_queue_size: 5,
+            token_budget: just_agent_runtime::token_budget::TokenBudget::new(
+                just_agent_common::protocol::DEFAULT_TOKEN_BUDGET,
+                0,
+            ),
         }
     }
 
@@ -116,6 +122,10 @@ impl AppState {
             max_agents,
             max_subagents,
             prompt_queue_size,
+            token_budget: just_agent_runtime::token_budget::TokenBudget::new(
+                just_agent_common::protocol::DEFAULT_TOKEN_BUDGET,
+                0,
+            ),
         }
     }
 }
@@ -179,7 +189,7 @@ impl AgentRegistry {
         self.agents.insert(id, entry);
     }
 
-    /// Like [`register`], but skips the subagent_ids push.
+    /// Like [`Self::register`], but skips the subagent_ids push.
     /// Used by `create_agent` which pre-reserves the slot before spawning.
     pub fn register_no_subagent_push(
         &mut self,

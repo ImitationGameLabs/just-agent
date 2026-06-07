@@ -73,9 +73,7 @@ pub async fn submit_promote_request(
             "agent has no session directory".into(),
         ))?;
 
-        let src = session_dir
-            .join("skills")
-            .join(format!("{skill_name}.md"));
+        let src = session_dir.join("skills").join(format!("{skill_name}.md"));
         if !src.exists() {
             return Err((
                 StatusCode::NOT_FOUND,

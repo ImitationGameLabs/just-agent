@@ -41,6 +41,8 @@ the full authorization matrix, see [auth.md](auth.md).
 | `GET`    | `/agents/{id}/permissions`                   | Get permission profile and tool policy | any                     |
 | `GET`    | `/agents/{id}/policy`                        | Get tool policy                        | any                     |
 | `PUT`    | `/agents/{id}/policy`                        | Update tool policy                     | operator / superior     |
+| `GET`    | `/budget`                                    | Get daemon-wide token budget status    | any                     |
+| `POST`   | `/budget`                                    | Adjust or set daemon-wide token budget | operator                |
 | `GET`    | `/approvals`                                 | List approvals                         | any (filtered by scope) |
 | `GET`    | `/approvals/{id}`                            | Get a single approval                  | operator / superior     |
 | `POST`   | `/approvals/{id}`                            | Approve or deny an approval            | operator / superior     |
@@ -74,6 +76,9 @@ Auth: operator (root agents) or direct supervisor (subagents). See
   "created_by": "AgentId — supervisor ID; omit for root agents (optional)"
 }
 ```
+
+> **Token budget:** All agents share a single daemon-wide token budget
+> (default: 100M tokens). Use `POST /budget` to adjust at runtime.
 
 **Response**
 
@@ -257,7 +262,9 @@ Auth: any authenticated identity. See [auth.md](auth.md).
       "error": "tool timeout",
       "delay_secs": 2.0
     }
-  ]
+  ],
+  "token_budget": 100000000,
+  "token_consumed": 23500000
 }
 ```
 
@@ -268,6 +275,8 @@ Auth: any authenticated identity. See [auth.md](auth.md).
   zeroed if no calls have been made.
 - `recent_retries`: last 20 retry records, newest first. Empty if no retries
   have occurred.
+- `token_budget`: daemon-wide cumulative token consumption limit (shared by all agents).
+- `token_consumed`: daemon-wide cumulative tokens consumed (shared by all agents).
 
 Status: `200 OK`
 
@@ -358,6 +367,79 @@ Status: `204 No Content`
 
 > **Strictness ordering:** `deny > ask > classify > allow`. Changes are
 > persisted to disk before the in-memory update.
+
+## Token Budget
+
+A single daemon-wide token budget is shared by all agents. The budget resets
+to the default (100M tokens) on daemon restart.
+
+### `GET /budget` — Get budget status
+
+Returns the daemon-wide token budget, cumulative consumption, and remaining tokens.
+
+Auth: any authenticated identity. See [auth.md](auth.md).
+
+**Response**
+
+```json
+{
+  "budget": 100000000,
+  "consumed": 23500000,
+  "remaining": 76500000
+}
+```
+
+Status: `200 OK`
+
+### `POST /budget` — Adjust or set budget
+
+Updates the daemon-wide token budget. Exactly one of `set_remaining` or `delta`
+must be provided. The change affects all agents immediately.
+
+Auth: operator only. See [auth.md](auth.md).
+
+**Request body (set remaining)**
+
+```json
+{
+  "set_remaining": 50000000
+}
+```
+
+The daemon computes `new_total = consumed + set_remaining`. Use `set_remaining: 0`
+to pause all agents (remaining = 0 triggers immediate budget exceeded).
+
+**Request body (delta adjustment)**
+
+```json
+{
+  "delta": 50000000
+}
+```
+
+Adjusts the total budget by a signed delta. Positive increases, negative
+decreases. The new budget must remain above tokens already consumed.
+
+**Response**
+
+```json
+{
+  "budget": 150000000,
+  "consumed": 23500000,
+  "remaining": 126500000
+}
+```
+
+Status: `200 OK`
+
+| Code | Condition                                                                 |
+| ---- | ------------------------------------------------------------------------- |
+| 400  | Both or neither `set_remaining`/`delta` provided, or `delta` is zero      |
+| 403  | Not the operator                                                          |
+| 409  | New budget would be at or below tokens already consumed (delta path only) |
+
+> **No persistence:** Budget changes are in-memory only. The budget resets to
+> the default (100M tokens) on daemon restart.
 
 ## Approvals
 
@@ -676,12 +758,13 @@ data: {"type":"assistantContentDelta","delta":"Hello, "}
 
 ### Terminal events
 
-| `type`              | Fields            | Description                   |
-| ------------------- | ----------------- | ----------------------------- |
-| `finished`          | `content: string` | Agent completed successfully  |
-| `maxRoundsExceeded` | _(none)_          | Hit the max tool rounds limit |
-| `error`             | `message: string` | Unrecoverable error           |
-| `cancelled`         | _(none)_          | Agent was interrupted         |
+| `type`                | Fields                       | Description                          |
+| --------------------- | ---------------------------- | ------------------------------------ |
+| `finished`            | `content: string`            | Agent completed successfully         |
+| `maxRoundsExceeded`   | _(none)_                     | Hit the max tool rounds limit        |
+| `error`               | `message: string`            | Unrecoverable error                  |
+| `cancelled`           | _(none)_                     | Agent was interrupted                |
+| `tokenBudgetExceeded` | `consumed: u64, budget: u64` | Token budget exhausted — agent stops |
 
 ### State and notifications
 

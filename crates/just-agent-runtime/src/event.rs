@@ -48,6 +48,10 @@ pub enum AgentEvent {
         id: String,
     },
     Cancelled,
+    TokenBudgetExceeded {
+        consumed: u64,
+        budget: u64,
+    },
 }
 
 /// Outcome of running the agent round loop.
@@ -55,4 +59,5 @@ pub enum AgentOutcome {
     Finished { content: String },
     MaxRoundsExceeded,
     Cancelled,
+    TokenBudgetExceeded { consumed: u64, budget: u64 },
 }
