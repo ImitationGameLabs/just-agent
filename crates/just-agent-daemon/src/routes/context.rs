@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use just_agent_common::agentid::AgentId;
 use just_agent_common::policy::ToolPolicy;
-use just_agent_common::protocol::{AgentPermissionsResponse, AgentStatusResponse};
+use just_agent_common::protocol::{AgentPermissionsResponse, AgentStatusResponse, ApiError};
 use just_agent_runtime::context::AgenticContext;
 use just_agent_runtime::persistence;
 
@@ -16,11 +16,11 @@ pub async fn agent_status(
     State(state): State<SharedState>,
     _auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, ApiError> {
     let registry = state.registry.read().await;
     let entry = registry
         .get(&id)
-        .ok_or((StatusCode::NOT_FOUND, "agent not found".into()))?;
+        .ok_or_else(|| ApiError::not_found("agent not found"))?;
     let store = entry.agent.store.lock().await;
     let context = store.usage_snapshot();
     let recent_retries = store
@@ -46,11 +46,11 @@ pub async fn agent_permissions(
     State(state): State<SharedState>,
     _auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, ApiError> {
     let registry = state.registry.read().await;
     let entry = registry
         .get(&id)
-        .ok_or((StatusCode::NOT_FOUND, "agent not found".into()))?;
+        .ok_or_else(|| ApiError::not_found("agent not found"))?;
     let config = &entry.agent.config;
     let tool_policy = entry
         .agent
@@ -71,11 +71,11 @@ pub async fn get_policy(
     State(state): State<SharedState>,
     _auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, ApiError> {
     let registry = state.registry.read().await;
     let entry = registry
         .get(&id)
-        .ok_or((StatusCode::NOT_FOUND, "agent not found".into()))?;
+        .ok_or_else(|| ApiError::not_found("agent not found"))?;
     let policy = entry
         .agent
         .tool_policy
@@ -104,20 +104,19 @@ pub async fn update_policy(
     auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
     Json(new_policy): Json<ToolPolicy>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<StatusCode, ApiError> {
     let registry = state.registry.read().await;
     registry.require_superior(auth.identity(), &id)?;
 
     let entry = registry
         .get(&id)
-        .ok_or((StatusCode::NOT_FOUND, "agent not found".into()))?;
+        .ok_or_else(|| ApiError::not_found("agent not found"))?;
 
     // Strictness validation against parent.
     if let Some(ref parent_id) = entry.agent.config.created_by {
-        let parent_entry = registry.get(parent_id).ok_or((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "parent agent not found".into(),
-        ))?;
+        let parent_entry = registry
+            .get(parent_id)
+            .ok_or_else(|| ApiError::internal("parent agent not found"))?;
         let parent_policy = parent_entry
             .agent
             .tool_policy
@@ -126,19 +125,15 @@ pub async fn update_policy(
         new_policy
             .validate_at_least_as_strict_as(&parent_policy)
             .map_err(|violations| {
-                (
-                    StatusCode::CONFLICT,
-                    format!("policy violations: {}", violations.join("; ")),
-                )
+                ApiError::conflict(format!("policy violations: {}", violations.join("; ")))
             })?;
     }
 
     // Cascade: children must still be at least as strict as the new policy.
     for child_id in &entry.subagent_ids {
-        let child = registry.get(child_id).ok_or((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("child agent {child_id} not found"),
-        ))?;
+        let child = registry
+            .get(child_id)
+            .ok_or_else(|| ApiError::internal(format!("child agent {child_id} not found")))?;
         let child_policy = child
             .agent
             .tool_policy
@@ -148,20 +143,17 @@ pub async fn update_policy(
         child_policy
             .validate_at_least_as_strict_as(&new_policy)
             .map_err(|violations| {
-                (
-                    StatusCode::CONFLICT,
-                    format!("child {child_id}: {}", violations.join("; ")),
-                )
+                ApiError::conflict(format!("child {child_id}: {}", violations.join("; ")))
             })?;
     }
 
     // Persist first, then update in-memory.
-    let session_dir = entry.agent.session_dir.as_ref().ok_or((
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "agent has no session directory".into(),
-    ))?;
-    persistence::persist_policy(session_dir, &new_policy)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let session_dir = entry
+        .agent
+        .session_dir
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("agent has no session directory"))?;
+    persistence::persist_policy(session_dir, &new_policy).map_err(ApiError::internal)?;
 
     *entry
         .agent

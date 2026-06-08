@@ -1,9 +1,9 @@
 //! Two-layer auth: Authentication (who are you) then Authorization (can you do this).
 
 use axum::extract::FromRequestParts;
-use axum::http::StatusCode;
 
 use crate::state::{AgentId, SharedState};
+use just_agent_common::protocol::ApiError;
 
 /// Resolved identity from the Authorization header.
 #[derive(Debug, Clone)]
@@ -35,7 +35,7 @@ impl AuthIdentity {
 }
 
 impl FromRequestParts<SharedState> for AuthIdentity {
-    type Rejection = (StatusCode, String);
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
@@ -55,7 +55,7 @@ impl FromRequestParts<SharedState> for AuthIdentity {
             return Ok(AuthIdentity(Identity::Agent { id: id.clone() }));
         }
 
-        Err((StatusCode::UNAUTHORIZED, "invalid agent token".into()))
+        Err(ApiError::unauthorized("invalid agent token"))
     }
 }
 
@@ -65,25 +65,24 @@ impl FromRequestParts<SharedState> for AuthIdentity {
 
 /// Only the operator may proceed. Used for root agent creation and
 /// daemon-wide resource management (e.g. token budget).
-pub fn require_operator(identity: &Identity) -> Result<(), (StatusCode, String)> {
+pub fn require_operator(identity: &Identity) -> Result<(), ApiError> {
     match identity {
         Identity::Operator => Ok(()),
-        Identity::Agent { .. } => Err((StatusCode::FORBIDDEN, "operator access required".into())),
+        Identity::Agent { .. } => Err(ApiError::forbidden("operator access required")),
     }
 }
 
 /// Extract bearer token from the Authorization header.
-fn extract_token(headers: &axum::http::HeaderMap) -> Result<&str, (StatusCode, String)> {
+fn extract_token(headers: &axum::http::HeaderMap) -> Result<&str, ApiError> {
     let value = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .ok_or((StatusCode::UNAUTHORIZED, "authentication required".into()))?;
-    let token = value.strip_prefix("Bearer ").ok_or((
-        StatusCode::UNAUTHORIZED,
-        "invalid Authorization scheme, expected Bearer".into(),
-    ))?;
+        .ok_or_else(|| ApiError::unauthorized("authentication required"))?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| ApiError::unauthorized("invalid Authorization scheme, expected Bearer"))?;
     if token.is_empty() {
-        return Err((StatusCode::UNAUTHORIZED, "empty bearer token".into()));
+        return Err(ApiError::unauthorized("empty bearer token"));
     }
     Ok(token)
 }

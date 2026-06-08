@@ -2,9 +2,8 @@
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use just_agent_common::protocol::{TokenBudgetResponse, TokenBudgetUpdateRequest};
+use just_agent_common::protocol::{ApiError, TokenBudgetResponse, TokenBudgetUpdateRequest};
 use just_agent_common::tokens::format_tokens_m;
 
 use crate::state::SharedState;
@@ -34,22 +33,20 @@ pub async fn update_budget(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
     Json(req): Json<TokenBudgetUpdateRequest>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, ApiError> {
     // Operator only.
     crate::auth::require_operator(auth.identity())?;
 
     // Validate: exactly one of set_remaining/delta must be provided.
     match (req.set_remaining, req.delta) {
         (Some(_), Some(_)) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "cannot specify both 'set_remaining' and 'delta'".into(),
+            return Err(ApiError::bad_request(
+                "cannot specify both 'set_remaining' and 'delta'",
             ));
         }
         (None, None) => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "must specify either 'set_remaining' or 'delta'".into(),
+            return Err(ApiError::bad_request(
+                "must specify either 'set_remaining' or 'delta'",
             ));
         }
         _ => {}
@@ -65,21 +62,18 @@ pub async fn update_budget(
         // Delta adjustment — CAS loop ensures delta applies to the actual current value.
         let delta = req.delta.unwrap();
         if delta == 0 {
-            return Err((StatusCode::BAD_REQUEST, "delta must be non-zero".into()));
+            return Err(ApiError::bad_request("delta must be non-zero"));
         }
 
         state
             .token_budget
             .adjust_delta(delta)
             .map_err(|attempted| {
-                (
-                    StatusCode::CONFLICT,
-                    format!(
-                        "new budget ({}) would be at or below tokens already consumed ({})",
-                        format_tokens_m(attempted),
-                        format_tokens_m(state.token_budget.consumed()),
-                    ),
-                )
+                ApiError::conflict(format!(
+                    "new budget ({}) would be at or below tokens already consumed ({})",
+                    format_tokens_m(attempted),
+                    format_tokens_m(state.token_budget.consumed()),
+                ))
             })?;
     }
 

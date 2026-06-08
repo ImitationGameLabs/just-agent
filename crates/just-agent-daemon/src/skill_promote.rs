@@ -8,14 +8,10 @@
 
 use std::collections::HashMap;
 
-use axum::http::StatusCode;
 use just_agent_common::agentid::AgentId;
 use just_agent_common::promote::{CreatePromoteRequest, SkillPromoteRecord, SkillPromoteStatus};
 
 /// Typed errors from [`SkillPromoteStore`] operations.
-///
-/// Carries the appropriate HTTP status code so route handlers can convert
-/// without fragile string matching.
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("promote request '{0}' not found")]
@@ -25,22 +21,6 @@ pub enum StoreError {
         id: String,
         status: SkillPromoteStatus,
     },
-}
-
-impl StoreError {
-    /// Map this error to the appropriate HTTP status code.
-    pub fn http_status(&self) -> StatusCode {
-        match self {
-            StoreError::NotFound(_) => StatusCode::NOT_FOUND,
-            StoreError::NotPending { .. } => StatusCode::CONFLICT,
-        }
-    }
-
-    /// Convert into the `(StatusCode, String)` tuple used by route handlers.
-    pub fn into_response(self) -> (StatusCode, String) {
-        let status = self.http_status();
-        (status, self.to_string())
-    }
 }
 
 /// Manages skill promote requests across all agents.

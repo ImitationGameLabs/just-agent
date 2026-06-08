@@ -15,7 +15,7 @@ use just_agent_common::agentid::AgentId;
 use just_agent_common::command::UserInput;
 use just_agent_common::promote::{CreatePromoteRequest, NO_REASON_PROVIDED, SkillPromoteStatus};
 use just_agent_common::protocol::{
-    ListSkillPromoteRecordsResponse, PromoteDecision, SkillPromoteDecisionBody,
+    ApiError, ListSkillPromoteRecordsResponse, PromoteDecision, SkillPromoteDecisionBody,
     SkillPromoteRecordEntry, SkillPromoteShowResponse, SkillPromoteSubmitResponse,
 };
 use just_agent_runtime::tools::skill::promote_skill_from_content;
@@ -25,7 +25,6 @@ use just_agent_runtime::tools::{
 use serde::Deserialize;
 use tracing::{info, warn};
 
-use crate::skill_promote::StoreError;
 use crate::state::SharedState;
 
 /// Query parameters for GET /skill-promote-requests.
@@ -42,7 +41,7 @@ pub async fn submit_promote_request(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
     Path((id, skill_name)): Path<(AgentId, String)>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, ApiError> {
     // Auth: caller must be the agent itself or operator.
     {
         let registry = state.registry.read().await;
@@ -50,16 +49,13 @@ pub async fn submit_promote_request(
     }
 
     // Validate skill name.
-    validate_skill_name(&skill_name).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    validate_skill_name(&skill_name).map_err(|e| ApiError::bad_request(e.to_string()))?;
 
     if skill_name == META_SKILL_NAME {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!(
-                "cannot promote the '{META_SKILL_NAME}' skill; \
-                 it is managed by the skill system"
-            ),
-        ));
+        return Err(ApiError::bad_request(format!(
+            "cannot promote the '{META_SKILL_NAME}' skill; \
+             it is managed by the skill system"
+        )));
     }
 
     // Extract session_dir and snapshot content under registry read lock.
@@ -67,35 +63,31 @@ pub async fn submit_promote_request(
         let registry = state.registry.read().await;
         let entry = registry
             .get(&id)
-            .ok_or((StatusCode::NOT_FOUND, "agent not found".into()))?;
-        let session_dir = entry.agent.session_dir.clone().ok_or((
-            StatusCode::NOT_FOUND,
-            "agent has no session directory".into(),
-        ))?;
+            .ok_or_else(|| ApiError::not_found("agent not found"))?;
+        let session_dir = entry
+            .agent
+            .session_dir
+            .clone()
+            .ok_or_else(|| ApiError::not_found("agent has no session directory"))?;
 
         let src = session_dir.join("skills").join(format!("{skill_name}.md"));
         if !src.exists() {
-            return Err((
-                StatusCode::NOT_FOUND,
-                format!("local skill '{skill_name}' not found at {}", src.display()),
-            ));
+            return Err(ApiError::not_found(format!(
+                "local skill '{skill_name}' not found at {}",
+                src.display()
+            )));
         }
 
-        let content = std::fs::read_to_string(&src).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read local skill: {e}"),
-            )
-        })?;
+        let content = std::fs::read_to_string(&src)
+            .map_err(|e| ApiError::internal(format!("failed to read local skill: {e}")))?;
 
         // Verify frontmatter and capture metadata in a single pass.
-        let meta = parse_frontmatter_meta(&content).ok_or((
-            StatusCode::BAD_REQUEST,
-            format!(
+        let meta = parse_frontmatter_meta(&content).ok_or_else(|| {
+            ApiError::bad_request(format!(
                 "skill '{skill_name}' has no valid frontmatter; \
                  a 'name' field in YAML frontmatter is required"
-            ),
-        ))?;
+            ))
+        })?;
 
         (content, meta)
     };
@@ -104,12 +96,10 @@ pub async fn submit_promote_request(
     let shared = skill_dir();
     let shared_path = shared.join(format!("{skill_name}.md"));
     let old_content = if shared_path.exists() {
-        Some(std::fs::read_to_string(&shared_path).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read shared skill: {e}"),
-            )
-        })?)
+        Some(
+            std::fs::read_to_string(&shared_path)
+                .map_err(|e| ApiError::internal(format!("failed to read shared skill: {e}")))?,
+        )
     } else {
         None
     };
@@ -170,17 +160,16 @@ pub async fn list_promote_requests(
     State(state): State<SharedState>,
     _auth: crate::auth::AuthIdentity,
     Query(query): Query<ListPromoteQuery>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, ApiError> {
     // Open to any authenticated agent: subagents may help review promote requests.
 
     let status_filter = match query.status.as_deref() {
-        Some(s) => Some(SkillPromoteStatus::from_str_name(s).ok_or((
-            StatusCode::BAD_REQUEST,
-            format!(
+        Some(s) => Some(SkillPromoteStatus::from_str_name(s).ok_or_else(|| {
+            ApiError::bad_request(format!(
                 "invalid status filter '{s}'; \
                      valid values: pending, approved, denied"
-            ),
-        ))?),
+            ))
+        })?),
         None => None,
     };
 
@@ -203,14 +192,13 @@ pub async fn show_promote_request(
     State(state): State<SharedState>,
     _auth: crate::auth::AuthIdentity,
     Path(request_id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, ApiError> {
     // Open to any authenticated agent: subagents may help review promote requests.
 
     let store = state.skill_promote_store.lock().await;
-    let record = store.get(&request_id).ok_or((
-        StatusCode::NOT_FOUND,
-        format!("promote request '{request_id}' not found"),
-    ))?;
+    let record = store
+        .get(&request_id)
+        .ok_or_else(|| ApiError::not_found(format!("promote request '{request_id}' not found")))?;
 
     Ok(Json(SkillPromoteShowResponse::from_record(record)))
 }
@@ -224,7 +212,7 @@ pub async fn respond_promote_request(
     auth: crate::auth::AuthIdentity,
     Path(request_id): Path<String>,
     Json(body): Json<SkillPromoteDecisionBody>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<StatusCode, ApiError> {
     {
         let registry = state.registry.read().await;
         registry.require_root_or_operator(auth.identity())?;
@@ -236,10 +224,7 @@ pub async fn respond_promote_request(
     }
 }
 
-async fn handle_approve(
-    state: &SharedState,
-    request_id: &str,
-) -> Result<StatusCode, (StatusCode, String)> {
+async fn handle_approve(state: &SharedState, request_id: &str) -> Result<StatusCode, ApiError> {
     // Hold the store lock for the entire approve operation to prevent
     // concurrent approve/deny races. Promote requests are infrequent
     // human-initiated operations and the skill files are small, so holding
@@ -253,9 +238,7 @@ async fn handle_approve(
     let mut store = state.skill_promote_store.lock().await;
 
     // Step 1: Validate the request is still Pending and get its data.
-    let record = store
-        .get_pending(request_id)
-        .map_err(StoreError::into_response)?;
+    let record = store.get_pending(request_id).map_err(ApiError::from)?;
 
     // Acquire the shared skill directory write lock. Lock order:
     // skill_promote_store → skill_write_lock (see AppState::skill_write_lock).
@@ -271,46 +254,34 @@ async fn handle_approve(
 
     if record.old_content.is_some() {
         // Shared skill existed at submission time — verify it hasn't changed.
-        let current = std::fs::read_to_string(&shared_path).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read shared skill: {e}"),
-            )
-        })?;
+        let current = std::fs::read_to_string(&shared_path)
+            .map_err(|e| ApiError::internal(format!("failed to read shared skill: {e}")))?;
         if current != record.old_content.as_deref().unwrap() {
-            return Err((
-                StatusCode::CONFLICT,
-                format!(
-                    "shared skill '{}' was modified while this request was pending; \
-                     please resubmit",
-                    record.skill_name
-                ),
-            ));
+            return Err(ApiError::conflict(format!(
+                "shared skill '{}' was modified while this request was pending; \
+                 please resubmit",
+                record.skill_name
+            )));
         }
     } else if shared_path.exists() {
         // Shared skill didn't exist at submission, but one appeared — race.
-        return Err((
-            StatusCode::CONFLICT,
-            format!(
-                "a shared skill '{}' was created while this request was pending; \
-                 please resubmit",
-                record.skill_name
-            ),
-        ));
+        return Err(ApiError::conflict(format!(
+            "a shared skill '{}' was created while this request was pending; \
+             please resubmit",
+            record.skill_name
+        )));
     }
 
     // Step 3: Execute promotion using snapshotted content. The consistency
     // check above already validated that the shared file state matches the
     // submission-time snapshot, so unconditional overwrite is correct here.
     promote_skill_from_content(&record.skill_name, &record.new_content, &shared)
-        .map_err(|e: anyhow::Error| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(ApiError::internal)?;
 
     // Step 4: File I/O succeeded — commit the status transition.
     // Since we hold the store lock throughout, no concurrent deny can
     // interfere between steps 1 and 4.
-    store
-        .commit_approved(request_id)
-        .map_err(StoreError::into_response)?;
+    store.commit_approved(request_id).map_err(ApiError::from)?;
 
     // Release the store lock before notification (which acquires registry lock).
     drop(store);
@@ -340,12 +311,10 @@ async fn handle_deny(
     state: &SharedState,
     request_id: &str,
     reason: Option<&str>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<StatusCode, ApiError> {
     let (requested_by, skill_name) = {
         let mut store = state.skill_promote_store.lock().await;
-        store
-            .deny(request_id, reason)
-            .map_err(StoreError::into_response)?
+        store.deny(request_id, reason).map_err(ApiError::from)?
     };
 
     info!(id = %request_id, skill = %skill_name, reason = ?reason, "promote request denied");

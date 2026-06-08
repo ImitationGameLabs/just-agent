@@ -1290,9 +1290,11 @@ dependencies = [
 name = "just-agent-common"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "serde",
  "serde_json",
  "time",
+ "tracing",
  "uuid",
 ]
 

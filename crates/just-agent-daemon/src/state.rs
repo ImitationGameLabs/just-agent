@@ -4,12 +4,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::skill_promote::SkillPromoteStore;
-use axum::http::StatusCode;
 pub use just_agent_common::agentid::AgentId;
 use just_agent_common::command::UserInput;
 use just_agent_common::policy::ToolPolicy;
 pub use just_agent_common::protocol::AgentState;
 pub use just_agent_common::protocol::AgentSummary;
+use just_agent_common::protocol::ApiError;
 use just_agent_common::protocol::SseEvent;
 use just_agent_runtime::approval::ApprovalStore;
 use just_agent_runtime::config::AgentConfig;
@@ -216,20 +216,17 @@ impl AgentRegistry {
     // -- authorization helpers --
 
     /// Walk the `created_by` chain from `start_id` upward with cycle detection.
-    pub fn walk_supervisor_chain(
-        &self,
-        start_id: &AgentId,
-    ) -> Result<Vec<&AgentEntry>, (StatusCode, String)> {
+    pub fn walk_supervisor_chain(&self, start_id: &AgentId) -> Result<Vec<&AgentEntry>, ApiError> {
         let mut visited = HashSet::new();
         let mut current_id = start_id.clone();
         let mut chain = Vec::new();
         loop {
             if !visited.insert(current_id.clone()) {
-                return Err((StatusCode::FORBIDDEN, "circular supervisor chain".into()));
+                return Err(ApiError::forbidden("circular supervisor chain"));
             }
             let entry = self
                 .get(&current_id)
-                .ok_or((StatusCode::FORBIDDEN, "broken supervisor chain".into()))?;
+                .ok_or_else(|| ApiError::forbidden("broken supervisor chain"))?;
             chain.push(entry);
             match &entry.agent.config.created_by {
                 Some(supervisor_id) => current_id = supervisor_id.clone(),
@@ -245,17 +242,15 @@ impl AgentRegistry {
         &self,
         identity: &crate::auth::Identity,
         supervisor_id: &AgentId,
-    ) -> Result<&AgentEntry, (StatusCode, String)> {
-        let supervisor = self.get(supervisor_id).ok_or((
-            StatusCode::NOT_FOUND,
-            format!("supervisor agent {supervisor_id} not found"),
-        ))?;
+    ) -> Result<&AgentEntry, ApiError> {
+        let supervisor = self.get(supervisor_id).ok_or_else(|| {
+            ApiError::not_found(format!("supervisor agent {supervisor_id} not found"))
+        })?;
         match identity {
             crate::auth::Identity::Operator => Ok(supervisor),
             crate::auth::Identity::Agent { id } if id == supervisor_id => Ok(supervisor),
-            _ => Err((
-                StatusCode::FORBIDDEN,
-                "invalid auth token for supervisor agent".into(),
+            _ => Err(ApiError::forbidden(
+                "invalid auth token for supervisor agent",
             )),
         }
     }
@@ -265,7 +260,7 @@ impl AgentRegistry {
         &self,
         identity: &crate::auth::Identity,
         target_id: &AgentId,
-    ) -> Result<(), (StatusCode, String)> {
+    ) -> Result<(), ApiError> {
         match identity {
             crate::auth::Identity::Operator => return Ok(()),
             crate::auth::Identity::Agent { id: caller_id } => {
@@ -278,10 +273,7 @@ impl AgentRegistry {
                 }
             }
         }
-        Err((
-            StatusCode::FORBIDDEN,
-            "not authorized to manage this agent".into(),
-        ))
+        Err(ApiError::forbidden("not authorized to manage this agent"))
     }
 
     /// Caller must be the operator or a root agent (created_by is None).
@@ -289,19 +281,18 @@ impl AgentRegistry {
     pub fn require_root_or_operator(
         &self,
         identity: &crate::auth::Identity,
-    ) -> Result<(), (StatusCode, String)> {
+    ) -> Result<(), ApiError> {
         match identity {
             crate::auth::Identity::Operator => Ok(()),
             crate::auth::Identity::Agent { id } => {
                 let entry = self
                     .get(id)
-                    .ok_or((StatusCode::FORBIDDEN, "unknown agent".into()))?;
+                    .ok_or_else(|| ApiError::forbidden("unknown agent"))?;
                 if entry.agent.config.created_by.is_none() {
                     Ok(())
                 } else {
-                    Err((
-                        StatusCode::FORBIDDEN,
-                        "only root agents or operators can review promote requests".into(),
+                    Err(ApiError::forbidden(
+                        "only root agents or operators can review promote requests",
                     ))
                 }
             }
@@ -314,13 +305,12 @@ impl AgentRegistry {
         &self,
         identity: &crate::auth::Identity,
         target_id: &AgentId,
-    ) -> Result<(), (StatusCode, String)> {
+    ) -> Result<(), ApiError> {
         match identity {
             crate::auth::Identity::Operator => Ok(()),
             crate::auth::Identity::Agent { id } if id == target_id => Ok(()),
-            _ => Err((
-                StatusCode::FORBIDDEN,
-                "only the agent itself or operator can submit promote requests".into(),
+            _ => Err(ApiError::forbidden(
+                "only the agent itself or operator can submit promote requests",
             )),
         }
     }
@@ -407,9 +397,9 @@ mod tests {
         );
         reg.register(b, "tb".into(), make_entry(Some(a.clone()), "ab".into()));
         match reg.walk_supervisor_chain(&a) {
-            Err((status, msg)) => {
-                assert_eq!(status, StatusCode::FORBIDDEN);
-                assert!(msg.contains("circular"));
+            Err(e) => {
+                assert_eq!(e.status, 403);
+                assert!(e.message.contains("circular"));
             }
             Ok(_) => panic!("expected cycle error"),
         }
@@ -422,7 +412,7 @@ mod tests {
         let ghost = AgentId::random();
         reg.register(a.clone(), "t".into(), make_entry(Some(ghost), "a".into()));
         match reg.walk_supervisor_chain(&a) {
-            Err((status, _)) => assert_eq!(status, StatusCode::FORBIDDEN),
+            Err(e) => assert_eq!(e.status, 403),
             Ok(_) => panic!("expected broken chain error"),
         }
     }
@@ -459,7 +449,7 @@ mod tests {
         add_root(&mut reg, &a);
         add_root(&mut reg, &other);
         match reg.require_superior(&Identity::Agent { id: other }, &a) {
-            Err((status, _)) => assert_eq!(status, StatusCode::FORBIDDEN),
+            Err(e) => assert_eq!(e.status, 403),
             Ok(_) => panic!("expected FORBIDDEN"),
         }
     }
@@ -472,7 +462,7 @@ mod tests {
         add_root(&mut reg, &parent);
         add_sub(&mut reg, &child, &parent);
         match reg.require_superior(&Identity::Agent { id: child }, &parent) {
-            Err((status, _)) => assert_eq!(status, StatusCode::FORBIDDEN),
+            Err(e) => assert_eq!(e.status, 403),
             Ok(_) => panic!("expected FORBIDDEN"),
         }
     }
@@ -497,7 +487,7 @@ mod tests {
         add_root(&mut reg, &a);
         add_root(&mut reg, &other);
         match reg.require_supervisor(&Identity::Agent { id: other }, &a) {
-            Err((status, _)) => assert_eq!(status, StatusCode::FORBIDDEN),
+            Err(e) => assert_eq!(e.status, 403),
             Ok(_) => panic!("expected FORBIDDEN"),
         }
     }
@@ -507,7 +497,7 @@ mod tests {
         let reg = AgentRegistry::new();
         let ghost = AgentId::random();
         match reg.require_supervisor(&Identity::Operator, &ghost) {
-            Err((status, _)) => assert_eq!(status, StatusCode::NOT_FOUND),
+            Err(e) => assert_eq!(e.status, 404),
             Ok(_) => panic!("expected NOT_FOUND"),
         }
     }
@@ -537,9 +527,9 @@ mod tests {
         add_root(&mut reg, &root);
         add_sub(&mut reg, &child, &root);
         match reg.require_root_or_operator(&Identity::Agent { id: child }) {
-            Err((status, msg)) => {
-                assert_eq!(status, StatusCode::FORBIDDEN);
-                assert!(msg.contains("root agents"));
+            Err(e) => {
+                assert_eq!(e.status, 403);
+                assert!(e.message.contains("root agents"));
             }
             Ok(_) => panic!("expected FORBIDDEN"),
         }
@@ -573,7 +563,7 @@ mod tests {
         add_root(&mut reg, &a);
         add_root(&mut reg, &b);
         match reg.require_self_or_operator(&Identity::Agent { id: b }, &a) {
-            Err((status, _)) => assert_eq!(status, StatusCode::FORBIDDEN),
+            Err(e) => assert_eq!(e.status, 403),
             Ok(_) => panic!("expected FORBIDDEN"),
         }
     }

@@ -10,6 +10,7 @@ use axum::response::IntoResponse;
 use just_agent_common::agentid::AgentId;
 use just_agent_common::command::UserInput;
 use just_agent_common::policy::ToolPolicy;
+use just_agent_common::protocol::ApiError;
 use just_agent_common::protocol::SseEvent;
 use just_agent_runtime::approval::ApprovalStore;
 use just_agent_runtime::config::{AgentConfig, PermissionProfile, tool_policy_from_env};
@@ -160,7 +161,7 @@ pub async fn create_agent(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
     Json(req): Json<CreateAgentRequest>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, ApiError> {
     // Root agents require operator privilege.
     if req.created_by.is_none() {
         crate::auth::require_operator(auth.identity())?;
@@ -172,7 +173,7 @@ pub async fn create_agent(
     let mut config = {
         let ws = req.workspace_root.map(std::path::PathBuf::from);
         AgentConfig::load(req.prompt, req.skills, ws)
-            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?
+            .map_err(|e| ApiError::bad_request(e.to_string()))?
     };
     config.agent_id = Some(id.clone());
     let env = SpawnArgs::default_env(&id, &auth_token);
@@ -190,16 +191,13 @@ pub async fn create_agent(
         // Check per-agent subagent limit and pre-reserve the slot.
         let supervisor = registry
             .get_mut(supervisor_id)
-            .ok_or((StatusCode::NOT_FOUND, "supervisor not found".into()))?;
+            .ok_or_else(|| ApiError::not_found("supervisor not found"))?;
         if supervisor.subagent_ids.len() >= state.max_subagents {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!(
-                    "supervisor has {}/{max} subagents, cannot create more",
-                    supervisor.subagent_ids.len(),
-                    max = state.max_subagents
-                ),
-            ));
+            return Err(ApiError::unavailable(format!(
+                "supervisor has {}/{max} subagents, cannot create more",
+                supervisor.subagent_ids.len(),
+                max = state.max_subagents
+            )));
         }
         // Pre-reserve: push the new ID so concurrent requests see the updated count.
         supervisor.subagent_ids.push(id.clone());
@@ -218,11 +216,11 @@ pub async fn create_agent(
     // skills can be resolved from the session dir.
     let session_dir =
         persistence::create_session(&id, &config.workspace_root, config.created_by.as_ref())
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(ApiError::internal)?;
 
     for skill_name in &config.skills {
         let content = load_skill(skill_name, Some(session_dir.as_path()))
-            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
         store
             .lock()
             .await
@@ -230,7 +228,7 @@ pub async fn create_agent(
                 &format!("skill:{skill_name}"),
                 ChatMessage::user(format!("[skill: {skill_name}]\n{content}")),
             )
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(ApiError::internal)?;
         info!(skill = skill_name, "loaded skill");
     }
 
@@ -238,7 +236,7 @@ pub async fn create_agent(
         &session_dir,
         &tool_policy.read().unwrap_or_else(|e| e.into_inner()),
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(ApiError::internal)?;
 
     let prompt = config.prompt.take();
     let log_ws = config.workspace_root.display().to_string();
@@ -276,7 +274,7 @@ pub async fn create_agent(
             if let Err(e) = std::fs::remove_dir_all(&session_dir_clone) {
                 tracing::warn!(path = %session_dir_clone.display(), "failed to clean up session dir: {e:#}");
             }
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+            return Err(ApiError::internal(e));
         }
     };
     {
@@ -290,14 +288,11 @@ pub async fn create_agent(
                 supervisor.subagent_ids.retain(|sid| sid != &id);
             }
             abort_agent(&agent);
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!(
-                    "agent limit reached ({}/{max}), delete agents to create new ones",
-                    registry.len(),
-                    max = state.max_agents
-                ),
-            ));
+            return Err(ApiError::unavailable(format!(
+                "agent limit reached ({}/{max}), delete agents to create new ones",
+                registry.len(),
+                max = state.max_agents
+            )));
         }
         // Re-verify supervisor was not deleted during agent spawn.
         if let Some(ref supervisor_id) = req.created_by
@@ -306,9 +301,8 @@ pub async fn create_agent(
             // Supervisor gone — the pre-reserved slot is already cleaned up
             // (unregistering the supervisor removes it from the map entirely).
             abort_agent(&agent);
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "supervisor agent was deleted during creation".into(),
+            return Err(ApiError::internal(
+                "supervisor agent was deleted during creation",
             ));
         }
         registry.register_no_subagent_push(
@@ -348,24 +342,20 @@ pub async fn delete_agent(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<StatusCode, ApiError> {
     let entry = {
         let mut registry = state.registry.write().await;
         registry.require_superior(auth.identity(), &id)?;
         let Some(entry) = registry.get(&id) else {
-            return Err((StatusCode::NOT_FOUND, "agent not found".into()));
+            return Err(ApiError::not_found("agent not found"));
         };
         // Agent must be idle and have no subagents.
         if entry.agent.get_state() != AgentState::Idle {
-            return Err((
-                StatusCode::CONFLICT,
-                "agent is busy, interrupt it first".into(),
-            ));
+            return Err(ApiError::conflict("agent is busy, interrupt it first"));
         }
         if !entry.subagent_ids.is_empty() {
-            return Err((
-                StatusCode::CONFLICT,
-                "agent has active subagents, delete or interrupt them first".into(),
+            return Err(ApiError::conflict(
+                "agent has active subagents, delete or interrupt them first",
             ));
         }
         // Unregister under the same write lock — should always succeed since
@@ -374,10 +364,7 @@ pub async fn delete_agent(
         match registry.unregister(&id) {
             Some(e) => e,
             None => {
-                return Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "agent vanished during deletion".into(),
-                ));
+                return Err(ApiError::internal("agent vanished during deletion"));
             }
         }
     };
@@ -403,11 +390,11 @@ pub async fn interrupt_agent(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<StatusCode, ApiError> {
     let registry = state.registry.read().await;
     registry.require_superior(auth.identity(), &id)?;
     let Some(entry) = registry.get(&id) else {
-        return Err((StatusCode::NOT_FOUND, "agent not found".into()));
+        return Err(ApiError::not_found("agent not found"));
     };
     entry.agent.cancel.cancel();
     Ok(StatusCode::ACCEPTED)
@@ -425,26 +412,21 @@ fn validate_subagent_request(
     identity: &crate::auth::Identity,
     supervisor_id: &AgentId,
     workspace_root: &std::path::Path,
-) -> Result<(PermissionProfile, ToolPolicy), (StatusCode, String)> {
+) -> Result<(PermissionProfile, ToolPolicy), ApiError> {
     let supervisor = registry.require_supervisor(identity, supervisor_id)?;
 
     let supervisor_perms = &supervisor.agent.config.permissions;
     if supervisor_perms.max_depth == 0 {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "supervisor has no remaining delegation depth".into(),
+        return Err(ApiError::forbidden(
+            "supervisor has no remaining delegation depth",
         ));
     }
-    let subagent_ws = workspace_root.canonicalize().map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            format!("invalid workspace_root: {e}"),
-        )
-    })?;
+    let subagent_ws = workspace_root
+        .canonicalize()
+        .map_err(|e| ApiError::bad_request(format!("invalid workspace_root: {e}")))?;
     if !subagent_ws.starts_with(&supervisor_perms.workspace_root) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "workspace_root must be within supervisor's workspace".into(),
+        return Err(ApiError::forbidden(
+            "workspace_root must be within supervisor's workspace",
         ));
     }
 

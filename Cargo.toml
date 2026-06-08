@@ -20,7 +20,7 @@ name = "just-agent"
 [workspace.dependencies]
 just-llm-client = "0.1.0"
 
-just-agent-common = { path = "crates/just-agent-common" }
+just-agent-common = { path = "crates/just-agent-common", default-features = false }
 just-agent-runtime = { path = "crates/just-agent-runtime" }
 just-agent-client = { path = "crates/just-agent-client" }
 just-agent-daemon = { path = "crates/just-agent-daemon" }

@@ -1,10 +1,9 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
 use just_agent_common::approval::ApprovalStatus;
 use just_agent_common::policy::PolicyDecision;
 use just_agent_common::protocol::{
-    ApprovalDecisionBody, ApprovalEntry, ListApprovalsResponse, SseEvent,
+    ApiError, ApprovalDecisionBody, ApprovalEntry, ListApprovalsResponse, SseEvent,
 };
 use just_agent_runtime::persistence;
 
@@ -20,7 +19,7 @@ pub async fn list_approvals(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
     Query(params): Query<ListApprovalsQuery>,
-) -> Result<Json<ListApprovalsResponse>, (StatusCode, String)> {
+) -> Result<Json<ListApprovalsResponse>, ApiError> {
     let registry = state.registry.read().await;
 
     let mut entries: Vec<ApprovalEntry> = Vec::new();
@@ -75,7 +74,7 @@ pub async fn list_approvals(
     let total = entries.len();
     let offset: usize = match params.offset.unwrap_or(0).try_into() {
         Ok(v) => v,
-        Err(e) => return Err((StatusCode::BAD_REQUEST, format!("invalid offset: {e}"))),
+        Err(e) => return Err(ApiError::bad_request(format!("invalid offset: {e}"))),
     };
     let limit = params.limit.unwrap_or(5).clamp(1, MAX_PAGE_SIZE as u64) as usize;
     let items: Vec<_> = entries.into_iter().skip(offset).take(limit).collect();
@@ -87,7 +86,7 @@ pub async fn get_approval(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
     Path(id): Path<String>,
-) -> Result<Json<ApprovalEntry>, (StatusCode, String)> {
+) -> Result<Json<ApprovalEntry>, ApiError> {
     let registry = state.registry.read().await;
     for (agent_id, entry) in registry.iter() {
         let approvals = entry.agent.approvals.lock().await;
@@ -104,7 +103,7 @@ pub async fn get_approval(
             )));
         }
     }
-    Err((StatusCode::NOT_FOUND, "approval not found".into()))
+    Err(ApiError::not_found("approval not found"))
 }
 
 /// Approve or deny a pending approval request.
@@ -112,7 +111,7 @@ pub async fn get_approval(
 /// # Authorization
 ///
 /// The caller must be a superior of the agent that owns the approval
-/// (checked via the [`AgentRegistry`](crate::state::AgentRegistry)'s `require_superior` method).
+/// (checked via the [`AgentRegistry](crate::state::AgentRegistry)'s `require_superior` method).
 ///
 /// For **approve** decisions, an additional policy gate applies: the caller's
 /// own [`ToolPolicy`](just_agent_common::policy::ToolPolicy) must permit the tool with `PolicyDecision::Allow`.
@@ -125,7 +124,7 @@ pub async fn respond_approval(
     auth: crate::auth::AuthIdentity,
     Path(id): Path<String>,
     Json(req): Json<ApprovalDecisionBody>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<axum::http::StatusCode, ApiError> {
     let registry = state.registry.read().await;
 
     // Find the owning agent and apply the decision in a single approval-lock
@@ -145,10 +144,9 @@ pub async fn respond_approval(
                 // Policy gate: a superior may only approve if its own policy
                 // allows the tool unilaterally. Operator is exempt.
                 if let crate::auth::Identity::Agent { id: caller_id } = auth.identity() {
-                    let caller_entry = registry.get(caller_id).ok_or((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "caller agent not found in registry".into(),
-                    ))?;
+                    let caller_entry = registry
+                        .get(caller_id)
+                        .ok_or_else(|| ApiError::internal("caller agent not found in registry"))?;
                     let caller_decision = caller_entry
                         .agent
                         .tool_policy
@@ -156,20 +154,17 @@ pub async fn respond_approval(
                         .unwrap_or_else(|e| e.into_inner())
                         .decision_for(&info.content.tool_name);
                     if caller_decision != PolicyDecision::Allow {
-                        return Err((
-                            StatusCode::FORBIDDEN,
-                            format!(
-                                "cannot approve '{}': caller policy is '{caller_decision}' \
-                                 (only 'allow' permits unilateral delegation)",
-                                info.content.tool_name,
-                            ),
-                        ));
+                        return Err(ApiError::forbidden(format!(
+                            "cannot approve '{}': caller policy is '{caller_decision}' \
+                             (only 'allow' permits unilateral delegation)",
+                            info.content.tool_name,
+                        )));
                     }
                 }
 
                 approvals
                     .approve(&id)
-                    .map_err(|e| (StatusCode::CONFLICT, e.to_string()))?;
+                    .map_err(|e| ApiError::conflict(e.to_string()))?;
                 entry
                     .agent
                     .events_tx
@@ -184,7 +179,7 @@ pub async fn respond_approval(
                 let reason = req.reason.as_deref().unwrap_or("denied").to_owned();
                 approvals
                     .deny(&id, &reason)
-                    .map_err(|e| (StatusCode::CONFLICT, e.to_string()))?;
+                    .map_err(|e| ApiError::conflict(e.to_string()))?;
                 entry
                     .agent
                     .events_tx
@@ -196,9 +191,8 @@ pub async fn respond_approval(
                 serde_json::to_string(&*approvals).ok()
             }
             _ => {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    "decision must be 'approve' or 'deny'".into(),
+                return Err(ApiError::bad_request(
+                    "decision must be 'approve' or 'deny'",
                 ));
             }
         };
@@ -211,17 +205,16 @@ pub async fn respond_approval(
             tracing::error!("approval persist after decision failed: {e:#}");
         }
 
-        return Ok(StatusCode::OK);
+        return Ok(axum::http::StatusCode::OK);
     }
 
-    Err((StatusCode::NOT_FOUND, "approval not found".into()))
+    Err(ApiError::not_found("approval not found"))
 }
 
 #[cfg(test)]
 mod tests {
     use axum::Json;
     use axum::extract::{Path, State};
-    use axum::http::StatusCode;
     use just_agent_common::agentid::AgentId;
     use just_agent_common::policy::{PolicyDecision, ToolPolicy};
     use just_agent_common::protocol::ApprovalDecisionBody;
@@ -259,7 +252,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result.unwrap(), StatusCode::OK);
+        assert_eq!(result.unwrap(), axum::http::StatusCode::OK);
     }
 
     #[tokio::test]
@@ -294,10 +287,10 @@ mod tests {
         .await;
 
         match result {
-            Err((status, msg)) => {
-                assert_eq!(status, StatusCode::FORBIDDEN);
-                assert!(msg.contains("dangerous_tool"));
-                assert!(msg.contains("ask"));
+            Err(e) => {
+                assert_eq!(e.status, 403);
+                assert!(e.message.contains("dangerous_tool"));
+                assert!(e.message.contains("ask"));
             }
             Ok(_) => panic!("expected FORBIDDEN for superior with Ask policy"),
         }
@@ -335,9 +328,9 @@ mod tests {
         .await;
 
         match result {
-            Err((status, msg)) => {
-                assert_eq!(status, StatusCode::FORBIDDEN);
-                assert!(msg.contains("deny"));
+            Err(e) => {
+                assert_eq!(e.status, 403);
+                assert!(e.message.contains("deny"));
             }
             Ok(_) => panic!("expected FORBIDDEN for superior with Deny policy"),
         }
@@ -375,9 +368,9 @@ mod tests {
         .await;
 
         match result {
-            Err((status, msg)) => {
-                assert_eq!(status, StatusCode::FORBIDDEN);
-                assert!(msg.contains("classify"));
+            Err(e) => {
+                assert_eq!(e.status, 403);
+                assert!(e.message.contains("classify"));
             }
             Ok(_) => panic!("expected FORBIDDEN for superior with Classify policy"),
         }
@@ -408,7 +401,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result.unwrap(), StatusCode::OK);
+        assert_eq!(result.unwrap(), axum::http::StatusCode::OK);
     }
 
     #[tokio::test]
@@ -442,7 +435,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(result.unwrap(), StatusCode::OK);
+        assert_eq!(result.unwrap(), axum::http::StatusCode::OK);
     }
 
     #[tokio::test]
@@ -481,10 +474,10 @@ mod tests {
         .await;
 
         match result {
-            Err((status, msg)) => {
-                assert_eq!(status, StatusCode::FORBIDDEN);
-                assert!(msg.contains("dangerous_tool"));
-                assert!(msg.contains("ask"));
+            Err(e) => {
+                assert_eq!(e.status, 403);
+                assert!(e.message.contains("dangerous_tool"));
+                assert!(e.message.contains("ask"));
             }
             Ok(_) => {
                 panic!("expected FORBIDDEN — gate must check the specific tool, not any Allow")

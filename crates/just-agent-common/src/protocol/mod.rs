@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod approval;
 pub mod budget;
+pub mod error;
 pub mod skill;
 pub mod sse;
 
@@ -16,6 +17,7 @@ pub use approval::{
     ApprovalDecisionBody, ApprovalEntry, ListApprovalsQuery, ListApprovalsResponse,
 };
 pub use budget::{DEFAULT_TOKEN_BUDGET, TokenBudgetResponse, TokenBudgetUpdateRequest};
+pub use error::ApiError;
 pub use skill::{
     ListSkillPromoteRecordsResponse, PromoteDecision, SkillMeta, SkillPathsResponse,
     SkillPromoteDecisionBody, SkillPromoteRecordEntry, SkillPromoteShowResponse,

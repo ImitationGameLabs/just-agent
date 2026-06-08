@@ -3,7 +3,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use just_agent_common::command::UserInput;
-use just_agent_common::protocol::MessageResponse;
+use just_agent_common::protocol::{ApiError, MessageResponse};
 use tracing::{error, info, warn};
 
 use super::MessageRequest;
@@ -25,21 +25,20 @@ pub async fn send_message(
     _auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
     Json(req): Json<MessageRequest>,
-) -> Result<(StatusCode, Json<MessageResponse>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<MessageResponse>), ApiError> {
     // Fast path: agent is alive, try non-blocking send.
     {
         let registry = state.registry.read().await;
         let entry = registry
             .get(&id)
-            .ok_or((StatusCode::NOT_FOUND, "agent not found".into()))?;
+            .ok_or_else(|| ApiError::not_found("agent not found"))?;
         match try_enqueue(&entry.agent.prompt_tx, &req.text) {
             EnqueueResult::Accepted(response) => return Ok((StatusCode::ACCEPTED, Json(response))),
             EnqueueResult::Full => {
                 let cap = entry.agent.prompt_tx.max_capacity();
-                return Err((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    format!("agent message queue is full ({cap} messages), retry later"),
-                ));
+                return Err(ApiError::unavailable(format!(
+                    "agent message queue is full ({cap} messages), retry later"
+                )));
             }
             EnqueueResult::Closed => { /* fall through to reactivation */ }
         }
@@ -59,17 +58,16 @@ pub async fn send_message(
         let mut registry = state.registry.write().await;
         let entry = registry
             .get_mut(&id)
-            .ok_or((StatusCode::NOT_FOUND, "agent not found".into()))?;
+            .ok_or_else(|| ApiError::not_found("agent not found"))?;
 
         // Double-check under write lock: another request may have reactivated.
         match try_enqueue(&entry.agent.prompt_tx, &req.text) {
             EnqueueResult::Accepted(response) => return Ok((StatusCode::ACCEPTED, Json(response))),
             EnqueueResult::Full => {
                 let cap = entry.agent.prompt_tx.max_capacity();
-                return Err((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    format!("agent message queue is full ({cap} messages), retry later"),
-                ));
+                return Err(ApiError::unavailable(format!(
+                    "agent message queue is full ({cap} messages), retry later"
+                )));
             }
             EnqueueResult::Closed => { /* proceed to reactivation */ }
         }
@@ -87,10 +85,7 @@ pub async fn send_message(
             .try_send(UserInput::Prompt(req.text.clone()))
             .map_err(|e| {
                 error!(id = %id, "fresh channel rejected pre-send: {e}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal error: failed to pre-send message".into(),
-                )
+                ApiError::internal("failed to pre-send message")
             })?;
         entry.agent.prompt_tx = prompt_tx;
 
@@ -130,10 +125,7 @@ pub async fn send_message(
                 }
             }
             warn!(id = %id, "agent left in dead state; next message will retry reactivation");
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("reactivation failed: {e:#}"),
-            ));
+            return Err(ApiError::internal(format!("reactivation failed: {e:#}")));
         }
     };
 
@@ -142,10 +134,7 @@ pub async fn send_message(
         let Some(entry) = registry.get_mut(&id) else {
             // Agent was deleted while we were spawning.
             abort_agent(&agent);
-            return Err((
-                StatusCode::NOT_FOUND,
-                "agent deleted during reactivation".into(),
-            ));
+            return Err(ApiError::not_found("agent deleted during reactivation"));
         };
         // No try_enqueue double-check needed: the sender we installed in
         // Phase 1 is still there, and the new Agent's prompt_tx is the same
@@ -168,11 +157,11 @@ pub async fn sse_events(
     State(state): State<SharedState>,
     _auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, ApiError> {
     let registry = state.registry.read().await;
     let entry = registry
         .get(&id)
-        .ok_or((StatusCode::NOT_FOUND, "agent not found".into()))?;
+        .ok_or_else(|| ApiError::not_found("agent not found"))?;
     let rx = entry.agent.events_tx.subscribe();
     Ok(sse_stream(rx))
 }
