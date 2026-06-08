@@ -144,10 +144,7 @@ pub async fn run_agent_rounds(
         let notifications = ctx.approvals.lock().await.drain_notifications();
         if !notifications.is_empty() {
             let msg = format_approval_notifications(&notifications);
-            ctx.store
-                .lock()
-                .await
-                .push_turn(vec![ChatMessage::user(&msg)]);
+            ctx.record_turn(vec![ChatMessage::user(&msg)]).await;
         }
 
         // -- Context composition and LLM request --
@@ -366,7 +363,7 @@ pub async fn run_agent_rounds(
             turn_messages.push(ChatMessage::tool_result(result, call.id));
         }
 
-        ctx.store.lock().await.push_turn(turn_messages);
+        ctx.record_turn(turn_messages).await;
         ctx.persist().await;
     }
 
@@ -462,6 +459,16 @@ pub(crate) async fn summarize_and_evict(ctx: &AgentContext) -> Result<CompactOut
             );
         }
 
+        // Record compaction event in history.
+        let summary_msg = vec![ChatMessage::assistant(&result.text)];
+        ctx.append_history(
+            None,
+            &summary_msg,
+            result.estimated_tokens,
+            crate::history::RecordKind::System,
+            Some(crate::history::SystemEvent::CompactionSummary),
+        );
+
         // Accumulate exact usage from the summarization LLM call.
         if let Some(u) = &usage {
             ctx.store.lock().await.accumulate_usage(u);
@@ -534,8 +541,16 @@ async fn check_progressive_warnings(
     );
 
     guard.mark_warned(threshold);
-    guard.push_turn(vec![ChatMessage::user(&msg)]);
+    let msgs = vec![ChatMessage::user(&msg)];
+    let (turn_id, estimated_tokens) = guard.push_turn(msgs.clone());
     drop(guard);
+    ctx.append_history(
+        Some(turn_id.0),
+        &msgs,
+        estimated_tokens,
+        crate::history::RecordKind::Turn,
+        None,
+    );
     info!(threshold, "injected context warning");
     true
 }
@@ -579,8 +594,16 @@ async fn check_token_budget_warnings(
     );
 
     guard.mark_budget_warned(threshold);
-    guard.push_turn(vec![ChatMessage::user(&msg)]);
+    let msgs = vec![ChatMessage::user(&msg)];
+    let (turn_id, estimated_tokens) = guard.push_turn(msgs.clone());
     drop(guard);
+    ctx.append_history(
+        Some(turn_id.0),
+        &msgs,
+        estimated_tokens,
+        crate::history::RecordKind::Turn,
+        None,
+    );
     info!(
         threshold,
         consumed = snap.consumed,

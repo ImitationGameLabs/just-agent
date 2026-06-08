@@ -93,7 +93,7 @@ impl ContextSummarizer {
             Some(s) => s.to_owned(),
             None => bail!("summarization: LLM returned empty summary"),
         };
-        let estimated_tokens = text.chars().count() / 4 + 16;
+        let estimated_tokens = super::turn::estimate_message_tokens(&ChatMessage::assistant(&text));
 
         Ok((
             Summary {

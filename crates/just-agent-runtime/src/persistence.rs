@@ -58,6 +58,10 @@ pub fn create_session(
 }
 
 /// Remove a session directory.
+///
+/// Deletes the entire directory including `context.json`, `approvals.json`,
+/// `policy.toml`, `skills/`, and `history/`. History is intentionally tied
+/// to the session lifecycle — once an agent is deleted, its history is gone.
 pub fn cleanup_session(agent_id: &AgentId) -> Result<()> {
     let dir = session_dir(agent_id)?;
     if dir.exists() {
@@ -253,7 +257,23 @@ pub fn restore_session(agent_id: &AgentId, dir: &Path) -> Result<RestorableSessi
     // Migrate legacy summary field to pinned item.
     store.migrate_legacy_summary();
 
-    store.push_turn(vec![ChatMessage::user(RESTART_MESSAGE)]);
+    let restart_msgs = vec![ChatMessage::user(RESTART_MESSAGE)];
+    let (_, estimated_tokens) = store.push_turn(restart_msgs.clone());
+
+    // Record session restore event in history.
+    // Uses direct HistoryWriter (no AgentContext exists at restore time).
+    {
+        let history = crate::history::HistoryWriter::new(dir.to_owned());
+        if let Err(e) = history.append(
+            None,
+            &restart_msgs,
+            estimated_tokens,
+            crate::history::RecordKind::System,
+            Some(crate::history::SystemEvent::SessionRestore),
+        ) {
+            tracing::warn!("history restore record failed: {e:#}");
+        }
+    }
 
     Ok(RestorableSession {
         agent_id: agent_id.clone(),

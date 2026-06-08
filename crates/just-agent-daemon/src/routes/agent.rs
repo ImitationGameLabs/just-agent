@@ -15,6 +15,7 @@ use just_agent_common::protocol::SseEvent;
 use just_agent_runtime::approval::ApprovalStore;
 use just_agent_runtime::config::{AgentConfig, PermissionProfile, tool_policy_from_env};
 use just_agent_runtime::context::{AgenticContext, ContextStore, ContextSummarizer};
+use just_agent_runtime::history::HistoryWriter;
 use just_agent_runtime::persistence;
 use just_agent_runtime::policy::{AgentPolicy, AuthorizedToolExecutor};
 use just_agent_runtime::provider::client_from_env;
@@ -107,6 +108,7 @@ pub(crate) async fn spawn_agent(args: SpawnArgs) -> anyhow::Result<Agent> {
         summarizer,
         config: args.config.clone(),
         session_dir: Some(args.session_dir.clone()),
+        history: Some(HistoryWriter::new(args.session_dir.clone())),
         cancel: cancel.clone(),
         token_budget: token_budget.clone(),
     };

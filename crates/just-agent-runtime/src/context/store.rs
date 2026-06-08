@@ -242,8 +242,8 @@ impl ContextStore {
     }
 
     /// Append a new turn from the given messages.
-    /// Returns the assigned turn ID.
-    pub fn push_turn(&mut self, messages: Vec<ChatMessage>) -> TurnId {
+    /// Returns the assigned turn ID and the estimated token count.
+    pub fn push_turn(&mut self, messages: Vec<ChatMessage>) -> (TurnId, usize) {
         let estimated_tokens = Turn::estimate_tokens(&messages);
         let id = TurnId(self.next_turn_id);
         self.next_turn_id += 1;
@@ -252,7 +252,7 @@ impl ContextStore {
             messages,
             estimated_tokens,
         });
-        id
+        (id, estimated_tokens)
     }
 
     /// Immutable access to the pinned items.
@@ -341,8 +341,8 @@ mod tests {
     #[test]
     fn push_turn_assigns_sequential_ids() {
         let mut store = new_store();
-        let id0 = store.push_turn(vec![ChatMessage::user("a")]);
-        let id1 = store.push_turn(vec![ChatMessage::user("b")]);
+        let (id0, _) = store.push_turn(vec![ChatMessage::user("a")]);
+        let (id1, _) = store.push_turn(vec![ChatMessage::user("b")]);
         assert_eq!(id0, TurnId(0));
         assert_eq!(id1, TurnId(1));
         assert_eq!(store.turn_count(), 2);

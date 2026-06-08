@@ -2,6 +2,7 @@ pub mod approval;
 pub mod config;
 pub mod context;
 pub mod event;
+pub mod history;
 pub mod persistence;
 pub mod policy;
 pub mod provider;

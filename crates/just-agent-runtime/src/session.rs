@@ -11,7 +11,8 @@ use just_agent_common::command::{SlashCommand, UserInput};
 
 use crate::approval::ApprovalStore;
 use crate::config::AgentConfig;
-use crate::context::{AgenticContext, ContextStore, ContextSummarizer};
+use crate::context::{AgenticContext, ContextStore, ContextSummarizer, TurnId};
+use crate::history::{HistoryWriter, RecordKind};
 use crate::policy::AuthorizedToolExecutor;
 use crate::runner;
 use just_llm_client::types::chat::ChatMessage;
@@ -26,6 +27,8 @@ pub struct AgentContext {
     pub config: AgentConfig,
     /// Session directory for persistence.
     pub session_dir: Option<PathBuf>,
+    /// Append-only conversation history writer. `Some` when `session_dir` is `Some`.
+    pub history: Option<HistoryWriter>,
     /// Cancellation signal for graceful interruption.
     pub cancel: CancellationToken,
     /// Daemon-wide token budget shared by all agents.
@@ -57,9 +60,40 @@ impl AgentContext {
             }
         }
     }
-}
 
-/// Agent task: receives user input, runs rounds, sends events back.
+    /// Fire-and-forget append to history. Logs a warning on failure.
+    pub(crate) fn append_history(
+        &self,
+        turn_id: Option<u64>,
+        messages: &[ChatMessage],
+        estimated_tokens: usize,
+        kind: RecordKind,
+        event: Option<crate::history::SystemEvent>,
+    ) {
+        if let Some(ref history) = self.history
+            && let Err(e) = history.append(turn_id, messages, estimated_tokens, kind, event)
+        {
+            tracing::warn!(turn_id = ?turn_id, "history write failed: {e:#}");
+        }
+    }
+
+    /// Record a turn to both the context store and the append-only history log.
+    /// Returns the assigned `TurnId`.
+    pub async fn record_turn(&self, messages: Vec<ChatMessage>) -> TurnId {
+        let (turn_id, estimated_tokens) = {
+            let mut guard = self.store.lock().await;
+            guard.push_turn(messages.clone())
+        };
+        self.append_history(
+            Some(turn_id.0),
+            &messages,
+            estimated_tokens,
+            RecordKind::Turn,
+            None,
+        );
+        turn_id
+    }
+}
 pub async fn agent_task(
     mut ctx: AgentContext,
     initial_prompt: Option<String>,
@@ -75,10 +109,7 @@ pub async fn agent_task(
         if p.is_empty() {
             return;
         }
-        ctx.store
-            .lock()
-            .await
-            .push_turn(vec![ChatMessage::user(&p)]);
+        ctx.record_turn(vec![ChatMessage::user(&p)]).await;
         if run_and_report(&mut ctx, &agent_tx).await.is_some() {
             return;
         }
@@ -89,10 +120,7 @@ pub async fn agent_task(
             input = prompt_rx.recv() => {
                 match input {
                     Some(UserInput::Prompt(text)) => {
-                        ctx.store
-                            .lock()
-                            .await
-                            .push_turn(vec![ChatMessage::user(&text)]);
+                        ctx.record_turn(vec![ChatMessage::user(&text)]).await;
                         if run_and_report(&mut ctx, &agent_tx).await.is_some() {
                             break;
                         }
@@ -136,10 +164,8 @@ pub async fn run_and_report(
     agent_tx.send(AgentEvent::Busy).await.ok();
     match runner::run_agent_rounds(ctx, agent_tx).await {
         Ok(AgentOutcome::Finished { content }) => {
-            ctx.store
-                .lock()
-                .await
-                .push_turn(vec![ChatMessage::assistant(&content)]);
+            ctx.record_turn(vec![ChatMessage::assistant(&content)])
+                .await;
             agent_tx.send(AgentEvent::Finished(content)).await.ok();
             None
         }
