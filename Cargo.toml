@@ -6,6 +6,7 @@ members = [
   "crates/just-agent-tui",
   "crates/just-agent-daemon",
   "crates/just-agent-client",
+  "crates/just-agent-run",
 ]
 
 resolver = "3"

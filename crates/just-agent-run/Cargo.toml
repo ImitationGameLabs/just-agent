@@ -1,0 +1,14 @@
+[package]
+name = "just-agent-run"
+description = "One-shot agent runner: create, stream output, print result, clean up"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+just-agent-client = { workspace = true }
+just-agent-common = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+futures-util = { workspace = true }

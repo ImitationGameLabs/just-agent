@@ -1324,6 +1324,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "just-agent-run"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures-util",
+ "just-agent-client",
+ "just-agent-common",
+ "tokio",
+]
+
+[[package]]
 name = "just-agent-runtime"
 version = "0.1.0"
 dependencies = [
