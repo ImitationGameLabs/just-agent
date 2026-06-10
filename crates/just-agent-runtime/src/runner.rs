@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;
+use just_agent_common::command::UserInput;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -126,11 +127,37 @@ async fn consume_stream(
 pub async fn run_agent_rounds(
     ctx: &mut AgentContext,
     tx: &tokio::sync::mpsc::Sender<AgentEvent>,
+    prompt_rx: &mut tokio::sync::mpsc::Receiver<UserInput>,
 ) -> Result<AgentOutcome> {
     let tool_timeout = Duration::from_secs(ctx.config.tool_timeout_secs);
     let context_window = ctx.config.context_window_tokens;
 
     for _round in 0..ctx.config.max_tool_rounds {
+        // -- Interjection draining: consume queued prompts/commands --
+        {
+            let mut interjected = Vec::new();
+            loop {
+                match prompt_rx.try_recv() {
+                    Ok(UserInput::Prompt(text)) => interjected.push(text),
+                    Ok(UserInput::Command(_)) => {
+                        // Discard: slash commands are handled in the outer
+                        // agent_task loop. Mid-round commands like Quit/Clear
+                        // are not actionable here; Status is handled outside.
+                    }
+                    Err(_) => break,
+                }
+            }
+            if !interjected.is_empty() {
+                let msg = interjected
+                    .iter()
+                    .map(|t| format!("[Interjected message]\n{t}\n[/Interjected message]"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                ctx.record_turn(vec![ChatMessage::user(&msg)]).await;
+                info!(count = interjected.len(), "injected interjected messages");
+            }
+        }
+
         // -- Pre-call token budget check (shared tree-wide counter) --
         let snap = ctx.token_budget.snapshot();
         if snap.is_exceeded() {

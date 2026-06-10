@@ -178,6 +178,21 @@ pub async fn create_agent(
             .map_err(|e| ApiError::bad_request(e.to_string()))?
     };
     config.agent_id = Some(id.clone());
+    if let Some(rounds) = req.max_tool_rounds {
+        match rounds {
+            just_agent_common::protocol::MaxToolRounds::Unlimited => {
+                config.set_max_tool_rounds(usize::MAX);
+            }
+            just_agent_common::protocol::MaxToolRounds::Limited(n) => {
+                if n == 0 {
+                    return Err(ApiError::bad_request(
+                        "max_tool_rounds must be greater than zero",
+                    ));
+                }
+                config.set_max_tool_rounds(n);
+            }
+        }
+    }
     let env = SpawnArgs::default_env(&id, &auth_token);
 
     // Subagent: validate supervisor and delegation constraints, or use default policy.

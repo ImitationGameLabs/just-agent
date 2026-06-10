@@ -7,7 +7,11 @@ use just_agent_common::AgentId;
 use just_agent_common::policy::{PolicyDecision, ToolPolicy};
 
 const DEFAULT_SYSTEM_PROMPT: &str = "You are a minimal coding agent. Use shell_session_exec for shell commands. Use shell_session_create to create persistent shell sessions, shell_session_list to inspect them, shell_session_capture to inspect recent output, and shell_session_restart or shell_session_kill when session lifecycle control is necessary. Keep answers concise and prefer the least risky tool that can accomplish the task.\n\nUse read_file_and_pin to load a file into persistent context (e.g. skills or reference documents). Use context_unpin to remove pinned items.\n\nWhen a tool returns {\"pending_approval\": true, \"id\": \"...\"}, the action was deferred and is pending authorization. Continue with other work. When you see an approval notification in context, call approval_redeem with the id to execute. Call approval_list to check status, approval_cancel if you no longer need a pending approval.\n\nUse `just-agent promote-request submit <name>` to request promotion of a local skill to the shared directory. The request is reviewed by the root agent. You will be notified when the decision is made.";
-const DEFAULT_MAX_TOOL_ROUNDS: usize = 32;
+/// Effectively unlimited — the real safety net is the daemon-wide token budget.
+/// Individual rounds are bounded by LLM response length; the loop as a whole is
+/// bounded by token consumption. This constant only serves as a last-resort
+/// guard against a degenerate "tool calls with no progress" loop.
+const DEFAULT_MAX_TOOL_ROUNDS: usize = usize::MAX;
 const DEFAULT_SUMMARY_MAX_TOKENS: u32 = 1_200;
 const DEFAULT_CONTEXT_WINDOW_TOKENS: usize = 128_000;
 const DEFAULT_OUTPUT_RESERVE_TOKENS: usize = 8_192;
@@ -257,6 +261,16 @@ impl AgentConfig {
     pub fn effective_budget(&self) -> usize {
         self.context_window_tokens
             .saturating_sub(self.output_reserve_tokens)
+    }
+
+    /// Override `max_tool_rounds` with a per-request value.
+    ///
+    /// Takes precedence over both the default and the env var.
+    /// Silently ignores zero (falls back to the loaded value).
+    pub fn set_max_tool_rounds(&mut self, value: usize) {
+        if value > 0 {
+            self.max_tool_rounds = value;
+        }
     }
 }
 

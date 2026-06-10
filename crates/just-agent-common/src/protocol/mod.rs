@@ -11,7 +11,7 @@ pub mod sse;
 // Downstream `use just_agent_common::protocol::*` continues to work unchanged.
 pub use agent::{
     AgentPermissionsResponse, AgentState, AgentStatusResponse, AgentSummary, CreateAgentRequest,
-    CreateAgentResponse, ListAgentsResponse, MessageRequest, MessageResponse,
+    CreateAgentResponse, ListAgentsResponse, MaxToolRounds, MessageRequest, MessageResponse,
 };
 pub use approval::{
     ApprovalDecisionBody, ApprovalEntry, ListApprovalsQuery, ListApprovalsResponse,

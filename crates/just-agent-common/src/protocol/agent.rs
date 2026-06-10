@@ -29,6 +29,21 @@ impl std::fmt::Display for AgentState {
     }
 }
 
+/// Round limit for an agent, set via `CreateAgentRequest::max_tool_rounds`.
+///
+/// - `None` on the request → use daemon default (`JUST_AGENT_MAX_TOOL_ROUNDS` env var
+///   or built-in unlimited).
+/// - `Some(Unlimited)` → force no round limit (bounded only by token budget).
+/// - `Some(Limited(N))` → explicit round limit (must be > 0).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaxToolRounds {
+    /// No hard round limit — bounded only by the daemon-wide token budget.
+    Unlimited,
+    /// Explicit round limit. Must be greater than zero.
+    Limited(usize),
+}
+
 /// Request body for creating a new agent instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAgentRequest {
@@ -36,6 +51,13 @@ pub struct CreateAgentRequest {
     pub skills: Vec<String>,
     pub prompt: Option<String>,
     pub created_by: Option<AgentId>,
+    /// Override the default/env-configured max tool-call rounds for this agent.
+    ///
+    /// - `None` → use daemon default (`JUST_AGENT_MAX_TOOL_ROUNDS` or unlimited).
+    /// - `Some(MaxToolRounds::Unlimited)` → force unlimited rounds.
+    /// - `Some(MaxToolRounds::Limited(N))` → explicit limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tool_rounds: Option<MaxToolRounds>,
 }
 
 /// Response body returned after creating an agent.

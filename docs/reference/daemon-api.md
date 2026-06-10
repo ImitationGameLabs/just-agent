@@ -73,9 +73,24 @@ Auth: operator (root agents) or direct supervisor (subagents). See
     "string — skill paths relative to skills root (e.g. \"code/refactoring\")"
   ],
   "prompt": "string — initial prompt (optional)",
-  "created_by": "AgentId — supervisor ID; omit for root agents (optional)"
+  "created_by": "AgentId — supervisor ID; omit for root agents (optional)",
+  "max_tool_rounds": "null — use daemon default (see below)"
 }
 ```
+
+**`max_tool_rounds`** — override the default/env-configured max tool-call rounds for this agent. Omit or `null` to use the daemon default (`JUST_AGENT_MAX_TOOL_ROUNDS` env var, or unlimited). To set an explicit value:
+
+```json
+"max_tool_rounds": {"limited": 64}
+```
+
+To force unlimited rounds (bounded only by token budget):
+
+```json
+"max_tool_rounds": "unlimited"
+```
+
+`Limited` values must be > 0; `Limited(0)` returns 400.
 
 > **Token budget:** All agents share a single daemon-wide token budget
 > (default: 100M tokens). Use `POST /budget` to adjust at runtime.

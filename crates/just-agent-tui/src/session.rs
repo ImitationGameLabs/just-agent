@@ -44,6 +44,7 @@ impl Session {
                 skills: vec![],
                 prompt: None,
                 created_by: None,
+                max_tool_rounds: None,
             })
             .await?;
         Ok(Self { client, agent_id })

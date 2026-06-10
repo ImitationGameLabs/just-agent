@@ -70,15 +70,16 @@ authentication and the authorization matrix, see [auth.md](reference/auth.md).
 ## Agent loop
 
 The core loop (`run_agent_rounds` in `just-agent-runtime`) iterates up to
-`max_tool_rounds` (default 32) per message:
+`max_tool_rounds` (default: unlimited, bounded by token budget) per message:
 
-1. Drain approval notifications into context as a synthetic user message.
-2. Compose context from layers (pinned → summary → working turns).
-3. Check token budget — if over limit, summarize old turns and evict.
-4. Stream the LLM request with tool definitions.
-5. If the response has tool calls, execute each through the policy gate.
-6. Push the assistant message and tool results as a new turn.
-7. Repeat until no tool calls remain (finished) or max rounds exceeded.
+1. Drain interjected messages (queued prompts from other agents) into context.
+2. Drain approval notifications into context as a synthetic user message.
+3. Compose context from layers (pinned → summary → working turns).
+4. Check token budget — if over limit, summarize old turns and evict.
+5. Stream the LLM request with tool definitions.
+6. If the response has tool calls, execute each through the policy gate.
+7. Push the assistant message and tool results as a new turn.
+8. Repeat until no tool calls remain (finished) or max rounds exceeded.
 
 ## Policy and approval
 

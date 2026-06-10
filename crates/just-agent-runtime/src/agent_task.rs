@@ -110,7 +110,10 @@ pub async fn agent_task(
             return;
         }
         ctx.record_turn(vec![ChatMessage::user(&p)]).await;
-        if run_and_report(&mut ctx, &agent_tx).await.is_some() {
+        if run_and_report(&mut ctx, &agent_tx, &mut prompt_rx)
+            .await
+            .is_some()
+        {
             return;
         }
     }
@@ -121,7 +124,7 @@ pub async fn agent_task(
                 match input {
                     Some(UserInput::Prompt(text)) => {
                         ctx.record_turn(vec![ChatMessage::user(&text)]).await;
-                        if run_and_report(&mut ctx, &agent_tx).await.is_some() {
+                        if run_and_report(&mut ctx, &agent_tx, &mut prompt_rx).await.is_some() {
                             break;
                         }
                     }
@@ -160,9 +163,10 @@ async fn handle_command(
 pub async fn run_and_report(
     ctx: &mut AgentContext,
     agent_tx: &tokio::sync::mpsc::Sender<AgentEvent>,
+    prompt_rx: &mut tokio::sync::mpsc::Receiver<UserInput>,
 ) -> Option<AgentOutcome> {
     agent_tx.send(AgentEvent::Busy).await.ok();
-    match runner::run_agent_rounds(ctx, agent_tx).await {
+    match runner::run_agent_rounds(ctx, agent_tx, prompt_rx).await {
         Ok(AgentOutcome::Finished { content }) => {
             ctx.record_turn(vec![ChatMessage::assistant(&content)])
                 .await;
