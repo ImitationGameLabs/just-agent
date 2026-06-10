@@ -33,7 +33,8 @@ async fn main() -> Result<()> {
         std::env::set_var("JUST_AGENT_DAEMON_URL", &args.advertise_url);
     }
 
-    let operator_token = uuid::Uuid::new_v4().to_string();
+    let operator_token = std::env::var("JUST_AGENT_OPERATOR_TOKEN")
+        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
     println!("─────────────────────────────────────────────────");
     println!("  Operator Token:");
     println!("  {operator_token}");

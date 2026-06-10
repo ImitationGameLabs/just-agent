@@ -60,6 +60,7 @@ These variables control the daemon server.
 | `JUST_AGENT_MAX_AGENTS`        | no       | `50`                    | Max concurrent agent instances. Range: 1..=1000. Creation returns 503 when at capacity. Restore is always exempt.                                                  |
 | `JUST_AGENT_MAX_SUBAGENTS`     | no       | `20`                    | Max direct subagents per agent. Range: 1..=100. Creation returns 503 when the supervisor is at capacity.                                                           |
 | `JUST_AGENT_MAX_BODY_SIZE_KB`  | no       | `1024`                  | Max HTTP request body size in kilobytes. `0` = axum default (2 MB). Oversized requests return 413.                                                                 |
+| `JUST_AGENT_OPERATOR_TOKEN`    | no       | _(random UUID)_         | Pre-set the daemon operator token. When unset, a random UUID is generated and printed to stdout. Set this for automation where the token must be known in advance. |
 
 Source: [`crates/just-agent-daemon/src/args.rs`](../../crates/just-agent-daemon/src/args.rs).
 
