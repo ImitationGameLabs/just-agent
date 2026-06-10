@@ -48,6 +48,36 @@ impl DaemonClient {
         }
     }
 
+    /// Construct a client from environment variables.
+    ///
+    /// Reads `JUST_AGENT_DAEMON_URL` (default: `http://127.0.0.1:3000`) and
+    /// `JUST_AGENT_AUTH_TOKEN` (required). Returns an error if the token is
+    /// missing, with guidance tailored to common scenarios:
+    ///
+    /// - **Agent running inside the daemon**: the token is embedded
+    ///   automatically in the PTY environment, this should not happen.
+    /// - **Operator user**: copy the token from the daemon startup output and
+    ///   `export JUST_AGENT_AUTH_TOKEN=<token>`.
+    /// - **Automation**: set `JUST_AGENT_AUTH_TOKEN` to the same value as the
+    ///   daemon's `JUST_AGENT_OPERATOR_TOKEN`.
+    pub fn from_env() -> Result<Self> {
+        let url = std::env::var("JUST_AGENT_DAEMON_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:3000".into());
+        let token = std::env::var("JUST_AGENT_AUTH_TOKEN").context(concat!(
+            "JUST_AGENT_AUTH_TOKEN is not set.\n",
+            "\n",
+            "How to obtain the token:\n",
+            "- Agent (inside daemon): token is embedded automatically, check daemon setup.\n",
+            "- Operator user: copy from daemon startup output, then:\n",
+            "    export JUST_AGENT_AUTH_TOKEN=<token>\n",
+            "- Automation: start the daemon with a preset operator token:\n",
+            "    JUST_AGENT_OPERATOR_TOKEN=<secret> just-agent-daemon\n",
+            "  then use the same value for the client:\n",
+            "    JUST_AGENT_AUTH_TOKEN=<secret> just-agent <command>",
+        ))?;
+        Ok(Self::new_with_token(&url, token))
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.inner.base_url)
     }

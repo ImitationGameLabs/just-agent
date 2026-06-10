@@ -22,14 +22,6 @@ use args::{
     PromoteRequestCommand, SkillCommand,
 };
 
-fn build_client() -> DaemonClient {
-    let url =
-        std::env::var("JUST_AGENT_DAEMON_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".into());
-    let token = std::env::var("JUST_AGENT_AUTH_TOKEN")
-        .expect("JUST_AGENT_AUTH_TOKEN must be set (export it from daemon startup output)");
-    DaemonClient::new_with_token(&url, token)
-}
-
 /// Read agent ID from JUST_AGENT_ID env var.
 fn agent_id_from_env() -> anyhow::Result<AgentId> {
     std::env::var("JUST_AGENT_ID")
@@ -40,26 +32,26 @@ fn agent_id_from_env() -> anyhow::Result<AgentId> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let client = DaemonClient::from_env()?;
+
     match cli.command {
         Commands::Agent(cmd) => match cmd {
             AgentCommand::Start(args) => {
-                let client = build_client();
                 let id = client
                     .spawn(just_agent_common::protocol::CreateAgentRequest {
                         workspace_root: args.workspace_root,
                         skills: args.skills,
                         prompt: args.prompt,
                         created_by: std::env::var("JUST_AGENT_ID").ok().map(AgentId::from),
+                        max_tool_rounds: None,
                     })
                     .await?;
                 println!("{id}");
             }
             AgentCommand::Send(args) => {
-                let client = build_client();
                 client.post_message(&args.id, &args.message).await?;
             }
             AgentCommand::List => {
-                let client = build_client();
                 let agents = client.list_agents().await?;
                 if agents.is_empty() {
                     println!("No agents running.");
@@ -70,7 +62,6 @@ async fn main() -> Result<()> {
                 }
             }
             AgentCommand::Stop(args) => {
-                let client = build_client();
                 if let Err(e) = client.stop_agent(&args.id).await {
                     let msg = e.to_string();
                     if msg.contains("409") || msg.contains("busy") || msg.contains("subagent") {
@@ -86,7 +77,6 @@ async fn main() -> Result<()> {
                 println!("Agent {} stopped.", args.id);
             }
             AgentCommand::Events(args) => {
-                let client = build_client();
                 let mut stream = client.event_stream(&args.id).await?;
                 while let Some(result) = stream.next().await {
                     match result {
@@ -96,7 +86,6 @@ async fn main() -> Result<()> {
                 }
             }
             AgentCommand::Status(args) => {
-                let client = build_client();
                 let status = client.agent_status(&args.id).await?;
                 println!("state: {}", status.state);
                 println!("{}", status.context.format_summary());
@@ -119,7 +108,6 @@ async fn main() -> Result<()> {
                 }
             }
             AgentCommand::Permissions(args) => {
-                let client = build_client();
                 let perms = client.agent_permissions(&args.id).await?;
                 println!("max_depth: {}", perms.max_depth);
                 println!("workspace_root: {}", perms.workspace_root);
@@ -135,14 +123,12 @@ async fn main() -> Result<()> {
                 }
             }
             AgentCommand::Interrupt(args) => {
-                let client = build_client();
                 client.interrupt_agent(&args.id).await?;
                 println!("Agent {} interrupted.", args.id);
             }
         },
         Commands::Approval(cmd) => match cmd {
             ApprovalCommand::List(args) => {
-                let client = build_client();
                 let status = if args.all {
                     None
                 } else {
@@ -169,17 +155,14 @@ async fn main() -> Result<()> {
                 }
             }
             ApprovalCommand::Get(args) => {
-                let client = build_client();
                 let a = client.get_approval(&args.id).await?;
                 print_approval_entry(&a);
             }
             ApprovalCommand::Approve(args) => {
-                let client = build_client();
                 client.respond_approval(&args.id, "approve", None).await?;
                 println!("Approved.");
             }
             ApprovalCommand::Deny(args) => {
-                let client = build_client();
                 client
                     .respond_approval(&args.id, "deny", Some(&args.reason))
                     .await?;
@@ -188,7 +171,6 @@ async fn main() -> Result<()> {
         },
         Commands::Policy(cmd) => match cmd {
             PolicyCommand::Get(args) => {
-                let client = build_client();
                 let policy = client.get_policy(&args.id).await?;
                 println!("default: {}", policy.default);
                 println!();
@@ -201,7 +183,6 @@ async fn main() -> Result<()> {
                     .decision
                     .parse()
                     .map_err(|e| anyhow::anyhow!("invalid decision: {e}"))?;
-                let client = build_client();
                 let mut policy = client.get_policy(&args.id).await?;
                 policy.tools.insert(args.tool.clone(), decision);
                 client.update_policy(&args.id, &policy).await?;
@@ -210,7 +191,6 @@ async fn main() -> Result<()> {
         },
         Commands::Skill(cmd) => match cmd {
             SkillCommand::Paths(_) => {
-                let client = build_client();
                 let id = agent_id_from_env()?;
                 let paths = client.skill_paths(&id).await?;
                 println!("shared: {}", paths.shared);
@@ -219,7 +199,6 @@ async fn main() -> Result<()> {
                 }
             }
             SkillCommand::Meta(args) => {
-                let client = build_client();
                 let id = agent_id_from_env()?;
                 let meta = client.skill_meta(&id, &args.name).await?;
                 println!("name: {}", meta.name);
@@ -230,7 +209,6 @@ async fn main() -> Result<()> {
         },
         Commands::PromoteRequest(cmd) => match cmd {
             PromoteRequestCommand::Submit(args) => {
-                let client = build_client();
                 let id = agent_id_from_env()?;
                 let resp = client.submit_promote_request(&id, &args.name).await?;
                 println!("Skill: {}", resp.skill_name);
@@ -243,7 +221,6 @@ async fn main() -> Result<()> {
                 }
             }
             PromoteRequestCommand::List { status } => {
-                let client = build_client();
                 let resp = client.list_promote_requests(status.as_deref()).await?;
                 if resp.items.is_empty() {
                     println!("No promote requests.");
@@ -267,7 +244,6 @@ async fn main() -> Result<()> {
                 }
             }
             PromoteRequestCommand::Show { id } => {
-                let client = build_client();
                 let resp = client.show_promote_request(&id).await?;
                 println!("id: {}", resp.id);
                 println!("skill: {}", resp.skill_name);
@@ -290,14 +266,12 @@ async fn main() -> Result<()> {
                 println!("{}", resp.new_content);
             }
             PromoteRequestCommand::Approve { id } => {
-                let client = build_client();
                 client
                     .respond_promote_request(&id, PromoteDecision::Approve, None)
                     .await?;
                 println!("Approved.");
             }
             PromoteRequestCommand::Deny { id, reason } => {
-                let client = build_client();
                 client
                     .respond_promote_request(&id, PromoteDecision::Deny, reason.as_deref())
                     .await?;
@@ -306,7 +280,6 @@ async fn main() -> Result<()> {
         },
         Commands::Budget(cmd) => match cmd {
             BudgetCommand::Get => {
-                let client = build_client();
                 let resp = client.get_token_budget().await?;
                 println!("{}", resp.format_display());
             }
@@ -314,7 +287,6 @@ async fn main() -> Result<()> {
                 let amount = parse_token_amount(&args.amount).map_err(|e| anyhow::anyhow!(e))?;
                 let delta = i64::try_from(amount)
                     .map_err(|_| anyhow::anyhow!("token amount {amount} exceeds maximum delta"))?;
-                let client = build_client();
                 let resp = client.adjust_token_budget(delta).await?;
                 println!("Budget increased. {}", resp.format_display());
             }
@@ -322,13 +294,11 @@ async fn main() -> Result<()> {
                 let amount = parse_token_amount(&args.amount).map_err(|e| anyhow::anyhow!(e))?;
                 let delta = i64::try_from(amount)
                     .map_err(|_| anyhow::anyhow!("token amount {amount} exceeds maximum delta"))?;
-                let client = build_client();
                 let resp = client.adjust_token_budget(-delta).await?;
                 println!("Budget decreased. {}", resp.format_display());
             }
             BudgetCommand::Set(args) => {
                 let value = parse_token_amount(&args.amount).map_err(|e| anyhow::anyhow!(e))?;
-                let client = build_client();
                 let resp = client.set_token_budget(value).await?;
                 println!("Budget set. {}", resp.format_display());
             }
