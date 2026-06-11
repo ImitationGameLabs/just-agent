@@ -22,6 +22,40 @@ const DEFAULT_PINNED_BUDGET_RATIO: f64 = 0.25;
 const DEFAULT_CONTEXT_THRESHOLDS: &[u8] = &[50, 60, 70, 80];
 const DEFAULT_TOKEN_BUDGET_WARNINGS: &[u8] = &[80, 95];
 
+/// Named policy preset selectable via `JUST_AGENT_POLICY_PRESET`.
+///
+/// Each variant maps to a concrete [`ToolPolicy`]. When the env var is unset,
+/// the existing `JUST_AGENT_ALLOW_TOOLS` / hardcoded default logic applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PolicyPreset {
+    /// All tools allowed — `default: Allow`, no per-tool overrides.
+    AllowAll,
+    /// All tools require approval — `default: Ask`, no per-tool overrides.
+    AskAll,
+}
+
+impl std::fmt::Display for PolicyPreset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::AllowAll => "allow-all",
+            Self::AskAll => "ask-all",
+        })
+    }
+}
+
+impl std::str::FromStr for PolicyPreset {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "allow-all" => Ok(Self::AllowAll),
+            "ask-all" => Ok(Self::AskAll),
+            _ => Err(format!(
+                "invalid policy preset '{s}' (expected allow-all or ask-all)"
+            )),
+        }
+    }
+}
+
 /// Default tool policy matching the current hardcoded behavior.
 ///
 /// Lives in the runtime crate because it encodes knowledge of specific tool
@@ -46,21 +80,20 @@ pub fn default_tool_policy() -> ToolPolicy {
     }
 }
 
-/// Returns the tool policy, checking `JUST_AGENT_ALLOW_TOOLS` if set.
+/// Resolve a [`PolicyPreset`] to a concrete [`ToolPolicy`].
+fn tool_policy_from_preset(preset: PolicyPreset) -> ToolPolicy {
+    match preset {
+        PolicyPreset::AllowAll => ToolPolicy::new(PolicyDecision::Allow),
+        PolicyPreset::AskAll => ToolPolicy::new(PolicyDecision::Ask),
+    }
+}
+
+/// Returns the tool policy using `JUST_AGENT_ALLOW_TOOLS` (legacy) or the
+/// hardcoded [`default_tool_policy`].
 ///
-/// When the env var is not set (or set to an empty/whitespace-only string),
-/// returns the hardcoded [`default_tool_policy`] unchanged. When set to a
-/// comma-separated list of tool names, those tools get `PolicyDecision::Allow`
-/// and all others default to `Ask`.
-///
-/// Note: `Classify` is not expressible via this env var — it is a debug
-/// override, not a full policy language. When set, `shell_session_exec`
-/// loses its `Classify` behavior and becomes either `Allow` (if listed) or
-/// `Ask` (if not listed).
-///
-/// Only affects root agents at creation time. Subagents inherit their
-/// supervisor's policy.
-pub fn tool_policy_from_env() -> ToolPolicy {
+/// See [`tool_policy_from_env`] for the full resolution chain that includes
+/// `JUST_AGENT_POLICY_PRESET` support.
+fn tool_policy_from_env_inner() -> ToolPolicy {
     let Ok(raw) = std::env::var("JUST_AGENT_ALLOW_TOOLS") else {
         return default_tool_policy();
     };
@@ -85,6 +118,44 @@ pub fn tool_policy_from_env() -> ToolPolicy {
         default: PolicyDecision::Ask,
         tools,
     }
+}
+
+/// Returns the tool policy for a root agent, checking env vars in priority
+/// order:
+///
+/// 1. `JUST_AGENT_POLICY_PRESET` — named preset (`allow-all` or `ask-all`).
+/// 2. `JUST_AGENT_ALLOW_TOOLS` — legacy comma-separated allow list.
+/// 3. Hardcoded [`default_tool_policy`] — fallback.
+///
+/// `Classify` is not expressible via presets — it is a per-tool behavior
+/// unique to the default policy. When a preset is active, `shell_session_exec`
+/// resolves to the preset's default decision instead.
+///
+/// Only affects root agents at creation time. Subagents inherit their
+/// supervisor's policy.
+pub fn tool_policy_from_env() -> ToolPolicy {
+    // Priority 1: named preset.
+    let Ok(raw) = std::env::var("JUST_AGENT_POLICY_PRESET") else {
+        return tool_policy_from_env_inner();
+    };
+
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return tool_policy_from_env_inner();
+    }
+
+    let preset = raw.parse::<PolicyPreset>().unwrap_or_else(|e| {
+        panic!("JUST_AGENT_POLICY_PRESET: {e}");
+    });
+
+    if std::env::var("JUST_AGENT_ALLOW_TOOLS").is_ok_and(|v| !v.trim().is_empty()) {
+        tracing::info!(
+            "JUST_AGENT_POLICY_PRESET={preset} takes precedence \
+             over JUST_AGENT_ALLOW_TOOLS"
+        );
+    }
+
+    tool_policy_from_preset(preset)
 }
 
 /// Hard-coded maximum delegation depth for top-level agents.
@@ -327,4 +398,158 @@ fn parse_env<T: std::str::FromStr>(name: &str) -> Result<Option<T>> {
             })
         })
         .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use just_agent_common::policy::PolicyDecision;
+
+    #[test]
+    fn policy_preset_display_roundtrip() {
+        for preset in [PolicyPreset::AllowAll, PolicyPreset::AskAll] {
+            let s = preset.to_string();
+            assert_eq!(s.parse::<PolicyPreset>().unwrap(), preset);
+        }
+    }
+
+    #[test]
+    fn policy_preset_rejects_invalid() {
+        assert!("default".parse::<PolicyPreset>().is_err());
+        assert!("copilot".parse::<PolicyPreset>().is_err());
+        assert!("".parse::<PolicyPreset>().is_err());
+    }
+
+    #[test]
+    fn preset_allow_all_sets_everything_to_allow() {
+        let policy = tool_policy_from_preset(PolicyPreset::AllowAll);
+        assert_eq!(policy.default, PolicyDecision::Allow);
+        assert!(policy.tools.is_empty());
+        // decision_for falls back to default.
+        assert_eq!(
+            policy.decision_for("shell_session_exec"),
+            PolicyDecision::Allow
+        );
+        assert_eq!(policy.decision_for("unknown_tool"), PolicyDecision::Allow);
+    }
+
+    #[test]
+    fn preset_ask_all_sets_everything_to_ask() {
+        let policy = tool_policy_from_preset(PolicyPreset::AskAll);
+        assert_eq!(policy.default, PolicyDecision::Ask);
+        assert!(policy.tools.is_empty());
+        assert_eq!(
+            policy.decision_for("shell_session_exec"),
+            PolicyDecision::Ask
+        );
+        assert_eq!(policy.decision_for("unknown_tool"), PolicyDecision::Ask);
+    }
+
+    #[test]
+    fn tool_policy_from_env_no_vars_returns_default() {
+        temp_env::with_vars_unset(
+            ["JUST_AGENT_POLICY_PRESET", "JUST_AGENT_ALLOW_TOOLS"],
+            || {
+                let policy = tool_policy_from_env();
+                let expected = default_tool_policy();
+                assert_eq!(policy.default, expected.default);
+                assert_eq!(policy.tools, expected.tools);
+            },
+        );
+    }
+
+    #[test]
+    fn tool_policy_from_env_preset_allow_all() {
+        temp_env::with_vars([("JUST_AGENT_POLICY_PRESET", Some("allow-all"))], || {
+            let policy = tool_policy_from_env();
+            assert_eq!(policy.default, PolicyDecision::Allow);
+            assert!(policy.tools.is_empty());
+        });
+    }
+
+    #[test]
+    fn tool_policy_from_env_preset_ask_all() {
+        temp_env::with_vars([("JUST_AGENT_POLICY_PRESET", Some("ask-all"))], || {
+            let policy = tool_policy_from_env();
+            assert_eq!(policy.default, PolicyDecision::Ask);
+            assert!(policy.tools.is_empty());
+        });
+    }
+
+    #[test]
+    fn tool_policy_from_env_whitespace_padded_preset() {
+        temp_env::with_vars(
+            [("JUST_AGENT_POLICY_PRESET", Some("  allow-all  "))],
+            || {
+                let policy = tool_policy_from_env();
+                assert_eq!(policy.default, PolicyDecision::Allow);
+                assert!(policy.tools.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn tool_policy_from_env_preset_takes_precedence_over_allow_tools() {
+        temp_env::with_vars(
+            [
+                ("JUST_AGENT_POLICY_PRESET", Some("ask-all")),
+                ("JUST_AGENT_ALLOW_TOOLS", Some("shell_session_exec")),
+            ],
+            || {
+                let policy = tool_policy_from_env();
+                // Preset wins — should be ask-all, not the allow-tools policy.
+                assert_eq!(policy.default, PolicyDecision::Ask);
+                assert!(policy.tools.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "JUST_AGENT_POLICY_PRESET: invalid policy preset")]
+    fn tool_policy_from_env_invalid_preset_panics() {
+        temp_env::with_vars([("JUST_AGENT_POLICY_PRESET", Some("gibberish"))], || {
+            let _ = tool_policy_from_env();
+        });
+    }
+
+    #[test]
+    fn tool_policy_from_env_empty_preset_falls_through() {
+        temp_env::with_vars([("JUST_AGENT_POLICY_PRESET", Some(""))], || {
+            let policy = tool_policy_from_env();
+            let expected = default_tool_policy();
+            assert_eq!(policy.default, expected.default);
+        });
+    }
+
+    #[test]
+    fn tool_policy_from_env_allow_tools_still_works() {
+        temp_env::with_vars(
+            [
+                ("JUST_AGENT_POLICY_PRESET", None::<&str>),
+                ("JUST_AGENT_ALLOW_TOOLS", Some("shell_session_exec")),
+            ],
+            || {
+                let policy = tool_policy_from_env();
+                assert_eq!(policy.default, PolicyDecision::Ask);
+                assert_eq!(
+                    policy.decision_for("shell_session_exec"),
+                    PolicyDecision::Allow
+                );
+            },
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "JUST_AGENT_POLICY_PRESET: invalid policy preset")]
+    fn tool_policy_from_env_invalid_preset_panics_even_with_allow_tools() {
+        temp_env::with_vars(
+            [
+                ("JUST_AGENT_POLICY_PRESET", Some("gibberish")),
+                ("JUST_AGENT_ALLOW_TOOLS", Some("shell_session_exec")),
+            ],
+            || {
+                let _ = tool_policy_from_env();
+            },
+        );
+    }
 }
