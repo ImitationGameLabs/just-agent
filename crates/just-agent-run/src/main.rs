@@ -5,6 +5,7 @@
 //! exit code. Designed for scripted and automated workflows where the caller
 //! needs machine-readable output and exit-status-driven control flow.
 
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use anyhow::Result;
@@ -88,6 +89,15 @@ async fn run() -> Result<ExitCode> {
     Ok(exit.into())
 }
 
+/// End the current reasoning block, printing a trailing newline if one was
+/// active.
+fn end_reasoning(in_reasoning: &mut bool) {
+    if *in_reasoning {
+        eprintln!();
+        *in_reasoning = false;
+    }
+}
+
 /// Subscribe to the agent's SSE stream and print events until a terminal
 /// event arrives.
 ///
@@ -106,6 +116,14 @@ async fn consume_stream(client: &DaemonClient, id: &AgentId) -> RunExit {
     // If the stream closes without a terminal event, we correctly report failure.
     let mut exit = RunExit::Error;
 
+    let mut in_reasoning = false;
+    let mut streamed_to_stderr = false;
+
+    // In terminal mode, stream content deltas to stderr for live feedback and
+    // suppress the final print to stdout. When piped, suppress deltas and emit
+    // only the full result on stdout for clean capture.
+    let stdout_is_terminal = std::io::stdout().is_terminal();
+
     while let Some(result) = stream.next().await {
         let event = match result {
             Ok(e) => e,
@@ -116,15 +134,25 @@ async fn consume_stream(client: &DaemonClient, id: &AgentId) -> RunExit {
         };
         match event {
             SseEvent::AssistantContentDelta { delta } => {
-                eprint!("{delta}");
+                end_reasoning(&mut in_reasoning);
+                if stdout_is_terminal {
+                    eprint!("{delta}");
+                    streamed_to_stderr = true;
+                }
             }
             SseEvent::ReasoningDelta { delta } => {
-                eprint!("[reasoning] {delta}");
+                if !in_reasoning {
+                    eprint!("[reasoning] ");
+                    in_reasoning = true;
+                }
+                eprint!("{delta}");
             }
             SseEvent::ToolCall { name, .. } => {
+                end_reasoning(&mut in_reasoning);
                 eprintln!("[tool] {name}");
             }
             SseEvent::ToolResult { result } => {
+                end_reasoning(&mut in_reasoning);
                 eprintln!("[tool-result] {result}");
             }
             SseEvent::Retrying {
@@ -133,26 +161,38 @@ async fn consume_stream(client: &DaemonClient, id: &AgentId) -> RunExit {
                 error,
                 delay_secs,
             } => {
+                end_reasoning(&mut in_reasoning);
                 eprintln!("[retry {attempt}/{max_attempts}] {error} (waiting {delay_secs:.1}s)");
             }
             SseEvent::Finished { content } => {
-                print!("{content}");
+                end_reasoning(&mut in_reasoning);
+                if stdout_is_terminal && streamed_to_stderr {
+                    // Content already streamed to stderr; ensure clean terminal line.
+                    eprintln!();
+                } else if !content.is_empty() {
+                    // No streaming happened (piped or no deltas): print to stdout.
+                    print!("{content}");
+                }
                 exit = RunExit::Success;
                 break;
             }
             SseEvent::Error { message } => {
+                end_reasoning(&mut in_reasoning);
                 eprintln!("{message}");
                 return RunExit::Error;
             }
             SseEvent::MaxRoundsExceeded => {
+                end_reasoning(&mut in_reasoning);
                 eprintln!("max rounds exceeded");
                 return RunExit::MaxRounds;
             }
             SseEvent::Cancelled => {
+                end_reasoning(&mut in_reasoning);
                 eprintln!("cancelled");
                 return RunExit::Cancelled;
             }
             SseEvent::TokenBudgetExceeded { consumed, budget } => {
+                end_reasoning(&mut in_reasoning);
                 eprintln!("token budget exceeded (consumed: {consumed}, budget: {budget})");
                 return RunExit::BudgetExceeded;
             }
