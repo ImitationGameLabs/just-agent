@@ -221,7 +221,9 @@ For Rust programs that need more control than the CLI offers, the
 ```rust
 use just_agent_client::DaemonClient;
 
-let client = DaemonClient::new_with_token("http://127.0.0.1:3000", token);
+let client = DaemonClient::builder("http://127.0.0.1:3000")
+    .auth_token(token)
+    .build();
 
 // Spawn an agent
 let id = client.spawn(CreateAgentRequest {

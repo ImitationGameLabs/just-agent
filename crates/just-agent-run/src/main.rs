@@ -65,6 +65,7 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
+
     let client = DaemonClient::from_env()?;
 
     let id = client

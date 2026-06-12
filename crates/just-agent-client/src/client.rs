@@ -27,24 +27,20 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
-    pub fn new(base_url: &str) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                base_url: base_url.trim_end_matches('/').to_owned(),
-                http: reqwest::Client::new(),
-                auth_token: None,
-            }),
-        }
-    }
-
-    /// Creates a client that authenticates with the given auth token.
-    pub fn new_with_token(base_url: &str, auth_token: String) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                base_url: base_url.trim_end_matches('/').to_owned(),
-                http: reqwest::Client::new(),
-                auth_token: Some(auth_token),
-            }),
+    /// Start building a [`DaemonClient`].
+    ///
+    /// `base_url` is required and is the daemon's HTTP root (e.g.
+    /// `http://127.0.0.1:3000`).  Chain `.auth_token()` and/or
+    /// `.http_client()` to override defaults, then call `.build()`.
+    ///
+    /// The default HTTP client is created lazily in [`DaemonClientBuilder::build`]
+    /// so that callers who override it via `.http_client()` never pay the cost
+    /// of constructing the default `reqwest::Client`.
+    pub fn builder(base_url: &str) -> DaemonClientBuilder {
+        DaemonClientBuilder {
+            base_url: base_url.trim_end_matches('/').to_owned(),
+            auth_token: None,
+            http: None,
         }
     }
 
@@ -61,21 +57,21 @@ impl DaemonClient {
     /// - **Automation**: set `JUST_AGENT_AUTH_TOKEN` to the same value as the
     ///   daemon's `JUST_AGENT_OPERATOR_TOKEN`.
     pub fn from_env() -> Result<Self> {
-        let url = std::env::var("JUST_AGENT_DAEMON_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:3000".into());
-        let token = std::env::var("JUST_AGENT_AUTH_TOKEN").context(concat!(
-            "JUST_AGENT_AUTH_TOKEN is not set.\n",
-            "\n",
-            "How to obtain the token:\n",
-            "- Agent (inside daemon): token is embedded automatically, check daemon setup.\n",
-            "- Operator user: copy from daemon startup output, then:\n",
-            "    export JUST_AGENT_AUTH_TOKEN=<token>\n",
-            "- Automation: start the daemon with a preset operator token:\n",
-            "    JUST_AGENT_OPERATOR_TOKEN=<secret> just-agent-daemon\n",
-            "  then use the same value for the client:\n",
-            "    JUST_AGENT_AUTH_TOKEN=<secret> just-agent <command>",
-        ))?;
-        Ok(Self::new_with_token(&url, token))
+        let (url, token) = read_env_config()?;
+        Self::builder(&url).auth_token(token).build()
+    }
+
+    /// Like [`from_env()`](Self::from_env), but injects a pre-built HTTP client.
+    ///
+    /// Use this when the caller needs to control TLS configuration (e.g.
+    /// disabling cert verification for loopback-only connections in minimal
+    /// containers).
+    pub fn from_env_with_http(http: reqwest::Client) -> Result<Self> {
+        let (url, token) = read_env_config()?;
+        Self::builder(&url)
+            .auth_token(token)
+            .http_client(http)
+            .build()
     }
 
     fn url(&self, path: &str) -> String {
@@ -536,6 +532,78 @@ impl DaemonClient {
             "failed to parse budget response",
         )
         .await
+    }
+}
+
+// -- Env helpers ---------------------------------------------------------------
+
+/// Read `JUST_AGENT_DAEMON_URL` and `JUST_AGENT_AUTH_TOKEN` from the
+/// environment.  Returns `(url, token)`.
+fn read_env_config() -> Result<(String, String)> {
+    let url =
+        std::env::var("JUST_AGENT_DAEMON_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".into());
+    let token = std::env::var("JUST_AGENT_AUTH_TOKEN").context(concat!(
+        "JUST_AGENT_AUTH_TOKEN is not set.\n",
+        "\n",
+        "How to obtain the token:\n",
+        "- Agent (inside daemon): token is embedded automatically, check daemon setup.\n",
+        "- Operator user: copy from daemon startup output, then:\n",
+        "    export JUST_AGENT_AUTH_TOKEN=<token>\n",
+        "- Automation: start the daemon with a preset operator token:\n",
+        "    JUST_AGENT_OPERATOR_TOKEN=<secret> just-agent-daemon\n",
+        "  then use the same value for the client:\n",
+        "    JUST_AGENT_AUTH_TOKEN=<secret> just-agent <command>",
+    ))?;
+    Ok((url, token))
+}
+
+// -- Builder ------------------------------------------------------------------
+
+/// Fluent builder for [`DaemonClient`].
+///
+/// Created via [`DaemonClient::builder`].  `base_url` is required (passed to
+/// `builder()`); `auth_token` and `http_client` are optional with sensible
+/// defaults.
+pub struct DaemonClientBuilder {
+    base_url: String,
+    auth_token: Option<String>,
+    http: Option<reqwest::Client>,
+}
+
+impl DaemonClientBuilder {
+    /// Set the bearer token for authenticating with the daemon.
+    pub fn auth_token(mut self, token: impl Into<String>) -> Self {
+        self.auth_token = Some(token.into());
+        self
+    }
+
+    /// Override the default [`reqwest::Client`].
+    ///
+    /// Use this when you need custom TLS settings (e.g. disabling cert
+    /// verification for loopback-only connections in minimal containers).
+    pub fn http_client(mut self, client: reqwest::Client) -> Self {
+        self.http = Some(client);
+        self
+    }
+
+    /// Consume the builder and produce a [`DaemonClient`].
+    ///
+    /// If no custom HTTP client was provided via `.http_client()`, a default
+    /// `reqwest::Client` is constructed here.  Construction can fail if the
+    /// system CA store is missing; callers that need to avoid this should
+    /// supply their own client via `.http_client()`.
+    pub fn build(self) -> Result<DaemonClient> {
+        let http = match self.http {
+            Some(client) => client,
+            None => reqwest::ClientBuilder::new().build()?,
+        };
+        Ok(DaemonClient {
+            inner: Arc::new(Inner {
+                base_url: self.base_url,
+                http,
+                auth_token: self.auth_token,
+            }),
+        })
     }
 }
 

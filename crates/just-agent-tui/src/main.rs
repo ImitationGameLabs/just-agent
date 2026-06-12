@@ -51,7 +51,9 @@ async fn main() -> Result<()> {
             tok
         }
     };
-    let client = DaemonClient::new_with_token(&args.daemon_url, token);
+    let client = DaemonClient::builder(&args.daemon_url)
+        .auth_token(token)
+        .build()?;
 
     let session = Session::connect(client).await?;
 
