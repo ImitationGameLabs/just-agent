@@ -1,13 +1,14 @@
 # Architecture
 
 just-agent is a **daemon-centric** agent runtime. Unlike most coding agents
-where the UI process *is* the agent, here the daemon is the long-lived host and
+where the UI process _is_ the agent, here the daemon is the long-lived host and
 all clients are thin surfaces.
 
 The daemon (`just-agent-daemon`) is the center: it hosts multiple isolated agent
 instances, each running as a pair of tokio tasks (agent task + bridge task)
-behind an HTTP API. Clients — the headless CLI (`just-agent`) or the TUI
-(`just-agent-tui`) — connect over HTTP and SSE, send messages, stream events,
+behind an HTTP API. Clients — the headless CLI (`just-agent`), the runner
+(`just-agent-run`), or the TUI (`just-agent-tui`) — connect over HTTP
+and SSE, send messages, stream events,
 and disconnect without affecting running agents.
 
 ## Why a daemon?
@@ -18,8 +19,8 @@ works for single-session coding but breaks down when you need:
 - **Multiple agents** running simultaneously across different projects
 - **Agent-to-agent coordination** — one agent spawning and managing others
 - **Detached operation** — agents continue running after the client disconnects
-- **Multiple client surfaces** — CLI for scripting, TUI for interactive use,
-  programmatic access via the client library
+- **Multiple client surfaces** — headless CLI for agents, runner for scripting,
+  TUI for interactive use, programmatic access via the client library
 
 The daemon makes these possible. Each agent is an isolated unit behind a stable
 HTTP API. Clients connect, send messages, stream events, and disconnect without
@@ -128,6 +129,7 @@ analyze shell commands:
 | `just-agent-common`  | Shared types and command parsing. Used by all crates.                                         |
 | `just-agent-runtime` | Agent runtime: agent loop, context management, tool dispatch, policy engine. No network code. |
 | `just-agent-daemon`  | HTTP server hosting agent instances. Uses `just-agent-runtime` internally.                    |
-| `just-agent`         | Headless CLI binary. Thin wrapper over `just-agent-client`. No agent logic.                   |
+| `just-agent`         | Headless CLI for agents. Thin wrapper over `just-agent-client`. No agent logic.               |
 | `just-agent-tui`     | Interactive terminal UI. Same client library, adds ratatui rendering.                         |
-| `just-agent-client`  | Async HTTP client for the daemon API. Used by both CLI and TUI.                               |
+| `just-agent-run`     | Agent runner for scripting and automation. Streams progress to stderr, result to stdout.      |
+| `just-agent-client`  | Async HTTP client for the daemon API. Used by CLI, TUI, and runner.                           |

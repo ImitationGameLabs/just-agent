@@ -1,8 +1,7 @@
-# Headless CLI Reference
+# `just-agent` Reference
 
-`just-agent` is the headless CLI binary. It is designed for scripting and
-automation — no TTY, no interactive prompts, structured output. This is how
-agents manage other agents.
+Headless CLI for agents — no TTY, no interactive prompts, structured output.
+This is the CLI that agents use to interact with the daemon.
 
 All subcommands use `JUST_AGENT_AUTH_TOKEN` (mandatory) and `JUST_AGENT_DAEMON_URL`
 (env, default `http://127.0.0.1:3000`).
@@ -66,7 +65,6 @@ line). Useful for monitoring or piping into `jq`.
 ```bash
 $ just-agent events "$AGENT_ID" | jq -c 'select(.type == "ToolCall")'
 ```
-
 
 ### `status` — Show agent context usage
 
@@ -141,7 +139,7 @@ Deny a committed approval with an optional reason.
 $ just-agent approval deny "ap_a1b2c3d4..." "too risky"
 ```
 
-## Scripting patterns
+## Usage patterns
 
 ### Send and monitor
 
@@ -168,7 +166,7 @@ just-agent events "$AGENT_ID" | jq -c 'select(.type == "approvalUpdated" and .st
 
 ## Multi-agent orchestration
 
-The headless CLI enables an agent to manage other agents. A single daemon can
+Agents use this CLI to manage other agents. A single daemon can
 host agents across multiple projects simultaneously.
 
 ### Parallel agents across projects
@@ -211,7 +209,7 @@ just-agent interrupt $AGENT_ID
 
 ## Environment variables
 
-`JUST_AGENT_AUTH_TOKEN` (required) and `JUST_AGENT_DAEMON_URL` (default `http://127.0.0.1:3000`) are the primary variables for headless CLI usage. For the complete reference including LLM provider configuration and agent tuning parameters, see [env.md](env.md).
+`JUST_AGENT_AUTH_TOKEN` (required) and `JUST_AGENT_DAEMON_URL` (default `http://127.0.0.1:3000`) are the primary variables. For the complete reference including LLM provider configuration and agent tuning parameters, see [env.md](env.md).
 
 ## Client library
 

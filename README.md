@@ -24,6 +24,7 @@ switch between, and coordinate multiple agent instances across projects.
 | `just-agent-client`  | Async client library for the daemon HTTP API                                          |
 | `just-agent`         | Headless CLI — designed for agents to call, so an agent can manage other agents       |
 | `just-agent-tui`     | Interactive terminal UI for human users, with approval prompts and markdown rendering |
+| `just-agent-run`     | Agent runner for scripting and automation — CI, benchmarks, scripted workflows        |
 
 ## Agentic context management
 
@@ -83,6 +84,7 @@ The flow:
 This design is intentional for multi-agent scenarios: a supervisor agent can monitor
 approvals from its subagents and make approval decisions programmatically,
 without a human in the loop. Or it can surface the decision to a human.
+
 ## Quick start
 
 ```bash

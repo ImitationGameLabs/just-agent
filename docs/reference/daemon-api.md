@@ -1,8 +1,9 @@
 # Daemon HTTP API
 
 The daemon (`just-agent-daemon`) exposes an HTTP API at `JUST_AGENT_DAEMON_ADDR`
-(default `127.0.0.1:3000`). Clients — the headless CLI, TUI, or the client
-library — connect over HTTP to manage agents, stream events, and handle
+(default `127.0.0.1:3000`). Clients — the agent CLI (`just-agent`), the runner (`just-agent-run`), TUI,
+or the client library — connect over HTTP to manage agents, stream events,
+and handle
 approvals.
 
 All endpoints require authentication. For token types, role definitions, and
