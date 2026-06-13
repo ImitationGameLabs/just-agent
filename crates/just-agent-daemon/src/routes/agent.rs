@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU8;
+use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -23,16 +24,13 @@ use just_agent_runtime::tools::{build_tool_dispatch, load_skill, meta_skill_cont
 use just_llm_client::types::chat::ChatMessage;
 use tokio::sync::{Notify, broadcast};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use just_agent_common::protocol::{CreateAgentRequest, CreateAgentResponse};
 
 use super::ListAgentsResponse;
 use crate::bridge::bridge_task;
 use crate::state::{Agent, AgentEntry, AgentState, AgentSummary, SharedState};
-
-/// Maximum time to wait for a single agent to persist before force-aborting on deletion.
-const DELETE_AGENT_SHUTDOWN_TIMEOUT_SECS: u64 = 10;
 
 pub(crate) struct SpawnArgs {
     pub agent_id: AgentId,
@@ -391,17 +389,15 @@ pub async fn delete_agent(
         }
     };
 
-    // Signal graceful cancellation.
+    // Signal graceful cancellation; the agent persists on its way out.
     entry.agent.cancel.cancel();
 
-    // Wait for the agent to detect cancellation and persist.
-    // Since JoinHandle is not Clone, we sleep and then abort.
-    tokio::time::sleep(std::time::Duration::from_secs(
-        DELETE_AGENT_SHUTDOWN_TIMEOUT_SECS,
-    ))
-    .await;
-    entry.agent.agent_handle.abort();
-    entry.agent.bridge_handle.abort();
+    // The agent is idle, so its tasks finish in milliseconds (persist + return).
+    // Await real completion under a bound; force-abort only if a task is stuck.
+    let bound = Duration::from_secs(crate::shutdown::DELETE_AGENT_SHUTDOWN_TIMEOUT_SECS);
+    if !entry.agent.shutdown(bound).await {
+        warn!(id = %id, "agent did not shut down in time, force-aborted");
+    }
 
     if let Err(e) = persistence::cleanup_agent_dir(&id) {
         info!(id = %id, "agent dir cleanup failed: {e:#}");

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::Duration;
 
 use crate::skill_promote::SkillPromoteStore;
 pub use just_agent_common::agentid::AgentId;
@@ -86,6 +87,32 @@ impl Agent {
             _ => AgentState::Idle,
         }
     }
+
+    /// Await both background tasks, bounded by `timeout`; force-abort on overrun.
+    ///
+    /// The caller must have already signalled cancellation (`cancel.cancel()` or
+    /// the daemon-wide `shutdown` token). Returns `true` if both tasks finished
+    /// gracefully within the bound; otherwise force-aborts both and returns
+    /// `false`. Consumes `self`, so all owned resources (store, channels, config)
+    /// drop together once the tasks are done.
+    ///
+    /// The handles are awaited by reference: when the timeout fires the inner
+    /// *non-move* async block is dropped and the field borrows are released,
+    /// leaving `self` owning the handles so we can call `.abort()`. (A `JoinSet`
+    /// would not work here — aborting its wrapper tasks only drops the
+    /// `JoinHandle`s, which does not abort the underlying tasks.)
+    pub(crate) async fn shutdown(mut self, timeout: Duration) -> bool {
+        let graceful = tokio::time::timeout(timeout, async {
+            let _ = tokio::join!(&mut self.agent_handle, &mut self.bridge_handle);
+        })
+        .await
+        .is_ok();
+        if !graceful {
+            self.agent_handle.abort();
+            self.bridge_handle.abort();
+        }
+        graceful
+    }
 }
 
 impl AppState {
@@ -154,20 +181,12 @@ impl AgentRegistry {
         self.agents.contains_key(id)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.agents.is_empty()
-    }
-
     pub fn len(&self) -> usize {
         self.agents.len()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&AgentId, &AgentEntry)> {
         self.agents.iter()
-    }
-
-    pub fn values(&self) -> impl Iterator<Item = &AgentEntry> {
-        self.agents.values()
     }
 
     pub fn get_agent_id_by_token(&self, token: &str) -> Option<&AgentId> {
@@ -213,6 +232,15 @@ impl AgentRegistry {
             supervisor.subagent_ids.retain(|sid| sid != id);
         }
         Some(entry)
+    }
+
+    /// Remove and return every entry, clearing the token index.
+    ///
+    /// Used at daemon shutdown to take ownership of all agents so their task
+    /// handles can be awaited without holding the registry lock.
+    pub fn drain(&mut self) -> Vec<(AgentId, AgentEntry)> {
+        self.token_index.clear();
+        self.agents.drain().collect()
     }
 
     // -- authorization helpers --
@@ -331,6 +359,34 @@ mod tests {
     use super::*;
     use crate::auth::Identity;
     use crate::test_helpers::*;
+
+    // -- Agent::shutdown: bounded graceful task drain --
+
+    #[tokio::test]
+    async fn agent_shutdown_aborts_straggler_after_timeout() {
+        use std::sync::atomic::AtomicBool;
+
+        // An abortable straggler: `tokio::time::sleep` yields (so the timeout can
+        // fire on a single-thread runtime) and respects cancellation. shutdown
+        // must time out, return false, and abort the task before it sets the flag.
+        let completed = Arc::new(AtomicBool::new(false));
+        let flag = completed.clone();
+        let mut entry = make_entry(None, "tok".into());
+        entry.agent.agent_handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            flag.store(true, Ordering::SeqCst);
+        });
+        assert!(!entry.agent.shutdown(Duration::from_millis(50)).await);
+        // Aborted before the 60s sleep elapsed, so the completion flag stays unset.
+        assert!(!completed.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn agent_shutdown_graceful_when_fast() {
+        // `make_entry` spawns two instantly-completing tasks.
+        let entry = make_entry(None, "tok".into());
+        assert!(entry.agent.shutdown(Duration::from_secs(1)).await);
+    }
 
     // -- Registry consistency: agents + token_index + subagent_ids stay in sync --
 

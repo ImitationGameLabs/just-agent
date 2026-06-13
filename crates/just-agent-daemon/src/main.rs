@@ -3,6 +3,7 @@ mod auth;
 mod bridge;
 mod error;
 mod routes;
+mod shutdown;
 mod skill_promote;
 mod sse;
 mod state;
@@ -106,7 +107,7 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal(shutdown_token))
         .await?;
 
-    graceful_agent_shutdown(&state).await;
+    shutdown::graceful_agent_shutdown(&state).await;
 
     Ok(())
 }
@@ -125,30 +126,4 @@ async fn shutdown_signal(token: CancellationToken) {
     }
     info!("received shutdown signal, initiating graceful shutdown");
     token.cancel();
-}
-
-/// Maximum time to wait for agents to persist before force-aborting.
-///
-/// Agent tasks detect cancellation, persist state, and exit on their own. This
-/// deadline is a safety net for stuck agents (slow disk, unresponsive LLM stream).
-const GRACEFUL_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
-
-/// Wait for in-flight agent tasks to save state; force-abort any remaining after the timeout.
-async fn graceful_agent_shutdown(state: &AppState) {
-    let registry = state.registry.read().await;
-    if registry.is_empty() {
-        return;
-    }
-    info!(count = registry.len(), "waiting for agents to persist");
-
-    tokio::time::sleep(std::time::Duration::from_secs(
-        GRACEFUL_SHUTDOWN_TIMEOUT_SECS,
-    ))
-    .await;
-
-    for entry in registry.values() {
-        entry.agent.agent_handle.abort();
-        entry.agent.bridge_handle.abort();
-    }
-    info!("all agents shut down");
 }
