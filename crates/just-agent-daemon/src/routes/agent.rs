@@ -392,8 +392,10 @@ pub async fn delete_agent(
     // Signal graceful cancellation; the agent persists on its way out.
     entry.agent.cancel.cancel();
 
-    // The agent is idle, so its tasks finish in milliseconds (persist + return).
-    // Await real completion under a bound; force-abort only if a task is stuck.
+    // The agent is idle, so its tasks finish in milliseconds: the agent task
+    // persists and returns (dropping its sender), and the bridge exits on
+    // channel-close (see `crate::bridge::bridge_task`). Await real completion
+    // under a bound; force-abort only if a task is stuck.
     let bound = Duration::from_secs(crate::shutdown::DELETE_AGENT_SHUTDOWN_TIMEOUT_SECS);
     if !entry.agent.shutdown(bound).await {
         warn!(id = %id, "agent did not shut down in time, force-aborted");

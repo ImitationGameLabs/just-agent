@@ -15,16 +15,18 @@ use crate::state::{AgentEntry, AppState};
 
 /// Maximum time to wait for a single agent's tasks to finish on deletion.
 ///
-/// The agent is idle + cancellation-signalled, so its tasks finish in
-/// milliseconds (persist + return). This is a safety net for stuck tasks, not
-/// the expected wait.
+/// The agent is idle + cancellation-signalled: the agent task persists and
+/// returns (dropping its sender), and the bridge exits on channel-close (see
+/// [`crate::bridge::bridge_task`]) — both finish in milliseconds. This is a
+/// safety net for stuck tasks, not the expected wait.
 pub(crate) const DELETE_AGENT_SHUTDOWN_TIMEOUT_SECS: u64 = 10;
 
 /// Maximum time to wait for all agents to persist before force-abort at exit.
 ///
 /// All agents are already cancellation-signalled (each agent's `cancel` is a
 /// child of the daemon-wide `shutdown` token) when this runs; they finish in
-/// milliseconds. This is a safety net, not the expected wait.
+/// milliseconds (the bridge exits on channel-close, see
+/// [`crate::bridge::bridge_task`]). This is a safety net, not the expected wait.
 pub(crate) const GRACEFUL_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
 
 /// Drain all agents and wait for their tasks to persist before force-aborting.

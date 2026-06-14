@@ -13,6 +13,27 @@ use tracing::{info, warn};
 
 use crate::state::SharedState;
 
+/// Route one agent's runtime events to SSE subscribers (and approval requests
+/// to the agent's superior).
+///
+/// # Lifecycle
+///
+/// The bridge owns the agent's event-stream receiver and exits when that stream
+/// ends — i.e. when the agent task drops its sender. This **channel-closed** path
+/// is the primary exit and covers per-agent cancellation (delete / interrupt):
+/// cancelling the agent makes its task persist, emit its terminal `Cancelled`
+/// event, then return and drop the sender — so the bridge forwards that final
+/// event and then observes `recv() == None` and exits, all in milliseconds.
+///
+/// The `cancel` token is a secondary, *forced* exit for daemon-wide shutdown: it
+/// preempts the bridge even if the agent task is mid-operation. It is the
+/// daemon-wide parent token, **not** the agent's child, deliberately. The bridge
+/// must outlive the agent task's terminal `Cancelled` emit so it can forward it;
+/// if the bridge watched the child token its cancel arm would fire the instant
+/// per-agent cancellation is signalled — before the agent task has emitted
+/// `Cancelled` — and that terminal event would be lost. Keying the bridge off the
+/// channel (not the child token) is precisely what preserves it. See
+/// `bridge_delivers_terminal_cancelled_before_exit`.
 pub async fn bridge_task(
     agent_id: AgentId,
     mut agent_rx: tokio::sync::mpsc::Receiver<AgentEvent>,
@@ -22,11 +43,17 @@ pub async fn bridge_task(
     shared_state: SharedState,
 ) {
     loop {
+        // `biased` with the recv arm first: on forced cancel, an already-queued
+        // event (including the terminal `Cancelled`) is processed before the
+        // cancel arm preempts, so SSE subscribers still see it.
         tokio::select! {
             biased;
 
-            Some(event) = agent_rx.recv() => {
-                match event {
+            // Channel-closed path (primary lifecycle). The agent task is gone;
+            // exit without waiting for the daemon-wide cancel, which would
+            // otherwise park this task until the shutdown bound force-aborts it.
+            event = agent_rx.recv() => match event {
+                Some(event) => match event {
                     AgentEvent::ApprovalCommitted { id, tool_name, arguments, commit_reason } => {
                         route_to_superior(&shared_state, &agent_id, id.clone(), tool_name, arguments, &commit_reason).await;
                         events_tx.send(SseEvent::ApprovalUpdated {
@@ -52,9 +79,17 @@ pub async fn bridge_task(
                             info!("no SSE subscribers, event dropped");
                         }
                     }
+                },
+                None => {
+                    state.store(AgentState::IDLE, Ordering::Relaxed);
+                    info!("bridge task: agent channel closed, exiting");
+                    break;
                 }
-            }
+            },
 
+            // Forced shutdown (daemon-wide only): best-effort drain of anything
+            // still queued before exiting. Per-agent cancellation reaches the
+            // bridge via the channel-closed path above — see the lifecycle note.
             _ = cancel.cancelled() => {
                 state.store(AgentState::IDLE, Ordering::Relaxed);
                 while let Ok(event) = agent_rx.try_recv() {
@@ -63,12 +98,6 @@ pub async fn bridge_task(
                     }
                 }
                 info!("bridge task: cancelled, exiting");
-                break;
-            }
-
-            else => {
-                state.store(AgentState::IDLE, Ordering::Relaxed);
-                info!("bridge task: all channels closed, exiting");
                 break;
             }
         }
@@ -280,8 +309,16 @@ async fn route_to_superior(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU8, Ordering};
+    use std::time::Duration;
+
     use just_agent_common::agentid::AgentId;
     use just_agent_common::policy::PolicyDecision;
+    use just_agent_common::protocol::{AgentState, SseEvent};
+    use just_agent_runtime::event::AgentEvent;
+    use tokio::sync::broadcast;
+    use tokio_util::sync::CancellationToken;
 
     use crate::test_helpers::*;
 
@@ -292,6 +329,113 @@ mod tests {
             Ok(None) => panic!("prompt channel closed unexpectedly"),
             Err(_) => panic!("timed out waiting for notification"),
         }
+    }
+
+    // -- Lifecycle: exit on channel close (primary) and on cancel (forced) --
+
+    /// Regression: the bridge must exit when the agent task drops its sender
+    /// (per-agent delete / interrupt), not park waiting for the daemon-wide
+    /// cancel token. Before the fix, `recv()` resolving to `None` disabled the
+    /// `Some` branch while the `cancel` arm stayed Pending, so the bridge hung
+    /// until the shutdown bound force-aborted it — the "agent did not shut down
+    /// in time" warning on delete.
+    #[tokio::test]
+    async fn bridge_exits_when_agent_channel_closes() {
+        let (agent_tx, agent_rx) = tokio::sync::mpsc::channel::<AgentEvent>(16);
+        let (events_tx, _events_rx) = broadcast::channel::<SseEvent>(16);
+        // Daemon-wide token, deliberately NOT cancelled: per-agent cancellation
+        // must reach the bridge solely via the channel closing.
+        let cancel = CancellationToken::new();
+        let state = Arc::new(AtomicU8::new(AgentState::BUSY));
+
+        let bridge = tokio::spawn(super::bridge_task(
+            AgentId::random(),
+            agent_rx,
+            events_tx,
+            cancel,
+            state.clone(),
+            make_state(),
+        ));
+
+        // Simulate the agent task finishing and dropping its sender.
+        drop(agent_tx);
+
+        // Promptness matters: the bug parked for ~10s. A generous bound here
+        // would let a future regression that re-introduces a seconds-long park
+        // slip through.
+        let exited = tokio::time::timeout(Duration::from_millis(100), bridge)
+            .await
+            .is_ok();
+        assert!(exited, "bridge did not exit after the agent channel closed");
+        assert_eq!(state.load(Ordering::Relaxed), AgentState::IDLE);
+    }
+
+    /// Forced shutdown via the daemon-wide cancel (preserved shutdown path). The
+    /// agent channel is kept OPEN so `recv()` stays Pending and only the cancel
+    /// arm can fire — isolating that path from the channel-closed path.
+    #[tokio::test]
+    async fn bridge_exits_on_cancel() {
+        let (_agent_tx, agent_rx) = tokio::sync::mpsc::channel::<AgentEvent>(16);
+        let (events_tx, _events_rx) = broadcast::channel::<SseEvent>(16);
+        let cancel = CancellationToken::new();
+        let state = Arc::new(AtomicU8::new(AgentState::BUSY));
+
+        let bridge = tokio::spawn(super::bridge_task(
+            AgentId::random(),
+            agent_rx,
+            events_tx,
+            cancel.clone(),
+            state.clone(),
+            make_state(),
+        ));
+
+        cancel.cancel();
+
+        let exited = tokio::time::timeout(Duration::from_millis(100), bridge)
+            .await
+            .is_ok();
+        assert!(exited, "bridge did not exit on cancel");
+        assert_eq!(state.load(Ordering::Relaxed), AgentState::IDLE);
+    }
+
+    /// Load-bearing invariant: when the agent task emits its terminal `Cancelled`
+    /// and then drops the sender, the bridge must forward `Cancelled` to SSE
+    /// subscribers *before* exiting. This is the reason the bridge keys off
+    /// channel-close rather than the agent's child cancel token (see the
+    /// `bridge_task` lifecycle note): watching the child token would make the
+    /// cancel arm preempt and lose this terminal event.
+    #[tokio::test]
+    async fn bridge_delivers_terminal_cancelled_before_exit() {
+        let (agent_tx, agent_rx) = tokio::sync::mpsc::channel::<AgentEvent>(16);
+        let (events_tx, mut events_rx) = broadcast::channel::<SseEvent>(16);
+        let cancel = CancellationToken::new();
+        let state = Arc::new(AtomicU8::new(AgentState::IDLE));
+
+        let bridge = tokio::spawn(super::bridge_task(
+            AgentId::random(),
+            agent_rx,
+            events_tx,
+            cancel,
+            state.clone(),
+            make_state(),
+        ));
+
+        // Agent task emits its terminal event, then finishes (drops sender).
+        agent_tx.send(AgentEvent::Cancelled).await.unwrap();
+        drop(agent_tx);
+
+        tokio::time::timeout(Duration::from_millis(100), bridge)
+            .await
+            .expect("bridge did not exit within bound")
+            .unwrap(); // propagate any bridge task panic
+
+        let mut saw_cancelled = false;
+        while let Ok(ev) = events_rx.try_recv() {
+            if matches!(ev, SseEvent::Cancelled) {
+                saw_cancelled = true;
+            }
+        }
+        assert!(saw_cancelled, "terminal Cancelled event was not delivered");
     }
 
     #[tokio::test]
