@@ -147,12 +147,10 @@ class JustAgentAdapter(BaseInstalledAgent):
             ),
         )
 
-        # 3. Resolve the operator token (or fall back to a fixed placeholder).
+        # 3. Resolve the operator token — use the host-provided value if set,
+        #    otherwise generate a fresh random UUID per trial.
         env = self.resolve_env_vars()
-        self._operator_token = env.get("JUST_AGENT_OPERATOR_TOKEN") or "just-agent-operator-token"
-        # self._operator_token = env.get("JUST_AGENT_OPERATOR_TOKEN") or str(
-        #     uuid.uuid4()
-        # )
+        self._operator_token = env.get("JUST_AGENT_OPERATOR_TOKEN") or str(uuid.uuid4())
         env["JUST_AGENT_OPERATOR_TOKEN"] = self._operator_token
 
         # 4. Apply Harbor's --model if provided.
@@ -203,11 +201,10 @@ class JustAgentAdapter(BaseInstalledAgent):
             "JUST_AGENT_AUTH_TOKEN": self._operator_token,
             "SSL_CERT_FILE": "/etc/ssl/certs/ca-certificates.crt",
         }
-        self.logger.info("run() env dict: %s", run_env)
 
         await self.exec_as_agent(
             environment,
-            command=f"{RUN_BIN} {flags} {task} >{RUN_LOG} 2>&1",
+            command=f"{RUN_BIN} {flags} --prompt {task} >{RUN_LOG} 2>&1",
             env=run_env,
         )
 
