@@ -9,18 +9,18 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    /// Stop the agent if `kill` is true.
+    /// Delete the agent when requested on exit.
     pub async fn cleanup(&self, kill: bool) {
         if kill {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
-                self.client.stop_agent(&self.agent_id),
+                self.client.delete_agent(&self.agent_id),
             )
             .await
             {
                 Ok(Ok(())) => {}
-                Ok(Err(e)) => tracing::warn!("failed to stop agent on exit: {e}"),
-                Err(_) => tracing::warn!("timed out stopping agent on exit"),
+                Ok(Err(e)) => tracing::warn!("failed to delete agent on exit: {e}"),
+                Err(_) => tracing::warn!("timed out deleting agent on exit"),
             }
         }
     }

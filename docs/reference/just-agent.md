@@ -45,13 +45,13 @@ just-agent list
 
 Prints all agents with their workspace root.
 
-### `stop` — Stop an agent
+### `delete` — Delete an agent
 
 ```bash
-just-agent stop <ID>
+just-agent delete <ID>
 ```
 
-Terminates the agent instance on the daemon.
+Deletes the agent instance on the daemon.
 
 ### `events` — Stream agent events
 
@@ -81,7 +81,7 @@ just-agent interrupt <ID>
 ```
 
 Gracefully interrupts the agent's current operation. The agent persists its
-state and stops processing. Use `stop` to stop the agent entirely.
+state and stops processing. Use `delete` to remove the agent entirely.
 
 ### `approval` — Manage approvals
 
@@ -234,8 +234,8 @@ let id = client.spawn(CreateAgentRequest {
 // Send a message (fire-and-forget)
 client.post_message(&id, "Review src/main.rs").await?;
 
-// Stream events, check status, stop
+// Stream events, check status, delete
 let mut stream = client.event_stream(&id).await?;
 let usage = client.agent_status(&id).await?;
-client.stop_agent(&id).await?;
+client.delete_agent(&id).await?;
 ```

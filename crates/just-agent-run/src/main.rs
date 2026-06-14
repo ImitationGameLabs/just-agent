@@ -133,7 +133,7 @@ async fn run() -> Result<ExitCode> {
     };
 
     let deleted = if cli.delete {
-        match client.stop_agent(&id).await {
+        match client.delete_agent(&id).await {
             Ok(()) => true,
             Err(e) => {
                 // Diagnostics belong on stderr regardless of --json: a failed
