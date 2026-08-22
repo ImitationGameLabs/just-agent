@@ -153,9 +153,11 @@
   {/if}
 {:else}
   <div class={sideLayout ? "flex flex-row h-full" : "flex flex-col h-full"}>
-    <!-- contents keeps the header a direct flex child on mobile; the local
-         route hides it below md because the shell top row owns it there. -->
-    <div class={statusHeaderMobile ? "contents" : "hidden md:block"}>
+    <!-- contents keeps the header a direct flex child at md+ (a plain
+         block wrapper would break the side aside's flex-item contract:
+         order-last, w-80, h-full); below md the local route hides it
+         because the shell top row owns it there. -->
+    <div class={statusHeaderMobile ? "contents" : "hidden md:contents"}>
       <TagmaStatusHeader
         status={conv.statusSnapshot}
         agentRows={{
