@@ -124,6 +124,7 @@
         class="flex-1 min-w-0 rounded-2xl border-2 border-surface-300-700 shadow-sm p-1 md:p-2 transition hover:shadow-xl focus-within:border-surface-400-600"
       >
         <textarea
+          id="composer-input"
           bind:this={area}
           bind:value={composer.draft}
           onkeydown={onKeydown}
@@ -134,18 +135,19 @@
           class="block w-full resize-none bg-transparent border-0 outline-none focus:ring-0 px-2 pt-0.5 pb-0.5 md:pt-1.5 md:pb-2 text-base leading-relaxed"
         ></textarea>
         <!-- The action row reads as part of the input card but sits
-             outside the textarea, so blank-space clicks forward to the
-             field and mousedown is cancelled so the button cannot steal
-             focus. -->
-        <div
+             outside the textarea. A label aimed at the field makes
+             blank-space clicks focus it natively; the mousedown guard
+             only keeps the button click from stealing focus (click
+             forwarding is the label's own, so the listener is not the
+             interaction), hence the ignore. -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <label
+          for="composer-input"
           class="hidden md:flex justify-end pt-1"
           onmousedown={(e) => e.preventDefault()}
-          onclick={(e) => {
-            if (e.target === e.currentTarget) area?.focus();
-          }}
         >
           {@render sendButton()}
-        </div>
+        </label>
       </div>
       <div class="md:hidden shrink-0 pb-2">
         {@render sendButton()}
