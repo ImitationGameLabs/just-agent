@@ -103,7 +103,6 @@
 
 <svelte:head><title>{connect_title()}</title></svelte:head>
 
-
 <div class="flex items-center justify-center min-h-dvh p-4 bg-surface-200-800">
   <form
     class="w-full max-w-sm space-y-6 p-6 bg-surface-100-900 border border-surface-200-800 shadow-sm rounded-xl"
@@ -146,7 +145,11 @@
     </label>
 
     {#if connectView}
-      <FormError message={connectView.title} detail={connectView.detail} hint={connectView.hint} />
+      <FormError
+        message={connectView.title}
+        detail={connectView.detail}
+        hint={connectView.hint}
+      />
     {/if}
     {#if error}
       <FormError message={error} />

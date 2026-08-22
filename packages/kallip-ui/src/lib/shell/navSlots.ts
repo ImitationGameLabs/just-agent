@@ -44,7 +44,7 @@ export function navSlots(links: NavSection[]): NavSlotPlan {
   const flat = shown.flatMap((s) =>
     s.hub
       ? [{ href: s.hub.href, label: s.hub.label, icon: s.hub.icon }]
-      : s.items
+      : s.items,
   );
   const hasManage = shown.some((s) => s.manage);
   const hasMore = flat.length > 4 || hasManage;

@@ -60,15 +60,12 @@ Deno.test("offline + /connect + disconnected -> render the form", () => {
   );
 });
 
-Deno.test(
-  "offline + /login + connected -> redirect /local (one hop)",
-  () => {
-    assertEquals(
-      decide({ mode: "offline", pathname: "/login", connected: true }),
-      { kind: "redirect", url: "/local" },
-    );
-  },
-);
+Deno.test("offline + /login + connected -> redirect /local (one hop)", () => {
+  assertEquals(
+    decide({ mode: "offline", pathname: "/login", connected: true }),
+    { kind: "redirect", url: "/local" },
+  );
+});
 
 Deno.test("offline + /login + disconnected -> redirect /connect", () => {
   assertEquals(
@@ -79,25 +76,19 @@ Deno.test("offline + /login + disconnected -> redirect /connect", () => {
 
 // --- offline protected ---
 
-Deno.test(
-  "offline + /tagmata -> redirect /local (no tagmata offline)",
-  () => {
-    assertEquals(decide({ mode: "offline", pathname: "/tagmata" }), {
-      kind: "redirect",
-      url: "/local",
-    });
-  },
-);
+Deno.test("offline + /tagmata -> redirect /local (no tagmata offline)", () => {
+  assertEquals(decide({ mode: "offline", pathname: "/tagmata" }), {
+    kind: "redirect",
+    url: "/local",
+  });
+});
 
-Deno.test(
-  "offline + /rooms -> redirect /local (rooms are online-only)",
-  () => {
-    assertEquals(decide({ mode: "offline", pathname: "/rooms" }), {
-      kind: "redirect",
-      url: "/local",
-    });
-  },
-);
+Deno.test("offline + /rooms -> redirect /local (rooms are online-only)", () => {
+  assertEquals(decide({ mode: "offline", pathname: "/rooms" }), {
+    kind: "redirect",
+    url: "/local",
+  });
+});
 
 Deno.test("offline + / -> redirect /local (old offline root)", () => {
   assertEquals(decide({ mode: "offline", pathname: "/" }), {

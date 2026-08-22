@@ -125,7 +125,10 @@
 {#if agoraSession.authError}
   <!-- Environment error (agora unreachable at boot); a submit's own failures
        render inline in the form below. -->
-  <Banner floating title={auth_couldnt_reach({ notice: agoraSession.authError })} />
+  <Banner
+    floating
+    title={auth_couldnt_reach({ notice: agoraSession.authError })}
+  />
 {/if}
 
 <div class="flex items-center justify-center min-h-dvh p-4 bg-surface-100-900">

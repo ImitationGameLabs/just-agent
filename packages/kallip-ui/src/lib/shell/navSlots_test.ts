@@ -167,7 +167,11 @@ const cases: {
         hub: { href: "/local", label: "home", icon: (() => {}) as never },
         items: [item("/local/chat")],
       },
-      { title: "Manage", smallScreenHidden: true, items: [item("/m/0"), item("/m/1")] },
+      {
+        title: "Manage",
+        smallScreenHidden: true,
+        items: [item("/m/0"), item("/m/1")],
+      },
     ],
     visible: ["/local"],
     overflow: [],

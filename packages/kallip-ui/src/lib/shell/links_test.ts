@@ -38,8 +38,20 @@ Deno.test(
   () => {
     const sections = navFor({ mode: "online", icons });
     assertEquals(shape(sections), [
-      { title: "Tagmata", manage: "/tagmata", hub: null, smallScreenHidden: false, items: [] },
-      { title: "Rooms", manage: "/rooms", hub: null, smallScreenHidden: false, items: [] },
+      {
+        title: "Tagmata",
+        manage: "/tagmata",
+        hub: null,
+        smallScreenHidden: false,
+        items: [],
+      },
+      {
+        title: "Rooms",
+        manage: "/rooms",
+        hub: null,
+        smallScreenHidden: false,
+        items: [],
+      },
     ]);
   },
 );
@@ -56,7 +68,13 @@ Deno.test(
       ],
     });
     assertEquals(shape(sections), [
-      { title: "Tagmata", manage: "/tagmata", hub: null, smallScreenHidden: false, items: [] },
+      {
+        title: "Tagmata",
+        manage: "/tagmata",
+        hub: null,
+        smallScreenHidden: false,
+        items: [],
+      },
       {
         title: "Rooms",
         manage: "/rooms",
@@ -122,7 +140,13 @@ Deno.test("navFor online lists every enrolled tagma under Tagmata", () => {
           },
         ],
       },
-      { title: "Rooms", manage: "/rooms", hub: null, smallScreenHidden: false, items: [] },
+      {
+        title: "Rooms",
+        manage: "/rooms",
+        hub: null,
+        smallScreenHidden: false,
+        items: [],
+      },
     ],
   );
 });
@@ -132,8 +156,20 @@ Deno.test(
   () => {
     const sections = navFor({ mode: "online", icons });
     assertEquals(shape(sections), [
-      { title: "Tagmata", manage: "/tagmata", hub: null, smallScreenHidden: false, items: [] },
-      { title: "Rooms", manage: "/rooms", hub: null, smallScreenHidden: false, items: [] },
+      {
+        title: "Tagmata",
+        manage: "/tagmata",
+        hub: null,
+        smallScreenHidden: false,
+        items: [],
+      },
+      {
+        title: "Rooms",
+        manage: "/rooms",
+        hub: null,
+        smallScreenHidden: false,
+        items: [],
+      },
     ]);
   },
 );
@@ -163,7 +199,13 @@ Deno.test("tagmaNavIndicator maps each channel state (transport-only)", () => {
 Deno.test("navFor offline -> Chat + Manage sections", () => {
   const sections = navFor({ mode: "offline", icons });
   assertEquals(shape(sections), [
-    { title: null, manage: null, hub: "/local", smallScreenHidden: false, items: ["/local/chat"] },
+    {
+      title: null,
+      manage: null,
+      hub: "/local",
+      smallScreenHidden: false,
+      items: ["/local/chat"],
+    },
     {
       title: "Manage",
       manage: null,
