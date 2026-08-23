@@ -78,9 +78,12 @@
 .markdown code {
   @apply font-mono break-all whitespace-normal;
 }
-/* Fenced blocks should scroll horizontally, not wrap like inline code. */
+/* Fenced blocks should scroll horizontally, not wrap like inline code.
+   white-space must be restored too: Shiki emits each line as a span
+   separated by literal newlines inside <code>, and the whitespace-normal
+   above collapses those newlines into spaces -- one flat line. */
 .markdown pre code {
-  @apply break-normal;
+  @apply break-normal whitespace-pre;
 }
 
 .markdown table {
