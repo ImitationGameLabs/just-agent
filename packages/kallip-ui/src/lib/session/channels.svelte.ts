@@ -30,11 +30,7 @@ import {
   RelayConversation,
   WINDOW_PAGE,
 } from "./conversation.svelte.ts";
-import {
-  clearConvCache,
-  loadAll,
-  readTail,
-} from "@kallipai/kallip-lesche-client";
+import { clearConvCache, readTail } from "@kallipai/kallip-lesche-client";
 import { configStore } from "../config/config.svelte.ts";
 import type { ConversationLine } from "../transcript.ts";
 
@@ -238,23 +234,23 @@ class ChannelsStore {
       tagma.tagma_id,
       tagma.label,
     );
-    // Hydrate from the per-device cache before marking open, so a refresh
-    // restores the conversation instantly and we only pull a delta.
-    const cached = await loadAll(channel.conversationId);
-    if (cached.length > 0) {
-      const lines: ConversationLine[] = cached.map(
-        ({ historyId, role, text, sender, createdAt }) => ({
-          historyId,
-          // The cache stores role as an opaque string (a UI concept); cast back
-          // to the reducer's role union, which the values round-trip as.
-          role: role as ConversationLine["role"],
-          text,
-          sender,
-          createdAt,
-        }),
-      );
-      conv.transcript = { lines, status: "idle" };
-      conv.maxRendered = cached[cached.length - 1]!.historyId;
+    // Hydrate a tail window from the per-device cache before marking open,
+    // so a refresh restores the conversation instantly and catchUp pulls
+    // only the delta (mirrors attachLocal; the same per-tagma cache the
+    // offline entry uses, so a mode switch rehydrates from the same rows).
+    try {
+      const cached = await readTail(channel.conversationId, WINDOW_PAGE);
+      if (cached.length > 0) {
+        conv.transcript = {
+          lines: cached.map(cachedLineToLine),
+          status: "idle",
+        };
+        conv.minRendered = cached[0]!.historyId;
+        conv.maxRendered = cached[cached.length - 1]!.historyId;
+      }
+    } catch {
+      // IndexedDB unavailable (e.g. private mode): proceed empty; the
+      // catch-up pull lands one recent batch.
     }
     // Race guard: a teardown (logout / mode switch) during the KEX or cache
     // awaits cleared the map; drop the channel we built instead of
@@ -275,26 +271,13 @@ class ChannelsStore {
       conv.setStatusSnapshot(this.statusBackfill(tagma.tagma_id));
     }
     this.setRelayConv(channel.conversationId, conv);
-    const after = conv.maxRendered > 0 ? conv.maxRendered : null;
-    try {
-      await channel.history({ after, limit: 50 });
-    } catch {
-      // Non-fatal: live delivery still works. Flip live so background
-      // notifications are not silently disabled for the whole session.
-      conv.live = true;
-    }
-    // Watchdog: if no history_batch_end lands within 10s (partial delivery,
-    // lost marker, relay crash), force live. The batch_end handler in
-    // RelayConversation.applyReply cancels this on the normal path.
-    conv.liveWatchdog = setTimeout(() => {
-      if (
-        this.conversations.get(channel.conversationId) === conv &&
-        !conv.live
-      ) {
-        conv.live = true;
-      }
-    }, 10_000);
+    // Catch up from the hydrated high-water to the newest server row
+    // (a fresh device gets one recent batch). Fire-and-forget, mirroring
+    // attachLocal: the drain runs concurrently, the UI is interactive
+    // meanwhile, and RelayConversation.catchUp owns the pull loop +
+    // per-batch timeouts + the notification floor.
     void conv.run();
+    void conv.catchUp();
     return channel.conversationId;
   }
 
@@ -353,9 +336,6 @@ class ChannelsStore {
   private tearDown(conversationId: string): void {
     const conv = this.conversations.get(conversationId);
     if (!conv) return;
-    if (conv instanceof RelayConversation && conv.liveWatchdog) {
-      clearTimeout(conv.liveWatchdog);
-    }
     conv.close();
     this.dropConv(conversationId);
   }
@@ -365,9 +345,6 @@ class ChannelsStore {
    *  other mode rehydrates instantly from the shared cache on re-attach. */
   tearDownAll(): void {
     for (const conv of this.conversations.values()) {
-      if (conv instanceof RelayConversation && conv.liveWatchdog) {
-        clearTimeout(conv.liveWatchdog);
-      }
       conv.close();
     }
     this.conversations.clear();

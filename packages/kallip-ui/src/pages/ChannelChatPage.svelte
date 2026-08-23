@@ -16,7 +16,7 @@
   import { managementBackend } from "../lib/manage/client.ts";
   import { convDraftKey, tagmaDraftKey } from "../lib/session/drafts.ts";
   import { channelsStore } from "../lib/session/channels.svelte";
-  import { LocalConversation } from "../lib/session/conversation.svelte.ts";
+  import { ConversationBase } from "../lib/session/conversation.svelte.ts";
   import { navigate } from "../lib/shell/port.ts";
   import {
     connect_connecting,
@@ -45,13 +45,13 @@
   const conv = $derived(channelsStore.get(conversationId));
   const isLocal = $derived(conversationId === "local");
 
-  // The lazy-window pager exists only on the local (direct) transport; the
-  // online relay page passes no pager and ConversationView renders verbatim.
+  // The lazy-window pager runs on both transports; each conversation leaf
+  // supplies its own page source behind the shared base loadOlder.
   const loadOlder = $derived(
-    conv instanceof LocalConversation ? () => conv.loadOlder() : undefined,
+    conv instanceof ConversationBase ? () => conv.loadOlder() : undefined,
   );
   const windowStates = $derived(
-    conv instanceof LocalConversation
+    conv instanceof ConversationBase
       ? { hasMoreOlder: conv.hasMoreOlder, loadingOlder: conv.loadingOlder }
       : {},
   );

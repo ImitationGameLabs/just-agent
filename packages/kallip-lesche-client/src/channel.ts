@@ -206,21 +206,24 @@ export class RelayChannel {
    * catch-up (rows newer than the rendered high-water mark); `before` =
    * scroll-up lazy load (rows older than the oldest id in view); both null =
    * the most recent `limit` rows (a first-time device). The matching rows and a
-   * `history_batch_end` marker flow through `replies()`. The same encrypted
-   * envelope channel as a `TagmaRequest`; lesche is unaware. */
+   * `history_batch_end` marker flow through `replies()`. Resolves to the
+   * request's `req_id` once the envelope is accepted, so the caller can await
+   * ITS marker on the reply stream (the marker echoes the same `req_id`).
+   * The same encrypted envelope channel as a `TagmaRequest`; lesche is unaware. */
   history(opts: {
     after?: number | null;
     before?: number | null;
     limit?: number;
-  }): Promise<void> {
+  }): Promise<number> {
+    const req_id = this.nextReqId++;
     const ctrl: TagmaControl = {
       op: "history",
-      req_id: this.nextReqId++,
+      req_id,
       after: opts.after ?? null,
       before: opts.before ?? null,
       limit: opts.limit ?? 50,
     };
-    return this.sendControl(ctrl);
+    return this.sendControl(ctrl).then(() => req_id);
   }
 
   manage(

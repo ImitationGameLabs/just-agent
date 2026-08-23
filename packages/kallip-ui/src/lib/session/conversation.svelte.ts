@@ -2,14 +2,18 @@
 // holds the shared surface (transcript, transport status, the two-stream drain,
 // the single-in-flight send pump, the history cursor + cache + dedup, and the
 // optimistic-line promotion), and the relay leaf carries its transport-specific
-// extras (the live/watchdog catch-up gate + background notifications):
+// extras (req_id-correlated cursor pulls, the before-page reroute, and the
+// background-notification gate):
 //
-//   - `RelayConversation` (online): the E2EE pipe; the live gate suppresses
-//     notifications during the catch-up batch.
+//   - `RelayConversation` (online): the E2EE pipe; history pages are cursor
+//     pulls that await their batch_end marker, replayed rows below the
+//     rendered cursor reroute into the pending page, and only frames above
+//     the open-time high-water fire background notifications.
 //   - `LocalConversation` (offline): a plain forwarder over the direct SSE.
 //
-// The two leaves share the `applyReplyCore` reducer path (dedup by `history_id`,
-// cache, `user_message` promotion of the optimistic line) and the run() status
+// The two leaves share the `applyReplyCore` reducer path (dedup by
+// `history_id`, cache, `user_message` promotion of the optimistic line —
+// the relay leaf wraps it with the page reroute) and the run() status
 // transitions verbatim. Every drain mutation is guarded by an object-identity
 // check against the store's live entry for this id (a reconnect replaces the
 // entry under the same id; a stale drain must not touch the fresh one).
@@ -56,8 +60,8 @@ import { DirectTransport } from "./directTransport.ts";
 export const WINDOW_PAGE = 50;
 
 /** Map a cached row back to its transcript line (the hydrate + cache-page
- *  paths; the cache stores the UI's own role union verbatim, cast back
- *  exactly like loadAll's consumers do). */
+ * paths; the cache stores the UI's own role union verbatim, cast back to
+ * the reducer's role union, which the values round-trip as). */
 export function cachedLineToLine(c: CachedLine): ConversationLine {
   return {
     historyId: c.historyId,
@@ -360,6 +364,45 @@ export abstract class ConversationBase {
     }
     return this.mergeWindowLines(lines);
   }
+  /** Recompute `minRendered` from the rendered durable lines. The
+   * drain-side batch path appends rows through applyReplyCore (which
+   * advances only maxRendered); this closes the window bracket once a
+   * batch has landed so the scroll sentinel can arm. Idempotent,
+   * O(window). */
+  protected recomputeMinRendered(): void {
+    let min = Infinity;
+    for (const l of this.transcript.lines) {
+      if (l.historyId > 0 && l.historyId < min) min = l.historyId;
+    }
+    if (min !== Infinity) this.minRendered = min;
+  }
+
+  /** Fetch one page older than the window head. Template method: the
+   * shared guards, the single-flight flag, and the quiet error handling
+   * live here; the leaf supplies the page source via loadOlderPage.
+   *
+   *  minRendered === 0 means the window has not formed yet (hydrate or
+   *  catch-up still in flight, or the server truly has nothing): paging
+   *  older-than-nothing is ill-defined — and racing the initial fill here
+   *  once issued a recent-N pull whose always-false `more` permanently
+   *  disarmed the sentinel. Wait for a window head to exist. */
+  async loadOlder(k = WINDOW_PAGE): Promise<void> {
+    if (this.loadingOlder || !this.hasMoreOlder) return;
+    if (this.minRendered <= 0) return;
+    this.loadingOlder = true;
+    try {
+      await this.loadOlderPage(k);
+    } catch {
+      // Offline / dead transport: retry on the next scroll-to-top.
+    } finally {
+      this.loadingOlder = false;
+    }
+  }
+
+  /** The leaf page source (cache-first, then transport). The caller
+   * holds the single-flight slot and has verified the window has
+   * formed. */
+  protected abstract loadOlderPage(k: number): Promise<void>;
 
   /** True iff this conversation is still the store's live entry for its id. */
   protected isLive(): boolean {
@@ -453,17 +496,55 @@ function maybeNotifyBackground(label: string | null, reply: TagmaReply): void {
   }
 }
 
+/** The background-notification gate for the relay leaf: only a content
+ * frame stamped above the open-time high-water is new since this device
+ * last looked. Markers/acks/errors never notify (not authored content). */
+export function shouldNotify(floor: number, reply: TagmaReply): boolean {
+  const id =
+    reply.kind === "event" || reply.kind === "user_message"
+      ? (reply.history_id ?? 0)
+      : 0;
+  return id > floor;
+}
+
+/** One in-flight relay history pull, keyed by `req_id` (the marker echoes
+ * it). `rows` buffers frames the drain rerouted into a before-page (see
+ * `RelayConversation.applyReplyCore`); `settle` resolves the pull's await
+ * when the batch_end marker — or the pull timeout — lands. */
+interface RelayPull {
+  rows: HistoryEntry[];
+  settle: ((count: number, more: boolean) => void) | null;
+}
+
 export class RelayConversation extends ConversationBase {
   readonly kind = "relay" as const;
 
   readonly tagmaId: string;
   readonly label: string | null;
-  /** True once the initial History batch completed. Before that, inbound frames
-   *  are catch-up (old) and must not fire notifications. */
-  live = $state(false);
-  /** Force-flips `live` after 10s if no history_batch_end arrives (lost-marker
-   *  guard). Plain (only the `live` flip it triggers is observed). */
-  liveWatchdog: ReturnType<typeof setTimeout> | null = null;
+
+  /** Per-batch marker timeout. The server deliberately omits the marker on
+   * partial delivery (dispatch.rs), so every pull carries its own deadline:
+   * one slow batch is never condemned by an earlier batch's timer (a
+   * whole-catch-up watchdog once force-flipped notifications mid-replay).
+   * Public and mutable as the test seam (10s in production). */
+  pullTimeoutMs = 10_000;
+
+  /** In-flight history pulls by req_id. Catch-up after-pages and a
+   * scroll-up before-page can overlap; each await resolves on ITS OWN
+   * marker. */
+  private pendingPulls = new Map<number, RelayPull>();
+  /** The one in-flight before-page pull (or null). Replay rows at or below
+   * the rendered cursor reroute here instead of being dedup-dropped. At
+   * most one: loadOlder single-flights. */
+  private beforePull: RelayPull | null = null;
+  /** The notification floor: content frames at or below it are replay
+   * (backlog being re-pulled) and never notify; above it is genuinely
+   * new since this device last looked. Replaces the old live/watchdog
+   * gate with an id test — no marker arrival required, so the gate can
+   * never wedge. Set to MAX_SAFE_INTEGER for the whole catch-up replay
+   * (suppress everything, batch rows included), reset to the live edge
+   * (the final maxRendered) when catch-up ends. */
+  private notifyFloor = 0;
 
   constructor(
     conversationId: string,
@@ -484,29 +565,185 @@ export class RelayConversation extends ConversationBase {
     this.label = label;
   }
 
-  /** The E2EE transport (for the store's history pull, envelope delivery, and
-   *  signal routing). */
+  /** The E2EE transport (for the store's history pull, envelope delivery,
+   * and signal routing). */
   get relayTransport(): import("./relayTransport.ts").RelayTransport {
     return this.transport as import("./relayTransport.ts").RelayTransport;
   }
 
+  /** Test seam: deliver one decrypted frame as the drain would. The fake
+   * channel in relayWindow_test bypasses the real E2EE pipe, so this is
+   * the entry point its frames use. */
+  feed(reply: TagmaReply, sender: Participant | undefined): void {
+    this.applyReplyCore(reply, sender);
+  }
+
+  /** Reroute replay rows into the in-flight before-page. The core's dedup
+   * is one-directional (id <= maxRendered is dropped), so a scroll-up
+   * page's rows would vanish; worse, a user_message whose text matches the
+   * in-flight send would be mis-consumed as its echo, promoting the
+   * optimistic line to a duplicate old id. Genuine echoes never take this
+   * branch: a relay echo is stamped above the cursor, a direct-path echo
+   * carries history_id 0, and acks/markers carry no content. */
+  protected override applyReplyCore(
+    reply: TagmaReply,
+    sender: Participant | undefined,
+  ): void {
+    const page = this.beforePull;
+    if (page && sender) {
+      const id =
+        reply.kind === "event" || reply.kind === "user_message"
+          ? (reply.history_id ?? 0)
+          : 0;
+      if (id > 0 && id <= this.maxRendered) {
+        page.rows.push({ sender, reply });
+        return;
+      }
+    }
+    super.applyReplyCore(reply, sender);
+  }
+
   protected override onReply(reply: TagmaReply): void {
     if (reply.kind === "history_batch_end") {
-      if (this.liveWatchdog) {
-        clearTimeout(this.liveWatchdog);
-        this.liveWatchdog = null;
+      const pull = this.pendingPulls.get(reply.req_id);
+      if (pull) {
+        this.pendingPulls.delete(reply.req_id);
+        if (this.beforePull === pull) this.beforePull = null;
+        pull.settle?.(reply.count, reply.more);
       }
-      this.live = true;
+      // Close the window bracket: drain-side batches advance only
+      // maxRendered, so the scroll sentinel needs minRendered recomputed
+      // once the batch has landed (idempotent; before-pages recompute
+      // again through the merge).
+      this.recomputeMinRendered();
+      return;
     }
-    if (this.live) maybeNotifyBackground(this.label, reply);
+    if (shouldNotify(this.notifyFloor, reply)) {
+      maybeNotifyBackground(this.label, reply);
+    }
+  }
+
+  /** Backfill from the hydrated high-water to the newest server row: pages
+   * `history{after}` until the cursor stops advancing, a batch comes back
+   * empty, or the server says no more. A fresh device (empty cache) takes
+   * one recent batch instead of the loop. Rows flow row-by-row through
+   * the drain (the normal path: dedup, cache write, echo promotion all
+   * apply); only the loop control lives here. */
+  async catchUp(k = WINDOW_PAGE): Promise<void> {
+    // Suppress notifications for the whole catch-up replay: every batch
+    // row is old news re-arriving, and a fresh device's recent batch
+    // starts below no floor at all (maxRendered 0) — either way one
+    // notification per row would be spam. The floor resets to the live
+    // edge (the final maxRendered) when catch-up ends, so only frames
+    // newer than everything replayed can ever notify.
+    this.notifyFloor = Number.MAX_SAFE_INTEGER;
+    try {
+      if (this.maxRendered > 0) {
+        for (;;) {
+          const before = this.maxRendered;
+          const { count, more } = await this.pullPage({
+            after: before,
+            limit: k,
+          });
+          if (count === 0 || !more || this.maxRendered <= before) break;
+        }
+      } else {
+        const { count, timedOut } = await this.pullPage({ limit: k });
+        // A short recent batch IS the whole server history; disarm the
+        // sentinel so it never arms for a page that cannot exist. A
+        // timed-out batch proves nothing — leave the sentinel armed.
+        if (!timedOut && count < k) this.hasMoreOlder = false;
+      }
+    } catch {
+      // Dead channel: the drain surfaces transport status; the window
+      // stays on whatever the hydrate landed and live frames keep
+      // arriving.
+    } finally {
+      // Marker or not, whatever the drain landed forms the window bracket
+      // (covers a timed-out recent batch that streamed rows but no
+      // marker).
+      this.recomputeMinRendered();
+      this.notifyFloor = this.maxRendered;
+    }
+  }
+
+  /** The relay leaf's page source: cache-first (the shared per-tagma
+   * cache — same key as the offline entry), then an encrypted before-page
+   * below the cache floor. A timed-out page (lost marker) folds its
+   * buffered rows and leaves the sentinel armed — the next scroll
+   * retries. */
+  protected override async loadOlderPage(k: number): Promise<void> {
+    const head = this.minRendered;
+    const cached = await readTailBefore(this.cacheConversationId, head, k);
+    if (cached.length > 0) {
+      this.mergeWindowLines(cached.map(cachedLineToLine));
+    }
+    if (cached.length >= k) return;
+    const { rows, more, timedOut } = await this.pullPage({
+      before: head,
+      limit: k,
+    });
+    const added = this.applyPulledRows(rows);
+    if (!timedOut && (!more || added === 0)) this.hasMoreOlder = false;
+  }
+
+  /** Issue one cursor page and await ITS batch_end marker
+   * (req_id-correlated; the rows stream through the drain meanwhile). The
+   * per-batch timeout is the old watchdog's replacement: on expiry the
+   * buffered rows fold, the page reads as terminal, and retry policy
+   * stays with the caller. */
+  private async pullPage(opts: {
+    after?: number | null;
+    before?: number | null;
+    limit: number;
+  }): Promise<{
+    rows: HistoryEntry[];
+    count: number;
+    more: boolean;
+    timedOut: boolean;
+  }> {
+    const pull: RelayPull = { rows: [], settle: null };
+    const isBeforePage = (opts.before ?? 0) > 0;
+    // The try covers the history() call too: if the channel rejects the
+    // send, the finally still drops this pull off beforePull — an orphan
+    // reroute target would otherwise swallow rows into a dead page.
+    let req_id = -1;
+    try {
+      if (isBeforePage) this.beforePull = pull;
+      req_id = await this.relayTransport.relayChannel.history(opts);
+      this.pendingPulls.set(req_id, pull);
+      return await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          // Partial delivery (the server stops without the marker):
+          // resolve with what buffered; `timedOut` tells callers not
+          // to trust `more`.
+          resolve({
+            rows: pull.rows,
+            count: pull.rows.length,
+            more: false,
+            timedOut: true,
+          });
+        }, this.pullTimeoutMs);
+        pull.settle = (count, more) => {
+          clearTimeout(timer);
+          resolve({ rows: pull.rows, count, more, timedOut: false });
+        };
+      });
+    } finally {
+      if (req_id >= 0) this.pendingPulls.delete(req_id);
+      if (isBeforePage && this.beforePull === pull) {
+        this.beforePull = null;
+      }
+    }
   }
 
   protected override onDrainDead(): void {
     this.abandonPending();
   }
 
-  /** Drop all unsent optimistic state: the in-flight slot, the queued entries,
-   *  and their rendered "sending" lines. Used when the channel dies. */
+  /** Drop all unsent optimistic state: the in-flight slot, the queued
+   * entries, and their rendered "sending" lines. Used when the channel
+   * dies. */
   abandonPending(): void {
     this.pending = [];
     this.pendingInFlight = null;
@@ -581,43 +818,23 @@ export class LocalConversation extends ConversationBase {
       // stays on whatever the cache hydrated and live frames keep arriving.
     }
   }
-
-  /** Fetch one page older than the window head. Cache-first: a full cache
-   *  page never touches the tagma (the offline degrade path — the cache
-   *  holds everything ever rendered); a short cache page falls through to
-   *  the server for the remainder. A zero-add server page disarms the
-   *  sentinel (the oldest reachable row is already in the window); errors
-   *  reset quietly and leave the sentinel armed for the next scroll. */
-  async loadOlder(k = WINDOW_PAGE): Promise<void> {
-    if (this.loadingOlder || !this.hasMoreOlder) return;
-    // minRendered === 0 means the window has not formed yet (hydrate or
-    // catch-up still in flight, or the server truly has nothing): paging
-    // older-than-nothing is ill-defined — and racing the initial fill here
-    // once issued a recent-N pull whose always-false `more` permanently
-    // disarmed the sentinel. Wait for a window head to exist.
-    if (this.minRendered <= 0) return;
-    this.loadingOlder = true;
-    try {
-      const head = this.minRendered;
-      if (head > 0) {
-        const cached = await readTailBefore(this.cacheConversationId, head, k);
-        if (cached.length > 0) {
-          this.mergeWindowLines(cached.map(cachedLineToLine));
-        }
-        if (cached.length >= k) return;
-      }
-      const t = this.direct;
-      if (!t) return;
-      const { rows, more } = await t.pullHistory({
-        before: head > 0 ? head : null,
-        limit: k,
-      });
-      const added = this.applyPulledRows(rows);
-      if (!more || added === 0) this.hasMoreOlder = false;
-    } catch {
-      // Offline / dead transport: retry on the next scroll-to-top.
-    } finally {
-      this.loadingOlder = false;
+  /** The local leaf's page source. Cache-first: a full cache page never
+   *  touches the tagma (the offline degrade path — the cache holds everything
+   *  ever rendered); a short cache page falls through to the server for the
+   *  remainder. A zero-add server page disarms the sentinel (the oldest
+   *  reachable row is already in the window). Guards, single-flight, and
+   *  quiet error handling live in the base loadOlder. */
+  protected override async loadOlderPage(k: number): Promise<void> {
+    const head = this.minRendered;
+    const cached = await readTailBefore(this.cacheConversationId, head, k);
+    if (cached.length > 0) {
+      this.mergeWindowLines(cached.map(cachedLineToLine));
     }
+    if (cached.length >= k) return;
+    const t = this.direct;
+    if (!t) return;
+    const { rows, more } = await t.pullHistory({ before: head, limit: k });
+    const added = this.applyPulledRows(rows);
+    if (!more || added === 0) this.hasMoreOlder = false;
   }
 }

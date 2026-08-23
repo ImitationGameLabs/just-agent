@@ -17,7 +17,6 @@ export { openRelayChannel, RelayChannel } from "./channel.ts";
 export {
   clear as clearConvCache,
   type CachedLine,
-  loadAll,
   put,
   readTail,
   readTailBefore,

@@ -110,25 +110,11 @@ function run<T>(
   );
 }
 
-/** Load all cached lines for a conversation, oldest-first (by historyId).
- * Returns `[]` on any cache error — a corrupt cache never blocks the
- * conversation; the tagma re-pull repopulates it. */
-export async function loadAll(conversationId: string): Promise<CachedLine[]> {
-  try {
-    const rows = await run<CachedLine[]>("readonly", (s) =>
-      s.getAll(conversationRange(conversationId)),
-    );
-    return rows ?? [];
-  } catch {
-    return [];
-  }
-}
-
 /** Collect up to `k` rows scanning `range` NEWEST-first with a cursor, then
  *  return them oldest-first. The composite keyPath orders rows by
  *  historyId within the conversation, so a "prev" cursor walks ids
  *  descending. Returns [] on any cache error — the same
- *  degrade-to-refetch contract as loadAll. */
+ *  degrade-to-refetch contract as the hydrate paths. */
 async function tailScan(range: IDBKeyRange, k: number): Promise<CachedLine[]> {
   try {
     const rows = await db().then(
@@ -161,11 +147,15 @@ async function tailScan(range: IDBKeyRange, k: number): Promise<CachedLine[]> {
 /** Load the most recent `k` cached lines for a conversation, oldest-first.
  *  The lazy-window hydrate: enough to fill a screen without materializing
  *  the whole cached history. */
-export function readTail(
+export async function readTail(
   conversationId: string,
   k: number,
 ): Promise<CachedLine[]> {
-  return tailScan(conversationRange(conversationId), k);
+  try {
+    return await tailScan(conversationRange(conversationId), k);
+  } catch {
+    return []; // no/failed IndexedDB: degrade to refetch
+  }
 }
 
 /** Load up to `k` cached lines strictly older than `beforeId`,
@@ -175,20 +165,24 @@ export function readTail(
  *  lower bound leans on the same invariant as conversationRange:
  *  historyId is the tagma's AUTOINCREMENT chat_history.id, whose
  *  minimum is 1 — no row can sit below it. */
-export function readTailBefore(
+export async function readTailBefore(
   conversationId: string,
   beforeId: number,
   k: number,
 ): Promise<CachedLine[]> {
-  return tailScan(
-    IDBKeyRange.bound(
-      [conversationId, 1],
-      [conversationId, beforeId],
-      false,
-      true,
-    ),
-    k,
-  );
+  try {
+    return await tailScan(
+      IDBKeyRange.bound(
+        [conversationId, 1],
+        [conversationId, beforeId],
+        false,
+        true,
+      ),
+      k,
+    );
+  } catch {
+    return []; // no/failed IndexedDB: degrade to refetch
+  }
 }
 
 /** Put (insert or replace) one cached line. Swallow errors: a failed write
