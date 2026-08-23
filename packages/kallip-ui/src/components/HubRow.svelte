@@ -1,5 +1,5 @@
 <script lang="ts">
-  // One hub row (ManageHubPage / AccountHubPage): full-width with a 48px
+  // One hub row (LocalHome/Account/ManageHub pages): full-width with a 64px
   // touch target -- the bar's icon-only cells are smaller because their hit
   // area is the whole grid cell; here the row IS the target. No chevron:
   // the row itself reads as the destination. `href` renders an anchor,
@@ -27,18 +27,18 @@
 {#if href}
   <a
     {href}
-    class="flex items-center gap-3 min-h-12 px-4 hover:preset-filled-surface-500 transition-colors"
+    class="flex items-center gap-4 min-h-16 px-4 hover:preset-filled-surface-500 transition-colors"
   >
-    <Icon class="size-5 shrink-0 opacity-70" aria-hidden="true" />
-    <span class="text-sm font-medium">{label}</span>
+    <Icon class="size-7 shrink-0 opacity-70" aria-hidden="true" />
+    <span class="text-lg font-medium">{label}</span>
   </a>
 {:else}
   <button
     type="button"
     {onclick}
-    class="flex items-center gap-3 min-h-12 px-4 w-full text-left hover:preset-filled-surface-500 transition-colors"
+    class="flex items-center gap-4 min-h-16 px-4 w-full text-left hover:preset-filled-surface-500 transition-colors"
   >
-    <Icon class="size-5 shrink-0 opacity-70" aria-hidden="true" />
-    <span class="text-sm font-medium">{label}</span>
+    <Icon class="size-7 shrink-0 opacity-70" aria-hidden="true" />
+    <span class="text-lg font-medium">{label}</span>
   </button>
 {/if}
