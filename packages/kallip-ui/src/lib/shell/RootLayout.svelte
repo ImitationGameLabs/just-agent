@@ -37,11 +37,13 @@
   let {
     pathname,
     search,
+    appKind,
     icons,
     children,
   }: {
     pathname: string;
     search: string;
+    appKind: "app" | "web";
     icons: NavIcons;
     children: Snippet;
   } = $props();
@@ -218,6 +220,7 @@
       connected: channelsStore.localConnected,
       pathname,
       search,
+      appKind,
     }),
   );
 

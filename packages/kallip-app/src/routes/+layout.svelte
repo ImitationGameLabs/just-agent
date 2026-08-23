@@ -50,6 +50,11 @@
   let { children } = $props();
 </script>
 
-<RootLayout pathname={page.url.pathname} search={page.url.search} {icons}>
+<RootLayout
+  pathname={page.url.pathname}
+  search={page.url.search}
+  appKind="app"
+  {icons}
+>
   {@render children()}
 </RootLayout>

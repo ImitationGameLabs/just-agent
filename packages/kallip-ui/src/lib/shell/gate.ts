@@ -20,6 +20,8 @@
 // Public (front-door) routes are /login, /register (online) and /connect
 // (offline). The gate owns all post-mode-flip / post-connect navigation: pages
 // must not navigate after a config write or connect.
+// The connected landing is platform-split: web goes straight to /local/chat,
+// the app shell to its /local home hub (appKind, injected by the host layout).
 //
 // Both sessions may coexist: the persisted config retains offline creds and the
 // agora cookie survives across switches (neither side is destroyed on a mode
@@ -59,6 +61,7 @@ export function appGateDecision(args: {
   user: unknown;
   authError: string | null;
   connected: boolean;
+  appKind: "app" | "web";
   pathname: string;
   search: string;
 }): GateDecision {
@@ -69,9 +72,15 @@ export function appGateDecision(args: {
 
   if (pub) {
     if (args.mode === "offline") {
-      // Already set up -> straight to the local home (one redirect, not via
-      // /connect).
-      if (args.connected) return { kind: "redirect", url: "/local" };
+      // Already set up -> straight to the platform's landing (one redirect,
+      // not via /connect): web goes straight into the chat, the app shell
+      // to its local home hub.
+      if (args.connected) {
+        return {
+          kind: "redirect",
+          url: args.appKind === "web" ? "/local/chat" : "/local",
+        };
+      }
       // Not connected: the form is the right place.
       if (args.pathname === "/connect") return { kind: "render" };
       // /login,/register are the wrong door for an offline user.

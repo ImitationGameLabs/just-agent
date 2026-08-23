@@ -15,6 +15,7 @@ function decide(
     user: undefined,
     authError: null,
     connected: false,
+    appKind: "app",
     search: "",
     ...over,
   });
@@ -46,9 +47,14 @@ Deno.test("config not loaded -> skeleton on every route (incl. /login)", () => {
 
 // --- offline public ---
 
-Deno.test("offline + /connect + connected -> redirect /local", () => {
+Deno.test("offline + /connect + connected (app) -> redirect /local", () => {
   assertEquals(
-    decide({ mode: "offline", pathname: "/connect", connected: true }),
+    decide({
+      mode: "offline",
+      pathname: "/connect",
+      connected: true,
+      appKind: "app",
+    }),
     { kind: "redirect", url: "/local" },
   );
 });
@@ -60,12 +66,20 @@ Deno.test("offline + /connect + disconnected -> render the form", () => {
   );
 });
 
-Deno.test("offline + /login + connected -> redirect /local (one hop)", () => {
-  assertEquals(
-    decide({ mode: "offline", pathname: "/login", connected: true }),
-    { kind: "redirect", url: "/local" },
-  );
-});
+Deno.test(
+  "offline + /login + connected (app) -> redirect /local (one hop)",
+  () => {
+    assertEquals(
+      decide({
+        mode: "offline",
+        pathname: "/login",
+        connected: true,
+        appKind: "app",
+      }),
+      { kind: "redirect", url: "/local" },
+    );
+  },
+);
 
 Deno.test("offline + /login + disconnected -> redirect /connect", () => {
   assertEquals(
@@ -73,6 +87,36 @@ Deno.test("offline + /login + disconnected -> redirect /connect", () => {
     { kind: "redirect", url: "/connect" },
   );
 });
+
+Deno.test(
+  "offline + /connect + connected (web) -> redirect /local/chat",
+  () => {
+    assertEquals(
+      decide({
+        mode: "offline",
+        pathname: "/connect",
+        connected: true,
+        appKind: "web",
+      }),
+      { kind: "redirect", url: "/local/chat" },
+    );
+  },
+);
+
+Deno.test(
+  "offline + /login + connected (web) -> redirect /local/chat (one hop)",
+  () => {
+    assertEquals(
+      decide({
+        mode: "offline",
+        pathname: "/login",
+        connected: true,
+        appKind: "web",
+      }),
+      { kind: "redirect", url: "/local/chat" },
+    );
+  },
+);
 
 // --- offline protected ---
 
