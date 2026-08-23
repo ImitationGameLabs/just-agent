@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 use just_llm_client::types::chat::{ChatMessage, ToolDefinition};
 use kallip_common::context::{ContextUsage, CumulativeUsage};
 
-use kallip_common::retry::RetryRecord;
+use kallip_common::retry::{RETRY_LOG_KEEP, RetryRecord};
 
 use super::manifest::{FORMAT_VERSION, ManifestDoc, PinRecord, PinsDoc};
 use super::tokens::estimate_message_tokens;
@@ -133,10 +133,15 @@ pub struct ContextStore {
     next_turn_id: u64,
     /// Historical retry records, persisted across agent restarts.
     ///
-    /// Append-only and never pruned: one record per retry attempt accumulates over the agent's
-    /// lifetime and across restarts (via `context.json`). The per-endpoint retry budget
-    /// (`runner.rs`) only counts records within `retry_timeout` by `timestamp`, so stale entries
-    /// don't inflate the budget — but they are not removed from this `Vec`.
+    /// On append, records older than the retry window are evicted first (they
+    /// can no longer count toward the per-endpoint budget, so dropping them
+    /// only frees slots), then the log is bounded to [`RETRY_LOG_KEEP`]
+    /// most-recent records: the status endpoint renders only that many, and an
+    /// unbounded persistent log would grow with every transient failure
+    /// across restarts (via `context.json`). The budget counts by `timestamp`
+    /// within `retry_timeout`; when `max_retries` exceeds the bound the bound
+    /// wins, clamping the count short of the gate — bounded storage over
+    /// budget precision in that configuration.
     #[serde(default)]
     pub retry_log: Vec<RetryRecord>,
     /// Maximum tokens for the pinned layer. 0 = no limit.
@@ -354,6 +359,23 @@ impl ContextStore {
             highest_warned_pct: None,
             highest_budget_warned_pct: None,
             injected_turn_ids: HashSet::new(),
+        }
+    }
+
+    /// Append retry records, first evicting records older than `keep_since`
+    /// (a unix-seconds cutoff — stale for the budget, so eviction only frees
+    /// slots for in-window records), then keeping only the
+    /// [`RETRY_LOG_KEEP`] most recent as an absolute bound.
+    pub fn record_retries(
+        &mut self,
+        records: impl IntoIterator<Item = RetryRecord>,
+        keep_since: u64,
+    ) {
+        self.retry_log.extend(records);
+        self.retry_log.retain(|r| r.timestamp >= keep_since);
+        let len = self.retry_log.len();
+        if len > RETRY_LOG_KEEP {
+            self.retry_log.drain(..len - RETRY_LOG_KEEP);
         }
     }
 

@@ -409,6 +409,8 @@ fn manifest_projection_carries_state_history_cannot_rebuild() {
         error: "rate limited".into(),
         delay_secs: 2.0,
         endpoint: None,
+        kind: kallip_common::retry::RetryKind::RateLimit,
+        quota_reset: Some(500),
     });
 
     let doc = store.to_manifest_doc();
@@ -416,4 +418,30 @@ fn manifest_projection_carries_state_history_cannot_rebuild() {
     assert_eq!(doc.cumulative_usage.completion_tokens, 40);
     assert_eq!(doc.retry_log.len(), 1);
     assert_eq!(doc.retry_log[0].error, "rate limited");
+}
+
+#[test]
+fn record_retries_evicts_stale_then_bounds() {
+    let mut store = new_store();
+    let rec = |ts: u64| kallip_common::retry::RetryRecord {
+        timestamp: ts,
+        round: 0,
+        attempt: 1,
+        max_attempts: 3,
+        error: "x".into(),
+        delay_secs: 0.0,
+        endpoint: None,
+        kind: kallip_common::retry::RetryKind::Transport,
+        quota_reset: None,
+    };
+    // 21 in-window records overflow the bound by one: the oldest is drained.
+    let records: Vec<_> = (0..21).map(|i| rec(1000 + i)).collect();
+    store.record_retries(records, 1000);
+    // A stale record is appended last yet evicted by the cutoff, so the
+    // in-window survivors keep their slots.
+    store.record_retries([rec(500)], 1000);
+    assert_eq!(store.retry_log.len(), RETRY_LOG_KEEP);
+    assert!(store.retry_log.iter().all(|r| r.timestamp >= 1000));
+    assert_eq!(store.retry_log.first().unwrap().timestamp, 1001);
+    assert_eq!(store.retry_log.last().unwrap().timestamp, 1020);
 }

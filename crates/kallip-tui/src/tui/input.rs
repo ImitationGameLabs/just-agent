@@ -391,17 +391,45 @@ impl App {
             // Tagma query
             SlashCommand::Status => match client.agent_status(agent_id).await {
                 Ok(status) => {
-                    let mut msg = status.context.format_summary();
+                    let now = kallip_common::timefmt::now_epoch();
+                    let mut msg = format!(
+                        "current datetime: {}\n\n{}",
+                        kallip_common::timefmt::format_utc(now),
+                        status.context.format_summary()
+                    );
+                    msg.push_str(&format!(
+                        "\nbudget: {} / {} remaining",
+                        kallip_common::timefmt::humanize_count(
+                            status.token_budget.saturating_sub(status.token_consumed),
+                        ),
+                        kallip_common::timefmt::humanize_count(status.token_budget)
+                    ));
                     if !status.recent_retries.is_empty() {
                         msg.push_str(&format!(
                             "\n  retries: {} (last: {})",
                             status.recent_retries.len(),
-                            status
-                                .recent_retries
-                                .first()
-                                .map(|r| r.error.as_str())
-                                .unwrap_or("n/a")
+                            status.recent_retries[0].kind.as_str()
                         ));
+                        for r in &status.recent_retries {
+                            let quota = r
+                                .quota_reset
+                                .map(|q| {
+                                    format!(
+                                        "  quota resets {}",
+                                        kallip_common::timefmt::format_relative(now, q)
+                                    )
+                                })
+                                .unwrap_or_default();
+                            msg.push_str(&format!(
+                                "\n    {}  {:<11} attempt {}/{}  round {}  backoff {:.0}s{quota}",
+                                kallip_common::timefmt::format_utc(r.timestamp),
+                                r.kind.as_str(),
+                                r.attempt,
+                                r.max_attempts,
+                                r.round,
+                                r.delay_secs,
+                            ));
+                        }
                     }
                     self.chat_lines.push(ChatLine::Status(msg));
                     self.auto_scroll = true;

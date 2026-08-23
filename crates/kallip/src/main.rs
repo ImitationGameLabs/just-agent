@@ -9,6 +9,7 @@ use clap::{CommandFactory, Parser};
 use kallip_client::TagmaClient;
 use kallip_common::agentid::AgentId;
 use kallip_common::policy::{ExecDecision, ExecOverride};
+use kallip_common::timefmt;
 use kallip_common::tokens::parse_token_amount;
 
 use args::{
@@ -75,22 +76,50 @@ async fn main() -> Result<()> {
             }
             AgentCommand::Status(args) => {
                 let status = client.agent_status(&args.id).await?;
+                let now = now_epoch();
+                // Four blank-line groups: a timezone-anchored clock first (readers
+                // calibrate against it instead of doing date arithmetic), then
+                // state, context, retries.
+                println!("current datetime: {}", timefmt::format_utc(now));
+                println!();
                 println!("state: {}", status.state);
+                println!();
                 println!("{}", status.context.format_summary());
+                // Tagma-wide shared budget rides in the context group; it is a
+                // token magnitude, so it never participates in --relative-time.
+                println!(
+                    "budget: {} / {} remaining",
+                    timefmt::humanize_count(
+                        status.token_budget.saturating_sub(status.token_consumed)
+                    ),
+                    timefmt::humanize_count(status.token_budget)
+                );
                 if !status.recent_retries.is_empty() {
+                    println!();
+                    // The summary carries our classification, not the vendor's
+                    // wording; the archived error body stays out of the line view.
                     println!(
                         "retries: {} (last: {})",
                         status.recent_retries.len(),
-                        status
-                            .recent_retries
-                            .first()
-                            .map(|r| r.error.as_str())
-                            .unwrap_or("n/a")
+                        status.recent_retries[0].kind.as_str()
                     );
                     for r in &status.recent_retries {
+                        let stamp = if args.relative_time {
+                            timefmt::format_relative(now, r.timestamp)
+                        } else {
+                            timefmt::format_utc(r.timestamp)
+                        };
+                        let quota = r
+                            .quota_reset
+                            .map(|q| format!("  quota resets {}", timefmt::format_relative(now, q)))
+                            .unwrap_or_default();
                         println!(
-                            "  [{}/{}] {} — waited {:.1}s  (round {})",
-                            r.attempt, r.max_attempts, r.error, r.delay_secs, r.round,
+                            "  {stamp}  {:<11} attempt {}/{}  round {}  backoff {:.0}s{quota}",
+                            r.kind.as_str(),
+                            r.attempt,
+                            r.max_attempts,
+                            r.round,
+                            r.delay_secs,
                         );
                     }
                 }
@@ -368,8 +397,11 @@ async fn main() -> Result<()> {
                 if resp.is_empty() {
                     println!("Inbox is empty.");
                 } else {
+                    // A clock anchor at the top: inbox times are core content,
+                    // and the header calibrates the per-entry stamps below it.
+                    println!("current datetime: {}", timefmt::format_utc(now_epoch()));
                     for e in &resp {
-                        print_inbox_entry(e);
+                        print_inbox_entry(e, now_epoch(), args.relative_time);
                         println!("---");
                     }
                     println!("(showing {})", resp.len());
@@ -378,7 +410,7 @@ async fn main() -> Result<()> {
             InboxCommand::Read(args) => {
                 let id = resolve_id(args.id)?;
                 let e = client.inbox_read(&id, args.msg_id).await?;
-                print_inbox_entry(&e);
+                print_inbox_entry(&e, now_epoch(), false);
             }
             InboxCommand::Summary(args) => {
                 let id = resolve_id(args.id)?;
@@ -410,11 +442,21 @@ fn resolve_id(id: Option<AgentId>) -> Result<AgentId, anyhow::Error> {
     })
 }
 
-fn print_inbox_entry(e: &kallip_client::InboxEntry) {
+fn now_epoch() -> u64 {
+    timefmt::now_epoch()
+}
+
+fn print_inbox_entry(e: &kallip_client::InboxEntry, now: u64, relative: bool) {
     println!("id: {}", e.id);
     println!("source: {}", e.source);
     println!("status: {}", e.status);
-    println!("time: {}", e.timestamp);
+    let epoch = e.timestamp.unix_timestamp().max(0) as u64;
+    let stamp = if relative {
+        timefmt::format_relative(now, epoch)
+    } else {
+        timefmt::format_utc(epoch)
+    };
+    println!("time: {stamp}");
     println!("body: {}", e.body);
 }
 

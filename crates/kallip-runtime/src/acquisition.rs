@@ -21,7 +21,8 @@ use just_llm_client::types::chat::{
     ChatMessage, ChatToolCall, StreamOptions, ToolChoice, ToolChoiceMode, ToolDefinition,
 };
 use kallip_common::protocol::FailoverChainExhaustion;
-use kallip_common::retry::RetryRecord;
+use kallip_common::retry::{RetryKind, RetryRecord};
+use kallip_common::timefmt;
 
 // ---------------------------------------------------------------------------
 // Stream consumption
@@ -285,20 +286,19 @@ pub(crate) async fn acquire_stream(
                 })
                 .ok();
                 let record = RetryRecord {
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
+                    timestamp: timefmt::now_epoch(),
                     round,
                     attempt,
                     max_attempts: policy.max_retries,
                     error: error_msg,
                     delay_secs,
                     endpoint: Some(endpoint_id.clone()),
+                    kind: RetryKind::Transport,
+                    quota_reset: None,
                 };
                 tokio::select! {
                     _ = tokio::time::sleep(delay) => {
-                        ctx.store.lock().await.retry_log.push(record);
+                        ctx.store.lock().await.record_retries([record], retry_keep_since(ctx));
                         ctx.persist().await;
                     }
                     _ = round_cancel.cancelled() => {
@@ -318,10 +318,7 @@ pub(crate) async fn acquire_stream(
 /// the same endpoint draw on the same quota, and a successor counts its predecessor's in-window
 /// retries.
 async fn count_recent_retries(ctx: &mut AgentContext, endpoint_id: &str) -> u32 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    let now = timefmt::now_epoch();
     let window_secs = ctx.config.retry_policy.retry_timeout.as_secs();
     ctx.store
         .lock()
@@ -332,6 +329,12 @@ async fn count_recent_retries(ctx: &mut AgentContext, endpoint_id: &str) -> u32 
         .count() as u32
 }
 
+/// Unix-seconds cutoff before which retry records are stale: older records can
+/// never count toward the budget again, so the store evicts them on append.
+fn retry_keep_since(ctx: &AgentContext) -> u64 {
+    timefmt::now_epoch().saturating_sub(ctx.config.retry_policy.retry_timeout.as_secs())
+}
+
 /// Persist any buffered retry records for this endpoint into the store. A no-op when empty.
 async fn flush_retry_records(ctx: &mut AgentContext, retry_records: &mut Vec<RetryRecord>) {
     if retry_records.is_empty() {
@@ -340,8 +343,7 @@ async fn flush_retry_records(ctx: &mut AgentContext, retry_records: &mut Vec<Ret
     ctx.store
         .lock()
         .await
-        .retry_log
-        .extend(std::mem::take(retry_records));
+        .record_retries(std::mem::take(retry_records), retry_keep_since(ctx));
     ctx.persist().await;
 }
 

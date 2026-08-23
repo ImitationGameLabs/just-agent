@@ -83,6 +83,8 @@ mod tests {
                 error: "boom".into(),
                 delay_secs: 1.5,
                 endpoint: Some("deepseek".into()),
+                kind: kallip_common::retry::RetryKind::RateLimit,
+                quota_reset: Some(1234),
             }],
         };
         let json = serde_json::to_string(&doc).unwrap();

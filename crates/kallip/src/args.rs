@@ -61,7 +61,7 @@ pub enum AgentCommand {
     /// cannot corrupt it. Prints a one-line JSON echo on success.
     Message(MessageArgs),
     /// Show an agent's context token usage and recent retry history.
-    Status(IdArgs),
+    Status(StatusArgs),
     /// Report this agent's current activity (self-only)
     Activity(ActivityArgs),
     /// Kick a parked agent awake: enqueues a [system] turn telling it
@@ -144,6 +144,9 @@ pub struct InboxListArgs {
     /// Max messages to return (default 50, max 200).
     #[arg(long)]
     pub limit: Option<u32>,
+    /// Render timestamps as relative distances (8m ago) instead of absolute UTC.
+    #[arg(long)]
+    pub relative_time: bool,
 }
 
 #[derive(Args)]
@@ -237,6 +240,15 @@ pub struct MessageArgs {
 pub struct IdArgs {
     /// Agent ID.
     pub id: AgentId,
+}
+
+#[derive(Args)]
+pub struct StatusArgs {
+    /// Agent ID.
+    pub id: AgentId,
+    /// Render timestamps as relative distances (8m ago) instead of absolute UTC.
+    #[arg(long)]
+    pub relative_time: bool,
 }
 
 #[derive(Subcommand)]

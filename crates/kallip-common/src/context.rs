@@ -51,15 +51,15 @@ impl ContextUsage {
         format!(
             "turns: {} ({} est tokens), pinned: {} ({} tokens), last prompt: {}, cumulative: {} in / {} out / {} cache",
             self.turn_count,
-            self.turn_tokens,
+            crate::timefmt::humanize_count(self.turn_tokens as u64),
             self.pinned_items.len(),
-            pinned_tokens,
+            crate::timefmt::humanize_count(pinned_tokens as u64),
             self.last_prompt_tokens
-                .map(|t| t.to_string())
+                .map(|t| crate::timefmt::humanize_count(t as u64))
                 .unwrap_or_else(|| "n/a".into()),
-            self.cumulative_usage.prompt_tokens,
-            self.cumulative_usage.completion_tokens,
-            self.cumulative_usage.cache_hit_tokens,
+            crate::timefmt::humanize_count(self.cumulative_usage.prompt_tokens),
+            crate::timefmt::humanize_count(self.cumulative_usage.completion_tokens),
+            crate::timefmt::humanize_count(self.cumulative_usage.cache_hit_tokens),
         )
     }
 }

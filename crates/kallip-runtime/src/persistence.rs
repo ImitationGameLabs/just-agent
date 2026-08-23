@@ -1101,6 +1101,8 @@ mod tests {
             error: "legacy".into(),
             delay_secs: 1.0,
             endpoint: None,
+            kind: kallip_common::retry::RetryKind::Transport,
+            quota_reset: None,
         });
         // Expected conversation window, in order, for history.
         let convo = vec![
@@ -1540,6 +1542,8 @@ mod tests {
             error: "wreck".into(),
             delay_secs: 1.0,
             endpoint: None,
+            kind: kallip_common::retry::RetryKind::Transport,
+            quota_reset: None,
         });
         persist_context(&store, dir.path()).unwrap();
         // A second persist leaves the first manifest as the .bak; the churn

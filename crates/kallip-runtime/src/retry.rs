@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
 use crate::event::AgentEvent;
-use kallip_common::retry::RetryRecord;
+use kallip_common::retry::{RetryKind, RetryRecord};
 
 /// Configuration for LLM request retry behavior.
 #[derive(Clone, Debug)]
@@ -44,6 +44,7 @@ enum Attempt {
     Retry {
         error: BackendError,
         retry_after: Option<Duration>,
+        kind: RetryKind,
     },
     /// Provider/profile-level permanent failure (401/403/404). A different profile (different
     /// credentials / provider / model) may succeed, so the failover loop advances the chain.
@@ -123,6 +124,7 @@ async fn attempt_once(client: &crate::profile::ChatClient, prepared: &reqwest::R
             return Attempt::Retry {
                 error,
                 retry_after: None,
+                kind: RetryKind::Transport,
             };
         }
     };
@@ -133,7 +135,18 @@ async fn attempt_once(client: &crate::profile::ChatClient, prepared: &reqwest::R
         Ok(stream) => Attempt::Stream(stream),
         Err(error) => {
             if is_retryable_status(status) {
-                Attempt::Retry { error, retry_after }
+                let kind = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    RetryKind::RateLimit
+                } else if status == reqwest::StatusCode::REQUEST_TIMEOUT {
+                    RetryKind::Timeout
+                } else {
+                    RetryKind::Server
+                };
+                Attempt::Retry {
+                    error,
+                    retry_after,
+                    kind,
+                }
             } else if is_failover_status(status) {
                 Attempt::Failover(error)
             } else {
@@ -225,7 +238,11 @@ pub async fn stream_with_retry(
             Attempt::Stream(stream) => return Ok(stream),
             Attempt::Failover(error) => return Err(RequestFailure::Failover(error)),
             Attempt::Fatal(error) => return Err(RequestFailure::Fatal(error)),
-            Attempt::Retry { error, retry_after } => {
+            Attempt::Retry {
+                error,
+                retry_after,
+                kind,
+            } => {
                 let retry_after_secs = retry_after.map(|d| d.as_secs());
                 let body = crate::llm_error::http_body_for_log(&error);
                 let error_msg = crate::llm_error::render_error(&error);
@@ -296,6 +313,14 @@ pub async fn stream_with_retry(
                     error: error_msg,
                     delay_secs,
                     endpoint: Some(endpoint_id.to_string()),
+                    kind,
+                    quota_reset: retry_after.map(|d| {
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs()
+                            + d.as_secs()
+                    }),
                 };
 
                 tokio::select! {
