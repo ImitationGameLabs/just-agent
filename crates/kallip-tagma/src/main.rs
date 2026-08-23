@@ -184,15 +184,14 @@ async fn main() -> Result<()> {
     lifecycle::restore_agents(&state).await?;
     routes::ensure_root_agent(&state).await?;
 
-    // Resolve the data root, credentials, and the tagma's conversation id ONCE
-    // before either serving path starts. The conversation id is
-    // `ConversationId::for_tagma(tagma_id)` (pure, no network) when stored
-    // credentials exist; `None` for a never-enrolled (pure-offline) tagma, in
-    // which case there is no durable history (the projector forwards live
-    // frames only). Hoisting this out of `init_direct`/`activate_relay` (which
-    // each used to do it independently) also collapses the duplicated
-    // data-root + credentials-dir setup.
-    let (tagma_id, conversation_id) = resolve_identity()?;
+    // Resolve the relay plan (entries + per-entry boot decisions) ONCE
+    // before either serving path starts: the projector's identity below is
+    // the primary agora's (the first entry with stored credentials), and
+    // `None` ids on an all-fresh deployment are claimed by the first
+    // successful enrollment. Every configuration error aborts boot here —
+    // the per-entry local-only degrade later must not swallow one.
+    let relay_plan = resolve_relay_plan(&args)?;
+    let (tagma_id, conversation_id) = resolve_primary_identity(&relay_plan)?;
 
     // The single chat_history store, shared by the projector (sole writer) and
     // GC. Opened UNCONDITIONALLY at boot: the projector's persist gate is the
@@ -273,23 +272,16 @@ async fn main() -> Result<()> {
     // projector's bus; owns no store of its own.
     init_direct(&state).await?;
 
-    // Optional online-mode relay: enroll + spawn the connector task. Runtime
-    // activation failures degrade to local-only (logs error, leaves the relay
-    // unset); a misconfigured enrollment entry aborts boot below instead.
-    if let Some(agora_url) = args.relay_agora_url.clone() {
-        // The entry decision (and its fail-fast errors) is made before the
-        // activation attempt: the local-only fallback in the match below
-        // is for runtime failures and would swallow a config error.
-        let entry = resolve_enroll_entry(
-            tagma_id.as_ref(),
-            args.relay_enrollment_code.as_deref(),
-            &credentials_dir()?,
-        )?;
-        match activate_relay(&state, &args, agora_url, entry).await {
-            Ok(()) => {}
-            Err(e) => {
-                tracing::error!("relay activation failed, running local-only: {e:#}");
-            }
+    // Activate each relay entry serially (enroll is a network call;
+    // serial keeps failure attribution clear and boot logs readable).
+    // Runtime activation failures degrade that entry alone to local-only
+    // (logged, skipped); configuration errors already aborted boot above.
+    for (entry, boot) in relay_plan {
+        if let Err(e) = activate_relay(&state, &entry, boot).await {
+            tracing::error!(
+                relay = %entry.name,
+                "relay activation failed, entry degraded to local-only: {e:#}"
+            );
         }
     }
 
@@ -319,36 +311,177 @@ async fn main() -> Result<()> {
 
     // Drain the relay task first (it tears down the tunnel + pump), then the
     // agents. Both observe the tagma-wide `shutdown` token.
-    shutdown::drain_relay(&state).await;
+    shutdown::drain_relays(&state).await;
     shutdown::graceful_agent_shutdown(&state).await;
 
     Ok(())
 }
 
-/// Resolve the data root, create it + the credentials dir owner-only, load any
-/// stored tagma credential, and derive the conversation id. Returns
-/// `(Option<TagmaId>, Option<ConversationId>)` — both `None` for a
-/// never-enrolled (pure-offline) tagma. Centralized here so `init_direct` and
-/// `activate_relay` agree on the id, and the data-root/credentials setup runs
-/// once. Idempotent (`create_dir_all`).
-fn resolve_identity() -> Result<(
-    Option<kallip_agora_common::ids::TagmaId>,
-    Option<kallip_agora_common::ids::ConversationId>,
-)> {
+/// Create the data root + the credentials dir (both owner-only) and return
+/// the credentials dir path. Every entry's subdirectory hangs off it; the
+/// shared `device.key` lives at its root. Idempotent (`create_dir_all`).
+fn ensure_credentials_root() -> Result<std::path::PathBuf> {
     let data_root = data_root()?;
     std::fs::create_dir_all(&data_root).context("create data root dir")?;
     credentials::set_owner_only(&data_root)?;
     let credentials_dir = credentials_dir()?;
     std::fs::create_dir_all(&credentials_dir).context("create credentials dir")?;
     credentials::set_owner_only(&credentials_dir)?;
-    Ok(match credentials::load_tagma(&credentials_dir) {
-        Some((id, _token)) => {
+    Ok(credentials_dir)
+}
+
+/// The projector's single-value identity is the **primary agora** concept:
+/// the first relay entry (config order) that has stored credentials at boot.
+/// It backs the frontend cache key and the offline fallback stamp only —
+/// every relay stamps its own wire identity on the envelope (see the pump).
+/// All-fresh deployments resolve `(None, None)` and the first successful
+/// enrollment claims the ids (write-once, first wins).
+fn resolve_primary_identity(
+    plan: &[(RelayEntry, EnrollEntry)],
+) -> Result<(
+    Option<kallip_agora_common::ids::TagmaId>,
+    Option<kallip_agora_common::ids::ConversationId>,
+)> {
+    let root = credentials_dir()?;
+    for (entry, _) in plan {
+        if let Some((id, _token)) = credentials::load_tagma(&root.join(&entry.name)) {
             let tid = kallip_agora_common::ids::TagmaId::from(id);
             let cid = kallip_agora_common::ids::ConversationId::for_tagma(&tid);
-            (Some(tid), Some(cid))
+            return Ok((Some(tid), Some(cid)));
         }
-        None => (None, None),
-    })
+    }
+    Ok((None, None))
+}
+
+/// One configured relay entry: one agora identity. `name` is the stable slug
+/// that keys the credentials subdirectory and the AppState relay slot (so a
+/// URL change never moves the identity directory).
+#[derive(Debug, Clone, PartialEq)]
+struct RelayEntry {
+    name: String,
+    agora_url: String,
+    lesche_url: Option<String>,
+    enrollment_code: Option<String>,
+}
+
+/// The `[[relay]]` array of `relays.toml`.
+#[derive(serde::Deserialize)]
+struct RelaysFile {
+    #[serde(default)]
+    relay: Vec<RelaysTomlEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct RelaysTomlEntry {
+    name: String,
+    agora_url: String,
+    lesche_url: Option<String>,
+    enrollment_code: Option<String>,
+}
+
+/// A relay name must be a DNS-label-like slug (`[a-z0-9][a-z0-9-]*`): it is a
+/// path component (`credentials/<name>/`) and a log key, so it stays flat,
+/// lowercase, and unambiguous.
+fn valid_entry_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Resolve the configured relay entries: `<data_root>/relays.toml` when
+/// present, else the legacy single-entry sugar (`KALLIP_TAGMA_RELAY_*` env /
+/// `--relay-*` flags → one implicit entry named "default"). Fail-fast cases
+/// (all configuration errors):
+///
+/// - the file and any legacy relay env/flag are both set (which source
+///   wins must never be implicit);
+/// - the file exists but declares zero `[[relay]]` entries;
+/// - a name fails the slug grammar or repeats.
+fn resolve_relay_entries(args: &args::Args) -> Result<Vec<RelayEntry>> {
+    let toml_path = data_root()?.join("relays.toml");
+    let legacy_set = args.relay_agora_url.is_some()
+        || args.relay_lesche_url.is_some()
+        || args.relay_enrollment_code.is_some();
+    if toml_path.exists() {
+        anyhow::ensure!(
+            !legacy_set,
+            concat!(
+                "conflicting relay configuration: {} exists but KALLIP_TAGMA_RELAY_*",
+                " env vars / --relay-* flags are also set; move the entries into the",
+                " file or unset the legacy vars"
+            ),
+            toml_path.display()
+        );
+        let raw = std::fs::read_to_string(&toml_path)
+            .with_context(|| format!("read {}", toml_path.display()))?;
+        let file: RelaysFile =
+            toml::from_str(&raw).with_context(|| format!("parse {}", toml_path.display()))?;
+        anyhow::ensure!(
+            !file.relay.is_empty(),
+            "{} declares no [[relay]] entries; add one or delete the file",
+            toml_path.display()
+        );
+        let mut seen = std::collections::HashSet::new();
+        let mut entries = Vec::with_capacity(file.relay.len());
+        for e in file.relay {
+            anyhow::ensure!(
+                valid_entry_name(&e.name),
+                concat!(
+                    "relay name {:?} is not a slug matching [a-z0-9][a-z0-9-]*",
+                    " (it is a credentials/<name>/ path component)"
+                ),
+                e.name
+            );
+            anyhow::ensure!(
+                seen.insert(e.name.clone()),
+                "relay name {:?} repeats",
+                e.name
+            );
+            entries.push(RelayEntry {
+                name: e.name,
+                agora_url: e.agora_url,
+                lesche_url: e.lesche_url,
+                enrollment_code: e.enrollment_code,
+            });
+        }
+        Ok(entries)
+    } else if legacy_set {
+        // Single-entry sugar: the pre-multi-agora deployment keeps working
+        // untouched, as one entry named "default".
+        let agora_url = args
+            .relay_agora_url
+            .clone()
+            .context("KALLIP_TAGMA_RELAY_LESCHE_URL / _ENROLLMENT_CODE set without KALLIP_TAGMA_RELAY_AGORA_URL; set the agora url too")?;
+        Ok(vec![RelayEntry {
+            name: "default".to_string(),
+            agora_url,
+            lesche_url: args.relay_lesche_url.clone(),
+            enrollment_code: args.relay_enrollment_code.clone(),
+        }])
+    } else {
+        Ok(Vec::new()) // local-only: no relay entries
+    }
+}
+
+/// Parse + fully validate the relay configuration: entries (see
+/// [`resolve_relay_entries`]), the one-time legacy-credentials migration, and
+/// each entry's boot decision (reuse stored vs first-run enroll). Every
+/// failure is a configuration error and aborts boot — the per-entry
+/// local-only degrade in `main` is for runtime activation failures only.
+fn resolve_relay_plan(args: &args::Args) -> Result<Vec<(RelayEntry, EnrollEntry)>> {
+    let entries = resolve_relay_entries(args)?;
+    let root = ensure_credentials_root()?;
+    let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+    credentials::migrate_legacy_layout(&root, &names)?;
+    let mut plan = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let dir = root.join(&entry.name);
+        let stored = credentials::load_tagma(&dir)
+            .map(|(id, _)| kallip_agora_common::ids::TagmaId::from(id));
+        let boot = resolve_enroll_entry(stored.as_ref(), entry.enrollment_code.as_deref(), &dir)?;
+        plan.push((entry, boot));
+    }
+    Ok(plan)
 }
 
 fn data_root() -> Result<std::path::PathBuf> {
@@ -397,11 +530,6 @@ async fn init_direct(state: &Arc<AppState>) -> Result<()> {
     Ok(())
 }
 
-/// Build and install the relay connector. `entry` is the boot-time decision
-/// from `resolve_enroll_entry` (reuse stored credentials, or first-run
-/// enrollment with a code). The relay forwards the projector's bus (it
-/// does not own a history store); GC runs unconditionally from `main`.
-
 /// How the relay connector enters the agora at boot.
 #[derive(Debug, PartialEq)]
 enum EnrollEntry {
@@ -446,37 +574,49 @@ fn resolve_enroll_entry(
         )),
     }
 }
+/// Build and install one relay connector. `entry` is the config entry (name,
+/// agora/lesche URLs, first-run code) and `boot` the fail-fast decision from
+/// `resolve_relay_plan` (reuse stored credentials, or first-run enrollment
+/// with a code); runtime failures propagate to `main`'s per-entry degrade.
+/// The relay forwards the projector's bus (it does not own a history
+/// store); GC runs unconditionally from `main`.
 async fn activate_relay(
     state: &Arc<AppState>,
-    args: &args::Args,
-    agora_url: String,
-    entry: EnrollEntry,
+    entry: &RelayEntry,
+    boot: EnrollEntry,
 ) -> Result<()> {
-    let credentials_dir = credentials_dir()?;
-    let device = credentials::load_or_create_device(&credentials_dir)?;
+    let root = credentials_dir()?;
+    let entry_dir = root.join(&entry.name);
+    std::fs::create_dir_all(&entry_dir).context("create entry credentials dir")?;
+    credentials::set_owner_only(&entry_dir)?;
+    // One device, many identities: the Ed25519 device key is shared across
+    // agoras (it proves "same physical tagma"), so it lives at the
+    // credentials root, while each agora's (tagma.id, tagma.token) pair
+    // lives in the entry's subdirectory.
+    let device = credentials::load_or_create_device(&root)?;
 
-    // The entry decision (reuse stored credentials vs first-run enroll) was
+    // The boot decision (reuse stored credentials vs first-run enroll) was
     // made by the caller via `resolve_enroll_entry`; this only executes it.
-    let (tagma_id, tagma_token) = match entry {
+    let (tagma_id, tagma_token) = match boot {
         EnrollEntry::Stored => {
-            let (id, token) = credentials::load_tagma(&credentials_dir)
+            let (id, token) = credentials::load_tagma(&entry_dir)
                 .context("stored credentials missing at relay activation (deleted after boot?)")?;
-            info!(tagma = %id, "relay: loaded stored tagma credentials");
+            info!(relay = %entry.name, tagma = %id, "relay: loaded stored tagma credentials");
             (kallip_agora_common::ids::TagmaId::from(id), token)
         }
         EnrollEntry::Fresh { code } => {
-            let (tagma_id, token) = kallip_agora_client::AgoraClient::builder(&agora_url)
+            let (tagma_id, token) = kallip_agora_client::AgoraClient::builder(&entry.agora_url)
                 .build()?
                 .enroll(&code, &device)
                 .await?;
-            credentials::save_tagma(&credentials_dir, tagma_id.as_ref(), &token);
-            info!(tagma = %tagma_id, "relay: enrolled with agora");
-            // First-run enroll boot: the projector was constructed at startup
-            // with `conversation_id = None` (creds did not exist yet). Now that
-            // enrollment has resolved the tagma id, hand it the derived
-            // conversation id so persistence + stamped echoes begin at once.
-            // (The loaded-creds boot constructed the projector with the id
-            // already set; this branch is the only caller, once.)
+            credentials::save_tagma(&entry_dir, tagma_id.as_ref(), &token);
+            info!(relay = %entry.name, tagma = %tagma_id, "relay: enrolled with agora");
+            // First-run enroll boot: the projector's write-once ids are
+            // claimed by the first successful enrollee — the primary-agora
+            // concept (see `resolve_primary_identity`). A loaded-creds boot
+            // constructed the projector with the ids already set, and on an
+            // all-fresh multi-entry boot a later enrollee's setters are
+            // no-ops on the OnceLocks, by design.
             let conv = kallip_agora_common::ids::ConversationId::for_tagma(&tagma_id);
             let projector = state
                 .external
@@ -498,10 +638,10 @@ async fn activate_relay(
     };
 
     // Default lesche URL to the agora origin if unset (same-origin only).
-    let lesche_url = match args.relay_lesche_url.clone() {
+    let lesche_url = match entry.lesche_url.clone() {
         Some(u) => u,
         None => {
-            let parsed = url::Url::parse(&agora_url).context("parse agora url")?;
+            let parsed = url::Url::parse(&entry.agora_url).context("parse agora url")?;
             parsed.origin().ascii_serialization()
         }
     };
@@ -514,6 +654,7 @@ async fn activate_relay(
 
     let handle = relay::RelayHandle::new(
         lesche,
+        entry.name.clone(),
         tagma_id,
         // Label fallback (see projector construction): "Tagma" until the enrolled
         // label is plumbed through.
@@ -522,10 +663,10 @@ async fn activate_relay(
         root_agent,
         Arc::downgrade(state),
     );
-    info!(tagma = %handle.tagma_id(), "relay connector active");
+    info!(relay = %entry.name, tagma = %handle.tagma_id(), "relay connector active");
 
     let join = tokio::spawn(handle.clone().run(state.shutdown.clone()));
-    state.set_relay(handle, join);
+    state.set_relay(&entry.name, handle, join);
     Ok(())
 }
 
@@ -597,6 +738,11 @@ mod tests {
         assert!(msg.contains("/tmp/credentials"), "{msg}");
         assert!(msg.contains("unset"), "{msg}");
         assert!(msg.contains("re-enroll"), "{msg}");
+        // Mutual-exclusion: the conflict message must be distinguishable
+        // from the incomplete one (which names the URL env var and the
+        // first-run/local-only exits), not merely contain its own markers.
+        assert!(!msg.contains("local-only"), "{msg}");
+        assert!(!msg.contains("first-run"), "{msg}");
     }
 
     /// Neither credentials nor code: the message names the URL env var and
@@ -609,5 +755,9 @@ mod tests {
         assert!(msg.contains("KALLIP_TAGMA_RELAY_AGORA_URL"), "{msg}");
         assert!(msg.contains("first-run enrollment"), "{msg}");
         assert!(msg.contains("local-only"), "{msg}");
+        // Mirror of the conflict test: the incomplete message must not
+        // carry the conflict's distinctive markers.
+        assert!(!msg.contains("would be ignored"), "{msg}");
+        assert!(!msg.contains("re-enroll"), "{msg}");
     }
 }

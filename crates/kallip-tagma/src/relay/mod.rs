@@ -97,6 +97,10 @@ pub(crate) struct RoomPayload {
 }
 
 struct Inner {
+    /// The config entry name (stable slug, e.g. "main"): keys the relay's
+    /// AppState slot and its joined-rooms slice, and stamps relay-scoped log
+    /// lines so two concurrently connected agoras are distinguishable.
+    name: String,
     tagma_id: TagmaId,
     /// The enrolled label (or a fallback) used to stamp the agent sender's
     /// handle on outbound envelopes.
@@ -132,6 +136,7 @@ struct Inner {
 impl RelayHandle {
     pub fn new(
         client: LescheClient,
+        name: String,
         tagma_id: TagmaId,
         tagma_label: String,
         device: DeviceKey,
@@ -142,6 +147,7 @@ impl RelayHandle {
         Self {
             inner: Arc::new(Inner {
                 tagma_id,
+                name,
                 tagma_label,
                 conversation_id,
                 client,

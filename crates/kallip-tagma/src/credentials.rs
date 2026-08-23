@@ -68,3 +68,113 @@ pub(crate) fn set_owner_only(path: &Path) -> Result<()> {
         .with_context(|| format!("set permissions on {path:?}"))?;
     Ok(())
 }
+
+/// One-time migration from the pre-multi-agora flat layout
+/// (`credentials/tagma.id` + `credentials/tagma.token`) into the entry's
+/// subdirectory. Runs at boot before any entry is resolved.
+///
+/// Exactly one configured entry is the only unambiguous case: the flat pair
+/// belongs to the single agora the tagma was enrolled with, and `fs::rename`
+/// moves the files (mode 0o600 and content untouched) into
+/// `credentials/<name>/`. Every other state fails fast with both exits named
+/// — guessing a destination would risk attaching an existing identity to
+/// the wrong agora:
+///
+/// - zero entries with leftover flat files: nothing to attach them to;
+/// - multiple entries: the flat pair cannot be attributed to one of them;
+/// - the entry's subdirectory already holding credentials: stale duplicate.
+pub(crate) fn migrate_legacy_layout(credentials_dir: &Path, entries: &[String]) -> Result<()> {
+    let legacy_id = credentials_dir.join("tagma.id");
+    let legacy_token = credentials_dir.join("tagma.token");
+    if !legacy_id.exists() && !legacy_token.exists() {
+        return Ok(()); // already on the per-entry layout (the common case)
+    }
+    let name = match entries.first() {
+        Some(n) => n,
+        None => anyhow::bail!(
+            concat!(
+                "legacy flat credentials exist in {} but no relay entry is ",
+                " configured; delete them if the enrollment is defunct"
+            ),
+            credentials_dir.display()
+        ),
+    };
+    anyhow::ensure!(
+        entries.len() == 1,
+        concat!(
+            "legacy flat credentials exist in {} but {} relay entries are ",
+            " configured, so the flat files cannot be attributed to one entry; ",
+            " move them into the right credentials/<name>/ manually"
+        ),
+        credentials_dir.display(),
+        entries.len()
+    );
+    let entry_dir = credentials_dir.join(name);
+    let new_id = entry_dir.join("tagma.id");
+    let new_token = entry_dir.join("tagma.token");
+    anyhow::ensure!(
+        !new_id.exists() && !new_token.exists(),
+        concat!(
+            "conflicting credentials: legacy flat files exist in {} and the ",
+            " entry directory {} already holds credentials; delete the stale set"
+        ),
+        credentials_dir.display(),
+        entry_dir.display()
+    );
+    std::fs::create_dir_all(&entry_dir).context("create entry credentials dir")?;
+    set_owner_only(&entry_dir)?;
+    if legacy_id.exists() {
+        std::fs::rename(&legacy_id, &new_id)
+            .with_context(|| format!("migrate {} to {}", legacy_id.display(), new_id.display()))?;
+    }
+    if legacy_token.exists() {
+        std::fs::rename(&legacy_token, &new_token).with_context(|| {
+            format!(
+                "migrate {} to {}",
+                legacy_token.display(),
+                new_token.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn legacy_pair(dir: &Path) {
+        std::fs::write(dir.join("tagma.id"), "tid-1").unwrap();
+        write_secret(&dir.join("tagma.token"), b"sk-test").unwrap();
+    }
+
+    #[test]
+    fn migrates_single_entry_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        legacy_pair(dir.path());
+        migrate_legacy_layout(dir.path(), &["main".to_string()]).unwrap();
+        let entry = dir.path().join("main");
+        assert_eq!(
+            std::fs::read_to_string(entry.join("tagma.id")).unwrap(),
+            "tid-1"
+        );
+        assert!(entry.join("tagma.token").exists());
+        assert!(!dir.path().join("tagma.id").exists());
+        // Idempotent: a second boot sees no legacy files and is a no-op.
+        migrate_legacy_layout(dir.path(), &["main".to_string()]).unwrap();
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_conflicting_states() {
+        let dir = tempfile::TempDir::new().unwrap();
+        legacy_pair(dir.path());
+        // Zero entries: nothing to attach the flat pair to.
+        assert!(migrate_legacy_layout(dir.path(), &[]).is_err());
+        // Multiple entries: cannot attribute the flat pair.
+        assert!(migrate_legacy_layout(dir.path(), &["a".to_string(), "b".to_string()]).is_err());
+        // Entry dir already holds credentials: stale duplicate.
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a/tagma.id"), "tid-2").unwrap();
+        assert!(migrate_legacy_layout(dir.path(), &["a".to_string()]).is_err());
+    }
+}

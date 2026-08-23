@@ -44,6 +44,7 @@ async fn setup(rooms: Rooms) -> (RelayHandle, SharedState) {
     let client = LescheClient::builder(&lesche_url, "tok").build().unwrap();
     let handle = RelayHandle::new(
         client,
+        "test".to_string(),
         TagmaId::from("tagma".to_string()),
         "Tagma".into(),
         DeviceKey::generate(),
@@ -120,6 +121,7 @@ async fn poll_failure_keeps_prior_cache() {
         .unwrap();
     let handle = RelayHandle::new(
         client,
+        "test".to_string(),
         TagmaId::from("tagma".to_string()),
         "Tagma".into(),
         DeviceKey::generate(),

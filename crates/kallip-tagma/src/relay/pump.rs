@@ -71,8 +71,21 @@ impl RelayHandle {
                         // projector, which also paired it with the sender (agent
                         // for outbound, user for the inbound echo). The pump
                         // encrypts + posts under the cancel token (so a slow emit
-                        // cannot stall a re-KEX), stamping the frame's sender
-                        // onto the envelope.
+                        // cannot stall a re-KEX). The agent sender is re-stamped
+                        // per relay: the projector stamps it with the primary
+                        // agora's tagma id (its single-value stamp is a frontend
+                        // cache key, not a wire identity), which would not match
+                        // this relay's participant on any secondary agora — so
+                        // Agent-kind senders are replaced with this relay's own
+                        // agent sender, while Human-kind senders (the inbound
+                        // echo's user) are data and pass through untouched.
+                        let sender = if sender.kind ==
+                            kallip_agora_common::ids::ParticipantKind::Agent
+                        {
+                            self.agent_sender()
+                        } else {
+                            sender
+                        };
                         if let Err(e) = self.emit(&trace, sender, reply, Some(&cancel)).await {
                             warn!("relay pump emit: {e:#}");
                         }

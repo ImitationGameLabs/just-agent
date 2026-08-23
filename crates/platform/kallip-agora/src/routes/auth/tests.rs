@@ -398,3 +398,37 @@ async fn admin_login_disabled_account_refused() {
     assert_eq!(err.status, 401);
     assert!(err.message.contains("disabled"));
 }
+
+/// Deleting the user row cascades the marker row away (FK ON DELETE
+/// CASCADE), so the handler's "dangling marker" 500 is a defense-in-depth
+/// branch that Postgres referential integrity makes unreachable. The
+/// observable behavior is the documented escape hatch: delete the account,
+/// and the next admin login re-creates it fresh — a NEW user id, not a
+/// stale-session reuse of the old one.
+#[tokio::test]
+async fn admin_login_user_row_deletion_resets_the_account() {
+    let state = make_state().await;
+    let (user_id_1, _) = take_admin_login_response(
+        admin_login(State(state.clone()), AuthPrincipal(Principal::Admin))
+            .await
+            .expect("first login"),
+    )
+    .await;
+    // Delete only the user row; the FK cascade removes the marker with it.
+    let deleted = users::Entity::delete_by_id(user_id_1.clone())
+        .exec(&state.db)
+        .await
+        .expect("delete user row");
+    assert_eq!(
+        deleted.rows_affected, 1,
+        "the user row must exist to delete"
+    );
+
+    let (user_id_2, _) = take_admin_login_response(
+        admin_login(State(state), AuthPrincipal(Principal::Admin))
+            .await
+            .expect("re-login after deletion"),
+    )
+    .await;
+    assert_ne!(user_id_1, user_id_2, "the account is re-created fresh");
+}

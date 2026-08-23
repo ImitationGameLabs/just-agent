@@ -205,6 +205,7 @@ async fn setup_inner(
     }
     let handle = RelayHandle::new(
         client,
+        "test".to_string(),
         tagma_id,
         "Tagma".into(),
         device,
@@ -878,7 +879,10 @@ async fn handle_user_op_routes_joined_room_to_the_room_path() {
         setup_inner(8, None).await;
     // Seed the joined-rooms cache so the fork recognizes the room.
     let room = RoomId::from("00000000-0000-0000-0000-000000000aa1".to_string());
-    state.joined_rooms.set_joined_rooms([room.clone()]).await;
+    state
+        .joined_rooms
+        .set_joined_rooms("test", [room.clone()])
+        .await;
 
     let envelope = room_envelope(&room, "hi room", "Alice");
     handle.handle_user_op(envelope).await;

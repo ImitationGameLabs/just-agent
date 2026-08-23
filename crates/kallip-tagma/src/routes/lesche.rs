@@ -111,9 +111,19 @@ pub async fn read_room_messages(
 ) -> Result<String, ApiError> {
     require_root_self(&state, auth.identity(), &id).await?;
     let room = RoomId::from(room);
+    // Route via room ownership: each relay's poll keys its slice of the
+    // joined-rooms cache by entry name, and a room id is unique to the lesche
+    // that created it, so the owning relay's client serves the read. A cold
+    // cache (no poll has warmed yet) is indistinguishable from "no relay
+    // online" and surfaces as unavailable, same as before — self-correcting
+    // on the next poll.
     let client = {
-        let relay = state.relay.lock().unwrap_or_else(|e| e.into_inner());
-        let Some((handle, _)) = relay.as_ref() else {
+        let Some(owner) = state.joined_rooms.owner_of(&room).await else {
+            return Err(ApiError::unavailable(
+                "no online relay owns this room; cannot read room history",
+            ));
+        };
+        let Some(handle) = state.relay(&owner) else {
             return Err(ApiError::unavailable(
                 "relay not online; cannot read room history",
             ));
@@ -231,11 +241,16 @@ async fn send_room_message(
     if !projector.check_outbound_burst().await {
         return Err(ApiError::too_many_requests("message burst cap exceeded"));
     }
-    // Clone the relay client + agent sender out of the std Mutex and drop the
-    // guard before awaiting (the lock is sync and must not span an await).
+    // Clone the relay client + agent sender via the room's owning relay (the
+    // room id is unique to the lesche that created it, so ownership picks
+    // the client; see the read route for the cold-cache caveat).
     let (client, sender) = {
-        let relay = state.relay.lock().unwrap_or_else(|e| e.into_inner());
-        let Some((handle, _)) = relay.as_ref() else {
+        let Some(owner) = state.joined_rooms.owner_of(&room).await else {
+            return Err(ApiError::unavailable(
+                "no online relay owns this room; cannot address a room",
+            ));
+        };
+        let Some(handle) = state.relay(&owner) else {
             return Err(ApiError::unavailable(
                 "relay not online; cannot address a room",
             ));

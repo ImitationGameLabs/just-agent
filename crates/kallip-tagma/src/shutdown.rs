@@ -13,19 +13,28 @@ use kallip_common::agentid::AgentId;
 
 use crate::state::{AppState, RegistryEntry, SharedState};
 
-/// Drain the optional relay connector: the tagma-wide `shutdown` token (already
-/// cancelled by the time this runs) makes the relay's `run` task call
-/// `stop_pump` and return; await its `JoinHandle` under the graceful bound and
-/// warn if it is stuck. No-op in local-only deployments (no relay).
-pub(crate) async fn drain_relay(state: &SharedState) {
-    let Some((_handle, join)) = state.take_relay() else {
+/// Drain every relay connector: the tagma-wide `shutdown` token (already
+/// cancelled by the time this runs) makes each relay's `run` task call
+/// `stop_pump` and return; all of them are awaited **in parallel** under one
+/// shared bound, so total exit time does not grow with the entry count (a
+/// stuck relay warns and its task is aborted on exit, same as before). No-op
+/// in local-only deployments (no relays).
+pub(crate) async fn drain_relays(state: &SharedState) {
+    let entries = state.take_relays();
+    if entries.is_empty() {
         return;
-    };
-    tracing::info!("waiting for relay to shut down");
-    let bound = Duration::from_secs(GRACEFUL_SHUTDOWN_TIMEOUT_SECS);
-    if tokio::time::timeout(bound, join).await.is_err() {
-        tracing::warn!("relay did not shut down in time; task will be aborted on exit");
     }
+    tracing::info!(count = entries.len(), "waiting for relays to shut down");
+    let bound = Duration::from_secs(GRACEFUL_SHUTDOWN_TIMEOUT_SECS);
+    join_all(entries.into_iter().map(|(name, _handle, join)| async move {
+        if tokio::time::timeout(bound, join).await.is_err() {
+            tracing::warn!(
+                relay = %name,
+                "relay did not shut down in time; task will be aborted on exit"
+            );
+        }
+    }))
+    .await;
 }
 
 /// Maximum time to wait for a single agent's tasks to finish on deletion.

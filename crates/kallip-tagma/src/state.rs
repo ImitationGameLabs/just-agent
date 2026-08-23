@@ -37,11 +37,14 @@ pub struct ProfileBundle {
     pub registry: Arc<ProfileRegistry>,
 }
 
-/// Tagma-side cache of the rooms this tagma belongs to. Rooms are plaintext
+/// Tagma-side cache of the rooms this tagma belongs to, keyed by relay name:
+/// each online relay's room-membership poll owns its slice, so two concurrently
+/// connected agoras never overwrite each other. Rooms are plaintext
 /// server-readable (the lesche enforces member access), so the cache is pure
 /// routing state: it tells the relay inbound fork and the agent's room
 /// send/read/list routes whether a given conversation id is a room envelope
-/// (vs the bilateral 1:1 conversation). Populated from the `list_my_rooms` poll
+/// (vs the bilateral 1:1 conversation), and which lesche owns a given room
+/// (see [`JoinedRooms::owner_of`]). Populated from the `list_my_rooms` poll
 /// (the room-membership pump in `relay::room_poll`, whose immediate first tick
 /// warms it on tunnel-up) and refreshed on each `Wake` nudge.
 ///
@@ -50,7 +53,7 @@ pub struct ProfileBundle {
 /// works) -- self-correcting on the next poll that warms the entry.
 #[derive(Default)]
 pub struct JoinedRooms {
-    rooms: Mutex<HashSet<kallip_lesche_common::rooms::RoomId>>,
+    rooms: Mutex<HashMap<String, HashSet<kallip_lesche_common::rooms::RoomId>>>,
 }
 
 impl JoinedRooms {
@@ -58,24 +61,44 @@ impl JoinedRooms {
         Self::default()
     }
 
-    /// Whether `room` is a room this tagma belongs to.
+    /// Whether `room` is a room this tagma belongs to (union across relays).
     pub async fn is_joined(&self, room: &kallip_lesche_common::rooms::RoomId) -> bool {
-        self.rooms.lock().await.contains(room)
+        self.rooms
+            .lock()
+            .await
+            .values()
+            .any(|set| set.contains(room))
     }
 
-    /// Replace the room set from a fresh `list_my_rooms` snapshot.
+    /// Replace the named relay's room set from a fresh `list_my_rooms`
+    /// snapshot. Each relay's poll owns its slice; other relays' slices are
+    /// untouched.
     pub async fn set_joined_rooms(
         &self,
+        relay: &str,
         rooms: impl IntoIterator<Item = kallip_lesche_common::rooms::RoomId>,
     ) {
         let mut g = self.rooms.lock().await;
-        g.clear();
-        g.extend(rooms);
+        g.insert(relay.to_owned(), rooms.into_iter().collect());
     }
 
-    /// Snapshot of the room ids (for the agent's room-list route).
+    /// Snapshot of the room ids across all relays (for the agent's
+    /// room-list route).
     pub async fn joined_rooms(&self) -> HashSet<kallip_lesche_common::rooms::RoomId> {
-        self.rooms.lock().await.clone()
+        let g = self.rooms.lock().await;
+        g.values().flat_map(|s| s.iter().cloned()).collect()
+    }
+
+    /// The relay whose lesche owns `room`, if any poll has warmed the entry.
+    /// Room ids are random and unique per lesche, so at most one relay holds
+    /// a given id; a cold or stale miss is the caller's problem (the lesche
+    /// routes return 503, mirroring the relay-not-online family).
+    pub async fn owner_of(&self, room: &kallip_lesche_common::rooms::RoomId) -> Option<String> {
+        self.rooms
+            .lock()
+            .await
+            .iter()
+            .find_map(|(relay, set)| set.contains(room).then(|| relay.clone()))
     }
 }
 
@@ -112,15 +135,18 @@ pub struct AppState {
     /// one agent holding a dir's write-lock blocks another. The tagma build
     /// enforces locks via landlock on Linux (mandatory); advisory elsewhere.
     pub lock_manager: Arc<kallip_runtime::dirlock::DirLockManager>,
-    /// Optional online-mode relay connector (set once at startup when
-    /// `KALLIP_TAGMA_RELAY_AGORA_URL` is configured), plus its long-running tunnel
-    /// task's `JoinHandle` so graceful shutdown can drain it. `None` in
-    /// pure-local deployments and during the degrade-to-local-only path.
+    /// Online-mode relay connectors, keyed by entry name (one per configured
+    /// agora), each with its long-running tunnel task's `JoinHandle` so
+    /// graceful shutdown can drain it. Empty in pure-local deployments and
+    /// holds only the successfully-activated subset otherwise (a failed entry
+    /// degrades to local-only for that entry alone).
     ///
     /// Interior-mutable (not set via `Arc::get_mut`) because the root agent's
     /// bridge/agent tasks already hold `Arc<AppState>` clones by the time the
-    /// relay is installed. Read under the mutex (e.g. by the lesche message route).
-    pub relay: std::sync::Mutex<Option<(crate::relay::RelayHandle, tokio::task::JoinHandle<()>)>>,
+    /// relays are installed. Read under the mutex (e.g. by the lesche message
+    /// routes); guards never span an await.
+    pub relays:
+        std::sync::Mutex<HashMap<String, (crate::relay::RelayHandle, tokio::task::JoinHandle<()>)>>,
     /// The direct (local, non-relay) serving path, always present. Installed
     /// once at startup via [`Self::set_direct`] after the `Arc<AppState>` exists
     /// (its pumps hold a `Weak<AppState>` and a child of `shutdown`). Serves the
@@ -488,7 +514,7 @@ impl AppState {
             ),
             profiles,
             lock_manager: Arc::new(kallip_runtime::dirlock::DirLockManager::new()),
-            relay: std::sync::Mutex::new(None),
+            relays: std::sync::Mutex::new(HashMap::new()),
             direct: std::sync::OnceLock::new(),
             external: std::sync::OnceLock::new(),
             joined_rooms: Arc::new(JoinedRooms::new()),
@@ -523,7 +549,7 @@ impl AppState {
             ),
             profiles,
             lock_manager: Arc::new(kallip_runtime::dirlock::DirLockManager::new()),
-            relay: std::sync::Mutex::new(None),
+            relays: std::sync::Mutex::new(HashMap::new()),
             direct: std::sync::OnceLock::new(),
             external: std::sync::OnceLock::new(),
             joined_rooms: Arc::new(JoinedRooms::new()),
@@ -535,20 +561,42 @@ impl AppState {
 }
 
 impl AppState {
-    /// Install the relay connector + its run-task handle, once, at startup.
-    /// Called from `main` after `ensure_root_agent`. Must not use `Arc::get_mut`
-    /// — the root agent already holds `Arc<AppState>` clones by this point.
-    pub fn set_relay(&self, handle: crate::relay::RelayHandle, join: tokio::task::JoinHandle<()>) {
-        let mut slot = self.relay.lock().unwrap_or_else(|e| e.into_inner());
-        *slot = Some((handle, join));
+    /// Install the named relay connector + its run-task handle, at startup.
+    /// Called from `main` after `ensure_root_agent` (once per successfully
+    /// activated entry). Must not use `Arc::get_mut` — the root agent already
+    /// holds `Arc<AppState>` clones by this point.
+    pub fn set_relay(
+        &self,
+        name: &str,
+        handle: crate::relay::RelayHandle,
+        join: tokio::task::JoinHandle<()>,
+    ) {
+        let mut slots = self.relays.lock().unwrap_or_else(|e| e.into_inner());
+        slots.insert(name.to_owned(), (handle, join));
     }
 
-    /// Take the relay connector + its run-task handle out so graceful shutdown
-    /// can drain the task. Returns `None` in local-only deployments. The slot is
-    /// left `None`; the lesche message route is not served during the shutdown drain.
-    pub fn take_relay(&self) -> Option<(crate::relay::RelayHandle, tokio::task::JoinHandle<()>)> {
-        let mut slot = self.relay.lock().unwrap_or_else(|e| e.into_inner());
-        slot.take()
+    /// Clone the named relay connector out for a route (guard dropped before
+    /// the caller awaits). `None` when that entry is not online.
+    pub fn relay(&self, name: &str) -> Option<crate::relay::RelayHandle> {
+        let slots = self.relays.lock().unwrap_or_else(|e| e.into_inner());
+        slots.get(name).map(|(handle, _)| handle.clone())
+    }
+
+    /// Take every relay connector + run-task handle out so graceful shutdown
+    /// can drain them all. The map is left empty; the lesche message routes
+    /// are not served during the shutdown drain.
+    pub fn take_relays(
+        &self,
+    ) -> Vec<(
+        String,
+        crate::relay::RelayHandle,
+        tokio::task::JoinHandle<()>,
+    )> {
+        let mut slots = self.relays.lock().unwrap_or_else(|e| e.into_inner());
+        slots
+            .drain()
+            .map(|(name, (handle, join))| (name, handle, join))
+            .collect()
     }
 
     /// Install the direct serving handle, once, at startup. Called from `main`

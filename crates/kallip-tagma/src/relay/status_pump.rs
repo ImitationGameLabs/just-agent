@@ -199,6 +199,7 @@ mod tests {
         let client = LescheClient::builder(&url, "tok").build().unwrap();
         let handle = RelayHandle::new(
             client,
+            "test".to_string(),
             kallip_agora_common::ids::TagmaId::from("tagma".to_string()),
             "Tagma".into(),
             DeviceKey::generate(),

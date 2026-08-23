@@ -83,6 +83,8 @@ in
     docker-compose.volumes = {
       agora_pgdata = { };
       lesche_pgdata = { };
+      agora2_pgdata = { };
+      lesche2_pgdata = { };
     };
 
     # Dev-only hardcoded creds (prod reads them from .env).
@@ -99,6 +101,33 @@ in
     services.lesche-postgres = {
       service.image = "postgres:17.5";
       service.volumes = [ "lesche_pgdata:/var/lib/postgresql/data" ];
+      service.environment = {
+        POSTGRES_USER = "kallip";
+        POSTGRES_PASSWORD = "kallip";
+        POSTGRES_DB = "kallip";
+      };
+    };
+
+    # Second agora + lesche pair (agora2 / lesche2, :7101 / :7201): the
+    # dual-agora acceptance stack for the multi-relay tagma (a tagma enrolled
+    # with both agoras must hold both tunnels and fan out to both lesches).
+    # Same shape as the primary pair; independent Postgres instances (the
+    # single-engine invariant is a prod-storage concern, not a dev-topology
+    # one). Acceptance drives them via the published ports directly, so they
+    # are deliberately NOT in caddy's depends_on.
+    services.agora2-postgres = {
+      service.image = "postgres:17.5";
+      service.volumes = [ "agora2_pgdata:/var/lib/postgresql/data" ];
+      service.environment = {
+        POSTGRES_USER = "kallip";
+        POSTGRES_PASSWORD = "kallip";
+        POSTGRES_DB = "kallip";
+      };
+    };
+
+    services.lesche2-postgres = {
+      service.image = "postgres:17.5";
+      service.volumes = [ "lesche2_pgdata:/var/lib/postgresql/data" ];
       service.environment = {
         POSTGRES_USER = "kallip";
         POSTGRES_PASSWORD = "kallip";
@@ -240,6 +269,63 @@ in
         KALLIP_LESCHE_AGORA_TOKEN = "dev-internal-secret";
         # Allow the web app origin (https://web.<devDomain> via Caddy) to
         # make credentialed cross-origin calls to lesche.<devDomain>.
+        KALLIP_LESCHE_CORS_ORIGINS = "https://web.${devDomain}";
+        RUST_LOG = "info";
+      };
+    };
+
+    # Agora2 / lesche2: the second agora+lesche pair (see the comment at
+    # agora2-postgres). Mirrors the primary services on :7101 / :7201 with
+    # their own databases; lesche2 authenticates against agora2's /internal
+    # surface. Reached by the tagma's relays.toml entries via the published
+    # ports, and by the browser via Caddy (agora2./lesche2. subdomains).
+    services.agora2 = {
+      service.depends_on = [ "agora2-postgres" ];
+      service.useHostStore = true;
+      service.command = [ "${workspace}/bin/kallip-agora" ];
+      service.ports = [ "7101:7101" ];
+      service.env_file = [ ".env" ];
+      image.contents = [
+        workspace
+      ]
+      ++ cacert;
+      service.environment = {
+        PATH = "${workspace}/bin";
+        KALLIP_AGORA_ADDR = "0.0.0.0:7101";
+        KALLIP_AGORA_DATABASE_URL = "postgres://kallip:kallip@agora2-postgres:5432/kallip";
+        KALLIP_AGORA_WEBAUTHN_RP_ID = devDomain;
+        KALLIP_AGORA_WEBAUTHN_RP_ORIGIN = "https://web.${devDomain}";
+        KALLIP_AGORA_WEBAUTHN_RP_NAME = "kallip";
+        KALLIP_AGORA_WEBAUTHN_ALLOW_ANY_PORT = "false";
+        KALLIP_AGORA_COOKIE_SECURE = "true";
+        KALLIP_AGORA_CORS_ORIGINS = "https://web.${devDomain}";
+        KALLIP_AGORA_SESSION_COOKIE_DOMAIN = devDomain;
+        KALLIP_AGORA_TRUSTED_PROXIES = "127.0.0.0/8, ::1/128";
+        KALLIP_AGORA_INTERNAL_TOKEN = "dev-internal-secret";
+        KALLIP_AGORA_ADMIN_TOKEN = "sk-admin-dev-0123456789abcdef0123456789abcdef";
+        KALLIP_AGORA_ADMIN_USER_LOGIN = "true";
+        RUST_LOG = "info";
+      };
+    };
+
+    services.lesche2 = {
+      service.depends_on = [
+        "agora2"
+        "lesche2-postgres"
+      ];
+      service.useHostStore = true;
+      service.command = [ "${workspace}/bin/kallip-lesche" ];
+      service.ports = [ "7201:7201" ];
+      service.env_file = [ ".env" ];
+      image.contents = [
+        workspace
+      ]
+      ++ cacert;
+      service.environment = {
+        KALLIP_LESCHE_ADDR = "0.0.0.0:7201";
+        KALLIP_LESCHE_DATABASE_URL = "postgres://kallip:kallip@lesche2-postgres:5432/kallip";
+        KALLIP_LESCHE_AGORA_INTERNAL_URL = "http://agora2:7101";
+        KALLIP_LESCHE_AGORA_TOKEN = "dev-internal-secret";
         KALLIP_LESCHE_CORS_ORIGINS = "https://web.${devDomain}";
         RUST_LOG = "info";
       };

@@ -34,7 +34,7 @@ impl RelayHandle {
         if let Some(state) = self.inner.state.upgrade() {
             state
                 .joined_rooms
-                .set_joined_rooms(rooms.iter().map(|v| v.room_id.clone()))
+                .set_joined_rooms(&self.inner.name, rooms.iter().map(|v| v.room_id.clone()))
                 .await;
         }
     }

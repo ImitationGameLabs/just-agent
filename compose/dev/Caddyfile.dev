@@ -48,6 +48,20 @@
 		}
 	}
 
+
+	@agora2 host agora2.{$KALLIP_DEV_DOMAIN}
+	handle @agora2 {
+		# second dev agora instance (dual-agora tagma acceptance)
+		reverse_proxy 127.0.0.1:7101
+	}
+
+	@lesche2 host lesche2.{$KALLIP_DEV_DOMAIN}
+	handle @lesche2 {
+		# second dev lesche instance, paired with agora2
+		reverse_proxy 127.0.0.1:7201 {
+			flush_interval -1
+		}
+	}
 	# Any other *.<devDomain> host (typo, or the bare apex) matched the wildcard
 	# site block's SNI but no route above -- surface it as a real 404 rather than
 	# Caddy's default empty 200, so misroutes are obvious.

@@ -223,6 +223,43 @@ side. It runs on the host network and reaches the agora/lesche at
 arion -f compose/dev/tagma.nix up -d   # tagma; enrolls its relay
 ```
 
+### Dual-agora tagma (multi-relay)
+
+The tagma can hold one identity per agora simultaneously (e.g. the local
+dev agora plus a remote one). Declare the entries in
+`<data-root>/relays.toml`:
+
+```toml
+[[relay]]
+name    = "main"                # slug: [a-z0-9][a-z0-9-]*; keys the
+                                # credentials/<name>/ dir (stable across URL changes)
+agora_url    = "http://127.0.0.1:7100"
+lesche_url   = "http://127.0.0.1:7200"   # optional; defaults to the agora origin
+# enrollment_code = "sk-enroll-..."      # first run only; afterwards the stored token is reused
+
+[[relay]]
+name     = "second"
+agora_url = "http://127.0.0.1:7101"
+```
+
+Rules: a `relays.toml` entry and the legacy single-relay env vars
+(`KALLIP_TAGMA_RELAY_*`) are mutually exclusive -- unset the env vars or
+delete the file (the env vars keep working as one implicit `default` entry
+when the file is absent). Each entry enrolls with its own agora identity
+(`credentials/<name>/tagma.id` + `tagma.token`); the Ed25519 `device.key`
+at the credentials root is shared (one device, many identities). A
+pre-multi-agora flat `credentials/tagma.id` is migrated into the single
+entry's directory on the first boot; anything ambiguous fails fast with
+both exits named. Outbound frames fan out to every online relay; the first
+entry with stored credentials is the "primary" agora (frontend cache
+key).
+
+The dev compose ships a second agora+lesche pair for acceptance:
+`agora2` / `lesche2` on `:7101` / `:7201` (own Postgres instances; same dev
+admin-token fixture). Enroll a code on each side, fill `relays.toml`, and
+watch the tagma log for two `relay connector active` lines (one per
+entry name); a message sent on either side must arrive on both.
+
 ## Iterating
 
 `arion up` re-evaluates the flake each time, so Rust changes are picked up just

@@ -640,3 +640,29 @@ fn new_has_generous_limits() {
     assert_eq!(state.max_agents, crate::args::MAX_AGENTS_LIMIT);
     assert_eq!(state.max_subagents, crate::args::MAX_SUBAGENTS_LIMIT);
 }
+
+#[tokio::test]
+async fn joined_rooms_slices_are_per_relay() {
+    use kallip_lesche_common::rooms::RoomId;
+    let rooms = JoinedRooms::new();
+    let r1 = RoomId::from("11111111-1111-1111-1111-111111111111".to_string());
+    let r2 = RoomId::from("22222222-2222-2222-2222-222222222222".to_string());
+
+    // Warm both relays' slices: a refresh of one must not clear the other.
+    rooms.set_joined_rooms("main", [r1.clone()]).await;
+    rooms.set_joined_rooms("second", [r2.clone()]).await;
+    rooms.set_joined_rooms("main", []).await; // main's poll now sees no rooms
+    assert!(!rooms.is_joined(&r1).await);
+    assert!(rooms.is_joined(&r2).await, "second's slice survives");
+
+    // Union snapshot for the agent room-list route.
+    rooms.set_joined_rooms("main", [r1.clone()]).await;
+    let all = rooms.joined_rooms().await;
+    assert_eq!(all.len(), 2);
+
+    // Ownership routing: each room resolves to its lesche, cold ids do not.
+    assert_eq!(rooms.owner_of(&r1).await.as_deref(), Some("main"));
+    assert_eq!(rooms.owner_of(&r2).await.as_deref(), Some("second"));
+    let cold = RoomId::from("33333333-3333-3333-3333-333333333333".to_string());
+    assert_eq!(rooms.owner_of(&cold).await, None);
+}
