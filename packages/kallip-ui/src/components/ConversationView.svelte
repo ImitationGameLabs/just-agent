@@ -31,6 +31,9 @@
     disabled,
     pendingCount,
     notice,
+    loadOlder,
+    hasMoreOlder,
+    loadingOlder,
   }: {
     lines: ConversationLine[];
     status: ConversationTranscript["status"];
@@ -38,6 +41,16 @@
     composer: ComposerModel;
     disabled: boolean;
     pendingCount: number;
+    /** Optional lazy-window pager: when present, a sentinel above the first
+     *  line fires it as it enters the viewport (scroll-up paging). All three
+     *  props default off so non-windowed callers (online relay pages) keep
+     *  today's behavior verbatim. */
+    loadOlder?: () => void | Promise<void>;
+    /** False once an older page came back empty (stops arming the sentinel). */
+    hasMoreOlder?: boolean;
+    /** True while a page is in flight (single-flight lives in the store). */
+    loadingOlder?: boolean;
+
     /** Optional page-supplied notice rendered inside the scrollable transcript
      *  (after the inline error), so it scrolls with the messages. Used for the
      *  online transport-offline banner. */
@@ -62,6 +75,64 @@
   // ResizeObserver across all bubbles); each <MessageBubble> hands its box +
   // actions elements to it on a raw toggle.
   const togglePin = createTogglePin(() => scroll.viewport);
+
+  // --- lazy-window scroll paging (optional; armed only when loadOlder is passed) ---
+
+  // The zero-height sentinel above the first line. An IntersectionObserver
+  // (not a scroll handler) fires the pager, so the auto-scroll controller's
+  // onScroll contract stays untouched; a full prepend pushes the sentinel
+  // back out of view, which naturally stops the arm loop.
+  let sentinel: HTMLDivElement | undefined = $state();
+  // Manual scroll anchor for top prepends: CSS overflow-anchor is UA- and
+  // WebView-dependent (untestable across our matrix), so we snapshot
+  // (scrollTop, scrollHeight) before the page lands and restore the
+  // position by the height delta once the DOM has grown.
+  let anchor: {
+    scrollTop: number;
+    scrollHeight: number;
+    count: number;
+  } | null = null;
+  $effect(() => {
+    const root = loadOlder ? scroll.viewport : undefined;
+    if (!loadOlder || !sentinel) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        if (hasMoreOlder === false || loadingOlder) return;
+        const vp = scroll.viewport;
+        if (vp && !anchor) {
+          anchor = {
+            scrollTop: vp.scrollTop,
+            scrollHeight: vp.scrollHeight,
+            count: lines.length,
+          };
+        }
+        void loadOlder();
+      },
+      // The scroll container as IO root: with the implicit viewport root
+      // the observer skips recalculating on inner-container scrolling
+      // (observed live in e2e), and the sentinel never fires.
+      { root },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  });
+
+  // Apply (and consume) the anchor after the DOM settles. A no-op page (the
+  // store's zero-add outcome) never changes lines.length, so the second
+  // effect reclaims the stale anchor once loadingOlder falls.
+  $effect(() => {
+    void lines.length;
+    const vp = scroll.viewport;
+    if (anchor && vp && lines.length !== anchor.count) {
+      const delta = vp.scrollHeight - anchor.scrollHeight;
+      if (delta > 0) vp.scrollTop = anchor.scrollTop + delta;
+      anchor = null;
+    }
+  });
+  $effect(() => {
+    if (!loadingOlder && anchor && lines.length === anchor.count) anchor = null;
+  });
 </script>
 
 <div
@@ -70,6 +141,15 @@
   onscroll={scroll.onScroll}
 >
   <div class="mx-auto w-full max-w-[80rem] p-4 flex flex-col gap-3">
+    {#if loadOlder}
+      <!-- Zero-height pager sentinel: visible to IntersectionObserver,
+           inert to layout. -->
+      <div
+        bind:this={sentinel}
+        class="h-1 w-full shrink-0"
+        aria-hidden="true"
+      ></div>
+    {/if}
     {#if lines.length === 0 && !busy}
       <p class="text-sm opacity-60 text-center mt-8">
         {chat_send_to_start()}

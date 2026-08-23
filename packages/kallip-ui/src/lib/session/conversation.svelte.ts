@@ -584,6 +584,12 @@ export class LocalConversation extends ConversationBase {
    *  reset quietly and leave the sentinel armed for the next scroll. */
   async loadOlder(k = WINDOW_PAGE): Promise<void> {
     if (this.loadingOlder || !this.hasMoreOlder) return;
+    // minRendered === 0 means the window has not formed yet (hydrate or
+    // catch-up still in flight, or the server truly has nothing): paging
+    // older-than-nothing is ill-defined — and racing the initial fill here
+    // once issued a recent-N pull whose always-false `more` permanently
+    // disarmed the sentinel. Wait for a window head to exist.
+    if (this.minRendered <= 0) return;
     this.loadingOlder = true;
     try {
       const head = this.minRendered;

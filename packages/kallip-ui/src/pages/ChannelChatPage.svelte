@@ -16,6 +16,7 @@
   import { managementBackend } from "../lib/manage/client.ts";
   import { convDraftKey, tagmaDraftKey } from "../lib/session/drafts.ts";
   import { channelsStore } from "../lib/session/channels.svelte";
+  import { LocalConversation } from "../lib/session/conversation.svelte.ts";
   import { navigate } from "../lib/shell/port.ts";
   import {
     connect_connecting,
@@ -43,6 +44,17 @@
   // (the gate routes a failed reconnect to /connect, so this is a short window).
   const conv = $derived(channelsStore.get(conversationId));
   const isLocal = $derived(conversationId === "local");
+
+  // The lazy-window pager exists only on the local (direct) transport; the
+  // online relay page passes no pager and ConversationView renders verbatim.
+  const loadOlder = $derived(
+    conv instanceof LocalConversation ? () => conv.loadOlder() : undefined,
+  );
+  const windowStates = $derived(
+    conv instanceof LocalConversation
+      ? { hasMoreOlder: conv.hasMoreOlder, loadingOlder: conv.loadingOlder }
+      : {},
+  );
 
   const composer = createComposer({
     send: (text) => channelsStore.send(conversationId, text),
@@ -186,6 +198,9 @@
         {composer}
         {disabled}
         {pendingCount}
+        {loadOlder}
+        hasMoreOlder={windowStates.hasMoreOlder}
+        loadingOlder={windowStates.loadingOlder}
       >
         {#snippet notice()}
           {#if conv.status === "offline"}
