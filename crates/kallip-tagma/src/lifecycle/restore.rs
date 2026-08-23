@@ -734,7 +734,7 @@ mod tests {
 
     #[test]
     fn restore_rejects_class_above_downgraded_supervisor() {
-        // The restore-side mirror of the M1 tightening: a child whose granted
+        // The restore-side mirror of the downgrade tightening: a child whose granted
         // class (Normal) exceeds its downgraded supervisor's (Guest) must fail
         // restore, even though it sits at its tier ceiling.
         let child = AgentId::from("child".to_owned());

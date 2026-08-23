@@ -332,7 +332,7 @@ fn allows_env_unset_and_assignment() {
 
 #[test]
 fn asks_for_env_split_string() {
-    // `env -S '<script>'` executes the string (P0-2).
+    // `env -S '<script>'` executes the string verbatim.
     assert!(matches!(cls("env -S 'rm -rf /'"), ToolDecision::Ask { .. }));
 }
 

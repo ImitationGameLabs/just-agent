@@ -131,7 +131,7 @@ pub async fn bridge_task(
                                     | AgentEvent::Interrupted => (AgentState::IDLE, None, None),
                                     AgentEvent::Waiting { .. } => (AgentState::WAITING, None, None),
                                     // The budget gate re-arms a waiting timer
-                                    // runtime-side (design D6, case b): the agent
+                                    // runtime-side: the agent
                                     // stays WAITING for the zero-cost recovery
                                     // probe, not parked.
                                     AgentEvent::TokenBudgetExceeded { .. } => {

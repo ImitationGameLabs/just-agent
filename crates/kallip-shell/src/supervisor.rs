@@ -34,7 +34,7 @@ pub(super) type TaskId = String;
 
 const WATCH_POLL: Duration = Duration::from_millis(200);
 /// Stall requires this much output-quiescence before the tail regex is trusted,
-/// so a build log printing `Compiling foo:` can't trip it (R6).
+/// so a build log printing `Compiling foo:` can't trip it.
 const STALL_QUIESCENCE: Duration = Duration::from_secs(3);
 /// Tail size examined for interactive-prompt lockups.
 const STALL_TAIL: u64 = 4 * 1024;
@@ -669,7 +669,7 @@ async fn watch(args: WatchArgs) {
             }
         }
 
-        // Stall watchdog: requires quiescence, then a tail-regex match (R6).
+        // Stall watchdog: requires quiescence, then a tail-regex match.
         if size == last_size {
             let since = quiescent_since.get_or_insert_with(tokio::time::Instant::now);
             if since.elapsed() >= STALL_QUIESCENCE && tail_matches(&output) {

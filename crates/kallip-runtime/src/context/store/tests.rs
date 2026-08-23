@@ -295,7 +295,7 @@ fn pinned_item_estimated_tokens_serde_default_is_zero() {
     assert_eq!(legacy_rt.estimated_tokens, 0, "missing field defaults to 0");
 }
 
-// --- F1/F3 safety: eviction skips pinned; ordering invariants ---
+// --- safety: eviction skips pinned; ordering invariants ---
 
 #[test]
 fn evict_turns_skips_pinned() {

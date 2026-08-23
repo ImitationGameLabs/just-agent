@@ -585,7 +585,7 @@ pub async fn interrupt_agent(
     Ok(StatusCode::ACCEPTED)
 }
 
-/// Kick a parked agent awake (design D2/D7): enqueue a `[system]` turn stating
+/// Kick a parked agent awake: enqueue a `[system]` turn stating
 /// why and how long ago it parked, and let the agent itself decide whether to
 /// retry, adjust, or report. Only meaningful while PARKED — the kick re-enters
 /// the outer loop's prompt arm, which owns the Parked→Running transition (the

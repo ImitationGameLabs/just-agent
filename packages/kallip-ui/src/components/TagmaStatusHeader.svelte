@@ -1,6 +1,5 @@
 <script lang="ts">
-  // Full-width chrome bar above the transcript (operator-directed redesign,
-  // /tmp/plans/status-bar-design.md case B + rounds 2-3). One centered row
+  // Full-width chrome bar above the transcript. One centered row
   // of two segments -- subagents / budget -- separated by a vertical
   // rule; justify-center clusters the content mid-bar on
   // ultra-wide screens instead of pinning the segments apart
@@ -79,7 +78,7 @@
     onToggleSide?: () => void;
   } = $props();
 
-  // Small-viewport collapse (mobile B1): below lg the top bar's two segments
+  // Small-viewport collapse: below lg the top bar's two segments
   // wrap and the agent-rows list renders unbounded -- together they eat half
   // a 375px viewport (operator-visible failure). The whole status area then
   // collapses to one summary line; tapping it restores the familiar bar +

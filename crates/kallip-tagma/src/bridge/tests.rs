@@ -1403,7 +1403,7 @@ async fn bridge_error_parks_with_fatal_reason() {
     drop(agent_tx);
 }
 
-/// TokenBudgetExceeded keeps the agent WAITING (design D6 case b: the
+/// TokenBudgetExceeded keeps the agent WAITING (the
 /// runtime re-armed a wait timer as a zero-cost budget probe) — no park.
 #[tokio::test]
 async fn bridge_token_budget_marks_waiting() {

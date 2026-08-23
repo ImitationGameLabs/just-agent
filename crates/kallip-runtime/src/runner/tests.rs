@@ -584,7 +584,7 @@ async fn failover_primary_down_backup_succeeds() {
 async fn break_tool_call_yields_break_outcome() {
     // A `break` tool call short-circuits the round: the outcome is `Break`
     // (not BareAssistant, not a continued tool round). This pins the
-    // R-M2/R-M3 contract — break terminates the round via the hoisted
+    // contract — break terminates the round via the hoisted
     // name-check in execute_tool_calls.
     let server = MockServer::start().await;
     mount_break_stream(&server).await;
@@ -1027,7 +1027,7 @@ async fn transient_retry_reruns_original_prompt_without_injection() {
     );
 }
 
-/// Budget-probe path (design D6-b): an exhausted budget parks the agent
+/// Budget-probe path: an exhausted budget parks the agent
 /// WAITING with a re-armed fuse, and while the budget stays exceeded every
 /// probe re-checks the round gate BEFORE any LLM call — zero requests hit
 /// the server across probe cycles.

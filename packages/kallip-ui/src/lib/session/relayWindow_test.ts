@@ -288,7 +288,7 @@ Deno.test("the id floor never notifies for replay frames", () => {
 Deno.test(
   "catchUp suppresses all replay notifications, then re-arms",
   async () => {
-    // q-MINOR-1: batch rows landing ABOVE a stale floor (a fresh device
+    // Batch rows landing ABOVE a stale floor (a fresh device
     // starts at 0; a partial hydrate leaves the floor below the replay
     // range) would each fire a notification. maybeNotifyBackground needs
     // document/Notification (absent here), so pin the floor itself: MAX for

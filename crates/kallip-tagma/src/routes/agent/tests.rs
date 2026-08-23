@@ -272,7 +272,7 @@ fn granted_rejects_request_above_tier_ceiling() {
 
 #[test]
 fn granted_rejects_request_above_downgraded_supervisor() {
-    // M1: a supervisor downgraded to Guest can no longer grant a child at its
+    // A supervisor downgraded to Guest can no longer grant a child at its
     // tier's default Normal ceiling — the child's granted (Normal, the ceiling)
     // exceeds the supervisor's granted (Guest). Fail-closed: correct escalation
     // prevention, newly reachable once downgrade exists.
