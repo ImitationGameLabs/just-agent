@@ -63,5 +63,7 @@
   "manage_schedules_error_every_hours": "N 需为 1–23 的整数",
   "manage_schedules_error_length_min": "L 需在 1 分钟到 7 天之间",
   "manage_schedules_error_generic": "配置无效",
-  "manage_schedules_unsaved": "有未保存的修改"
+  "manage_schedules_unsaved": "有未保存的修改",
+  "manage_schedules_load_failed": "无法加载作息。",
+  "manage_schedules_save_failed": "无法保存作息。"
 }

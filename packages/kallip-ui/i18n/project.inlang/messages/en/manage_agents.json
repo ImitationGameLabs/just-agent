@@ -3,5 +3,7 @@
   "manage_agents_title": "KallipAI · tagma details",
   "manage_agents_heading": "Tagma Details",
   "manage_agents_empty": "No agents.",
-  "manage_agents_details": "Details"
+  "manage_agents_details": "Details",
+  "manage_agents_action_failed": "The action failed.",
+  "manage_agents_load_failed": "Could not load the agent list."
 }

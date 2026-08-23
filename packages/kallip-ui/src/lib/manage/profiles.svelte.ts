@@ -19,6 +19,13 @@ import {
   singleProviderProbeRequest as singleProviderProbeRequestFn,
 } from "./compute.ts";
 import { type ManagementBackend, managementBackend } from "./client.ts";
+import { displayError } from "./errors.ts";
+import {
+  manage_profiles_apply_failed,
+  manage_profiles_load_failed,
+  manage_profiles_probe_failed,
+  manage_profiles_save_failed,
+} from "../../paraglide/messages.js";
 
 class ProfilesStore {
   private _backend: ManagementBackend | null = null;
@@ -58,7 +65,7 @@ class ProfilesStore {
       this.config = resp;
       this.draft = structuredClone(resp);
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("profiles", e, manage_profiles_load_failed());
     } finally {
       this.isLoading = false;
     }
@@ -76,7 +83,7 @@ class ProfilesStore {
       this.config = resp;
       this.draft = structuredClone(resp);
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("profiles", e, manage_profiles_save_failed());
       throw e;
     } finally {
       this.isSaving = false;
@@ -91,7 +98,7 @@ class ProfilesStore {
       const resp = await this.backend.applyProfiles();
       return resp;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("profiles", e, manage_profiles_apply_failed());
       throw e;
     } finally {
       this.isSaving = false;
@@ -116,7 +123,11 @@ class ProfilesStore {
     try {
       this.probe = await this.backend.probeProfiles(body);
     } catch (e) {
-      this.probeError = e instanceof Error ? e.message : String(e);
+      this.probeError = displayError(
+        "probe",
+        e,
+        manage_profiles_probe_failed(),
+      );
       this.probe = null;
     } finally {
       this.isProbing = false;
@@ -143,7 +154,11 @@ class ProfilesStore {
     try {
       this.probe = await this.backend.probeProfiles(body);
     } catch (e) {
-      this.probeError = e instanceof Error ? e.message : String(e);
+      this.probeError = displayError(
+        "probe",
+        e,
+        manage_profiles_probe_failed(),
+      );
       this.probe = null;
     } finally {
       this.isProbing = false;
@@ -164,7 +179,11 @@ class ProfilesStore {
       this.probe = await this.backend.probeProfiles(body);
       return this.probe;
     } catch (e) {
-      this.probeError = e instanceof Error ? e.message : String(e);
+      this.probeError = displayError(
+        "probe",
+        e,
+        manage_profiles_probe_failed(),
+      );
       this.probe = null;
       return null;
     } finally {

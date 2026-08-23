@@ -4,6 +4,11 @@
 import type { WireAgentManagementSummary } from "@kallipai/kallip-client";
 import { SvelteSet } from "svelte/reactivity";
 import { type ManagementBackend, managementBackend } from "./client.ts";
+import { displayError } from "./errors.ts";
+import {
+  manage_agents_action_failed,
+  manage_agents_load_failed,
+} from "../../paraglide/messages.js";
 
 class AgentsStore {
   private _backend: ManagementBackend | null = null;
@@ -40,7 +45,7 @@ class AgentsStore {
       this.agents = [...resp.agents];
       this.hasLoaded = true;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("agents", e, manage_agents_load_failed());
     } finally {
       this.isLoading = false;
     }
@@ -82,7 +87,7 @@ class AgentsStore {
       this.snapshots.delete(id);
     } catch (e) {
       this.revertById(id);
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("agents", e, manage_agents_action_failed());
       throw e;
     } finally {
       this.inFlight.delete(id);
@@ -110,7 +115,7 @@ class AgentsStore {
       this.snapshots.delete(id);
     } catch (e) {
       this.revertById(id);
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("agents", e, manage_agents_action_failed());
       throw e;
     } finally {
       this.inFlight.delete(id);
@@ -128,7 +133,7 @@ class AgentsStore {
       this.snapshots.delete(id);
     } catch (e) {
       this.revertById(id);
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("agents", e, manage_agents_action_failed());
       throw e;
     } finally {
       this.inFlight.delete(id);
@@ -143,7 +148,7 @@ class AgentsStore {
       await this.backend.removeAgent(id);
     } catch (e) {
       this.agents = snapshot; // revert
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("agents", e, manage_agents_action_failed());
       throw e;
     } finally {
       this.inFlight.delete(id);
@@ -161,7 +166,7 @@ class AgentsStore {
       this.snapshots.delete(id);
     } catch (e) {
       this.revertById(id);
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("agents", e, manage_agents_action_failed());
       throw e;
     } finally {
       this.inFlight.delete(id);

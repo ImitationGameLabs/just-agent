@@ -33,7 +33,6 @@
   "manage_profiles_probe_models_other": "{count} models",
   "manage_profiles_probe_tier_ok": "all profiles ok",
   "manage_profiles_probe_tier_fail": "failing profiles:",
-  "manage_profiles_probe_request_failed": "probe request failed: {error}",
   "manage_profiles_provider_dialog_new_title": "New Provider",
   "manage_profiles_provider_dialog_edit_title": "Edit Provider",
   "manage_profiles_provider_dialog_desc": "Configure an LLM provider: family, base URL, and API key.",
@@ -84,5 +83,9 @@
   "manage_profiles_max_context_label": "max context",
   "manage_profiles_profile_provider_label": "provider",
   "manage_profiles_profile_model_label": "model",
-  "manage_profiles_profile_actions_aria": "Profile actions"
+  "manage_profiles_profile_actions_aria": "Profile actions",
+  "manage_profiles_load_failed": "Could not load profiles.",
+  "manage_profiles_save_failed": "Could not save profiles.",
+  "manage_profiles_apply_failed": "Could not apply profiles.",
+  "manage_profiles_probe_failed": "The test request failed."
 }

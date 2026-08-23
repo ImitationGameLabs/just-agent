@@ -5,6 +5,11 @@ import type {
   WorkSchedule,
 } from "@kallipai/kallip-client";
 import { type ManagementBackend, managementBackend } from "./client.ts";
+import { displayError } from "./errors.ts";
+import {
+  manage_schedules_load_failed,
+  manage_schedules_save_failed,
+} from "../../paraglide/messages.js";
 
 class SchedulesStore {
   schedule = $state<WorkSchedule | null>(null);
@@ -39,7 +44,7 @@ class SchedulesStore {
       this.schedule = await this.backend.getWorkSchedule();
       this.hasLoaded = true;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("schedules", e, manage_schedules_load_failed());
     } finally {
       this.isLoading = false;
     }
@@ -54,7 +59,7 @@ class SchedulesStore {
       this.schedule = saved;
       return saved;
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("schedules", e, manage_schedules_save_failed());
       throw e;
     } finally {
       this.isSaving = false;

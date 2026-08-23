@@ -79,7 +79,6 @@
     manage_profiles_parking_add,
     manage_profiles_parking_desc_l1,
     manage_profiles_parking_desc_l2,
-    manage_profiles_probe_request_failed,
     manage_profiles_probe_tier_ok,
     manage_profiles_probe_tier_fail,
     manage_profiles_profile_provider_label,
@@ -499,9 +498,7 @@
     {/if}
     {#if profilesStore.probeError}
       <p class="text-error-500 dark:text-error-400 text-sm font-mono break-all">
-        {manage_profiles_probe_request_failed({
-          error: profilesStore.probeError,
-        })}
+        {profilesStore.probeError}
       </p>
     {/if}
     {#if profilesStore.isDirty}

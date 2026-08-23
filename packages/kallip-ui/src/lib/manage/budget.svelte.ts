@@ -14,6 +14,11 @@ import {
   type BudgetSample,
 } from "./compute.ts";
 import { type ManagementBackend, managementBackend } from "./client.ts";
+import { displayError } from "./errors.ts";
+import {
+  manage_budget_load_failed,
+  manage_budget_update_failed,
+} from "../../paraglide/messages.js";
 
 class BudgetStore {
   private _backend: ManagementBackend | null = null;
@@ -65,7 +70,7 @@ class BudgetStore {
       const resp = await this.backend.getBudget();
       this.applyResponse(resp);
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("budget", e, manage_budget_load_failed());
     } finally {
       this.isLoading = false;
     }
@@ -157,7 +162,7 @@ class BudgetStore {
       this.budget = prev.budget;
       this.consumed = prev.consumed;
       this.remaining = prev.remaining;
-      this.error = e instanceof Error ? e.message : String(e);
+      this.error = displayError("budget", e, manage_budget_update_failed());
       throw e;
     } finally {
       this.inFlightMutation = false;

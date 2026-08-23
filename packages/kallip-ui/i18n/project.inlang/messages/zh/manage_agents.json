@@ -3,5 +3,7 @@
   "manage_agents_title": "KallipAI · 编队细节",
   "manage_agents_heading": "编队细节",
   "manage_agents_empty": "暂无智能体。",
-  "manage_agents_details": "详情"
+  "manage_agents_details": "详情",
+  "manage_agents_action_failed": "操作失败。",
+  "manage_agents_load_failed": "无法加载智能体列表。"
 }

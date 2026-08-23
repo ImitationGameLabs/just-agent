@@ -27,5 +27,7 @@
   "manage_budget_budget_cleared_hint": "Remaining budget is 0. All agents are stopped. Enter an amount above to restore.",
   "manage_budget_amount_restore": "amount to restore",
   "manage_budget_set_resume": "Set & Resume",
-  "manage_budget_clear_hint": "Sets remaining budget to 0 — all agents will stop immediately."
+  "manage_budget_clear_hint": "Sets remaining budget to 0 — all agents will stop immediately.",
+  "manage_budget_load_failed": "Could not load budget.",
+  "manage_budget_update_failed": "Could not update budget."
 }

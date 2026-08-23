@@ -33,7 +33,6 @@
   "manage_profiles_probe_models_other": "{count} 个模型",
   "manage_profiles_probe_tier_ok": "全部配置可用",
   "manage_profiles_probe_tier_fail": "问题配置：",
-  "manage_profiles_probe_request_failed": "测试请求失败：{error}",
   "manage_profiles_provider_dialog_new_title": "新增模型提供商",
   "manage_profiles_provider_dialog_edit_title": "编辑模型提供商",
   "manage_profiles_provider_dialog_desc": "配置一个 LLM 模型提供商：接口类型、Base URL 与 API Key。",
@@ -84,5 +83,9 @@
   "manage_profiles_max_context_label": "最大上下文",
   "manage_profiles_profile_provider_label": "模型提供商",
   "manage_profiles_profile_model_label": "模型",
-  "manage_profiles_profile_actions_aria": "配置操作"
+  "manage_profiles_profile_actions_aria": "配置操作",
+  "manage_profiles_load_failed": "无法加载模型配置。",
+  "manage_profiles_save_failed": "无法保存模型配置。",
+  "manage_profiles_apply_failed": "无法应用模型配置。",
+  "manage_profiles_probe_failed": "测试请求失败。"
 }

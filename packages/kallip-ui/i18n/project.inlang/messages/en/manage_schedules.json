@@ -63,5 +63,7 @@
   "manage_schedules_error_every_hours": "N must be an integer 1–23",
   "manage_schedules_error_length_min": "L must be 1 minute to 7 days",
   "manage_schedules_error_generic": "invalid configuration",
-  "manage_schedules_unsaved": "Unsaved changes"
+  "manage_schedules_unsaved": "Unsaved changes",
+  "manage_schedules_load_failed": "Could not load the schedule.",
+  "manage_schedules_save_failed": "Could not save the schedule."
 }
