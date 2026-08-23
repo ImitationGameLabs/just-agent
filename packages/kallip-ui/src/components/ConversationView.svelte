@@ -142,11 +142,11 @@
 >
   <div class="mx-auto w-full max-w-[80rem] p-4 flex flex-col gap-3">
     {#if loadOlder}
-      <!-- Zero-height pager sentinel: visible to IntersectionObserver,
-           inert to layout. -->
+      <!-- Pager sentinel: zero-height and inert to layout; the observer
+           reports zero-area targets entering the root fine. -->
       <div
         bind:this={sentinel}
-        class="h-1 w-full shrink-0"
+        class="h-0 w-full shrink-0"
         aria-hidden="true"
       ></div>
     {/if}

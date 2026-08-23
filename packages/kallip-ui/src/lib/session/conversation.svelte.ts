@@ -50,7 +50,9 @@ import { DirectTransport } from "./directTransport.ts";
 
 /** The lazy-window page size: how many lines a hydrate, a catch-up batch,
  *  or a scroll-up page brings in at once. Mirrors the server's
- *  /external/history clamp (50) so a full page is one request. */
+ *  /external/history clamp (50: DEFAULT_LIMIT = MAX_LIMIT, routes/message.rs)
+ *  so a full page is one request — if that clamp ever moves, this mirror
+ *  drifting only costs an extra partial request, never correctness. */
 export const WINDOW_PAGE = 50;
 
 /** Map a cached row back to its transcript line (the hydrate + cache-page
@@ -314,7 +316,6 @@ export abstract class ConversationBase {
     }
   }
 
-  /** True iff this conversation is still the store's live entry for its id. */
   /** Fold one page of already-renderable lines into the window in a single
    *  transcript rebuild (the batch — not the row — is the update unit, so a
    *  50-row page costs one O(window) pass, not 50). Pure w.r.t. the
@@ -360,6 +361,7 @@ export abstract class ConversationBase {
     return this.mergeWindowLines(lines);
   }
 
+  /** True iff this conversation is still the store's live entry for its id. */
   protected isLive(): boolean {
     return this.store.get(this.conversationId) === this;
   }
@@ -569,6 +571,10 @@ export class LocalConversation extends ConversationBase {
       } else {
         const { rows } = await t.pullHistory({ limit: k });
         this.applyPulledRows(rows);
+        // A short recent batch IS the whole server history (recent-N
+        // carries no `more`); disarm the sentinel so it never arms
+        // again for a page that cannot exist.
+        if (rows.length < k) this.hasMoreOlder = false;
       }
     } catch {
       // Server unreachable: the drain surfaces transport status; the window

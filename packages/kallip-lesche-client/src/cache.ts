@@ -171,7 +171,10 @@ export function readTail(
 /** Load up to `k` cached lines strictly older than `beforeId`,
  *  oldest-first. The scroll-to-top page source: everything already
  *  loaded sits at ids >= beforeId, so the upper bound is exclusive
- *  (matching the server read_before semantics). */
+ *  (matching the server read_before semantics). The [conversationId, 1]
+ *  lower bound leans on the same invariant as conversationRange:
+ *  historyId is the tagma's AUTOINCREMENT chat_history.id, whose
+ *  minimum is 1 — no row can sit below it. */
 export function readTailBefore(
   conversationId: string,
   beforeId: number,
