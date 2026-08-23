@@ -260,6 +260,32 @@ admin-token fixture). Enroll a code on each side, fill `relays.toml`, and
 watch the tagma log for two `relay connector active` lines (one per
 entry name); a message sent on either side must arrive on both.
 
+### Manual KEX round-trip acceptance
+
+The automated acceptance chain covers fanout and dual identity; the
+user-agent KEX round-trip itself (message in, agent reply out, both sides
+receiving) is a manual residual item. Verify it by hand once per dual-agora
+setup:
+
+1. Bring the agora side and the web dev server up (`deno task dev` from
+   `packages/kallip-web`), open `https://web.kallipai.lan/register`, and
+   create a user (username + passkey).
+2. Open `https://web.kallipai.lan/tagmata`, pick the enrolled tagma, send a
+   message, and wait for the agent reply.
+3. Confirm the exchange landed on both lesche instances. Message bodies
+   are E2E ciphertext, so compare rows, not content:
+
+   ```sh
+   for pg in lesche-postgres lesche2-postgres; do
+     docker exec kallipai-dev-$pg-1 psql -U kallip -d kallip -c \
+       'select room_id, seq, sender_kind, created_at
+        from room_messages order by created_at desc limit 4'
+   done
+   ```
+
+Both sides must list the new rows: `human` for the user's message,
+`agent` for the reply.
+
 ## Iterating
 
 `arion up` re-evaluates the flake each time, so Rust changes are picked up just
