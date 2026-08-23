@@ -145,7 +145,7 @@ pub enum InboxCommand {
 
 #[derive(Args)]
 pub struct InboxListArgs {
-    /// Agent ID (defaults to KALLIP_ID).
+    /// Agent ID or role (defaults to KALLIP_ID).
     #[arg(long)]
     pub id: Option<AgentId>,
     /// Filter by status: unread, read, done.
@@ -161,7 +161,7 @@ pub struct InboxListArgs {
 
 #[derive(Args)]
 pub struct InboxReadArgs {
-    /// Agent ID (defaults to KALLIP_ID).
+    /// Agent ID or role (defaults to KALLIP_ID).
     #[arg(long)]
     pub id: Option<AgentId>,
     /// Message ID (positional).
@@ -170,14 +170,14 @@ pub struct InboxReadArgs {
 
 #[derive(Args)]
 pub struct InboxSummaryArgs {
-    /// Agent ID (defaults to KALLIP_ID).
+    /// Agent ID or role (defaults to KALLIP_ID).
     #[arg(long)]
     pub id: Option<AgentId>,
 }
 
 #[derive(Args)]
 pub struct InboxClearArgs {
-    /// Agent ID (defaults to KALLIP_ID).
+    /// Agent ID or role (defaults to KALLIP_ID).
     #[arg(long)]
     pub id: Option<AgentId>,
     /// Clear all messages, not just done ones.
@@ -220,7 +220,7 @@ pub struct SpawnArgs {
 
 #[derive(Args)]
 pub struct MetadataArgs {
-    /// Agent ID.
+    /// Agent ID or role.
     pub id: AgentId,
     /// New role. Must be non-empty if provided.
     #[arg(long)]
@@ -242,19 +242,19 @@ pub struct ActivityArgs {
 /// `<<'EOF'` so shell expansion cannot corrupt it.
 #[derive(Args)]
 pub struct MessageArgs {
-    /// Agent ID.
+    /// Agent ID or role.
     pub id: AgentId,
 }
 
 #[derive(Args)]
 pub struct IdArgs {
-    /// Agent ID.
+    /// Agent ID or role.
     pub id: AgentId,
 }
 
 #[derive(Args)]
 pub struct StatusArgs {
-    /// Agent ID (positional; omit for the fleet overview).
+    /// Agent ID or role (positional; omit for the fleet overview).
     pub id: Option<AgentId>,
     /// Render timestamps as relative distances (8m ago) instead of absolute UTC.
     #[arg(long)]
@@ -281,7 +281,7 @@ pub struct ApprovalListArgs {
     /// Page size. Clamped to [1, 20]; defaults to 5.
     #[arg(long)]
     pub limit: Option<u64>,
-    /// Filter by owning agent ID.
+    /// Filter by owning agent ID or role.
     #[arg(long)]
     pub requested_by: Option<String>,
     /// Show all statuses (default: committed only).
@@ -327,7 +327,7 @@ pub enum PolicyCommand {
 
 #[derive(Args)]
 pub struct ExecSetArgs {
-    /// Agent ID.
+    /// Agent ID or role.
     pub id: AgentId,
     /// Command name (e.g. cargo, sudo).
     pub command: String,

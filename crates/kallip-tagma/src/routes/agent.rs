@@ -88,6 +88,7 @@ pub async fn create_agent(
             "subagent requires a non-empty 'role'",
         ));
     }
+
     // Reject any workspace that overlaps the tagma data tree BEFORE reserving
     // the subagent slot, so a rejected workspace leaves no dangling slot.
     // (`validate_subagent_request` already confines a subagent's workspace within
@@ -108,6 +109,21 @@ pub async fn create_agent(
     // applies to every agent, so only the per-agent exec-policy is resolved here.
     let exec_policy = {
         let mut registry = state.registry.write().await;
+        // Roles are the readable addressing alias across the registry, so a
+        // duplicate would make role addressing ambiguous; reject before the
+        // slot is reserved, naming the holder. Inside the same write lock as
+        // the reservation: a separate read-lock pass could race a concurrent
+        // same-role spawn through the gap between the two locks.
+        if let Some(holder) = registry
+            .iter()
+            .find(|(_, e)| e.identity().config.role == config.role)
+            .map(|(id, _)| id.clone())
+        {
+            return Err(ApiError::conflict(format!(
+                "role '{}' is already held by agent {holder}",
+                config.role
+            )));
+        }
         let (permissions, exec, permission_class) = validate_subagent_request(
             &registry,
             auth.identity(),
@@ -288,6 +304,19 @@ pub async fn update_metadata(
 
     let mut registry = state.registry.write().await;
     registry.require_direct_supervisor(auth.identity(), &id)?;
+    // A rename must not collide with another agent's role (addressing stays
+    // unambiguous); scanned under the same write-lock as the update, excluding
+    // the renaming agent itself.
+    if let Some(new_role) = &body.role
+        && let Some(holder) = registry
+            .iter()
+            .find(|(other, e)| *other != &id && e.identity().config.role == *new_role)
+            .map(|(other, _)| other.clone())
+    {
+        return Err(ApiError::conflict(format!(
+            "role '{new_role}' is already held by agent {holder}"
+        )));
+    }
     let entry = registry
         .get_mut(&id)
         .ok_or_else(|| ApiError::not_found("agent not found"))?;

@@ -132,7 +132,8 @@ pub struct CreateAgentRequest {
     /// Short display label for the agent ("researcher"). Subagent spawns are the
     /// only HTTP create path (`created_by = Some` is required; the tagma's root
     /// is created at startup, not over HTTP) and require a non-empty role.
-    /// Never a unique address — `AgentId` is canonical. Empty means unset.
+    /// Registry-unique: it doubles as the readable addressing alias
+    /// (`AgentId` stays the canonical, stable identity). Empty means unset.
     #[serde(default)]
     pub role: String,
     /// Longer prose: what this agent is for ("gathers sources for the plan").
@@ -193,7 +194,8 @@ pub struct AgentSummary {
     pub workspace_root: String,
     pub state: AgentState,
     pub created_by: Option<AgentId>,
-    /// Short display label ("researcher"). Empty when unset.
+    /// Short display label ("researcher"), registry-unique — it doubles as
+    /// the readable addressing alias in CLI commands. Empty when unset.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub role: String,
     /// Longer prose ("gathers sources for the plan"). Empty when unset.

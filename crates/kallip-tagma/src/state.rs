@@ -22,8 +22,11 @@ use tokio::sync::{Mutex, Notify, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-/// Write the state byte and its transition timestamp as a pair, so a summary
-/// never observes a fresh state with a stale `state_since`.
+/// Write the state byte and its transition timestamp together. The two
+/// Relaxed stores are unordered against a concurrent summary read, so a
+/// summary can momentarily pair the new state with the previous timestamp;
+/// `state_since` feeds display and sorting only, so the transient mislabel
+/// is harmless.
 pub fn transition_state(state: &AtomicU8, state_since: &AtomicU64, new_state: u8) {
     state.store(new_state, Ordering::Relaxed);
     state_since.store(kallip_common::timefmt::now_epoch(), Ordering::Relaxed);

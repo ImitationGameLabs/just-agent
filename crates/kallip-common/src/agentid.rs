@@ -9,3 +9,24 @@ crate::id_type! {
     /// validation. Use [`AgentId::random()`] to generate a new one.
     AgentId
 }
+
+/// Whether `s` parses as a UUID — the lexical test that separates direct-id
+/// addressing from role-name resolution in the CLI. `AgentId::from_str` accepts
+/// any string, so callers that accept `<ID>` arguments branch on this first.
+pub fn is_uuid_format(s: &str) -> bool {
+    uuid::Uuid::parse_str(s).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn is_uuid_format_accepts_uuids_only() {
+        assert!(super::is_uuid_format(
+            "6d42c8c5-2e9c-4896-af0e-e714ec3e3560"
+        ));
+        assert!(!super::is_uuid_format("lead-dev"));
+        assert!(!super::is_uuid_format("reviewer 2"));
+        // Prefixes of a UUID are roles as far as addressing is concerned.
+        assert!(!super::is_uuid_format("6d42c8c5"));
+    }
+}

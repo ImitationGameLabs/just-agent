@@ -85,6 +85,40 @@ impl TagmaClient {
         Ok(resp.agents)
     }
 
+    /// Resolve a CLI `<ID>` argument to an agent id. A UUID-shaped input is
+    /// used verbatim; anything else is matched as an exact, case-sensitive
+    /// role across the whole registry (unique by spawn-time discipline). No
+    /// match lists the available roles; multiple holders (defensive — the
+    /// tagma rejects duplicates) lists them. Resolution anchors the returned
+    /// id, so a later rename cannot divert an in-flight command.
+    pub async fn resolve_agent_ref(&self, input: &str) -> Result<AgentId> {
+        if kallip_common::agentid::is_uuid_format(input) {
+            return Ok(AgentId::from(input.to_string()));
+        }
+        let agents = self.list_agents(None).await?;
+        let holders: Vec<&AgentSummary> = agents.iter().filter(|a| a.role == input).collect();
+        match holders.as_slice() {
+            [only] => Ok(only.id.clone()),
+            [] => anyhow::bail!(
+                "no agent with role '{input}'; known roles: {}",
+                agents
+                    .iter()
+                    .map(|a| a.role.as_str())
+                    .filter(|r| !r.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            many => anyhow::bail!(
+                "role '{input}' is held by {} agents; use a uuid: {}",
+                many.len(),
+                many.iter()
+                    .map(|a| a.id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+
     /// Update an agent's `role` and/or `description`. Caller must be the agent's
     /// direct supervisor (or operator). `None` fields are left unchanged.
     pub async fn update_agent_metadata(
@@ -187,5 +221,106 @@ impl TagmaClient {
             )
             .await?;
         JsonEventStream::from_response(response).context("failed to parse SSE stream")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn client_for(server: &MockServer) -> TagmaClient {
+        TagmaClient::builder(&server.uri()).build().unwrap()
+    }
+
+    async fn mount_agents(server: &MockServer, agents: serde_json::Value) {
+        Mock::given(method("GET"))
+            .and(path("/agents"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(agents))
+            .mount(server)
+            .await;
+    }
+
+    fn summary(id: &str, role: Option<&str>) -> serde_json::Value {
+        let mut v = serde_json::json!({
+            "id": id,
+            "workspace_root": "/tmp/ws",
+            "state": "idle",
+            "created_by": null,
+        });
+        if let Some(role) = role {
+            v["role"] = serde_json::json!(role);
+        }
+        v
+    }
+
+    fn uuid(n: u16) -> String {
+        format!("0b6c95a4-0000-4000-8000-{n:012x}")
+    }
+
+    #[tokio::test]
+    async fn resolve_agent_ref_passes_uuid_verbatim_without_listing() {
+        let server = MockServer::start().await;
+        // No /agents mock is mounted: the uuid path must return before any
+        // request, so a listing attempt would fail on the empty mock server.
+        let client = client_for(&server);
+        let id = client.resolve_agent_ref(&uuid(1)).await.unwrap();
+        assert_eq!(id.to_string(), uuid(1));
+    }
+
+    #[tokio::test]
+    async fn resolve_agent_ref_matches_role_exactly() {
+        let server = MockServer::start().await;
+        mount_agents(
+            &server,
+            serde_json::json!({"agents": [
+                summary(&uuid(1), Some("lead-dev")),
+                summary(&uuid(2), Some("reviewer-quality")),
+            ]}),
+        )
+        .await;
+        let client = client_for(&server);
+        let id = client.resolve_agent_ref("reviewer-quality").await.unwrap();
+        assert_eq!(id.to_string(), uuid(2));
+    }
+
+    #[tokio::test]
+    async fn resolve_agent_ref_lists_known_roles_on_miss() {
+        let server = MockServer::start().await;
+        mount_agents(
+            &server,
+            serde_json::json!({"agents": [
+                summary(&uuid(1), Some("lead-dev")),
+                summary(&uuid(2), Some("reviewer-quality")),
+                summary(&uuid(3), None),
+            ]}),
+        )
+        .await;
+        let client = client_for(&server);
+        // Exact match is case-sensitive: the wrong case is a miss.
+        let err = client.resolve_agent_ref("Lead-Dev").await.unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no agent with role 'Lead-Dev'"), "{msg}");
+        assert!(msg.contains("lead-dev, reviewer-quality"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn resolve_agent_ref_lists_uuids_when_role_is_ambiguous() {
+        let server = MockServer::start().await;
+        mount_agents(
+            &server,
+            serde_json::json!({"agents": [
+                summary(&uuid(1), Some("scout")),
+                summary(&uuid(2), Some("scout")),
+            ]}),
+        )
+        .await;
+        let client = client_for(&server);
+        let err = client.resolve_agent_ref("scout").await.unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("held by 2 agents"), "{msg}");
+        assert!(msg.contains(&uuid(1)), "{msg}");
+        assert!(msg.contains(&uuid(2)), "{msg}");
     }
 }

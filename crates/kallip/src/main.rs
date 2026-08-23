@@ -60,14 +60,15 @@ async fn main() -> Result<()> {
     match command {
         Commands::Agent(cmd) => match cmd {
             AgentCommand::Message(args) => {
+                let id = client.resolve_agent_ref(args.id.as_ref()).await?;
                 // Echo prints only on success: a failed send must not look
                 // delivered.
                 let text = read_text_stdin()?;
-                let resp = client.post_message(&args.id, &text).await?;
+                let resp = client.post_message(&id, &text).await?;
                 println!(
                     "{}",
                     kallip_common::message::message_sent_line(
-                        args.id.as_ref(),
+                        id.as_ref(),
                         &text,
                         resp.queue_depth,
                         resp.warning.as_deref()
@@ -77,10 +78,11 @@ async fn main() -> Result<()> {
             AgentCommand::Status(args) => {
                 // Two scales: no argument renders the fleet overview;
                 // an argument keeps the per-agent deep view unchanged.
-                let Some(id) = args.id else {
+                let Some(ref_arg) = args.id else {
                     print_status_overview(&client).await?;
                     return Ok(());
                 };
+                let id = client.resolve_agent_ref(ref_arg.as_ref()).await?;
                 let status = client.agent_status(&id).await?;
                 let now = now_epoch();
                 // Four blank-line groups: a timezone-anchored clock first (readers
@@ -148,7 +150,8 @@ async fn main() -> Result<()> {
                 // The kick round runs asynchronously in the tagma;
                 // a clean return IS the deliverable (the agent will
                 // speak on its own stream when it wakes).
-                client.wake_agent(&args.id).await?;
+                let id = client.resolve_agent_ref(args.id.as_ref()).await?;
+                client.wake_agent(&id).await?;
             }
         },
         Commands::Dir(cmd) => match cmd {
@@ -221,24 +224,45 @@ async fn main() -> Result<()> {
                     print_agent_list(&agents, "No direct subagents.");
                 }
                 SubagentCommand::Remove(args) => {
-                    annotate_remove_error(client.remove_agent(&args.id).await, &args.id)?;
-                    println!("Agent {} archived.", args.id);
+                    let id = client.resolve_agent_ref(args.id.as_ref()).await?;
+                    annotate_remove_error(client.remove_agent(&id).await, &id)?;
+                    println!("Agent {id} archived.");
                 }
                 SubagentCommand::Interrupt(args) => {
-                    client.interrupt_agent(&args.id).await?;
-                    println!("Agent {} interrupted.", args.id);
+                    let id = client.resolve_agent_ref(args.id.as_ref()).await?;
+                    client.interrupt_agent(&id).await?;
+                    println!("Agent {id} interrupted.");
                 }
                 SubagentCommand::Metadata(args) => {
+                    let id = client.resolve_agent_ref(args.id.as_ref()).await?;
+                    // A rename re-points the addressing alias; capturing the
+                    // old role first lets the notice below name it.
+                    let old_role = client
+                        .list_agents(None)
+                        .await?
+                        .into_iter()
+                        .find(|a| a.id == id)
+                        .map(|a| a.role);
                     let updated = client
                         .update_agent_metadata(
-                            &args.id,
+                            &id,
                             kallip_common::protocol::UpdateAgentMetadataRequest {
-                                role: args.role,
+                                role: args.role.clone(),
                                 description: args.description,
                             },
                         )
                         .await?;
                     print_agent_summary(&updated);
+                    if let (Some(old), Some(new)) = (old_role.as_deref(), args.role.as_deref())
+                        && old != new
+                    {
+                        eprintln!("warning: uuid unchanged; '{new}' is now the addressing alias");
+                        if !old.is_empty() {
+                            eprintln!(
+                                "tips: notify agents or scripts that address '{old}' — they will now get 'role not found'"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -283,11 +307,15 @@ async fn main() -> Result<()> {
                     args.status.clone().or(Some("committed".into()))
                 };
                 let order = if args.reverse { "asc" } else { "desc" };
+                let requested_by = match &args.requested_by {
+                    Some(r) => Some(client.resolve_agent_ref(r).await?),
+                    None => None,
+                };
                 let resp = client
                     .list_approvals(&kallip_client::ListApprovalsParams {
                         offset: args.offset,
                         limit: args.limit,
-                        requested_by: args.requested_by.clone().map(AgentId::from),
+                        requested_by,
                         status,
                         order: Some(order.to_owned()),
                     })
@@ -319,7 +347,8 @@ async fn main() -> Result<()> {
         },
         Commands::Policy(cmd) => match cmd {
             PolicyCommand::Show(args) => {
-                let perms = client.agent_permissions(&args.id).await?;
+                let id = client.resolve_agent_ref(args.id.as_ref()).await?;
+                let perms = client.agent_permissions(&id).await?;
                 println!("max_depth: {}", perms.max_depth);
                 println!("workspace_root: {}", perms.workspace_root);
                 if let Some(sup) = &perms.created_by {
@@ -329,7 +358,8 @@ async fn main() -> Result<()> {
                 println!("preset: {}", perms.preset);
             }
             PolicyCommand::ExecGet(args) => {
-                let policy = client.get_exec_policy(&args.id).await?;
+                let id = client.resolve_agent_ref(args.id.as_ref()).await?;
+                let policy = client.get_exec_policy(&id).await?;
                 if policy.overrides.is_empty() {
                     println!("(no per-command overrides; static catalog applies)");
                 } else {
@@ -352,11 +382,12 @@ async fn main() -> Result<()> {
                     Some(reason) => ExecOverride::new(decision).with_reason(reason),
                     None => ExecOverride::new(decision),
                 };
-                let mut policy = client.get_exec_policy(&args.id).await?;
+                let id = client.resolve_agent_ref(args.id.as_ref()).await?;
+                let mut policy = client.get_exec_policy(&id).await?;
                 policy
                     .overrides
                     .insert(args.command.to_ascii_lowercase(), entry);
-                client.update_exec_policy(&args.id, &policy).await?;
+                client.update_exec_policy(&id, &policy).await?;
                 println!("Updated {} = {}.", args.command, decision);
             }
         },
@@ -399,7 +430,7 @@ async fn main() -> Result<()> {
         },
         Commands::Inbox(cmd) => match cmd {
             InboxCommand::List(args) => {
-                let id = resolve_id(args.id)?;
+                let id = resolve_id_ref(&client, args.id).await?;
                 let resp = client
                     .inbox_list(&id, args.status.as_deref(), args.limit)
                     .await?;
@@ -417,23 +448,23 @@ async fn main() -> Result<()> {
                 }
             }
             InboxCommand::Read(args) => {
-                let id = resolve_id(args.id)?;
+                let id = resolve_id_ref(&client, args.id).await?;
                 let e = client.inbox_read(&id, args.msg_id).await?;
                 print_inbox_entry(&e, now_epoch(), false);
             }
             InboxCommand::Summary(args) => {
-                let id = resolve_id(args.id)?;
+                let id = resolve_id_ref(&client, args.id).await?;
                 let s = client.inbox_summary(&id).await?;
                 println!("total: {}", s.total);
                 println!("unread: {}", s.unread);
             }
             InboxCommand::Done(args) => {
-                let id = resolve_id(args.id)?;
+                let id = resolve_id_ref(&client, args.id).await?;
                 client.inbox_mark_done(&id, args.msg_id).await?;
                 println!("Marked done.");
             }
             InboxCommand::Clear(args) => {
-                let id = resolve_id(args.id)?;
+                let id = resolve_id_ref(&client, args.id).await?;
                 let cleared = client.inbox_clear(&id, args.all).await?;
                 println!("Cleared {cleared} message(s).");
             }
@@ -451,6 +482,12 @@ fn resolve_id(id: Option<AgentId>) -> Result<AgentId, anyhow::Error> {
     })
 }
 
+/// `--id`-style target: the env default (a uuid) passes through; an explicit
+/// value may be a role and goes through ref resolution like any <ID>.
+async fn resolve_id_ref(client: &TagmaClient, id: Option<AgentId>) -> Result<AgentId> {
+    let id = resolve_id(id)?;
+    client.resolve_agent_ref(id.as_ref()).await
+}
 fn now_epoch() -> u64 {
     timefmt::now_epoch()
 }
@@ -502,6 +539,9 @@ fn state_rank(s: kallip_common::protocol::AgentState) -> u8 {
 /// parenthesised form so a blocked agent reads at a glance), the full id
 /// (still the addressing anchor), workspace tail and a truncated description.
 fn fleet_row(a: &kallip_common::protocol::AgentSummary, now: u64) -> String {
+    // Description cap for the fleet row; truncation and the ellipsis check
+    // must agree, so it is a named constant rather than two bare literals.
+    const DESC_MAX: usize = 40;
     let since = a
         .state_since
         .map(|t| timefmt::format_relative(now, t))
@@ -518,8 +558,8 @@ fn fleet_row(a: &kallip_common::protocol::AgentSummary, now: u64) -> String {
         .unwrap_or(&a.workspace_root);
     let mut line = format!("{}  {}  {}  ws={ws}", agent_label(a), state, a.id);
     if !a.description.is_empty() {
-        let desc: String = a.description.chars().take(40).collect();
-        let ellipsis = if a.description.chars().count() > 40 {
+        let desc: String = a.description.chars().take(DESC_MAX).collect();
+        let ellipsis = if a.description.chars().count() > DESC_MAX {
             "…"
         } else {
             ""

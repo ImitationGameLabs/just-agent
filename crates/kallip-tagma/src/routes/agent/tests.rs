@@ -991,3 +991,95 @@ async fn update_duty_on_notifies_agent() {
     // Message is still in the inbox (pull happens in the agent task loop).
     assert_eq!(state.inboxes.get().unwrap().len_for(&agent).await, 1);
 }
+
+/// Register a live agent with the given role; returns its id.
+async fn seed_role_agent(state: &crate::state::SharedState, role: &str) -> AgentId {
+    let id = AgentId::random();
+    let (mut entry, _rx) = make_entry_with_rx(None, format!("tok-{id}"));
+    entry.identity.config.role = role.to_string();
+    state
+        .registry
+        .write()
+        .await
+        .register(id.clone(), RegistryEntry::Live(entry));
+    id
+}
+
+#[tokio::test]
+async fn create_agent_rejects_duplicate_role() {
+    let state = make_state();
+    let holder = seed_role_agent(&state, "scout").await;
+    let sup = AgentId::random();
+
+    let resp = super::create_agent(
+        State(state.clone()),
+        AuthIdentity::test_new(Identity::Agent { id: sup.clone() }),
+        axum::Json(kallip_common::protocol::CreateAgentRequest {
+            workspace_root: "/tmp".into(),
+            skills: vec![],
+            prompt: None,
+            created_by: Some(sup),
+            role: "scout".into(),
+            description: String::new(),
+            max_tool_rounds: None,
+            permission_class: None,
+            delegation_mode: None,
+        }),
+    )
+    .await;
+    let err = match resp {
+        Err(e) => e,
+        Ok(_) => panic!("duplicate role accepted"),
+    };
+    assert_eq!(err.status, 409, "duplicate role must be a conflict");
+    assert!(
+        err.message.contains(&holder.to_string()),
+        "names the holder"
+    );
+}
+
+/// A rename that would collide with another agent's role is rejected before
+/// anything is written; a unique rename goes through.
+#[tokio::test]
+async fn update_metadata_enforces_role_uniqueness() {
+    let state = make_state();
+    let parent = seed_role_agent(&state, "lead").await;
+    let _other = seed_role_agent(&state, "scout").await;
+
+    // Child with an on-disk dir carrying a minimal meta.json.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("meta.json"),
+        r#"{"workspace_root":"/tmp/whatever"}"#,
+    )
+    .unwrap();
+    let child = AgentId::random();
+    let (mut entry, _rx) = make_entry_with_rx(Some(parent.clone()), format!("tok-{child}"));
+    entry.identity.config.role = "junior".into();
+    entry.identity.agent_dir = Some(dir.path().to_path_buf());
+    state
+        .registry
+        .write()
+        .await
+        .register(child.clone(), RegistryEntry::Live(entry));
+
+    let req = |role: &str| {
+        super::update_metadata(
+            State(state.clone()),
+            AuthIdentity::test_new(Identity::Agent { id: parent.clone() }),
+            Path(child.clone()),
+            axum::Json(kallip_common::protocol::UpdateAgentMetadataRequest {
+                role: Some(role.to_string()),
+                description: None,
+            }),
+        )
+    };
+
+    let err = req("scout").await.unwrap_err();
+    assert_eq!(err.status, 409, "colliding rename must be a conflict");
+
+    let summary = req("junior-2").await.unwrap();
+    assert_eq!(summary.0.role, "junior-2");
+    let meta = std::fs::read_to_string(dir.path().join("meta.json")).unwrap();
+    assert!(meta.contains("junior-2"), "disk is the source of truth");
+}
