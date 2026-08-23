@@ -8,12 +8,15 @@ import { assert, assertEquals } from "@std/assert";
 import {
   applySignal,
   applyTagmaReply,
+  historyEntryLine,
   cacheLineOf,
   type ConversationTranscript,
   EMPTY_TRANSCRIPT,
+  mergeHistoryLines,
   markLineSent,
   replaceLineId,
   withUserLine,
+  type ConversationLine,
 } from "./transcript.ts";
 import type {
   Participant,
@@ -376,3 +379,179 @@ Deno.test(
     );
   },
 );
+
+// --- mergeHistoryLines + historyEntryLine (lazy-window batch merge) ---
+
+const L = (
+  historyId: number,
+  role: ConversationLine["role"] = "assistant",
+): ConversationLine => ({
+  historyId,
+  role,
+  text: `m${historyId}`,
+  sender: undefined,
+});
+
+Deno.test("mergeHistoryLines inserts an older batch at the head", () => {
+  const state: ConversationTranscript = {
+    ...EMPTY_TRANSCRIPT,
+    lines: [L(10), L(20)],
+  };
+  const r = mergeHistoryLines(state, [L(1), L(2), L(3), L(4), L(5)]);
+  assertEquals(r.added, 5);
+  assertEquals(
+    r.transcript.lines.map((l) => l.historyId),
+    [1, 2, 3, 4, 5, 10, 20],
+  );
+});
+
+Deno.test("mergeHistoryLines skips ids already rendered", () => {
+  const state: ConversationTranscript = {
+    ...EMPTY_TRANSCRIPT,
+    lines: [L(10), L(20)],
+  };
+  const r = mergeHistoryLines(state, [L(5), L(10), L(15)]);
+  assertEquals(r.added, 2);
+  assertEquals(
+    r.transcript.lines.map((l) => l.historyId),
+    [5, 10, 15, 20],
+  );
+});
+
+Deno.test(
+  "mergeHistoryLines appends newer rows behind the optimistic tail",
+  () => {
+    const sending: ConversationLine = { ...L(-1, "user"), status: "sending" };
+    const state: ConversationTranscript = {
+      ...EMPTY_TRANSCRIPT,
+      lines: [L(10), L(20), sending],
+    };
+    const r = mergeHistoryLines(state, [L(30)]);
+    assertEquals(r.added, 1);
+    assertEquals(
+      r.transcript.lines.map((l) => l.historyId),
+      [10, 20, 30, -1],
+    );
+  },
+);
+
+Deno.test("mergeHistoryLines keeps optimistic tail last on head insert", () => {
+  const sending: ConversationLine = { ...L(-1, "user"), status: "sending" };
+  const state: ConversationTranscript = {
+    ...EMPTY_TRANSCRIPT,
+    lines: [L(10), sending],
+  };
+  const r = mergeHistoryLines(state, [L(3), L(7)]);
+  assertEquals(
+    r.transcript.lines.map((l) => l.historyId),
+    [3, 7, 10, -1],
+  );
+});
+
+Deno.test("mergeHistoryLines: empty batch is a no-op", () => {
+  const state: ConversationTranscript = { ...EMPTY_TRANSCRIPT, lines: [L(10)] };
+  const r = mergeHistoryLines(state, []);
+  assertEquals(r.added, 0);
+  assertEquals(r.transcript, state);
+});
+
+Deno.test("mergeHistoryLines merges into an empty transcript", () => {
+  const r = mergeHistoryLines(EMPTY_TRANSCRIPT, [L(1), L(2)]);
+  assertEquals(r.added, 2);
+  assertEquals(
+    r.transcript.lines.map((l) => l.historyId),
+    [1, 2],
+  );
+});
+
+Deno.test(
+  "mergeHistoryLines drops unstamped rows and unsorted batches still land ordered",
+  () => {
+    const state: ConversationTranscript = {
+      ...EMPTY_TRANSCRIPT,
+      lines: [L(10)],
+    };
+    const unstamped: ConversationLine = { ...L(0) };
+    const r = mergeHistoryLines(state, [L(12), unstamped, L(4)]);
+    assertEquals(r.added, 2);
+    assertEquals(
+      r.transcript.lines.map((l) => l.historyId),
+      [4, 10, 12],
+    );
+  },
+);
+
+Deno.test("historyEntryLine maps event rows to assistant lines", () => {
+  const line = historyEntryLine({
+    sender: agentP,
+    reply: {
+      kind: "event",
+      history_id: 7,
+      event: { type: "assistant_content", content: "  hi  " },
+      created_at: "2026-08-23T00:00:00Z",
+    },
+  });
+  assertEquals(line, {
+    historyId: 7,
+    role: "assistant",
+    text: "hi",
+    sender: agentS,
+    createdAt: "2026-08-23T00:00:00Z",
+  });
+});
+
+Deno.test("historyEntryLine maps user_message rows to user lines", () => {
+  const line = historyEntryLine({
+    sender: userP,
+    reply: {
+      kind: "user_message",
+      history_id: 8,
+      text: " hello ",
+      created_at: "2026-08-23T00:00:01Z",
+    },
+  });
+  assertEquals(line, {
+    historyId: 8,
+    role: "user",
+    text: "hello",
+    sender: userS,
+    createdAt: "2026-08-23T00:00:01Z",
+  });
+});
+
+Deno.test("historyEntryLine skips non-content and unstamped rows", () => {
+  assertEquals(
+    historyEntryLine({
+      sender: agentP,
+      reply: {
+        kind: "message_accepted",
+        req_id: 1,
+        queue_depth: 0,
+        history_id: 9,
+      },
+    }),
+    null,
+  );
+  assertEquals(
+    historyEntryLine({
+      sender: agentP,
+      reply: {
+        kind: "event",
+        history_id: 0,
+        event: { type: "assistant_content", content: "unstamped" },
+      },
+    }),
+    null,
+  );
+  assertEquals(
+    historyEntryLine({
+      sender: agentP,
+      reply: {
+        kind: "event",
+        history_id: 10,
+        event: { type: "assistant_content", content: "   " },
+      },
+    }),
+    null,
+  );
+});

@@ -124,6 +124,70 @@ export async function loadAll(conversationId: string): Promise<CachedLine[]> {
   }
 }
 
+/** Collect up to `k` rows scanning `range` NEWEST-first with a cursor, then
+ *  return them oldest-first. The composite keyPath orders rows by
+ *  historyId within the conversation, so a "prev" cursor walks ids
+ *  descending. Returns [] on any cache error — the same
+ *  degrade-to-refetch contract as loadAll. */
+async function tailScan(range: IDBKeyRange, k: number): Promise<CachedLine[]> {
+  try {
+    const rows = await db().then(
+      (d) =>
+        new Promise<CachedLine[]>((resolve, reject) => {
+          const out: CachedLine[] = [];
+          const req = d
+            .transaction(STORE, "readonly")
+            .objectStore(STORE)
+            .openCursor(range, "prev");
+          req.onsuccess = () => {
+            const c = req.result;
+            if (c && out.length < k) {
+              out.push(c.value as CachedLine);
+              c.continue();
+            } else {
+              resolve(out);
+            }
+          };
+          req.onerror = () =>
+            reject(req.error ?? new Error("idb cursor failed"));
+        }),
+    );
+    return rows.reverse();
+  } catch {
+    return [];
+  }
+}
+
+/** Load the most recent `k` cached lines for a conversation, oldest-first.
+ *  The lazy-window hydrate: enough to fill a screen without materializing
+ *  the whole cached history. */
+export function readTail(
+  conversationId: string,
+  k: number,
+): Promise<CachedLine[]> {
+  return tailScan(conversationRange(conversationId), k);
+}
+
+/** Load up to `k` cached lines strictly older than `beforeId`,
+ *  oldest-first. The scroll-to-top page source: everything already
+ *  loaded sits at ids >= beforeId, so the upper bound is exclusive
+ *  (matching the server read_before semantics). */
+export function readTailBefore(
+  conversationId: string,
+  beforeId: number,
+  k: number,
+): Promise<CachedLine[]> {
+  return tailScan(
+    IDBKeyRange.bound(
+      [conversationId, 1],
+      [conversationId, beforeId],
+      false,
+      true,
+    ),
+    k,
+  );
+}
+
 /** Put (insert or replace) one cached line. Swallow errors: a failed write
  * only means the next reopen re-pulls that row from the tagma. */
 export async function put(line: CachedLine): Promise<void> {

@@ -24,6 +24,7 @@
 
 import type {
   AuthoredEvent,
+  HistoryEntry,
   Participant,
   SignalEvent,
   TagmaReply,
@@ -185,6 +186,71 @@ function applyAuthored(
   createdAt?: string,
 ): ConversationTranscript {
   return line(state, lineId, "assistant", event.content, sender, createdAt);
+}
+
+/** Map one pulled history row to its transcript line, or null when the row
+ * carries no renderable content (acks/markers/batch-end) or no durable id
+ * (unstamped; the cache and the {#each} key both key on historyId). Mirrors
+ * applyTagmaReply's mapping: event ⇒ assistant, user_message ⇒ user —
+ * replayed rows must render identically to live ones. */
+export function historyEntryLine(entry: HistoryEntry): ConversationLine | null {
+  const { reply, sender } = entry;
+  const cs = sender ? toSender(sender) : undefined;
+  // TagmaReply is a discriminated union: history_id/created_at exist only on
+  // the content arms, so narrow by kind before reading them.
+  if (reply.kind === "event") {
+    const historyId = reply.history_id ?? 0;
+    if (historyId <= 0) return null;
+    const text = reply.event.content.trim();
+    if (text === "") return null;
+    return {
+      historyId,
+      role: "assistant",
+      text,
+      sender: cs,
+      createdAt: reply.created_at,
+    };
+  }
+  if (reply.kind === "user_message") {
+    const historyId = reply.history_id ?? 0;
+    if (historyId <= 0) return null;
+    const text = reply.text.trim();
+    if (text === "") return null;
+    return {
+      historyId,
+      role: "user",
+      text,
+      sender: cs,
+      createdAt: reply.created_at,
+    };
+  }
+  return null;
+}
+
+/** Merge one pulled history batch (oldest-first) into the transcript. One
+ * single lines rebuild per batch — the batch, not each row, is the
+ * granularity the live drain never offers. Rows whose id already sits in
+ * the window are dropped (idempotent against re-pulls and cache/server
+ * overlap); everything else is inserted in id order, before the durable
+ * ids but always behind the optimistic tail (synthetic negative ids must
+ * stay last so the sending pulse stays pinned to the bottom). */
+export function mergeHistoryLines(
+  state: ConversationTranscript,
+  rows: ConversationLine[],
+): { transcript: ConversationTranscript; added: number } {
+  if (rows.length === 0) return { transcript: state, added: 0 };
+  const durable = state.lines.filter((l) => l.historyId > 0);
+  const tail = state.lines.filter((l) => l.historyId <= 0);
+  const have = new Set(durable.map((l) => l.historyId));
+  const fresh = rows.filter((l) => l.historyId > 0 && !have.has(l.historyId));
+  if (fresh.length === 0) return { transcript: state, added: 0 };
+  const lines = [...durable, ...fresh].sort(
+    (a, b) => a.historyId - b.historyId,
+  );
+  return {
+    transcript: { ...state, lines: [...lines, ...tail] },
+    added: fresh.length,
+  };
 }
 
 /** The human-readable system line a signal produces, or `null` if it is

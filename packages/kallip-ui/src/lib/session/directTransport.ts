@@ -177,36 +177,20 @@ export class DirectTransport implements Transport {
       throw e;
     }
   }
-  /** Pull a cursor-driven history batch and feed it through the SAME `replyQueue`
-   *  live `authored` frames use (followed by a synthesized `history_batch_end`),
-   *  so the conversation's reply drain consumes live + batch frames in one
-   *  ordered stream — mirroring how `RelayChannel.history` routes its batch back
-   *  through `replies()`. Idempotent to call before `replies()` is iterated: the
-   *  mux drains the queue regardless of iteration order. */
-  async history(opts: {
+  /** Pull a cursor-driven history batch DIRECTLY (no queue interleave).
+   *
+   *  The lazy-window store merges pulled rows via mergeHistoryLines,
+   *  deliberately NOT through the reply queue: a queued batch racing the
+   *  live drain would let a live frame advance `maxRendered` first and
+   *  the gap rows would then be dropped as "replayed" (id <= cursor).
+   *  Rows arrive oldest-first with the server's `more` flag verbatim. */
+  async pullHistory(opts: {
     after?: number | null;
     before?: number | null;
     limit?: number;
-  }): Promise<void> {
+  }): Promise<{ rows: HistoryEntry[]; more: boolean }> {
     const resp = await this.client.externalHistory(this.agentId, opts);
-    // History rows are `{sender, reply}` entries — the same IncomingFrame shape
-    // live `authored` frames use, so the reply drain consumes live + batch in
-    // one ordered stream.
-    for (const row of resp.rows as HistoryEntry[]) {
-      this.replyQueue.push({ sender: row.sender, reply: row.reply });
-    }
-    // Synthesize the batch-end marker so the reducer's `history_batch_end` arm
-    // (and any future `live` gate reuse) sees the same terminator the relay
-    // path emits. The direct path does not use the `live` gate today; the
-    // marker carries no sender (the reducer ignores it for this kind).
-    this.replyQueue.push({
-      reply: {
-        kind: "history_batch_end",
-        req_id: 0,
-        count: resp.rows.length,
-        more: resp.more,
-      },
-    });
+    return { rows: resp.rows as HistoryEntry[], more: resp.more };
   }
 
   close(): void {

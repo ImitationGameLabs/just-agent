@@ -26,9 +26,15 @@ import { RelayTransport } from "./relayTransport.ts";
 import {
   ConversationBase,
   LocalConversation,
+  cachedLineToLine,
   RelayConversation,
+  WINDOW_PAGE,
 } from "./conversation.svelte.ts";
-import { clearConvCache, loadAll } from "@kallipai/kallip-lesche-client";
+import {
+  clearConvCache,
+  loadAll,
+  readTail,
+} from "@kallipai/kallip-lesche-client";
 import { configStore } from "../config/config.svelte.ts";
 import type { ConversationLine } from "../transcript.ts";
 
@@ -166,18 +172,11 @@ class ChannelsStore {
     const conv = new LocalConversation(this, transport, cacheConversationId);
     this.conversations.set("local", conv);
     try {
-      const cached = await loadAll(cacheConversationId);
+      const cached = await readTail(cacheConversationId, WINDOW_PAGE);
       if (cached.length > 0) {
-        const lines: ConversationLine[] = cached.map(
-          ({ historyId, role, text, sender, createdAt }) => ({
-            historyId,
-            role: role as ConversationLine["role"],
-            text,
-            sender,
-            createdAt,
-          }),
-        );
+        const lines: ConversationLine[] = cached.map(cachedLineToLine);
         conv.transcript = { lines, status: "idle" };
+        conv.minRendered = cached[0]!.historyId;
         conv.maxRendered = cached[cached.length - 1]!.historyId;
       }
     } catch {
@@ -192,6 +191,10 @@ class ChannelsStore {
       return;
     }
     void conv.run();
+    // Catch the gap between the hydrated high-water mark and the newest
+    // server row (a fresh device hydrates nothing and gets one recent
+    // batch here). Fire-and-forget: the merge is live-safe by design.
+    void conv.catchUp();
   }
 
   /** Tear down the local conversation (called on detach / before a re-attach /

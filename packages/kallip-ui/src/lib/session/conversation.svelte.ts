@@ -23,19 +23,48 @@ import {
   applyTagmaReply,
   cacheLineOf,
   EMPTY_TRANSCRIPT,
+  historyEntryLine,
   markLineSent,
   replaceLineId,
+  mergeHistoryLines,
   toSender,
   withUserLine,
 } from "../transcript.ts";
 import type {
   ConversationSender,
   ConversationTranscript,
+  ConversationLine,
 } from "../transcript.ts";
-import type { Participant, TagmaReply } from "@kallipai/kallip-lesche-client";
-import { put as cachePut } from "@kallipai/kallip-lesche-client";
+import type {
+  CachedLine,
+  HistoryEntry,
+  Participant,
+  TagmaReply,
+} from "@kallipai/kallip-lesche-client";
+import {
+  put as cachePut,
+  readTailBefore,
+} from "@kallipai/kallip-lesche-client";
 import type { Transport } from "./transport.ts";
+import { DirectTransport } from "./directTransport.ts";
 
+/** The lazy-window page size: how many lines a hydrate, a catch-up batch,
+ *  or a scroll-up page brings in at once. Mirrors the server's
+ *  /external/history clamp (50) so a full page is one request. */
+export const WINDOW_PAGE = 50;
+
+/** Map a cached row back to its transcript line (the hydrate + cache-page
+ *  paths; the cache stores the UI's own role union verbatim, cast back
+ *  exactly like loadAll's consumers do). */
+export function cachedLineToLine(c: CachedLine): ConversationLine {
+  return {
+    historyId: c.historyId,
+    role: c.role as ConversationLine["role"],
+    text: c.text,
+    sender: c.sender,
+    createdAt: c.createdAt,
+  };
+}
 /** Transport-status surface: the sidebar dot + the chat-page disabled gate. */
 export type ConversationStatus = "opening" | "open" | "offline" | "error";
 
@@ -100,6 +129,19 @@ export abstract class ConversationBase {
   statusSnapshot = $state<
     import("../tagmata.svelte.ts").TagmaStatusSummary | undefined
   >(undefined);
+
+  /** The oldest durable id in the loaded window (the scroll-up cursor).
+   *  `0` = nothing loaded. Together with `maxRendered` it brackets what
+   *  the transcript currently holds; rows outside the bracket are fetched
+   *  on demand (catch-up above, scroll-paging below), never up front. */
+  minRendered = $state(0);
+  /** True while a scroll-up page is in flight (single-flight guard + the
+   *  top sentinel's busy state). */
+  loadingOlder = $state(false);
+  /** False once an older page came back empty — the sentinel stops
+   *  arming. Stays true while unknown (conservative: an extra empty
+   *  pull is cheap, a missed page is not). */
+  hasMoreOlder = $state(true);
 
   constructor(
     readonly conversationId: string,
@@ -273,6 +315,51 @@ export abstract class ConversationBase {
   }
 
   /** True iff this conversation is still the store's live entry for its id. */
+  /** Fold one page of already-renderable lines into the window in a single
+   *  transcript rebuild (the batch — not the row — is the update unit, so a
+   *  50-row page costs one O(window) pass, not 50). Pure w.r.t. the
+   *  transcript; both window cursors recompute from the merged lines.
+   *  Returns how many rows were newly added (0 = the page was fully
+   *  redundant — the idempotency signal loadOlder uses to stop paging). */
+  protected mergeWindowLines(rows: ConversationLine[]): number {
+    const { transcript, added } = mergeHistoryLines(this.transcript, rows);
+    if (added === 0) return 0;
+    this.transcript = transcript;
+    let min = Infinity;
+    let max = 0;
+    for (const l of transcript.lines) {
+      if (l.historyId > 0) {
+        if (l.historyId < min) min = l.historyId;
+        if (l.historyId > max) max = l.historyId;
+      }
+    }
+    if (min !== Infinity) this.minRendered = min;
+    if (max > this.maxRendered) this.maxRendered = max;
+    return added;
+  }
+
+  /** Ingest one pulled history batch: persist every row to the cache first
+   *  (the put is historyId-keyed, so re-pulls are idempotent), then fold
+   *  the rows into the window. Gap catch-up and scroll paging both land
+   *  here — the pulled path must cache what it renders, because unlike the
+   *  live drain it bypasses applyReplyCore's cachePut. */
+  protected applyPulledRows(rows: HistoryEntry[]): number {
+    const lines = rows
+      .map(historyEntryLine)
+      .filter((l): l is ConversationLine => l !== null);
+    for (const l of lines) {
+      void cachePut({
+        conversationId: this.cacheConversationId,
+        historyId: l.historyId,
+        role: l.role,
+        text: l.text,
+        sender: l.sender,
+        createdAt: l.createdAt,
+      });
+    }
+    return this.mergeWindowLines(lines);
+  }
+
   protected isLive(): boolean {
     return this.store.get(this.conversationId) === this;
   }
@@ -451,5 +538,74 @@ export class LocalConversation extends ConversationBase {
       transport.localSender,
     );
     this.status = "open";
+  }
+
+  /** The direct transport when still attached (null once the drain died). */
+  private get direct(): DirectTransport | null {
+    return this.transport instanceof DirectTransport ? this.transport : null;
+  }
+
+  /** Backfill from the high-water mark to the newest server row: pages
+   *  pullHistory({after: maxRendered}) until the batch stops advancing.
+   *  On an empty window (a fresh device with no cache) one recent batch
+   *  replaces the gap loop. Live-safe: applyPulledRows merges regardless
+   *  of the order live frames land in. Fire-and-forget from attachLocal —
+   *  the SSE drain runs concurrently and the UI is interactive meanwhile. */
+  async catchUp(k = WINDOW_PAGE): Promise<void> {
+    try {
+      const t = this.direct;
+      if (!t) return;
+      if (this.maxRendered > 0) {
+        for (;;) {
+          const { rows, more } = await t.pullHistory({
+            after: this.maxRendered,
+            limit: k,
+          });
+          if (rows.length === 0) break;
+          const before = this.maxRendered;
+          this.applyPulledRows(rows);
+          if (this.maxRendered <= before || !more) break;
+        }
+      } else {
+        const { rows } = await t.pullHistory({ limit: k });
+        this.applyPulledRows(rows);
+      }
+    } catch {
+      // Server unreachable: the drain surfaces transport status; the window
+      // stays on whatever the cache hydrated and live frames keep arriving.
+    }
+  }
+
+  /** Fetch one page older than the window head. Cache-first: a full cache
+   *  page never touches the tagma (the offline degrade path — the cache
+   *  holds everything ever rendered); a short cache page falls through to
+   *  the server for the remainder. A zero-add server page disarms the
+   *  sentinel (the oldest reachable row is already in the window); errors
+   *  reset quietly and leave the sentinel armed for the next scroll. */
+  async loadOlder(k = WINDOW_PAGE): Promise<void> {
+    if (this.loadingOlder || !this.hasMoreOlder) return;
+    this.loadingOlder = true;
+    try {
+      const head = this.minRendered;
+      if (head > 0) {
+        const cached = await readTailBefore(this.cacheConversationId, head, k);
+        if (cached.length > 0) {
+          this.mergeWindowLines(cached.map(cachedLineToLine));
+        }
+        if (cached.length >= k) return;
+      }
+      const t = this.direct;
+      if (!t) return;
+      const { rows, more } = await t.pullHistory({
+        before: head > 0 ? head : null,
+        limit: k,
+      });
+      const added = this.applyPulledRows(rows);
+      if (!more || added === 0) this.hasMoreOlder = false;
+    } catch {
+      // Offline / dead transport: retry on the next scroll-to-top.
+    } finally {
+      this.loadingOlder = false;
+    }
   }
 }
