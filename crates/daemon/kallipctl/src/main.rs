@@ -111,12 +111,8 @@ fn print(response: Response) -> Result<()> {
                         return Ok(());
                     }
                     println!(
-                        "{:<20} {:<20} {:<7} {:<6} {}",
-                        "SLUG",
-                        "WORKSPACE",
-                        "RUNNING",
-                        "OWNER",
-                        concat!("INSTANCE-", "ID")
+                        "{:<20} {:<20} {:<7} {:<6} INSTANCE-ID",
+                        "SLUG", "WORKSPACE", "RUNNING", "OWNER",
                     );
                     for i in instances {
                         println!(

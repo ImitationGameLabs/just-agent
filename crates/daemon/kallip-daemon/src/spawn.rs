@@ -166,10 +166,9 @@ pub fn spawn(
         if let (Some(pid), Some(port)) = (
             read_num(&instance_dir, "pid"),
             read_num(&instance_dir, "port"),
-        ) {
-            if scan::pid_is_tagma(pid) {
-                return Ok((pid, port));
-            }
+        ) && scan::pid_is_tagma(pid)
+        {
+            return Ok((pid, port));
         }
         if Instant::now() >= deadline {
             // Rollback: kill whatever the helper left (a failed exec leaves

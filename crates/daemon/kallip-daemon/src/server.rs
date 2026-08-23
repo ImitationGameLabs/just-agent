@@ -50,7 +50,7 @@ impl Daemon {
 
     async fn handle(&self, stream: tokio::net::UnixStream, peer_uid: u32) -> anyhow::Result<()> {
         let (reader, mut writer) = stream.into_split();
-        let mut reader = BufReader::new(reader);
+        let reader = BufReader::new(reader);
         // Cap the request line at the protocol limit: `take` bounds the
         // read, so a runaway client streaming bytes cannot grow memory
         // unbounded — an over-long line reads back truncated (no newline)

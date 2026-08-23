@@ -17,8 +17,6 @@ pub struct ScannedInstance {
     pub workspace: Option<String>,
     /// The `pid` file content when present and parse-able.
     pub pid: Option<u32>,
-    /// The `port` file content when present and parse-able.
-    pub port: Option<u16>,
     /// The `owner` file content when present and parse-able (the
     /// spawn-time uid of the requesting peer).
     pub owner: Option<u32>,
@@ -61,10 +59,25 @@ impl ScannedInstance {
     }
 }
 
-/// True when `pid` exists and `/proc/<pid>/comm` starts with `kallip-tagma`.
+/// A live /proc entry is not enough: a zombie keeps its entry (and its
+/// comm) until someone reaps it, and under a shell-PID1 init nobody
+/// does. The kernel's state field tells a corpse from a live process.
+pub fn pid_is_alive(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/status")) {
+        Ok(status) => !status
+            .lines()
+            .any(|l| l.starts_with("State:") && l.split_whitespace().nth(1) == Some("Z")),
+        Err(_) => false,
+    }
+}
+/// True when `pid` is alive (not a zombie) and `/proc/<pid>/comm` starts
+/// with `kallip-tagma`.
 /// The prefix match (not equality) tolerates a 15-char comm truncation of
 /// longer future names.
 pub fn pid_is_tagma(pid: u32) -> bool {
+    if !pid_is_alive(pid) {
+        return false;
+    }
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"));
     matches!(comm, Ok(c) if c.trim_start_matches("kallip-").starts_with("tagma"))
 }
@@ -89,7 +102,6 @@ pub fn scan_instances(data_root: &Path) -> Vec<ScannedInstance> {
             instance_id,
             workspace: read_trimmed(&dir.join("workspace")),
             pid: read_trimmed(&dir.join("pid")).and_then(|p| p.parse().ok()),
-            port: read_trimmed(&dir.join("port")).and_then(|p| p.parse().ok()),
             owner: read_trimmed(&dir.join("owner")).and_then(|o| o.parse().ok()),
         });
     }

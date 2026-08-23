@@ -36,6 +36,11 @@ fn main() -> Result<()> {
     // probe by connecting: a live listener refuses startup ("already
     // running"), a refused connection means the file is stale, unlink and
     // bind once more.
+    // Close the umask before anything is created: the socket is chmod'd
+    // 0600 only after it exists, and a group/other-connectable window
+    // in between is unacceptable for the system-install layout. Every
+    // file this daemon creates is private, so the mask stays for life.
+    unsafe { libc::umask(0o077) };
     std::fs::create_dir_all(&state_dir).context("create state dir")?;
     // Prove-liveness check runs on std sockets (blocking is fine for a
     // one-shot probe); the serving listener is bound by tokio directly.

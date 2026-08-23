@@ -86,7 +86,8 @@ fn send(pid: u32, signal: i32) -> Result<(), String> {
     }
 }
 
-/// A zombie counts as exited for our purposes (reaped or reparented).
+/// A zombie counts as exited for our purposes: its /proc entry lingers
+/// until reaped, so existence alone would over-report liveness.
 fn alive(pid: u32) -> bool {
-    Path::new(&format!("/proc/{pid}")).exists()
+    crate::scan::pid_is_alive(pid)
 }

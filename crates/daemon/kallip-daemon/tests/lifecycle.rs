@@ -4,6 +4,10 @@
 //! binaries — resolved like the tagma sandbox harness does (KALLIP_BIN_DIR
 //! → CARGO_BIN_EXE_* → deps-parent → PATH), so they run green both under
 //! `cargo test` and inside the dev container.
+//! A package-scoped
+//! `cargo build -p kallip-daemon` does NOT produce the sibling binaries:
+//! build the workspace first or the resolve chain falls through to PATH
+//! and these tests spuriously fail.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -51,7 +55,7 @@ fn start_daemon() -> DaemonProc {
     let state_dir = tempfile::tempdir().expect("state tempdir");
     let socket = state_dir.path().join("control.sock");
     let bin = resolve_bin("kallip-daemon");
-    let child = std::process::Command::new(&bin)
+    let mut child = std::process::Command::new(&bin)
         .env("KALLIP_DATA_DIR", data_dir.path())
         .env("KALLIP_STATE_DIR", state_dir.path())
         .stdout(std::process::Stdio::null())
@@ -64,12 +68,15 @@ fn start_daemon() -> DaemonProc {
             return DaemonProc {
                 socket,
                 child,
-                _data: state_dir.into_path(),
+                _data: state_dir.keep(),
                 data_dir,
             };
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Give-up path: do not leak the daemon process.
+    let _ = child.kill();
+    let _ = child.wait();
     panic!("daemon socket never appeared");
 }
 
