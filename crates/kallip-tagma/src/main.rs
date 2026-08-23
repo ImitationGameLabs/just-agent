@@ -273,11 +273,19 @@ async fn main() -> Result<()> {
     // projector's bus; owns no store of its own.
     init_direct(&state).await?;
 
-    // Optional online-mode relay: enroll + spawn the connector task. Degrades
-    // to local-only on any enrollment failure (logs error, leaves the relay
-    // unset; the lesche message route then routes through the projector).
+    // Optional online-mode relay: enroll + spawn the connector task. Runtime
+    // activation failures degrade to local-only (logs error, leaves the relay
+    // unset); a misconfigured enrollment entry aborts boot below instead.
     if let Some(agora_url) = args.relay_agora_url.clone() {
-        match activate_relay(&state, &args, agora_url, tagma_id).await {
+        // The entry decision (and its fail-fast errors) is made before the
+        // activation attempt: the local-only fallback in the match below
+        // is for runtime failures and would swallow a config error.
+        let entry = resolve_enroll_entry(
+            tagma_id.as_ref(),
+            args.relay_enrollment_code.as_deref(),
+            &credentials_dir()?,
+        )?;
+        match activate_relay(&state, &args, agora_url, entry).await {
             Ok(()) => {}
             Err(e) => {
                 tracing::error!("relay activation failed, running local-only: {e:#}");
@@ -389,36 +397,77 @@ async fn init_direct(state: &Arc<AppState>) -> Result<()> {
     Ok(())
 }
 
-/// Build and install the relay connector. `stored_tagma_id` is the id resolved
-/// at boot when credentials already existed; `None` means first run, in which
-/// case the enrollment code is required. The tagma id is reused as-is (not
-/// re-loaded). The relay forwards the projector's bus (it does not own a
-/// history store); GC runs unconditionally from `main`.
+/// Build and install the relay connector. `entry` is the boot-time decision
+/// from `resolve_enroll_entry` (reuse stored credentials, or first-run
+/// enrollment with a code). The relay forwards the projector's bus (it
+/// does not own a history store); GC runs unconditionally from `main`.
+
+/// How the relay connector enters the agora at boot.
+#[derive(Debug, PartialEq)]
+enum EnrollEntry {
+    /// Reuse the credentials persisted by a prior enrollment.
+    Stored,
+    /// No stored credentials: redeem `code` for a fresh enrollment.
+    Fresh { code: String },
+}
+
+/// Decide the boot-time enrollment entry: reuse stored credentials or run
+/// a first-run enrollment with a code. Two misconfigured states fail fast
+/// instead of degrading to local-only, because the degradation would hide
+/// a configuration error behind a confusing runtime failure later (a code
+/// silently ignored leaves a stale token pointed at a new agora, looping
+/// 401 reconnects forever):
+///
+/// - stored credentials + enrollment code: the code would be ignored (the
+///   stored branch never reads it), so name both exits;
+/// - neither credentials nor code: there is nothing to connect with.
+fn resolve_enroll_entry(
+    stored: Option<&kallip_agora_common::ids::TagmaId>,
+    code: Option<&str>,
+    credentials_dir: &std::path::Path,
+) -> Result<EnrollEntry> {
+    match (stored.is_some(), code) {
+        (true, Some(_)) => Err(anyhow::anyhow!(
+            "conflicting relay configuration: stored credentials exist in {} \
+             but KALLIP_TAGMA_RELAY_ENROLLMENT_CODE is also set, so the code \
+             would be ignored; either unset the code to reuse the stored \
+             identity, or delete the credentials directory to re-enroll",
+            credentials_dir.display()
+        )),
+        (true, None) => Ok(EnrollEntry::Stored),
+        (false, Some(code)) => Ok(EnrollEntry::Fresh {
+            code: code.to_owned(),
+        }),
+        (false, None) => Err(anyhow::anyhow!(
+            "incomplete relay configuration: KALLIP_TAGMA_RELAY_AGORA_URL is \
+             set but there are no stored credentials and no \
+             KALLIP_TAGMA_RELAY_ENROLLMENT_CODE; either set the code for a \
+             first-run enrollment, or unset the URL to run local-only"
+        )),
+    }
+}
 async fn activate_relay(
     state: &Arc<AppState>,
     args: &args::Args,
     agora_url: String,
-    stored_tagma_id: Option<kallip_agora_common::ids::TagmaId>,
+    entry: EnrollEntry,
 ) -> Result<()> {
     let credentials_dir = credentials_dir()?;
     let device = credentials::load_or_create_device(&credentials_dir)?;
 
-    // Use the id resolved at boot, or enroll on first run.
-    let (tagma_id, tagma_token) = match stored_tagma_id {
-        Some(id) => {
-            let token = credentials::load_tagma(&credentials_dir)
-                .map(|(_, t)| t)
-                .context("tagma id resolved at boot but credentials missing on relay activation")?;
+    // The entry decision (reuse stored credentials vs first-run enroll) was
+    // made by the caller via `resolve_enroll_entry`; this only executes it.
+    let (tagma_id, tagma_token) = match entry {
+        EnrollEntry::Stored => {
+            let (id, token) = credentials::load_tagma(&credentials_dir)
+                .context("stored credentials missing at relay activation (deleted after boot?)")?;
             info!(tagma = %id, "relay: loaded stored tagma credentials");
-            (id, token)
+            (kallip_agora_common::ids::TagmaId::from(id), token)
         }
-        None => {
-            let code = args.relay_enrollment_code.as_deref().context(
-                "no stored tagma token; KALLIP_TAGMA_RELAY_ENROLLMENT_CODE required for first run",
-            )?;
+        EnrollEntry::Fresh { code } => {
             let (tagma_id, token) = kallip_agora_client::AgoraClient::builder(&agora_url)
                 .build()?
-                .enroll(code, &device)
+                .enroll(&code, &device)
                 .await?;
             credentials::save_tagma(&credentials_dir, tagma_id.as_ref(), &token);
             info!(tagma = %tagma_id, "relay: enrolled with agora");
@@ -494,4 +543,71 @@ async fn shutdown_signal(token: CancellationToken) {
     }
     info!("received shutdown signal, initiating graceful shutdown");
     token.cancel();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stored_id() -> kallip_agora_common::ids::TagmaId {
+        kallip_agora_common::ids::TagmaId::from("tagma-test".to_string())
+    }
+
+    /// Stored credentials and no code: the stored identity is reused.
+    #[test]
+    fn stored_credentials_are_reused_without_a_code() {
+        let entry = resolve_enroll_entry(
+            Some(&stored_id()),
+            None,
+            std::path::Path::new("/tmp/credentials"),
+        )
+        .expect("stored entry resolves");
+        assert_eq!(entry, EnrollEntry::Stored);
+    }
+
+    /// No stored credentials and a code: first-run enrollment.
+    #[test]
+    fn fresh_code_enrolls_when_no_credentials_stored() {
+        let entry = resolve_enroll_entry(
+            None,
+            Some("sk-enroll-test"),
+            std::path::Path::new("/tmp/credentials"),
+        )
+        .expect("fresh entry resolves");
+        assert_eq!(
+            entry,
+            EnrollEntry::Fresh {
+                code: "sk-enroll-test".to_string()
+            }
+        );
+    }
+
+    /// Stored credentials + code: the conflict names the env var, the
+    /// credentials location, and both exits.
+    #[test]
+    fn stored_credentials_conflict_with_code_fails_fast() {
+        let err = resolve_enroll_entry(
+            Some(&stored_id()),
+            Some("sk-enroll-test"),
+            std::path::Path::new("/tmp/credentials"),
+        )
+        .expect_err("conflict must fail");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE"), "{msg}");
+        assert!(msg.contains("/tmp/credentials"), "{msg}");
+        assert!(msg.contains("unset"), "{msg}");
+        assert!(msg.contains("re-enroll"), "{msg}");
+    }
+
+    /// Neither credentials nor code: the message names the URL env var and
+    /// both exits, distinct from the conflict message.
+    #[test]
+    fn neither_credentials_nor_code_fails_fast() {
+        let err = resolve_enroll_entry(None, None, std::path::Path::new("/tmp/credentials"))
+            .expect_err("incomplete must fail");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("KALLIP_TAGMA_RELAY_AGORA_URL"), "{msg}");
+        assert!(msg.contains("first-run enrollment"), "{msg}");
+        assert!(msg.contains("local-only"), "{msg}");
+    }
 }
