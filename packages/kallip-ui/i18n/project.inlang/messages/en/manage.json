@@ -1,4 +1,5 @@
 {
   "$schema": "https://inlang.com/schema/message-format",
-  "manage_opening": "Opening management channel…"
+  "manage_opening": "Opening management channel…",
+  "manage_backend_failed": "Could not open the management channel."
 }

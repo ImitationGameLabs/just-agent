@@ -19,6 +19,7 @@ import {
 } from "@kallipai/kallip-lesche-client";
 import { participantIdForTagma } from "@kallipai/kallip-common";
 import { agoraSession, lescheClientOrFail } from "./agora.svelte.ts";
+import { rooms_public_failed } from "../../paraglide/messages.js";
 
 function messageOf(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -74,7 +75,8 @@ class RoomsStore {
       this.publicRooms = publicRes.value;
       this.publicRoomsError = null;
     } else {
-      this.publicRoomsError = messageOf(publicRes.reason);
+      console.error("[rooms] public list failed:", publicRes.reason);
+      this.publicRoomsError = rooms_public_failed();
     }
   }
 

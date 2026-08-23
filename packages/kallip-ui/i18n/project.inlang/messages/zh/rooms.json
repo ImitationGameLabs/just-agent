@@ -12,7 +12,7 @@
   "rooms_invite_meta": "来自 {invitedBy} · {date} 到期",
   "rooms_accept": "接受",
   "rooms_public_title": "公开群聊",
-  "rooms_public_failed": "无法加载公开群聊：{error}",
+  "rooms_public_failed": "无法加载公开群聊。",
   "rooms_join": "加入",
   "rooms_load_failed": "群聊加载失败。",
   "rooms_menu_settings": "设置",

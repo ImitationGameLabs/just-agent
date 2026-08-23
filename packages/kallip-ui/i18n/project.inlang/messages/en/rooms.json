@@ -12,7 +12,7 @@
   "rooms_invite_meta": "from {invitedBy} · expires {date}",
   "rooms_accept": "Accept",
   "rooms_public_title": "Public rooms",
-  "rooms_public_failed": "Could not load public rooms: {error}",
+  "rooms_public_failed": "Could not load public rooms.",
   "rooms_join": "Join",
   "rooms_load_failed": "Failed to load rooms.",
   "rooms_menu_settings": "Settings",

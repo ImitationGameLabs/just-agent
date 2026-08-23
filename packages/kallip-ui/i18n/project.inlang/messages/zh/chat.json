@@ -20,5 +20,6 @@
   "composer_send_aria": "发送",
   "composer_queued": "已排队：{count}",
   "composer_connect_link": "连接智能体编队",
-  "composer_connect_tail": "后即可发送。"
+  "composer_connect_tail": "后即可发送。",
+  "chat_send_failed": "无法发送消息。"
 }

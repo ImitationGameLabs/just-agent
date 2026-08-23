@@ -20,7 +20,10 @@
   import AgentsPage from "./AgentsPage.svelte";
   import ProfilesPage from "./ProfilesPage.svelte";
   import SchedulesPage from "./SchedulesPage.svelte";
-  import { manage_opening } from "../../paraglide/messages.js";
+  import {
+    manage_backend_failed,
+    manage_opening,
+  } from "../../paraglide/messages.js";
 
   let {
     tagmaId,
@@ -67,7 +70,8 @@
       backendReady = true;
       error = null;
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      console.error("[manage] backend wiring failed:", e);
+      error = manage_backend_failed();
       backendReady = false;
     }
   });

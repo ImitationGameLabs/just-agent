@@ -306,7 +306,7 @@ const PREFIXES = new Set([
   "manage_profiles",
   "manage_schedules",
 ]);
-const BARE_MANAGE_KEYS = new Set(["manage_opening"]);
+const BARE_MANAGE_KEYS = new Set(["manage_opening", "manage_backend_failed"]);
 
 Deno.test("catalog: key prefixes stay inside the closed vocabulary", () => {
   for (const key of Object.keys(en)) {

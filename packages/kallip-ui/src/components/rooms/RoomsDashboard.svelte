@@ -10,6 +10,7 @@
     RoomInviteView,
     RoomView,
   } from "@kallipai/kallip-lesche-client";
+  import { LescheApiError } from "@kallipai/kallip-lesche-client";
   import type { SectionPhase } from "../../lib/phase.ts";
   import RoomCard from "./RoomCard.svelte";
   import CreateRoomDialog, {
@@ -31,6 +32,7 @@
     room_label_fallback,
     rooms_join,
     rooms_load_failed,
+    rooms_couldnt_reach,
   } from "../../paraglide/messages.js";
 
   let {
@@ -84,8 +86,16 @@
       await onCreate(opts);
       createOpen = false;
     } catch (err) {
-      createError = err instanceof Error ? err.message : String(err);
+      createError = msgOf(err);
     }
+  }
+
+  /** Typed lesche failures keep their server copy (a 409 double-accept
+   * is actionable); transport failures are qualitative, details logged. */
+  function msgOf(e: unknown): string {
+    if (e instanceof LescheApiError) return e.message;
+    console.error("[rooms] create/accept failed:", e);
+    return rooms_couldnt_reach();
   }
 
   // Per-invite accept state: which invite is accepting (one at a time) + the
@@ -104,7 +114,7 @@
     } catch (err) {
       acceptErrors = {
         ...acceptErrors,
-        [inv.invite_id]: err instanceof Error ? err.message : String(err),
+        [inv.invite_id]: msgOf(err),
       };
     } finally {
       acceptingId = null;
@@ -219,7 +229,7 @@
           </h2>
           {#if publicRoomsError}
             <p class="text-xs text-error-500 dark:text-error-400">
-              {rooms_public_failed({ error: publicRoomsError })}
+              {publicRoomsError}
             </p>
           {:else}
             {#each joinablePublic as room (room.room_id)}

@@ -10,6 +10,7 @@
   import type { RetryErrorKind } from "../../lib/manage/retry.ts";
   import { classifyRetryError, relativeTime } from "../../lib/manage/retry.ts";
   import { managementBackend } from "../../lib/manage/client.ts";
+  import { KallipError } from "@kallipai/kallip-common";
   import { agentsStore } from "../../lib/manage/agents.svelte.ts";
   import { formatTokenCount } from "../../lib/tagmata.svelte.ts";
   import { navigate } from "../../lib/shell/port.ts";
@@ -26,6 +27,7 @@
     common_edit,
     common_remove,
     manage_agent_title,
+    manage_agent_status_failed,
     manage_agent_back,
     manage_agent_role,
     manage_agent_duty,
@@ -91,7 +93,11 @@
     try {
       status = await managementBackend().getAgentStatus(id);
     } catch (e) {
-      statusError = e instanceof Error ? e.message : String(e);
+      if (e instanceof KallipError) statusError = e.message;
+      else {
+        console.error("[agent status] fetch failed:", e);
+        statusError = manage_agent_status_failed();
+      }
     } finally {
       isLoading = false;
     }

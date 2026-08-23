@@ -51,6 +51,9 @@ import {
 } from "@kallipai/kallip-lesche-client";
 import type { Transport } from "./transport.ts";
 import { DirectTransport } from "./directTransport.ts";
+import { LescheApiError } from "@kallipai/kallip-lesche-client";
+import { KallipError } from "@kallipai/kallip-common";
+import { chat_send_failed } from "../../paraglide/messages.js";
 
 /** The lazy-window page size: how many lines a hydrate, a catch-up batch,
  *  or a scroll-up page brings in at once. Mirrors the server's
@@ -79,10 +82,6 @@ export type ConversationStatus = "opening" | "open" | "offline" | "error";
  *  module (avoids a cycle). */
 export interface ConversationStoreLike {
   get(id: string): ConversationBase | undefined;
-}
-
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }
 
 /** A synthetic error reply for a POST that failed before the tagma could ack,
@@ -304,6 +303,15 @@ export abstract class ConversationBase {
     try {
       await this.transport!.send(next.text);
     } catch (e) {
+      // Typed failures (direct KallipError / relay LescheApiError) keep
+      // their server copy; transport failures are qualitative.
+      let failureCopy: string;
+      if (e instanceof KallipError || e instanceof LescheApiError) {
+        failureCopy = e.message;
+      } else {
+        console.error("[chat] send failed:", e);
+        failureCopy = chat_send_failed();
+      }
       this.transcript = applyTagmaReply(
         {
           ...this.transcript,
@@ -311,7 +319,7 @@ export abstract class ConversationBase {
             (l) => l.historyId !== next.localId,
           ),
         },
-        syntheticErrorReply(messageOf(e)),
+        syntheticErrorReply(failureCopy),
         undefined,
         (this.syntheticSeq -= 1),
       );

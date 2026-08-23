@@ -29,7 +29,9 @@
     tagma_revoke,
     tagma_enrolled_at,
     tagma_rename_failed,
+    auth_couldnt_reach,
   } from "../../paraglide/messages.js";
+  import { AgoraApiError } from "@kallipai/kallip-agora-client";
 
   let {
     tagma,
@@ -63,6 +65,13 @@
   let revoking = $state(false);
   let revokeError = $state<string | null>(null);
 
+  /** Typed agora failures keep their server copy; transport failures are
+   * qualitative, details to the console. */
+  function msgOf(e: unknown): string {
+    if (e instanceof AgoraApiError) return e.message;
+    console.error("[tagma] rename/revoke failed:", e);
+    return auth_couldnt_reach();
+  }
   // Manage-rooms dialog (lazy: only opened on demand).
   let roomsOpen = $state(false);
 
@@ -74,7 +83,7 @@
       await onRevoke(tagma.tagmaId);
       confirmingRevoke = false;
     } catch (e) {
-      revokeError = e instanceof Error ? e.message : String(e);
+      revokeError = msgOf(e);
     } finally {
       revoking = false;
     }
@@ -101,7 +110,7 @@
       await onRename(tagma.tagmaId, trimmed);
       editing = false;
     } catch (e) {
-      renameError = e instanceof Error ? e.message : String(e);
+      renameError = msgOf(e);
       queueMicrotask(() => inputEl?.focus());
     } finally {
       saving = false;
