@@ -117,6 +117,7 @@ fn make_entry_inner(
             round_cancel: Arc::new(std::sync::Mutex::new(None)),
             notify: Arc::new(tokio::sync::Notify::new()),
             state: Arc::new(AtomicU8::new(AgentState::IDLE)),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             activity: Arc::new(std::sync::Mutex::new(String::new())),
             parked: Arc::new(std::sync::Mutex::new(None)),
             retrying: Arc::new(std::sync::Mutex::new(None)),
@@ -149,6 +150,7 @@ pub fn make_faulted_entry(created_by: Option<AgentId>, reason: &str) -> FaultedE
         },
         subagent_ids: vec![],
         reason: reason.to_string(),
+        at: 0,
     }
 }
 

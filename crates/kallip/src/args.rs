@@ -49,8 +49,18 @@ pub enum Commands {
     /// List, read, summarize, or clear this agent's message inbox.
     #[command(subcommand)]
     Inbox(InboxCommand),
+    /// Read-only team directory: who exists and in what state. Discovery
+    /// only — management actions (spawn/remove/metadata) live under `subagent`.
+    #[command(name = "agent", subcommand)]
+    Dir(AgentDirCommand),
 }
 
+/// The `kallip agent` command family: a read-only fleet directory.
+#[derive(Subcommand)]
+pub enum AgentDirCommand {
+    /// List every agent on this tagma: role, state, since, id, workspace.
+    List,
+}
 /// Ungrouped per-agent ops, flattened into the top-level command list — they
 /// never appear as an "agent" group in `--help`.
 #[derive(Subcommand)]
@@ -244,8 +254,8 @@ pub struct IdArgs {
 
 #[derive(Args)]
 pub struct StatusArgs {
-    /// Agent ID.
-    pub id: AgentId,
+    /// Agent ID (positional; omit for the fleet overview).
+    pub id: Option<AgentId>,
     /// Render timestamps as relative distances (8m ago) instead of absolute UTC.
     #[arg(long)]
     pub relative_time: bool,

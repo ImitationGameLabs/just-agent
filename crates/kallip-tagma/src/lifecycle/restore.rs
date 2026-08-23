@@ -388,6 +388,7 @@ fn faulted_from_meta(
         },
         subagent_ids: vec![],
         reason,
+        at: kallip_common::timefmt::now_epoch(),
     }
 }
 

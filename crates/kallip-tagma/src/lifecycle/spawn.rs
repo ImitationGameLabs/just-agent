@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU8;
+use std::sync::atomic::{AtomicU8, AtomicU64};
 
 use just_llm_client::types::chat::ChatMessage;
 use kallip_common::agentid::AgentId;
@@ -246,6 +246,7 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
         agent_tx,
     ));
     let state = Arc::new(AtomicU8::new(AgentState::IDLE));
+    let state_since = Arc::new(AtomicU64::new(kallip_common::timefmt::now_epoch()));
     let parked: Arc<std::sync::Mutex<Option<crate::state::ParkedSnapshot>>> =
         Arc::new(std::sync::Mutex::new(None));
     let retrying: Arc<std::sync::Mutex<Option<TransientRetryInfo>>> =
@@ -257,6 +258,7 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
         args.events_tx.clone(),
         args.shutdown_cancel.clone(),
         state.clone(),
+        state_since.clone(),
         activity.clone(),
         parked.clone(),
         retrying.clone(),
@@ -275,6 +277,7 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
             round_cancel,
             notify,
             state,
+            state_since,
             activity,
             auth_token_hash: args.auth_token_hash,
             env: args.env,

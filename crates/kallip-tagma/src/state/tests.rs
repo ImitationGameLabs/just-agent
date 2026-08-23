@@ -666,3 +666,26 @@ async fn joined_rooms_slices_are_per_relay() {
     let cold = RoomId::from("33333333-3333-3333-3333-333333333333".to_string());
     assert_eq!(rooms.owner_of(&cold).await, None);
 }
+
+#[tokio::test]
+async fn summary_carries_state_since_and_transition_advances_it() {
+    let id = AgentId::random();
+    let (entry, _rx) = make_entry_with_rx(None, "token".to_string());
+    let wrapped = RegistryEntry::Live(entry);
+    let before = wrapped.summary(&id).state_since;
+    assert_eq!(before, Some(0), "helper baseline is the creation stamp");
+
+    let RegistryEntry::Live(e) = &wrapped else {
+        unreachable!()
+    };
+    let agent_state = e.agent.state.clone();
+    let since = e.agent.state_since.clone();
+    transition_state(&agent_state, &since, AgentState::BUSY);
+
+    let after = wrapped.summary(&id);
+    assert_eq!(after.state, AgentState::Busy);
+    assert!(
+        after.state_since.unwrap() > 0,
+        "transition restamps the pair"
+    );
+}

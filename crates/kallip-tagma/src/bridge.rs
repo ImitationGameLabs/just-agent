@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use kallip_common::agentid::AgentId;
@@ -11,7 +11,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::state::{AgentRegistry, ParkedSnapshot, SharedState};
+use crate::state::{AgentRegistry, ParkedSnapshot, SharedState, transition_state};
 
 /// Route one agent's runtime events to SSE subscribers (and approval requests
 /// to the agent's superior).
@@ -44,6 +44,7 @@ pub async fn bridge_task(
     events_tx: broadcast::Sender<SseEvent>,
     cancel: CancellationToken,
     state: Arc<std::sync::atomic::AtomicU8>,
+    state_since: Arc<AtomicU64>,
     activity: Arc<std::sync::Mutex<String>>,
     parked: Arc<std::sync::Mutex<Option<ParkedSnapshot>>>,
     retrying: Arc<std::sync::Mutex<Option<TransientRetryInfo>>>,
@@ -89,7 +90,7 @@ pub async fn bridge_task(
                                 // a spent retry budget (last armed attempt ==
                                 // max) from a chain with retries disabled.
                                 let mut cell = parked.lock().unwrap_or_else(|e| e.into_inner());
-                                state.store(AgentState::BUSY, Ordering::Relaxed);
+                                transition_state(&state, &state_since, AgentState::BUSY);
                                 *cell = None;
                             }
                             AgentEvent::Retrying { .. } | AgentEvent::StreamReset { .. } => {
@@ -98,7 +99,7 @@ pub async fn bridge_task(
                                 // is still open; this is display state, not a
                                 // terminal transition. Any other in-flight
                                 // event below ends the overlay.
-                                state.store(AgentState::RETRYING, Ordering::Relaxed);
+                                transition_state(&state, &state_since, AgentState::RETRYING);
                             }
                             ev if ev.is_terminal() => {
                                 // Fatal-error observability BEFORE the state mark:
@@ -185,7 +186,7 @@ pub async fn bridge_task(
                                     ),
                                 };
                                 let notice = mark_and_snapshot(
-                                    &shared_state, &agent_id, &state, &activity,
+                                    &shared_state, &agent_id, &state, &state_since, &activity,
                                     &parked, &retrying, new_state, parked_reason, retry_info,
                                 ).await;
                                 deferred = match ev {
@@ -244,7 +245,7 @@ pub async fn bridge_task(
                                 // parked payload (the retrying cell stays —
                                 // see the Busy arm).
                                 if state.load(Ordering::Relaxed) == AgentState::RETRYING {
-                                    state.store(AgentState::BUSY, Ordering::Relaxed);
+                                    transition_state(&state, &state_since, AgentState::BUSY);
                                 }
                                 *parked.lock().unwrap_or_else(|e| e.into_inner()) = None;
                             }
@@ -265,7 +266,7 @@ pub async fn bridge_task(
                     }
                 },
                 None => {
-                    mark_idle(&state, &activity, &parked, &retrying);
+                    mark_idle(&state, &state_since, &activity, &parked, &retrying);
                     info!("bridge task: agent channel closed, exiting");
                     break;
                 }
@@ -275,7 +276,7 @@ pub async fn bridge_task(
             // still queued before exiting. Per-agent cancellation reaches the
             // bridge via the channel-closed path above — see the lifecycle note.
             _ = cancel.cancelled() => {
-                mark_idle(&state, &activity, &parked, &retrying);
+                mark_idle(&state, &state_since, &activity, &parked, &retrying);
                 while let Ok(event) = agent_rx.try_recv() {
                     if let Some(sse) = convert_event(event) {
                         events_tx.send(sse).ok();
@@ -296,11 +297,12 @@ pub async fn bridge_task(
 /// [`bridge_task`]; live turn-ends go through [`mark_and_snapshot`].
 fn mark_idle(
     state: &std::sync::atomic::AtomicU8,
+    state_since: &AtomicU64,
     activity: &std::sync::Mutex<String>,
     parked: &std::sync::Mutex<Option<ParkedSnapshot>>,
     retrying: &std::sync::Mutex<Option<TransientRetryInfo>>,
 ) {
-    state.store(AgentState::IDLE, Ordering::Relaxed);
+    transition_state(state, state_since, AgentState::IDLE);
     activity.lock().unwrap_or_else(|e| e.into_inner()).clear();
     *parked.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *retrying.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -517,6 +519,7 @@ async fn mark_and_snapshot(
     shared_state: &SharedState,
     agent_id: &AgentId,
     state: &std::sync::atomic::AtomicU8,
+    state_since: &AtomicU64,
     activity: &std::sync::Mutex<String>,
     parked: &std::sync::Mutex<Option<ParkedSnapshot>>,
     retrying: &std::sync::Mutex<Option<TransientRetryInfo>>,
@@ -525,7 +528,7 @@ async fn mark_and_snapshot(
     retry_info: Option<TransientRetryInfo>,
 ) -> IdleNotice {
     let registry = shared_state.registry.write().await;
-    state.store(new_state, Ordering::Relaxed);
+    transition_state(state, state_since, new_state);
     activity.lock().unwrap_or_else(|e| e.into_inner()).clear();
     *parked.lock().unwrap_or_else(|e| e.into_inner()) =
         parked_reason.map(|reason| ParkedSnapshot {

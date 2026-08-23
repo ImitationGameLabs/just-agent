@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 
 use arc_swap::ArcSwap;
@@ -22,6 +22,12 @@ use tokio::sync::{Mutex, Notify, RwLock, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+/// Write the state byte and its transition timestamp as a pair, so a summary
+/// never observes a fresh state with a stale `state_since`.
+pub fn transition_state(state: &AtomicU8, state_since: &AtomicU64, new_state: u8) {
+    state.store(new_state, Ordering::Relaxed);
+    state_since.store(kallip_common::timefmt::now_epoch(), Ordering::Relaxed);
+}
 pub type SharedState = Arc<AppState>;
 
 /// Atomic-swap container for the full profile state: the serializable config
@@ -236,6 +242,8 @@ pub struct FaultedEntry {
     pub identity: AgentIdentity,
     pub subagent_ids: Vec<AgentId>,
     pub reason: String,
+    /// Unix seconds when the fault was recorded (entry creation).
+    pub at: u64,
 }
 
 /// Bridge-written parked snapshot: why the agent parked and when (the `when`
@@ -263,6 +271,10 @@ pub struct Agent {
     /// The agent task awaits this in the outer loop; callers signal via `notify_one()`.
     pub notify: Arc<Notify>,
     pub state: Arc<AtomicU8>,
+    /// Unix seconds of the most recent `state` transition (creation sets the
+    /// baseline). Written only beside a `state` store so the pair reads
+    /// consistently; feeds `AgentSummary::state_since` for the fleet views.
+    pub state_since: Arc<AtomicU64>,
     /// Ephemeral, agent-self-reported current activity ("reading docs/x.md").
     /// Written by `PUT /agents/{id}/activity` (the agent reports its own, via the
     /// `kallip activity` CLI), cleared by the bridge on terminal events, read
@@ -453,7 +465,7 @@ impl RegistryEntry {
     /// construction site for list / metadata responses.
     pub fn summary(&self, id: &AgentId) -> AgentSummary {
         let identity = self.identity();
-        let (activity, faulted_reason, parked_reason, retrying) = match self {
+        let (activity, faulted_reason, parked_reason, retrying, state_since) = match self {
             RegistryEntry::Live(e) => {
                 let agent = &e.agent;
                 (
@@ -461,9 +473,16 @@ impl RegistryEntry {
                     None,
                     agent.parked_reason_snapshot(),
                     agent.retrying_snapshot(),
+                    Some(agent.state_since.load(Ordering::Relaxed)),
                 )
             }
-            RegistryEntry::Faulted(e) => (String::new(), Some(e.reason.clone()), None, None),
+            RegistryEntry::Faulted(e) => (
+                String::new(),
+                Some(e.reason.clone()),
+                None,
+                None,
+                Some(e.at),
+            ),
         };
         AgentSummary {
             id: id.clone(),
@@ -477,6 +496,7 @@ impl RegistryEntry {
             parked_reason,
             retrying,
             faulted_reason,
+            state_since,
             // Populated only by `get_root_agent` (the sole external-conversation
             // surface); absent on list/metadata summaries.
             conversation_id: None,

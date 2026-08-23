@@ -13,8 +13,8 @@ use kallip_common::timefmt;
 use kallip_common::tokens::parse_token_amount;
 
 use args::{
-    AgentCommand, ApprovalCommand, BudgetCommand, Cli, Commands, DirlockCommand, InboxCommand,
-    LescheCommand, PolicyCommand, SkillCommand, SubagentCommand,
+    AgentCommand, AgentDirCommand, ApprovalCommand, BudgetCommand, Cli, Commands, DirlockCommand,
+    InboxCommand, LescheCommand, PolicyCommand, SkillCommand, SubagentCommand,
 };
 
 /// Read agent ID from KALLIP_ID env var.
@@ -75,7 +75,13 @@ async fn main() -> Result<()> {
                 );
             }
             AgentCommand::Status(args) => {
-                let status = client.agent_status(&args.id).await?;
+                // Two scales: no argument renders the fleet overview;
+                // an argument keeps the per-agent deep view unchanged.
+                let Some(id) = args.id else {
+                    print_status_overview(&client).await?;
+                    return Ok(());
+                };
+                let status = client.agent_status(&id).await?;
                 let now = now_epoch();
                 // Four blank-line groups: a timezone-anchored clock first (readers
                 // calibrate against it instead of doing date arithmetic), then
@@ -144,6 +150,9 @@ async fn main() -> Result<()> {
                 // speak on its own stream when it wakes).
                 client.wake_agent(&args.id).await?;
             }
+        },
+        Commands::Dir(cmd) => match cmd {
+            AgentDirCommand::List => print_agent_directory(&client).await?,
         },
         Commands::Lesche(cmd) => match cmd {
             LescheCommand::Send(args) => {
@@ -475,6 +484,96 @@ fn print_approval_entry(a: &kallip_common::protocol::ApprovalEntry) {
     println!("created_at: {}", a.created_at);
 }
 
+/// Triage rank for the fleet overview: anomalies first (faulted, parked,
+/// waiting), healthy work later. Lower sorts earlier.
+fn state_rank(s: kallip_common::protocol::AgentState) -> u8 {
+    use kallip_common::protocol::AgentState;
+    match s {
+        AgentState::Faulted => 0,
+        AgentState::Parked => 1,
+        AgentState::Waiting => 2,
+        AgentState::Retrying => 3,
+        AgentState::Busy => 4,
+        AgentState::Idle => 5,
+    }
+}
+
+/// One fleet row: label, state with the since distance (waiting gets the
+/// parenthesised form so a blocked agent reads at a glance), the full id
+/// (still the addressing anchor), workspace tail and a truncated description.
+fn fleet_row(a: &kallip_common::protocol::AgentSummary, now: u64) -> String {
+    let since = a
+        .state_since
+        .map(|t| timefmt::format_relative(now, t))
+        .unwrap_or_else(|| "?".to_string());
+    let state = if a.state == kallip_common::protocol::AgentState::Waiting {
+        format!("waiting ({since})")
+    } else {
+        format!("{} {since}", a.state)
+    };
+    let ws = a
+        .workspace_root
+        .rsplit('/')
+        .next()
+        .unwrap_or(&a.workspace_root);
+    let mut line = format!("{}  {}  {}  ws={ws}", agent_label(a), state, a.id);
+    if !a.description.is_empty() {
+        let desc: String = a.description.chars().take(40).collect();
+        let ellipsis = if a.description.chars().count() > 40 {
+            "…"
+        } else {
+            ""
+        };
+        line.push_str(&format!("  {desc}{ellipsis}"));
+    }
+    line
+}
+
+/// `kallip status` with no argument: the whole fleet at a glance — clock,
+/// budget, anomaly-sorted rows, and the drill-down tip.
+async fn print_status_overview(client: &TagmaClient) -> Result<()> {
+    let now = timefmt::now_epoch();
+    let mut agents = client.list_agents(None).await?;
+    let budget = client.get_token_budget().await?;
+    println!("current datetime: {}", timefmt::format_utc(now));
+    println!();
+    println!(
+        "budget: {} / {} remaining",
+        timefmt::humanize_count(budget.remaining),
+        timefmt::humanize_count(budget.budget)
+    );
+    println!();
+    if agents.is_empty() {
+        println!("(no agents)");
+    }
+    agents.sort_by(|a, b| {
+        state_rank(a.state)
+            .cmp(&state_rank(b.state))
+            .then(a.state_since.cmp(&b.state_since))
+    });
+    for a in &agents {
+        println!("{}", fleet_row(a, now));
+    }
+    println!();
+    println!("tips: kallip status <agent-id> for details");
+    Ok(())
+}
+
+/// `kallip agent list`: the same rows in plain role order — a directory, not
+/// a triage board.
+async fn print_agent_directory(client: &TagmaClient) -> Result<()> {
+    let now = timefmt::now_epoch();
+    let mut agents = client.list_agents(None).await?;
+    if agents.is_empty() {
+        println!("(no agents)");
+        return Ok(());
+    }
+    agents.sort_by_key(agent_label);
+    for a in &agents {
+        println!("{}", fleet_row(a, now));
+    }
+    Ok(())
+}
 /// Display label for an agent: its role, falling back to the id when no role
 /// is set so every row is identifiable.
 fn agent_label(a: &kallip_common::protocol::AgentSummary) -> String {

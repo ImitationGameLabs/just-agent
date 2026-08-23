@@ -227,6 +227,10 @@ pub struct AgentSummary {
     /// `transient_retry` payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retrying: Option<TransientRetryInfo>,
+    /// Unix seconds of the most recent state transition (creation sets the
+    /// baseline). Absent for entries that predate the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_since: Option<u64>,
 }
 
 /// Response body for listing agents.
@@ -359,5 +363,23 @@ mod tests {
             serde_json::from_str::<CreateAgentRequest>(json).is_err(),
             "missing workspace_root must be rejected"
         );
+    }
+
+    #[test]
+    fn agent_summary_state_since_defaults_absent() {
+        // A pre-field payload must deserialize with the timestamp absent,
+        // and a round-trip must preserve it once set.
+        let legacy = r#"{"id":"11111111-1111-1111-1111-111111111111",
+            "workspace_root":"/tmp","state":"idle","created_by":null}"#;
+        let parsed: super::AgentSummary = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.state_since, None);
+        let stamped = super::AgentSummary {
+            state_since: Some(1_700_000_000),
+            ..parsed
+        };
+        let json = serde_json::to_string(&stamped).unwrap();
+        assert!(json.contains("\"state_since\":1700000000"));
+        let back: super::AgentSummary = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.state_since, Some(1_700_000_000));
     }
 }
