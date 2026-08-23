@@ -65,6 +65,7 @@
     roomsettings_leaving,
     roomsettings_leave_confirm,
     roomsettings_leave_failed,
+    rooms_couldnt_reach,
     roomsettings_remove_title,
     roomsettings_remove_desc,
     roomsettings_removing,
@@ -156,7 +157,9 @@
       rosterError = null;
     } catch (e) {
       if (isStale()) return;
-      rosterError = e instanceof Error ? e.message : String(e);
+      // Transport-level (lesche unreachable); qualitative copy only.
+      console.error("[room roster] fetch failed:", e);
+      rosterError = rooms_couldnt_reach();
     }
   }
 

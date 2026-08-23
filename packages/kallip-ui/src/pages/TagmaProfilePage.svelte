@@ -18,6 +18,7 @@
     common_back_aria,
     tagma_fallback_label,
     tagma_profile_subtitle,
+    auth_couldnt_reach,
     tagma_profile_unnamed,
     tagma_profile_created,
     tagma_profile_message,
@@ -48,7 +49,9 @@
       })
       .catch((e) => {
         if (!stale) {
-          error = e instanceof Error ? e.message : String(e);
+          // Transport-level (agora unreachable); qualitative copy only.
+          console.error("[tagma profile] fetch failed:", e);
+          error = auth_couldnt_reach();
           loading = false;
         }
       });

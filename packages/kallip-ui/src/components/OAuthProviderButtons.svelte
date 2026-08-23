@@ -7,8 +7,11 @@
   // after a signin; register has none (a brand-new account always lands on
   // /tagmata).
   import { agoraSession } from "../lib/session/agora.svelte";
-  import { auth_continue_with, auth_or } from "../paraglide/messages.js";
-
+  import {
+    auth_couldnt_reach,
+    auth_continue_with,
+    auth_or,
+  } from "../paraglide/messages.js";
   let { returnPath = undefined }: { returnPath?: string } = $props();
 
   // A begin failure (agora unreachable, 429) would otherwise reject unhandled:
@@ -21,7 +24,10 @@
     try {
       await agoraSession.signInWithOAuth(provider, returnPath);
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      // Transport-level (agora unreachable); the redirect never happens on
+      // failure, so the raw error is console-only and the buttons stay usable.
+      console.error("[oauth] begin failed:", e);
+      error = auth_couldnt_reach();
     }
   }
 </script>

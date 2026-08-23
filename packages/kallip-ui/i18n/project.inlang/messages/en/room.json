@@ -16,6 +16,7 @@
   "room_members": "Members",
   "room_close_members_aria": "Close member list",
   "room_unavailable": "This room is unavailable.",
+  "room_history_failed": "Could not load room history.",
   "room_private_badge": "private",
   "room_actions_aria": "Room actions",
   "room_member_online_aria": "online",

@@ -16,6 +16,7 @@
   "room_members": "成员",
   "room_close_members_aria": "关闭成员列表",
   "room_unavailable": "该群聊不可用。",
+  "room_history_failed": "无法加载群聊历史记录。",
   "room_private_badge": "私有",
   "room_actions_aria": "群聊操作",
   "room_member_online_aria": "在线",

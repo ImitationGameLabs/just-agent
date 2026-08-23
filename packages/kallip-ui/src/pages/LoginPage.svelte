@@ -58,8 +58,10 @@
         return auth_rate_limited();
       default:
         // Unknown includes invalid-credentials (401) -- kept generic so as not
-        // to leak which usernames exist (closed-beta enumeration residual).
-        return r.message ?? login_failed();
+        // to leak which usernames exist (closed-beta enumeration residual);
+        // any raw message is diagnostic noise for the console, not the form.
+        if (r.message) console.error("[login] unknown failure:", r.message);
+        return login_failed();
     }
   }
 
@@ -81,7 +83,8 @@
     } catch (e) {
       // A thrown error here is transport-level (agora unreachable); the
       // ceremony's own failures come back as a non-ok result below.
-      error = e instanceof Error ? e.message : String(e);
+      console.error(e);
+      error = auth_couldnt_reach();
     } finally {
       submitting = false;
     }
@@ -142,10 +145,7 @@
 {#if agoraSession.authError}
   <!-- Environment error (agora unreachable at boot): stays in the floating
        banner; a submit's own failures render inline in the form below. -->
-  <Banner
-    floating
-    title={auth_couldnt_reach({ notice: agoraSession.authError })}
-  />
+  <Banner floating title={agoraSession.authError} />
 {/if}
 
 <div class="flex items-center justify-center min-h-dvh p-4 bg-surface-200-800">
@@ -180,7 +180,7 @@
       {/if}
     </label>
     {#if error}
-      <FormError message={auth_couldnt_reach({ notice: error })} />
+      <FormError message={error} />
     {:else if result && !result.ok}
       <FormError message={reasonMessage(result)} />
     {/if}

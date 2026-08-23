@@ -1,7 +1,7 @@
 {
   "$schema": "https://inlang.com/schema/message-format",
   "rooms_title": "KallipAI · rooms",
-  "rooms_couldnt_reach": "Could not reach the server: {error}",
+  "rooms_couldnt_reach": "Could not reach the server.",
   "rooms_retrying": "Retrying...",
   "rooms_new_room": "New Room",
   "rooms_new_room_action": "+ New Room",

@@ -1,7 +1,7 @@
 {
   "$schema": "https://inlang.com/schema/message-format",
   "rooms_title": "KallipAI · 群聊",
-  "rooms_couldnt_reach": "无法连接服务器：{error}",
+  "rooms_couldnt_reach": "无法连接服务器。",
   "rooms_retrying": "重试中…",
   "rooms_new_room": "新建群聊",
   "rooms_new_room_action": "+ 新建群聊",

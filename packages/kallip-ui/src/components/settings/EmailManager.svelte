@@ -8,7 +8,10 @@
     agoraClientOrFail,
     agoraSession,
   } from "../../lib/session/agora.svelte";
-  import type { EmailSummary } from "@kallipai/kallip-agora-client";
+  import {
+    AgoraApiError,
+    type EmailSummary,
+  } from "@kallipai/kallip-agora-client";
   import { isValidEmail } from "../../lib/email.ts";
   import {
     settings_email,
@@ -22,6 +25,7 @@
     settings_email_verified_notice,
     common_add,
     settings_email_invalid,
+    settings_email_failed,
     settings_email_verify_token,
     common_remove,
     common_verify,
@@ -39,7 +43,11 @@
   const canAdd = $derived(addressValid && !busy);
 
   function msgOf(e: unknown): string {
-    return e instanceof Error ? e.message : String(e);
+    if (e instanceof AgoraApiError) return e.message;
+    // Transport/internal failure: qualitative copy for the form, details to
+    // the console (raw exception text never reaches the user).
+    console.error(e);
+    return settings_email_failed();
   }
 
   async function refresh(): Promise<void> {

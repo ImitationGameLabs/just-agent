@@ -76,7 +76,8 @@
         },
       );
     } catch (e) {
-      scanError = e instanceof Error ? e.message : String(e);
+      console.error(e);
+      scanError = pair_camera_unavailable();
       scanning = false;
     }
   }
@@ -99,7 +100,11 @@
       case "rate-limited":
         return auth_rate_limited();
       default:
-        return r.message ?? pair_failed();
+        // Same discipline as register/login: no actionable copy rides the
+        // default arm -- qualitative text for the form, raw message (if any)
+        // to the console for diagnosis.
+        if (r.message) console.error("[pair] unknown failure:", r.message);
+        return pair_failed();
     }
   }
 
@@ -114,7 +119,8 @@
       result = r;
       if (r.ok) await navigate("/tagmata");
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      console.error(e);
+      error = auth_couldnt_reach();
     } finally {
       submitting = false;
     }
@@ -125,10 +131,7 @@
 {#if agoraSession.authError}
   <!-- Environment error (agora unreachable at boot); a submit's own failures
        render inline in the form below. -->
-  <Banner
-    floating
-    title={auth_couldnt_reach({ notice: agoraSession.authError })}
-  />
+  <Banner floating title={agoraSession.authError} />
 {/if}
 
 <div class="flex items-center justify-center min-h-dvh p-4 bg-surface-100-900">
@@ -183,7 +186,7 @@
         >
         {#if scanError}
           <div class="text-xs text-error-600 dark:text-error-500">
-            {pair_camera_unavailable({ error: scanError })}
+            {scanError}
           </div>
         {/if}
       </div>
@@ -195,7 +198,7 @@
       >
     {/if}
     {#if error}
-      <FormError message={auth_couldnt_reach({ notice: error })} />
+      <FormError message={error} />
     {:else if result && !result.ok}
       <FormError message={reasonMessage(result)} />
     {/if}

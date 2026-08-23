@@ -10,6 +10,7 @@
   } from "../../lib/passkeys.svelte.ts";
   import {
     settings_unnamed_device,
+    settings_error_unknown,
     settings_passwordless_badge_title,
     settings_passwordless_badge,
     settings_added_date,
@@ -50,7 +51,9 @@
       editing = false;
     } catch (e) {
       // Leave the editor open so the user can retry.
-      renameError = e instanceof Error ? e.message : String(e);
+      // Qualitative copy only; the raw error is console material.
+      console.error("[passkey] rename failed:", e);
+      renameError = settings_error_unknown();
     }
   }
 
@@ -63,7 +66,8 @@
     try {
       await onRevoke?.(passkey.id);
     } catch (e) {
-      revokeError = e instanceof Error ? e.message : String(e);
+      console.error("[passkey] revoke failed:", e);
+      revokeError = settings_error_unknown();
     }
   }
 </script>

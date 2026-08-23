@@ -10,6 +10,8 @@
 // signed in. The auth gate treats only `null` as "redirect to /login", so a
 // transient network failure (user stays undefined) renders a skeleton rather
 // than booting the user out.
+// The *Error fields carry qualitative, localized copy only -- a raw error's
+// message/stack is internal detail and goes to the console, never the UI.
 //
 // The agora base URL is injected via initAgora() at app bootstrap -- this
 // package does not read import.meta.env (which is only typed in a SvelteKit
@@ -39,11 +41,13 @@ import {
 import type { PairingCodeView } from "../passkeys.svelte.ts";
 import { LescheClient } from "@kallipai/kallip-lesche-client";
 import {
+  auth_couldnt_reach,
   auth_no_signed_in_user,
   auth_passkey_cancelled,
   oauth_context_lost,
   pair_reauth_failed,
   auth_reauth_required,
+  rooms_couldnt_reach,
 } from "../../paraglide/messages.js";
 import { participantIdForUser } from "@kallipai/kallip-common";
 import type {
@@ -91,11 +95,6 @@ export function lescheClientOrFail(): LescheClient {
     throw new Error("initLesche(url) must be called at app bootstrap");
   }
   return lescheClient;
-}
-
-function messageOf(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  return String(e);
 }
 
 /** sessionStorage key stashing the in-flight OAuth provider + action across the
@@ -294,7 +293,8 @@ class AgoraSessionStore {
         this.participantId = null;
         this.authError = null;
       } else {
-        this.authError = messageOf(e);
+        console.error("[agora] whoami failed:", e);
+        this.authError = auth_couldnt_reach();
       }
     }
   }
@@ -350,7 +350,8 @@ class AgoraSessionStore {
       this.tagmataLoaded = true;
     } catch (e) {
       // Leave the stale list + loaded flag so a refresh failure does not blank it.
-      this.tagmataError = messageOf(e);
+      console.error("[agora] listTagmata failed:", e);
+      this.tagmataError = rooms_couldnt_reach();
     }
   }
 
@@ -391,7 +392,8 @@ class AgoraSessionStore {
       this.tagmataLoaded = true;
       this.tagmataError = null;
     } catch (e) {
-      this.tagmataError = messageOf(e);
+      console.error("[agora] mintTagma failed:", e);
+      this.tagmataError = rooms_couldnt_reach();
     } finally {
       this.minting = false;
     }
@@ -422,7 +424,8 @@ class AgoraSessionStore {
       this.passkeysLoaded = true;
     } catch (e) {
       // Leave the stale list + loaded flag so a refresh failure does not blank it.
-      this.passkeysError = messageOf(e);
+      console.error("[agora] listPasskeys failed:", e);
+      this.passkeysError = auth_couldnt_reach();
     }
   }
 
@@ -503,7 +506,8 @@ class AgoraSessionStore {
       this.externalIdentities = [...(await client().listExternalIdentities())];
       this.externalIdentitiesLoaded = true;
     } catch (e) {
-      this.externalIdentitiesError = messageOf(e);
+      console.error("[agora] listExternalIdentities failed:", e);
+      this.externalIdentitiesError = auth_couldnt_reach();
     }
   }
 
@@ -647,7 +651,8 @@ class AgoraSessionStore {
       resp = await client().mintPairingCode();
     } catch (e) {
       if (!(e instanceof AgoraApiError) || e.status !== 403) {
-        this.pairingError = messageOf(e);
+        console.error("[agora] mintPairingCode failed:", e);
+        this.pairingError = auth_couldnt_reach();
         return false;
       }
       // Credential-agnostic step-up: only an account WITH a passkey can re-auth
@@ -672,7 +677,8 @@ class AgoraSessionStore {
       try {
         resp = await client().mintPairingCode();
       } catch (e2) {
-        this.pairingError = messageOf(e2);
+        console.error("[agora] mintPairingCode (step-up retry) failed:", e2);
+        this.pairingError = auth_couldnt_reach();
         return false;
       }
     }

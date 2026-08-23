@@ -48,6 +48,7 @@
   "settings_email_token_notice": "SMTP 尚未接入，验证令牌已输出到 agora 日志（请粘贴到下方）。",
   "settings_email_verified_notice": "邮箱已验证。",
   "settings_email_invalid": "请输入有效的邮箱地址。",
+  "settings_email_failed": "无法连接服务器。",
   "settings_email_verify_token": "验证令牌",
   "settings_linked_accounts": "已关联账户",
   "settings_linked_intro": "通行密钥之外的登录方式。关联服务商后即可用它登录；请保留至少一种登录方式。",

@@ -6,7 +6,6 @@
   import RoomsDashboard from "../components/rooms/RoomsDashboard.svelte";
   import {
     rooms_title,
-    rooms_couldnt_reach,
     rooms_retrying,
     common_loading,
   } from "../paraglide/messages.js";
@@ -57,7 +56,7 @@
 {:else if agoraSession.authError}
   <div class="p-4">
     <p class="text-error-500 dark:text-error-400 text-sm">
-      {rooms_couldnt_reach({ error: agoraSession.authError })}
+      {agoraSession.authError}
     </p>
     <p class="opacity-60 text-sm">{rooms_retrying()}</p>
   </div>

@@ -143,7 +143,11 @@
       "reauth-required": settings_reauth_failed(),
       "duplicate-credential": settings_passkey_duplicate(),
       "rate-limited": settings_rate_limited(),
-      unknown: r.message ?? settings_error_unknown(),
+      // Same wrapper family as the auth pages: the unknown arm never carries
+      // actionable server copy -- qualitative hint, raw message to console.
+      unknown:
+        (console.error("[add device] unknown failure:", r.message),
+        settings_error_unknown()),
     };
     return { tone: "err", text: map[r.reason] ?? settings_error_unknown() };
   }

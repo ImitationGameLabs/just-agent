@@ -58,7 +58,11 @@
       case "rate-limited":
         return auth_rate_limited();
       default:
-        return r.message ?? register_failed();
+        // Unknown carries no actionable server copy (a typed reason covers
+        // every actionable case) -- keep the form qualitative; the raw
+        // message, when present, is diagnostic noise for the console.
+        if (r.message) console.error("[register] unknown failure:", r.message);
+        return register_failed();
     }
   }
 
@@ -80,7 +84,8 @@
       if (r.ok) await navigate("/tagmata");
     } catch (e) {
       // Transport-level (agora unreachable); ceremony failures are non-ok results.
-      error = e instanceof Error ? e.message : String(e);
+      console.error(e);
+      error = auth_couldnt_reach();
     } finally {
       submitting = false;
     }
@@ -97,10 +102,7 @@
 {#if agoraSession.authError}
   <!-- Environment error (agora unreachable at boot); a submit's own failures
        render inline in the form below. -->
-  <Banner
-    floating
-    title={auth_couldnt_reach({ notice: agoraSession.authError })}
-  />
+  <Banner floating title={agoraSession.authError} />
 {/if}
 
 <div class="flex items-center justify-center min-h-dvh p-4 bg-surface-100-900">
@@ -127,7 +129,7 @@
       />
     </label>
     {#if error}
-      <FormError message={auth_couldnt_reach({ notice: error })} />
+      <FormError message={error} />
     {:else if result && !result.ok}
       <FormError message={reasonMessage(result)} />
     {/if}

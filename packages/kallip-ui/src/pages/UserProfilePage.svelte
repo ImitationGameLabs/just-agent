@@ -12,6 +12,7 @@
   import type { PublicUserProfile } from "@kallipai/kallip-agora-client";
   import {
     common_loading,
+    auth_couldnt_reach,
     common_back_aria,
     user_profile_subtitle,
     user_profile_joined,
@@ -45,7 +46,9 @@
       })
       .catch((e) => {
         if (!stale) {
-          error = e instanceof Error ? e.message : String(e);
+          // Transport-level (agora unreachable); qualitative copy only.
+          console.error("[user profile] fetch failed:", e);
+          error = auth_couldnt_reach();
           loading = false;
         }
       });

@@ -441,6 +441,7 @@ const SYNONYMS: string[][] = [
   ["tagma_presence_offline", "room_member_offline_aria", "shell_offline"],
   ["auth_creating", "rooms_creating"],
   ["login_username", "auth_username"],
+  ["auth_couldnt_reach", "settings_email_failed"],
   ["room_settings_aria", "roomsettings_subtitle"],
   ["roomsettings_removing", "tagma_rooms_removing"],
   ["roomsettings_remove_failed", "tagma_rooms_remove_failed"],

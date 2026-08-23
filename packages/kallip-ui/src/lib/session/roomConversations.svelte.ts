@@ -22,6 +22,10 @@ import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { agoraSession, lescheClientOrFail } from "./agora.svelte.ts";
 import { roomsStore } from "./rooms.svelte.ts";
 import {
+  room_history_failed,
+  rooms_couldnt_reach,
+} from "../../paraglide/messages.js";
+import {
   appendRoomLine,
   decodeRoomMessage,
   encodeRoomSendMessage,
@@ -177,10 +181,6 @@ function visibilityOf(roomId: string): Visibility {
   return (
     roomsStore.rooms.find((r) => r.room_id === roomId)?.visibility ?? "private"
   );
-}
-
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }
 
 /** A fresh random trace id (the lesche forwards it; rooms ignore it -- no replay
@@ -430,7 +430,8 @@ class RoomConversationsStore {
       conv.error = null;
     } catch (e) {
       conv.status = "error";
-      conv.error = messageOf(e);
+      console.error("[room history] fetch failed:", e);
+      conv.error = rooms_couldnt_reach();
     }
   }
 
@@ -456,7 +457,8 @@ class RoomConversationsStore {
     try {
       decoded = decodeRoomPayload(ciphertextB64);
     } catch (e) {
-      conv.error = messageOf(e);
+      console.error("[room history] decode failed:", e);
+      conv.error = room_history_failed();
       return;
     }
     if (decoded.op !== "message") return;

@@ -35,7 +35,13 @@
       );
       if (!result.ok) {
         busy = false;
-        error = result.message ?? oauth_signin_failed();
+        // Same wrapper family as register/login: the default arm never
+        // carries actionable server copy -- qualitative text for the page,
+        // the raw message (if any) to the console.
+        if (result.message) {
+          console.error("[oauth callback] failure:", result.message);
+        }
+        error = oauth_signin_failed();
         return;
       }
       if (result.kind === "signin") {
@@ -55,7 +61,8 @@
       }
     } catch (e) {
       busy = false;
-      error = e instanceof Error ? e.message : String(e);
+      console.error(e);
+      error = oauth_signin_failed();
     }
   });
 </script>

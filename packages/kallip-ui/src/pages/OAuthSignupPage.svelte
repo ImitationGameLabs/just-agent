@@ -62,7 +62,11 @@
       case "rate-limited":
         return auth_rate_limited();
       default:
-        return r.message ?? oauth_signup_failed();
+        // Same wrapper family: qualitative copy for the form, raw message
+        // (if any) to the console.
+        if (r.message)
+          console.error("[oauth signup] unknown failure:", r.message);
+        return oauth_signup_failed();
     }
   }
 
@@ -88,7 +92,8 @@
         await navigate("/tagmata");
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      console.error(e);
+      error = oauth_signup_failed();
     } finally {
       submitting = false;
     }
