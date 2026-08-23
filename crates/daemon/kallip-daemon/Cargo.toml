@@ -1,0 +1,23 @@
+[package]
+name = "kallip-daemon"
+description = "Stateless directory-driven daemon managing local kallip instances"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+kallip-daemon-common = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "net"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+libc = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+kallip-daemon-client = { workspace = true }
+tempfile = { workspace = true }
+kallip-daemon-common = { workspace = true }

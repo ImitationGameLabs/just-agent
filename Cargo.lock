@@ -2820,6 +2820,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "kallip-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "kallip-daemon-client",
+ "kallip-daemon-common",
+ "libc",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "kallip-daemon-client"
+version = "0.1.0"
+dependencies = [
+ "kallip-daemon-common",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "kallip-daemon-common"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "kallip-daemon-spawn"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "kallip-e2ee"
 version = "0.1.0"
 dependencies = [
@@ -3042,6 +3085,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "kallipctl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "kallip-daemon-client",
+ "kallip-daemon-common",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,10 @@
+[package]
+name = "kallip-daemon-common"
+description = "UDS wire types for the kallip local daemon and its clients"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

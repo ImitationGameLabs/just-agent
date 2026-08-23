@@ -1,0 +1,258 @@
+//! UDS wire protocol for the kallip local daemon.
+//!
+//! One newline-delimited JSON exchange per short connection: the client
+//! connects, writes one [`Request`] line, reads one [`Response`] line, closes.
+//! No streaming, no multiplexing — the four management verbs do not need it,
+//! and a plain JSON line stays debuggable with `nc -U`.
+//!
+//! The `v` field on both envelopes is the protocol version. v1 is the first
+//! shape; a future revision (e.g. the web proxy adding enroll parameters)
+//! bumps it, and unknown versions are rejected by the reader.
+
+use serde::{Deserialize, Serialize};
+
+/// Protocol version of this crate's wire shape.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Maximum bytes accepted for one request line. Legitimate requests are far
+/// smaller; the cap turns a runaway client (or a non-protocol file pointed at
+/// the socket) into a clean error instead of an unbounded read.
+pub const MAX_LINE_BYTES: usize = 64 * 1024;
+
+/// A client request envelope.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Request {
+    pub v: u32,
+    #[serde(flatten)]
+    pub body: RequestBody,
+}
+
+/// The four management verbs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RequestBody {
+    /// Launch a new instance. `workspace` is an absolute path; `env` carries
+    /// the allowlisted KEY=VALUE pairs the daemon passes to the spawn helper
+    /// (relay config, operator token override, log filter).
+    Spawn {
+        slug: String,
+        workspace: String,
+        env: Vec<String>,
+    },
+    /// Terminate an instance: SIGTERM, grace period, SIGKILL.
+    Stop { slug: String },
+    /// List all managed instances (directory scan).
+    List,
+    /// One instance's health, or omit `slug` for the daemon itself.
+    Health { slug: Option<String> },
+}
+
+/// A daemon response envelope.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Response {
+    pub v: u32,
+    #[serde(flatten)]
+    pub body: ResponseBody,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ResponseBody {
+    Ok {
+        #[serde(flatten)]
+        payload: OkPayload,
+    },
+    Err {
+        code: ErrorCode,
+        message: String,
+    },
+}
+
+/// Successful payloads, keyed by verb.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OkPayload {
+    Spawn { slug: String, pid: u32, port: u16 },
+    Stop { slug: String },
+    List { instances: Vec<InstanceInfo> },
+    Health { report: HealthReport },
+}
+
+/// One managed instance as seen by a directory scan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InstanceInfo {
+    pub slug: String,
+    pub instance_id: String,
+    pub workspace: String,
+    pub running: bool,
+    /// Owning uid recorded at spawn (SO_PEERCRED of the requesting
+    /// peer); None when an adopted directory predates the field.
+    pub owner: Option<u32>,
+}
+
+/// Liveness detail for one instance (or the daemon).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HealthReport {
+    pub slug: Option<String>,
+    pub running: bool,
+    /// Present when `running` is false: why (no pid file, stale pid, comm
+    /// mismatch after a pid reuse, ...).
+    pub detail: Option<String>,
+}
+
+/// Stable error codes. Clients match on these, not on messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    /// The requested slug already exists in the instance tree.
+    SlugTaken,
+    /// The workspace overlaps an existing instance's workspace or the
+    /// instance tree itself.
+    WorkspaceOverlap,
+    /// A spawn configuration input is invalid (bad slug grammar, missing
+    /// required env pair, non-directory workspace).
+    InvalidSpawnInput,
+    /// The spawned process did not publish pid/port within the timeout.
+    SpawnTimeout,
+    /// No managed instance carries this slug.
+    NotFound,
+    /// The instance is not running (stop/health on a dead slug).
+    NotRunning,
+    /// The request could not be parsed or violates the protocol version.
+    BadRequest,
+    /// An internal error (I/O, signal failure); the message carries context.
+    Internal,
+}
+
+/// An instance slug must be a DNS-label-like lowercase slug
+/// (`[a-z0-9][a-z0-9-]*`): it is a directory name in the instance tree and a
+/// log key, exactly like the relay-entry names inside `relays.toml`
+/// (kallip-tagma `valid_entry_name`). Duplicated grammar on purpose — the
+/// daemon stays independent of kallip-tagma; unifying the two into one shared
+/// helper is a tracked follow-up, not something this crate reaches for now.
+pub fn valid_slug(slug: &str) -> bool {
+    let mut chars = slug.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Serialize a [`Request`] to its wire line (no trailing newline).
+pub fn encode_request(request: &Request) -> Result<String, serde_json::Error> {
+    serde_json::to_string(request)
+}
+
+/// Parse one request line. Errors carry the parse failure verbatim; callers
+/// translate that into a `bad_request` response.
+pub fn decode_request(line: &str) -> Result<Request, serde_json::Error> {
+    let request: Request = serde_json::from_str(line)?;
+    Ok(request)
+}
+
+/// Serialize a [`Response`] to its wire line (no trailing newline).
+pub fn encode_response(response: &Response) -> Result<String, serde_json::Error> {
+    serde_json::to_string(response)
+}
+
+/// Parse one response line.
+pub fn decode_response(line: &str) -> Result<Response, serde_json::Error> {
+    let response: Response = serde_json::from_str(line)?;
+    Ok(response)
+}
+
+/// Construct a v1 request envelope.
+pub fn request(body: RequestBody) -> Request {
+    Request {
+        v: PROTOCOL_VERSION,
+        body,
+    }
+}
+
+/// Construct a v1 ok response envelope.
+pub fn ok(payload: OkPayload) -> Response {
+    Response {
+        v: PROTOCOL_VERSION,
+        body: ResponseBody::Ok { payload },
+    }
+}
+
+/// Construct a v1 err response envelope.
+pub fn err(code: ErrorCode, message: impl Into<String>) -> Response {
+    Response {
+        v: PROTOCOL_VERSION,
+        body: ResponseBody::Err {
+            code,
+            message: message.into(),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_round_trips_through_json() {
+        let body = RequestBody::Spawn {
+            slug: "team-a".into(),
+            workspace: "/home/u/work/a".into(),
+            env: vec!["KALLIP_TAGMA_ADDR=127.0.0.1:0".into()],
+        };
+        let line = encode_request(&request(body.clone())).expect("encode");
+        assert!(!line.contains('\n'), "one line, caller appends the newline");
+        let back = decode_request(&line).expect("decode");
+        assert_eq!(back.v, PROTOCOL_VERSION);
+        assert_eq!(back.body, body);
+    }
+
+    #[test]
+    fn response_err_round_trips_with_stable_code() {
+        let line = encode_response(&err(ErrorCode::SlugTaken, "slug exists")).expect("encode");
+        let back = decode_response(&line).expect("decode");
+        match back.body {
+            ResponseBody::Err { code, message } => {
+                assert_eq!(code, ErrorCode::SlugTaken);
+                assert_eq!(message, "slug exists");
+            }
+            other => panic!("expected err, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spawn_payload_round_trips() {
+        let payload = OkPayload::Spawn {
+            slug: "team-a".into(),
+            pid: 4242,
+            port: 39999,
+        };
+        let line = encode_response(&ok(payload.clone())).expect("encode");
+        let back = decode_response(&line).expect("decode");
+        assert_eq!(back.body, ResponseBody::Ok { payload });
+    }
+
+    #[test]
+    fn unknown_protocol_version_parses_structurally_but_differs() {
+        // A future-version line still parses structurally, but carries a
+        // different `v`; the reader must compare against PROTOCOL_VERSION.
+        let line = r#"{"v":99,"type":"list"}"#;
+        let parsed = decode_request(line).expect("structural parse");
+        assert_ne!(parsed.v, PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn slug_grammar_matches_the_relay_entry_rule() {
+        for good in ["a", "team-a", "t2", "9lives", "a-b-c", "a--b", "trail-"] {
+            assert!(valid_slug(good), "{good} should be valid");
+        }
+        for bad in [
+            "",
+            "-lead",
+            "Upper",
+            "under_score",
+            "sp ace",
+            "dot.dot",
+            "ümlaut",
+        ] {
+            assert!(!valid_slug(bad), "{bad} should be invalid");
+        }
+    }
+}

@@ -286,6 +286,29 @@ setup:
 Both sides must list the new rows: `human` for the user's message,
 `agent` for the reply.
 
+### Local daemon management (kallipctl)
+
+The daemon family (`crates/daemon/`) manages multiple local tagma
+instances. The daemon is stateless — the instance tree under
+`KALLIP_DATA_DIR` (default `~/.local/share/kallip`) is the only truth;
+`kallipctl` talks to it over a 0600 control socket:
+
+```sh
+kallipctl spawn <slug> <workspace> -e KALLIP_LLM_PROVIDER=... \
+    -e KALLIP_LLM_MODEL=... -e KALLIP_LLM_DEEPSEEK_API_KEY=...
+kallipctl list           # every <slug>/ with an instance.id
+kallipctl health <slug>  # pid liveness via /proc/<pid>/comm
+kallipctl stop <slug>    # TERM, 10s grace, KILL
+```
+
+Each instance directory carries `instance.id`, `workspace`, `owner`
+(the requesting peer's uid), and the runtime-written `pid`/`port`
+(published by the tagma itself when `KALLIP_INSTANCE_STATE_DIR` is
+set — unset boots write nothing). Env
+pairs must start with `KALLIP_` or be `RUST_LOG`; the four reserved
+keys (`KALLIP_INSTANCE_STATE_DIR`, `KALLIP_DATA_DIR`,
+`KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`) are daemon-owned.
+
 ## Iterating
 
 `arion up` re-evaluates the flake each time, so Rust changes are picked up just

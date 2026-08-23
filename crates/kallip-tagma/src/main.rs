@@ -304,6 +304,14 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("binding listen addr {}", args.listen_addr))?;
     info!(addr = %args.listen_addr, advertise = %args.advertise_url, "tagma listening");
+    // Local daemon management (opt-in): when a supervisor sets
+    // KALLIP_INSTANCE_STATE_DIR, publish the pid + actual bound port next
+    // to the instance metadata, right after the bind. Unset keeps the
+    // single-instance behavior exactly: no directory is created, no
+    // file is written.
+    if let Some(state_dir) = std::env::var_os("KALLIP_INSTANCE_STATE_DIR") {
+        write_instance_state(std::path::Path::new(&state_dir), &listener)?;
+    }
     let shutdown_token = state.shutdown.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(shutdown_token))
@@ -328,6 +336,45 @@ fn ensure_credentials_root() -> Result<std::path::PathBuf> {
     std::fs::create_dir_all(&credentials_dir).context("create credentials dir")?;
     credentials::set_owner_only(&credentials_dir)?;
     Ok(credentials_dir)
+}
+/// Publish the runtime identity of this instance (`pid` + the actually
+/// bound port) into `dir`, for the local instance daemon's spawn
+/// pipeline. Both files land owner-only via tmp+rename; the port is
+/// read back from the listener so a `:0` bind is discoverable. Called
+/// only from the `KALLIP_INSTANCE_STATE_DIR` gate in `main`.
+fn write_instance_state(dir: &std::path::Path, listener: &tokio::net::TcpListener) -> Result<()> {
+    let port = listener
+        .local_addr()
+        .context("reading the bound local address")?
+        .port();
+    let pid = std::process::id();
+    write_owner_only(&dir.join("pid"), &pid.to_string())
+        .context("writing the instance pid file")?;
+    write_owner_only(&dir.join("port"), &port.to_string())
+        .context("writing the instance port file")?;
+    info!(pid, port, state_dir = %dir.display(), "instance state published");
+    Ok(())
+}
+
+/// Write `text` to `path` atomically (tmp file + rename), owner-only.
+/// No fsync: these are runtime hints — a torn write is at worst a stale
+/// value, which the daemon's pid-liveness check already treats as
+/// "not running".
+fn write_owner_only(path: &std::path::Path, text: &str) -> Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let tmp = path.with_extension("tmp");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .with_context(|| format!("creating state tmp file {}", tmp.display()))?;
+    file.write_all(text.as_bytes())?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("renaming state file into {}", path.display()))?;
+    Ok(())
 }
 
 /// The projector's single-value identity is the **primary agora** concept:
@@ -759,5 +806,38 @@ mod tests {
         // carry the conflict's distinctive markers.
         assert!(!msg.contains("would be ignored"), "{msg}");
         assert!(!msg.contains("re-enroll"), "{msg}");
+    }
+
+    /// KALLIP_INSTANCE_STATE_DIR contract: when the state dir is handed to
+    /// `write_instance_state`, exactly `pid` + `port` appear, owner-only,
+    /// with the process pid and the actually bound (`:0`) port.
+    #[tokio::test]
+    async fn instance_state_dir_gets_pid_and_port_owner_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral");
+        let port = listener.local_addr().expect("local addr").port();
+
+        write_instance_state(dir.path(), &listener).expect("write instance state");
+
+        let pid = std::fs::read_to_string(dir.path().join("pid")).expect("pid file");
+        assert_eq!(pid, std::process::id().to_string());
+        let port_text = std::fs::read_to_string(dir.path().join("port")).expect("port file");
+        assert_eq!(port_text, port.to_string());
+
+        use std::os::unix::fs::PermissionsExt as _;
+        for name in ["pid", "port"] {
+            let mode = std::fs::metadata(dir.path().join(name))
+                .expect("state file metadata")
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "{name} must be owner-only");
+        }
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read state dir")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(entries.len(), 2, "exactly pid+port, no tmp leftovers");
     }
 }

@@ -102,6 +102,9 @@
               kallip-tagma = builds.tagma;
               kallip-cron-daemon = builds.cron-daemon;
               kallip-cron = builds.cron;
+              kallip-daemon = builds.daemon;
+              kallipctl = builds.ctl;
+              kallip-daemon-spawn = builds.daemon-spawn;
               kallip-tarball = import ./nix/packages/tarball.nix {
                 inherit
                   pkgs

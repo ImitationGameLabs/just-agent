@@ -1,0 +1,13 @@
+[package]
+name = "kallipctl"
+description = "Management CLI (kallipctl) for the kallip local daemon"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+kallip-daemon-client = { workspace = true }
+kallip-daemon-common = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "net", "rt", "macros"] }

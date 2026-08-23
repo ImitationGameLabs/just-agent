@@ -56,4 +56,11 @@ in
   # management CLI so each can be built/deployed independently.
   cron-daemon = buildCrate "cargo build --release -p kallip-cron-daemon";
   cron = buildCrate "cargo build --release -p kallip-cron";
+  # Local daemon family: the stateless instance manager, its
+  # kallipctl CLI, and the setuid-candidate spawn helper -- separate attrs
+  # so the daemon (operator host) and helper (root-owned install path)
+  # never share a deployment unit.
+  daemon = buildCrate "cargo build --release -p kallip-daemon";
+  ctl = buildCrate "cargo build --release -p kallipctl";
+  daemon-spawn = buildCrate "cargo build --release -p kallip-daemon-spawn";
 }
