@@ -21,5 +21,6 @@
   "composer_queued": "queued: {count}",
   "composer_connect_link": "Connect a tagma",
   "composer_connect_tail": "to send.",
-  "chat_send_failed": "Could not send the message."
+  "chat_send_failed": "Could not send the message.",
+  "chat_reconnecting": "Reconnecting…"
 }

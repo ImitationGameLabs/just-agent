@@ -21,6 +21,7 @@
   import {
     connect_connecting,
     chat_opening,
+    chat_reconnecting,
     chat_go_tagmata,
     chat_title_local,
     chat_title_channel,
@@ -190,7 +191,31 @@
     <!-- The wrapper gives the transcript a flex child whose width can be
          zeroed (min-w-0) in the sidebar state; in the top-bar state it is
          a no-op flex column. -->
-    <div class="flex-1 min-h-0 flex flex-col {sideLayout ? 'min-w-0' : ''}">
+    <div
+      class="flex-1 min-h-0 flex flex-col {sideLayout
+        ? 'min-w-0'
+        : ''} relative"
+    >
+      {#if conv.status === "reconnecting"}
+        <!-- Silent SSE retry in progress (transport-level reconnect): the
+             failure itself stays in the console. The overlay ignores pointer
+             events so the transcript stays scrollable; the composer is
+             disabled via status !== "open". No backdrop by design: the
+             transcript stays fully readable while the reconnect runs. -->
+        <div
+          class="absolute inset-0 z-10 grid place-items-center pointer-events-none"
+          aria-busy="true"
+        >
+          <div
+            class="card preset-tonal-surface flex flex-col items-center gap-3 px-8 py-6"
+          >
+            <div
+              class="size-10 rounded-full border-4 border-surface-400-600 border-t-transparent animate-spin"
+            ></div>
+            <p class="text-sm opacity-80">{chat_reconnecting()}</p>
+          </div>
+        </div>
+      {/if}
       <ConversationView
         lines={conv.transcript.lines}
         status={conv.transcript.status}

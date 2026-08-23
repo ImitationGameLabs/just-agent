@@ -121,6 +121,11 @@ class ChannelsStore {
         return { kind: "open", conversationId: conv.conversationId };
       case "opening":
         return { kind: "pending", conversationId: conv.conversationId };
+      case "reconnecting":
+        // The channel is established; only the direct SSE stream is mid-retry
+        // (the transport reconnects transparently). Reporting "open" keeps
+        // the sidebar indicator steady while the chat body shows its spinner.
+        return { kind: "open", conversationId: conv.conversationId };
       case "offline":
         return { kind: "offline", conversationId: conv.conversationId };
       case "error":
@@ -166,6 +171,10 @@ class ChannelsStore {
     this.localError = null;
     const cacheConversationId = conversationId ?? "local";
     const conv = new LocalConversation(this, transport, cacheConversationId);
+    // Wire the transport's stream-retry lifecycle into the conversation:
+    // reconnecting flips its status (spinner + composer gate), resumed
+    // re-opens it and backfills the gap via catch-up.
+    transport.onState = (s) => conv.onTransportState(s);
     this.conversations.set("local", conv);
     try {
       const cached = await readTail(cacheConversationId, WINDOW_PAGE);

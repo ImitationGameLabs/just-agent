@@ -97,6 +97,17 @@ async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
   return out;
 }
 
+/** Collect the first n items off a generator, then stop iterating (the
+ * transport keeps running; close it when done). */
+async function collectN<T>(gen: AsyncGenerator<T>, n: number): Promise<T[]> {
+  const out: T[] = [];
+  for await (const v of gen) {
+    out.push(v);
+    if (out.length >= n) break;
+  }
+  return out;
+}
+
 /** A fake TagmaClient whose externalEventStream yields the given raw
  * `{event,data}` frames in order, then ends. */
 function fakeClient(frames: { event: string; data: string }[]): TagmaClient {
@@ -161,10 +172,11 @@ Deno.test(
       localSender,
     );
     const [replies, signals, statuses] = await Promise.all([
-      drain(t.replies()),
-      drain(t.signals()),
-      drain(t.status()),
+      collectN(t.replies(), 2),
+      collectN(t.signals(), 2),
+      collectN(t.status(), 1),
     ]);
+    t.close();
     assertEquals(
       replies.map((r) => r.reply.kind),
       ["event", "event"],
@@ -197,6 +209,8 @@ Deno.test(
       } as unknown as TagmaClient,
       "root",
       localSender,
+      [],
+      [1],
     );
     const replyP = drain(t.replies());
     const signalP = drain(t.signals());
@@ -214,19 +228,26 @@ Deno.test(
     let starts = 0;
     const t = new DirectTransport(
       {
-        externalEventStream: async function* () {
+        externalEventStream: async function* (_id: string, sig?: AbortSignal) {
           starts++;
           yield authored("a", 1);
           yield signal({ type: "busy" });
+          // Hold the connection open like an idle live SSE.
+          await new Promise<never>((_, reject) => {
+            const onAbort = () => reject(new Error("aborted"));
+            if (sig?.aborted) onAbort();
+            else sig?.addEventListener("abort", onAbort, { once: true });
+          });
         },
       } as unknown as TagmaClient,
       "root",
       localSender,
     );
     const [replies, signals] = await Promise.all([
-      drain(t.replies()),
-      drain(t.signals()),
+      collectN(t.replies(), 1),
+      collectN(t.signals(), 1),
     ]);
+    t.close();
     assertEquals(starts, 1, "the SSE is opened once even with two drains");
     assertEquals(replies.length, 1);
     assertEquals(signals.length, 1);
@@ -234,19 +255,26 @@ Deno.test(
 );
 
 Deno.test(
-  "DirectTransport ends both drains on a clean stream end",
+  "DirectTransport reconnects after a clean stream end, then exhausts",
   async () => {
+    // New contract: a clean end is retried like a failure (mobile backgrounding
+    // often surfaces as a clean close); with a 1-attempt budget the second
+    // clean end exhausts it and the drains fail with the stream-closed error.
+    let connects = 0;
     const t = new DirectTransport(
-      fakeClient([authored("hi", 1)]),
+      {
+        externalEventStream: async function* () {
+          connects++;
+          yield authored("hi", 1);
+        },
+      } as unknown as TagmaClient,
       "root",
       localSender,
+      [],
+      [1],
     );
-    const [replies, signals] = await Promise.all([
-      drain(t.replies()),
-      drain(t.signals()),
-    ]);
-    assertEquals(replies.length, 1);
-    assertEquals(signals, []);
+    await assertRejects(() => drain(t.replies()), "stream closed");
+    assertEquals(connects, 2, "clean end reconnected once before exhausting");
   },
 );
 

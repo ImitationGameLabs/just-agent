@@ -50,7 +50,7 @@ import {
   readTailBefore,
 } from "@kallipai/kallip-lesche-client";
 import type { Transport } from "./transport.ts";
-import { DirectTransport } from "./directTransport.ts";
+import { DirectTransport, type TransportState } from "./directTransport.ts";
 import { LescheApiError } from "@kallipai/kallip-lesche-client";
 import { KallipError } from "@kallipai/kallip-common";
 import { chat_send_failed } from "../../paraglide/messages.js";
@@ -75,7 +75,12 @@ export function cachedLineToLine(c: CachedLine): ConversationLine {
   };
 }
 /** Transport-status surface: the sidebar dot + the chat-page disabled gate. */
-export type ConversationStatus = "opening" | "open" | "offline" | "error";
+export type ConversationStatus =
+  | "opening"
+  | "open"
+  | "reconnecting"
+  | "offline"
+  | "error";
 
 /** The minimal store surface a Conversation needs (back-ref for the stale
  *  guard). Defined here so conversation.svelte.ts does not import the store
@@ -790,6 +795,21 @@ export class LocalConversation extends ConversationBase {
   /** The direct transport when still attached (null once the drain died). */
   private get direct(): DirectTransport | null {
     return this.transport instanceof DirectTransport ? this.transport : null;
+  }
+
+  /** Stream lifecycle from the direct transport's retry loop (wired by
+   * attachLocal): "reconnecting" flips the status — the chat page shows its
+   * in-chat spinner and the composer disables via status !== "open";
+   * "resumed" restores "open" and backfills whatever frames the reconnect
+   * gap dropped (cursor-based catch-up is idempotent and live-safe). */
+  onTransportState(s: TransportState): void {
+    if (!this.isLive()) return;
+    if (s === "reconnecting") {
+      this.status = "reconnecting";
+    } else {
+      this.status = "open";
+      void this.catchUp();
+    }
   }
 
   /** Backfill from the high-water mark to the newest server row: pages

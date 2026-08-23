@@ -116,6 +116,10 @@ class RealtimeStore {
   // One-shot per session; force-resolves presence after the deadline so the
   // "checking" placeholder is bounded regardless of SSE connection health.
   private resolveDeadline: ReturnType<typeof setTimeout> | null = null;
+  /** Foreground-return kick: reconnect the SSE at once instead of sleeping. */
+  private foregroundKick = false;
+  /** Resolves the in-flight backoff sleep early (foreground fast path). */
+  private wake: (() => void) | null = null;
 
   /** Reactive liveness query: true iff a tagma tunnel is live for `tagmaId`. */
   has(tagmaId: string): boolean {
@@ -200,6 +204,9 @@ class RealtimeStore {
    * presence is meaningless until re-auth). */
   stop(): void {
     this.running = false;
+    this.unbindForeground();
+    this.foregroundKick = false;
+    this.wake?.();
     this.abort?.abort();
     this.abort = null;
     this.clearResolveDeadline();
@@ -232,10 +239,13 @@ class RealtimeStore {
    * source and it is stable) and self-corrects on a refresh. */
   private async run(): Promise<void> {
     let backoff = 1000;
-    const signal = this.abort!.signal;
+    this.bindForeground();
     while (this.running) {
+      this.abort = new AbortController(); // fresh per attempt: restartable
       try {
-        for await (const ev of lescheClientOrFail().meEvents(signal)) {
+        for await (const ev of lescheClientOrFail().meEvents(
+          this.abort.signal,
+        )) {
           backoff = 1000; // a live event proves the stream is healthy.
           // The first event (incl. the connect-time presence snapshot) resolves
           // presence immediately. The no-event case (empty snapshot, or the SSE
@@ -252,14 +262,66 @@ class RealtimeStore {
           this.clearResolveDeadline();
           this.presence.clear();
           this.resolvedState = false;
+          this.unbindForeground();
           return;
         }
         // Other errors (transient network, server drop): reconnect after backoff.
       }
       if (!this.running) break;
-      await new Promise((r) => setTimeout(r, backoff));
+      // Foreground fast path: the stream was torn down on the foreground
+      // return (likely half-open after the OS froze the socket) — reconnect
+      // at once, resetting the backoff.
+      if (this.foregroundKick) {
+        this.foregroundKick = false;
+        backoff = 1000;
+        continue;
+      }
+      await this.waitBackoff(backoff);
       backoff = Math.min(backoff * 2, 30_000);
     }
+    this.unbindForeground();
+  }
+
+  /** Foreground return: abort the current SSE attempt (the loop reconnects
+   * immediately) and cut any in-flight backoff sleep. The connect-time
+   * presence snapshot re-fires on reconnect, so the swap is lossless. */
+  private handleForegroundVisible = (): void => {
+    if (!this.running) return;
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState !== "visible"
+    ) {
+      return;
+    }
+    this.foregroundKick = true;
+    this.abort?.abort();
+    this.wake?.();
+  };
+
+  /** Backoff sleep, interruptible by the foreground fast path. */
+  private waitBackoff(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.wake = null;
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.wake = done;
+    });
+  }
+
+  private bindForeground(): void {
+    if (typeof document === "undefined") return;
+    document.addEventListener("visibilitychange", this.handleForegroundVisible);
+  }
+
+  private unbindForeground(): void {
+    if (typeof document === "undefined") return;
+    document.removeEventListener(
+      "visibilitychange",
+      this.handleForegroundVisible,
+    );
   }
 
   private dispatch(ev: LescheEvent): void {
