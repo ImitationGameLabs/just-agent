@@ -289,6 +289,7 @@ async fn build_state(
         http,
         oauth_providers,
         signup_enabled,
+        "admin".to_string(),
     ))
 }
 

@@ -132,3 +132,26 @@ re-verification, drop the connection (the tagma relay reconnects; the app
 reconnects). This is the v1 revocation contract; a JWT migration (local
 validation, zero per-request RPC) is the future step if tighter coupling is
 ever needed.
+
+### Admin-token login (local platform)
+
+The fifth auth ceremony, `POST /v1/auth/admin-login`, exists for the
+local-platform deployment: it exchanges the operator's `sk-admin-` token
+for a normal User session on a fixed local account (username from
+`KALLIP_AGORA_ADMIN_USER_NAME`, default `admin`; the account is created on
+first use and bound by an `external_identities (local-admin, admin)`
+marker row, so it can never collide with or take over a real signup's
+username -- a collision fails fast and names the env knob). The session
+mints through the same `mint_session_row` path as every other login, so
+the whole user-scoped surface (profiles, tagma mint/enroll) works
+unchanged; the true admin principal keeps `/v1/admin` and the CLI.
+
+Security boundary, three sentences: only the admin principal may enter
+(any other credential is a plain 401); the route is not mounted unless
+`KALLIP_AGORA_ADMIN_USER_LOGIN` is explicitly set, so the production
+default has no such surface at all; and when it is set, an operator-chosen
+admin token shorter than 32 chars refuses to boot (the generated 256-bit
+token is exempt). Deleting the marker row together with its user row
+resets the account -- the next admin-login recreates both. Mounting the
+route is an explicit operator act that pre-provisions an operator
+account, so `KALLIP_AGORA_SIGNUP_ENABLED` does not gate it.

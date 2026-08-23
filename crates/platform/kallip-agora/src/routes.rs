@@ -31,7 +31,11 @@ use crate::state::SharedState;
 /// Build the public router. `internal_token_hash`, when `Some`, mounts the
 /// `/internal/*` ControlPlane surface for the lesche (guarded by that hash);
 /// `None` runs the agora standalone with no internal surface.
-pub fn router(state: SharedState, internal_token_hash: Option<TokenHash>) -> Router<()> {
+pub fn router(
+    state: SharedState,
+    internal_token_hash: Option<TokenHash>,
+    admin_login: bool,
+) -> Router<()> {
     // The unauthenticated, crypto-heavy entry surfaces are rate-limited per
     // client IP: the ceremony begins (ceremony-spam / username-enumeration) and
     // tagma enroll (CPU + DB + token mint). Ceremony finishes are NOT
@@ -67,13 +71,13 @@ pub fn router(state: SharedState, internal_token_hash: Option<TokenHash>) -> Rou
     // (click-from-inbox). The 256-bit single-use token is the real verify gate;
     // the limiter is defense-in-depth + outbound bound.
     let email_write = emails::write_router().layer(rate_limit.clone());
-    let email_verify = emails::verify_router().layer(rate_limit);
+    let email_verify = emails::verify_router().layer(rate_limit.clone());
 
     // The control-plane v1 carries `SharedState`; resolve it to a stateless
     // `Router<()>`. The CSRF custom-header guard scopes to v1 (a no-op for
     // non-cookie / bearer requests); it gates cookie-bearing mutating control-
     // plane requests. The data plane (lesche) runs its own CSRF guard.
-    let v1 = Router::new()
+    let mut v1 = Router::new()
         .merge(ceremony_begin)
         .merge(pair_begin)
         .merge(auth::finish_router())
@@ -87,7 +91,15 @@ pub fn router(state: SharedState, internal_token_hash: Option<TokenHash>) -> Rou
         .nest("/admin", admin::router())
         .merge(enroll)
         .merge(tagmata::protected_router())
-        .merge(public_profiles)
+        .merge(public_profiles);
+    // The local-platform admin-login mounts only when the boot flag is set
+    // (production default: the route does not exist). It is an
+    // unauthenticated credential-check surface, so it shares the per-IP
+    // limiter with the ceremony begins.
+    if admin_login {
+        v1 = v1.merge(auth::admin_login_router().layer(rate_limit));
+    }
+    let v1 = v1
         .with_state(state.clone())
         .layer(axum::middleware::from_fn(crate::middleware::csrf_guard));
 

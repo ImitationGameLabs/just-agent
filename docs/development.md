@@ -155,7 +155,7 @@ up. The `agora_pgdata` volume persists across `arion down` / `up`, so this
 sub-flow runs **once per volume** -- check before doing it:
 
 ```sh
-KALLIP_AGORA_ADMIN_TOKEN=sk-admin-test cargo run -q -p kallip-admin -- --agora-url http://localhost:7100 users list
+KALLIP_AGORA_ADMIN_TOKEN=sk-admin-dev-0123456789abcdef0123456789abcdef cargo run -q -p kallip-admin -- --agora-url http://localhost:7100 users list
 ```
 
 If `users list` already shows a row, a test account exists -- skip to minting
@@ -170,6 +170,20 @@ the tagma's operator token. (The tagma's agora/lesche relay URLs are wired to
 compose DNS by arion -- `http://agora:7100` / `http://lesche:7200` -- so they
 need no `.env` override.)
 
+Faster alternative without touching a browser: the dev stack enables the
+local-platform admin-login, so a plain curl exchanges the admin token for a
+User session on a fixed `admin` account (created on first use) and that
+session mints enrollment codes like any user:
+
+```sh
+curl -si -X POST http://localhost:7100/v1/auth/admin-login \
+  -H 'Authorization: Bearer sk-admin-dev-0123456789abcdef0123456789abcdef'
+```
+
+The `Set-Cookie: kallip_session=...` header is the session (see
+docs/reference/auth.md); pass it as `-b kallip_session=...` to mint an
+enrollment code at `POST /v1/tagmata` without signing up.
+
 ##### The admin token
 
 `kallip-admin` authenticates with the agora's admin token. The clean path is to
@@ -177,11 +191,13 @@ pin it **before** first boot so the same known value works on every run: make
 sure `.env` contains
 
 ```text
-KALLIP_AGORA_ADMIN_TOKEN=sk-admin-test
+KALLIP_AGORA_ADMIN_TOKEN=sk-admin-dev-0123456789abcdef0123456789abcdef
 ```
 
-then run `arion up -d`. The agora loads it via `env_file` and `kallip-admin`
-always authenticates with `sk-admin-test` -- no log scraping.
+then run `arion up -d`. The dev compose pins this same fixture in the agora
+service's environment (a local-platform login is enabled there, and that
+route refuses to boot with an operator-set token shorter than 32 chars),
+so `kallip-admin` authenticates with it -- no log scraping.
 
 If the agora is **already running** without this pinned (e.g. an older stack
 booted before you set it), its token was generated randomly at startup and
@@ -194,7 +210,7 @@ TOK=$(arion logs agora 2>&1 | grep -oP 'sk-admin-[A-Za-z0-9_-]+' | tail -1)
 KALLIP_AGORA_ADMIN_TOKEN="$TOK" cargo run -q -p kallip-admin -- --agora-url http://localhost:7100 ...
 ```
 
-`sk-admin-test` is a dev-only fixture; prod must set a strong secret.
+The fixture is dev-only; prod must set a strong secret.
 
 ### Tagma side
 

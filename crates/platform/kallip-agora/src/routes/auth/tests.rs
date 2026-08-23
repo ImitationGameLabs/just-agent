@@ -12,12 +12,15 @@ use uuid::Uuid;
 
 use super::{
     DiscoverableAuthentication, KIND_LOGIN, KIND_LOGIN_DISCOVERABLE, LoginBeginRequest,
-    LoginFinishRequest, PublicKeyCredential, RegisterBeginRequest, login_begin,
+    LoginFinishRequest, PublicKeyCredential, RegisterBeginRequest, admin_login, login_begin,
     login_discoverable_begin, login_discoverable_finish, register_begin,
 };
-use crate::db::entity::{users, webauthn_challenges};
+use crate::auth::AuthPrincipal;
+use crate::db::entity::{external_identities, sessions, users, webauthn_challenges};
 use crate::test_helpers::{make_state, seed_user};
+use kallip_agora_common::principal::Principal;
 use sea_orm::EntityTrait;
+use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter};
 
 /// `login_begin` rejects an unknown username with 401 (accepted enumeration
 /// oracle for closed beta; see the handler doc comment).
@@ -253,4 +256,145 @@ async fn login_discoverable_finish_rejects_expired() {
     .await
     .expect_err("expired");
     assert_eq!(err.status, 401);
+}
+
+// ---------------------------------------------------------------------------
+// admin-login (local platform)
+// ---------------------------------------------------------------------------
+
+/// Extract the user_id JSON field and the Set-Cookie header from an
+/// admin-login response.
+async fn take_admin_login_response(resp: axum::response::Response) -> (String, Option<String>) {
+    let cookie = resp
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let json: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+    (
+        json.get("user_id")
+            .and_then(|v| v.as_str())
+            .expect("user_id")
+            .to_owned(),
+        cookie,
+    )
+}
+
+/// First admin-login creates the fixed account (users row + local-admin
+/// marker row) and mints a session cookie bound to that account.
+#[tokio::test]
+async fn admin_login_first_login_creates_account_and_session() {
+    let state = make_state().await;
+    let resp = admin_login(State(state.clone()), AuthPrincipal(Principal::Admin))
+        .await
+        .expect("first login");
+    assert_eq!(resp.status(), 200);
+    let (user_id, cookie) = take_admin_login_response(resp).await;
+    assert!(
+        cookie
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("kallip_session=")
+    );
+
+    let user = users::Entity::find()
+        .filter(users::Column::Id.eq(user_id.clone()))
+        .one(&state.db)
+        .await
+        .expect("find user")
+        .expect("users row created");
+    assert_eq!(user.username, "admin");
+    let marker = external_identities::Entity::find()
+        .filter(external_identities::Column::Provider.eq("local-admin"))
+        .one(&state.db)
+        .await
+        .expect("find marker")
+        .expect("marker row created");
+    assert_eq!(marker.user_id, user_id);
+    assert_eq!(marker.subject, "admin");
+}
+
+/// Second admin-login reuses the same UserId (no new account) and mints a
+/// second session.
+#[tokio::test]
+async fn admin_login_second_login_same_user_new_session() {
+    let state = make_state().await;
+    let (first, _) = take_admin_login_response(
+        admin_login(State(state.clone()), AuthPrincipal(Principal::Admin))
+            .await
+            .expect("first login"),
+    )
+    .await;
+    let (second, _) = take_admin_login_response(
+        admin_login(State(state.clone()), AuthPrincipal(Principal::Admin))
+            .await
+            .expect("second login"),
+    )
+    .await;
+    assert_eq!(first, second);
+    let session_count = sessions::Entity::find()
+        .filter(sessions::Column::UserId.eq(first.clone()))
+        .count(&state.db)
+        .await
+        .expect("count sessions");
+    assert_eq!(session_count, 2);
+}
+
+/// Only the Admin principal may enter: a user session or tagma bearer
+/// gets a plain 401.
+#[tokio::test]
+async fn admin_login_rejects_non_admin_principal() {
+    let state = make_state().await;
+    let err = admin_login(
+        State(state),
+        AuthPrincipal(Principal::User(kallip_agora_common::ids::UserId::random())),
+    )
+    .await
+    .expect_err("non-admin principal");
+    assert_eq!(err.status, 401);
+    assert_eq!(err.message, "admin token required");
+}
+
+/// A real signup already holding the configured username is a
+/// configuration collision: fail fast and name the env knob.
+#[tokio::test]
+async fn admin_login_username_taken_fails_fast() {
+    let state = make_state().await;
+    seed_user(&state, "admin").await;
+    let err = admin_login(State(state), AuthPrincipal(Principal::Admin))
+        .await
+        .expect_err("collision");
+    assert_eq!(err.status, 409);
+    assert!(err.message.contains("KALLIP_AGORA_ADMIN_USER_NAME"));
+}
+
+/// A disabled fixed account refuses login (the caller holds the admin
+/// token, so the explicit refusal leaks nothing).
+#[tokio::test]
+async fn admin_login_disabled_account_refused() {
+    let state = make_state().await;
+    let (user_id, _) = take_admin_login_response(
+        admin_login(State(state.clone()), AuthPrincipal(Principal::Admin))
+            .await
+            .expect("first login"),
+    )
+    .await;
+    let mut am: users::ActiveModel = users::Entity::find()
+        .filter(users::Column::Id.eq(user_id))
+        .one(&state.db)
+        .await
+        .expect("find user")
+        .expect("user exists")
+        .into();
+    am.disabled_at = Set(Some(OffsetDateTime::now_utc()));
+    am.update(&state.db).await.expect("disable user");
+
+    let err = admin_login(State(state), AuthPrincipal(Principal::Admin))
+        .await
+        .expect_err("disabled");
+    assert_eq!(err.status, 401);
+    assert!(err.message.contains("disabled"));
 }

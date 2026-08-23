@@ -149,4 +149,15 @@ pub struct Args {
     /// lesche's `KALLIP_LESCHE_AGORA_TOKEN`.
     #[arg(long, env = "KALLIP_AGORA_INTERNAL_TOKEN")]
     pub internal_token: Option<String>,
+    /// Mount POST /v1/auth/admin-login: exchange the admin token for a normal
+    /// User session on a fixed local account (the local-platform login; see
+    /// docs/reference/auth.md). Default off: the route is not mounted at
+    /// all. When on, an operator-set KALLIP_AGORA_ADMIN_TOKEN shorter than
+    /// 32 chars fails at boot (the generated 256-bit token is exempt).
+    #[arg(long, env = "KALLIP_AGORA_ADMIN_USER_LOGIN", default_value_t = false)]
+    pub admin_user_login: bool,
+    /// Username for the fixed local account the first admin-login creates
+    /// (normalized + validated at boot, same rules as signup handles).
+    #[arg(long, env = "KALLIP_AGORA_ADMIN_USER_NAME", default_value = "admin")]
+    pub admin_user_name: String,
 }

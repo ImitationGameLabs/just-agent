@@ -83,7 +83,8 @@
 //! Session ids are rotated: every register/login finish mints a brand-new
 //! session token (never reuses a pre-login one), defeating session fixation.
 
-use crate::db::entity::{passkeys, sessions, users, webauthn_challenges};
+use crate::auth::AuthPrincipal;
+use crate::db::entity::{external_identities, passkeys, sessions, users, webauthn_challenges};
 use crate::db::{TxnError, flatten_txn, map_db_err};
 use crate::session::{SessionCfg, build_set_cookie};
 use crate::state::SharedState;
@@ -95,6 +96,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use kallip_agora_common::ids::UserId;
+use kallip_agora_common::principal::Principal;
 use kallip_common::authtoken::MintedToken;
 use kallip_common::protocol::ApiError;
 use sea_orm::{
@@ -105,7 +107,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use time::OffsetDateTime;
-use tracing::warn;
+use tracing::{info, warn};
 use uuid::Uuid;
 use webauthn_rs::prelude::{
     AuthenticationResult, CreationChallengeResponse, DiscoverableAuthentication, DiscoverableKey,
@@ -152,6 +154,11 @@ pub(crate) const CHALLENGE_TTL: Duration = Duration::from_secs(300);
 /// the Postgres unique-violation message to discriminate a username-collision
 /// race (-> 409) from any other unique violation in the same transaction.
 const USERNAME_UNIQUE_CONSTRAINT: &str = "uniq_users_username";
+/// Name of the `external_identities (provider, subject)` unique index, used
+/// to discriminate a concurrent first-admin-login race (two requests both
+/// take the create arm; the loser hits the index) exactly the way
+/// [`USERNAME_UNIQUE_CONSTRAINT`] discriminates username races.
+const EXTERNAL_IDENTITY_UNIQUE_CONSTRAINT: &str = "uniq_external_identities_provider_subject";
 
 /// Max live (unexpired) ceremonies per username (register) / user (login).
 /// Bounds `webauthn_challenges` storage growth against an attacker who spams
@@ -957,6 +964,163 @@ pub(crate) async fn mint_session_row(
     .insert(txn)
     .await?;
     Ok(set_cookie)
+}
+
+// ---------------------------------------------------------------------------
+// admin token login (local platform)
+// ---------------------------------------------------------------------------
+
+/// Marker-row discriminators binding the fixed local account that
+/// [`admin_login`] creates: `(provider, subject)` is the lookup key, so these
+/// are stable identities like the OAuth provider names -- never rename. The
+/// username the account carries is boot config (`KALLIP_AGORA_ADMIN_USER_NAME`),
+/// NOT the subject; renaming the env var changes only the display handle.
+const LOCAL_ADMIN_PROVIDER: &str = "local-admin";
+const LOCAL_ADMIN_SUBJECT: &str = "admin";
+
+/// The local-platform login route. Mounted only when the boot flag
+/// `KALLIP_AGORA_ADMIN_USER_LOGIN` is set (see `routes::router`); the route
+/// does not exist in the default production surface.
+pub fn admin_login_router() -> Router<SharedState> {
+    Router::new().route("/auth/admin-login", post(admin_login))
+}
+
+/// POST /v1/auth/admin-login: exchange the operator's `sk-admin-` token for a
+/// normal User session on a fixed local account, creating that account on
+/// first use. This is the fifth auth ceremony and the local-platform
+/// deployment's operator entry: a User session lights up the whole
+/// user-scoped surface (profiles, tagma mint/enroll) with no browser passkey
+/// ceremony, which is exactly the online management experience a local stack
+/// needs (see docs/reference/auth.md for the security boundary).
+///
+/// Not gated by `signup_enabled`: mounting the route is an explicit operator
+/// act that pre-provisions an operator account -- the same position as the
+/// OAuth creation step, where the gate also does not apply to logins. Any
+/// principal other than `Admin` (wrong token, a tagma bearer, a user
+/// session) is a plain 401. The plaintext token is consumed by the
+/// `AuthPrincipal` extractor; it never reaches this handler and so cannot be
+/// logged here.
+async fn admin_login(
+    State(state): State<SharedState>,
+    AuthPrincipal(principal): AuthPrincipal,
+) -> Result<Response, ApiError> {
+    let Principal::Admin = principal else {
+        return Err(ApiError::unauthorized("admin token required"));
+    };
+
+    let username = state.admin_user_name.clone();
+    let session_cfg = state.session_cfg.clone();
+    let outcome = state
+        .db
+        .transaction::<_, (String, String), TxnError>(|txn| {
+            let username = username.clone();
+            let session_cfg = session_cfg.clone();
+            Box::pin(async move {
+                let marker = external_identities::Entity::find()
+                    .filter(external_identities::Column::Provider.eq(LOCAL_ADMIN_PROVIDER))
+                    .filter(external_identities::Column::Subject.eq(LOCAL_ADMIN_SUBJECT))
+                    .lock_exclusive()
+                    .one(txn)
+                    .await?;
+                let now = OffsetDateTime::now_utc();
+
+                let user_id = if let Some(row) = marker {
+                    // LOGIN: reuse the account a prior admin-login created.
+                    // The caller holds the admin token, so an explicit
+                    // disabled-refusal (vs the OAuth arm's generic 401) leaks
+                    // nothing the caller does not already control.
+                    let user = users::Entity::find_by_id(row.user_id.clone())
+                        .lock_exclusive()
+                        .one(txn)
+                        .await?
+                        .ok_or_else(|| {
+                            TxnError::Api(ApiError::internal(
+                                "local admin marker row dangles (user row missing)",
+                            ))
+                        })?;
+                    if user.disabled_at.is_some() {
+                        return Err(TxnError::Api(ApiError::unauthorized(
+                            "local admin account is disabled",
+                        )));
+                    }
+                    let mut am: external_identities::ActiveModel = row.into();
+                    am.last_used_at = Set(Some(now));
+                    am.update(txn).await?;
+                    UserId::from(user.id)
+                } else {
+                    // FIRST LOGIN: create the fixed account. A real signup
+                    // already holding the configured username is a
+                    // configuration collision, not a race to retry: name the
+                    // env knob as the exit.
+                    let existing = users::Entity::find()
+                        .filter(users::Column::Username.eq(username.clone()))
+                        .lock_exclusive()
+                        .one(txn)
+                        .await?;
+                    if existing.is_some() {
+                        return Err(TxnError::Api(ApiError::conflict(
+                            "username for the local admin account is already taken by a real \
+                             account; set KALLIP_AGORA_ADMIN_USER_NAME to a free username",
+                        )));
+                    }
+                    let user_id = UserId::random();
+                    users::ActiveModel {
+                        id: Set(user_id.to_string()),
+                        username: Set(username),
+                        display_name: Set(None),
+                        created_at: Set(now),
+                        disabled_at: Set(None),
+                    }
+                    .insert(txn)
+                    .await?;
+                    external_identities::ActiveModel {
+                        id: Set(Uuid::new_v4()),
+                        user_id: Set(user_id.to_string()),
+                        provider: Set(LOCAL_ADMIN_PROVIDER.to_string()),
+                        subject: Set(LOCAL_ADMIN_SUBJECT.to_string()),
+                        display_name: Set(None),
+                        created_at: Set(now),
+                        // First use IS this login.
+                        last_used_at: Set(Some(now)),
+                    }
+                    .insert(txn)
+                    .await?;
+                    user_id
+                };
+
+                let set_cookie = mint_session_row(txn, &user_id, &session_cfg, now).await?;
+                Ok((user_id.to_string(), set_cookie))
+            })
+        })
+        .await;
+    // Discriminate the sub-ms double-first-login race the same way
+    // `register_finish` discriminates its username race: the FOR UPDATE
+    // pre-checks win the common case; a simultaneous insert loses to a
+    // unique index and surfaces as a clean 409 (a retry then takes the
+    // login arm). Any other unique violation stays a 500 via `map_db_err`.
+    let (user_id, set_cookie) = match outcome {
+        Ok(v) => v,
+        Err(TransactionError::Transaction(TxnError::Api(e))) => return Err(e),
+        Err(TransactionError::Transaction(TxnError::Db(e)))
+        | Err(TransactionError::Connection(e)) => {
+            if let Some(SqlErr::UniqueConstraintViolation(msg)) = e.sql_err()
+                && (msg.contains(USERNAME_UNIQUE_CONSTRAINT)
+                    || msg.contains(EXTERNAL_IDENTITY_UNIQUE_CONSTRAINT))
+            {
+                return Err(ApiError::conflict(
+                    "concurrent first admin-login; retry the request",
+                ));
+            }
+            return Err(map_db_err(e));
+        }
+    };
+
+    info!(user = %user_id, "admin-login: minted local admin session");
+    Ok(set_cookie_response(
+        &set_cookie,
+        AuthFinishResponse { user_id },
+        StatusCode::OK,
+    ))
 }
 
 // ---------------------------------------------------------------------------

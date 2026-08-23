@@ -18,7 +18,11 @@ pub struct Model {
     /// `UserId` of the owner. References `users(id)` with cascading delete.
     #[sea_orm(column_type = "Text")]
     pub user_id: String,
-    /// Stable provider discriminator: `"github"` | `"google"`. Never rename.
+    /// Stable provider discriminator: `"github"` | `"google"` | `"local-admin"`
+    /// (the fixed local-platform account POST /v1/auth/admin-login binds;
+    /// subject is the constant "admin"). Never rename. Deleting the
+    /// local-admin row together with its user row resets that account: the
+    /// next admin-login recreates both -- a clean operator escape hatch.
     #[sea_orm(column_type = "Text")]
     pub provider: String,
     /// The provider's stable account id (GitHub numeric `id`, Google `sub`).

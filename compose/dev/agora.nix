@@ -192,6 +192,15 @@ in
         # .env). The lesche presents the SAME value as
         # KALLIP_LESCHE_AGORA_TOKEN.
         KALLIP_AGORA_INTERNAL_TOKEN = "dev-internal-secret";
+        # The local-platform login refuses to boot with an operator-set
+        # admin token shorter than 32 chars, so the dev fixture pins a
+        # compliant one HERE (service.environment overrides the shorter
+        # KALLIP_AGORA_ADMIN_TOKEN a legacy .env may still carry).
+        KALLIP_AGORA_ADMIN_TOKEN = "sk-admin-dev-0123456789abcdef0123456789abcdef";
+        # Local-platform operator login: exchange the admin token for a User
+        # session (POST /v1/auth/admin-login) on a fixed local account. Dev
+        # fixture, paired with the compliant token above; prod leaves it off.
+        KALLIP_AGORA_ADMIN_USER_LOGIN = "true";
         RUST_LOG = "info";
       };
     };

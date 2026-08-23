@@ -62,6 +62,26 @@ async fn main() -> Result<()> {
     println!("  (retain only this hash; plaintext shown once)");
     println!("==================================================");
 
+    // The local-platform admin-login turns the admin token into a User-session
+    // mint, so when it is enabled a weak operator-chosen token is not just an
+    // admin CLI credential anymore: refuse to boot with one. The generated
+    // token is 256-bit and exempt from the length floor.
+    const MIN_ADMIN_TOKEN_LEN: usize = 32;
+    let admin_user_name = if args.admin_user_login {
+        if let Some(s) = args.admin_token.as_deref()
+            && s.len() < MIN_ADMIN_TOKEN_LEN
+        {
+            anyhow::bail!(
+                "KALLIP_AGORA_ADMIN_USER_LOGIN is enabled but KALLIP_AGORA_ADMIN_TOKEN is \
+                 shorter than {MIN_ADMIN_TOKEN_LEN} chars; set a strong token or unset the flag"
+            );
+        }
+        username::normalize(&args.admin_user_name)
+            .map_err(|e| anyhow::anyhow!("invalid KALLIP_AGORA_ADMIN_USER_NAME: {e}"))?
+    } else {
+        args.admin_user_name.clone()
+    };
+
     let limits = Limits {
         max_body_size_bytes: body_size_bytes(args.max_body_size_kb),
         enrollment_code_ttl: Duration::from_secs(args.enrollment_code_ttl_secs),
@@ -148,6 +168,7 @@ async fn main() -> Result<()> {
         http,
         oauth_providers,
         args.signup_enabled,
+        admin_user_name,
     ));
 
     // The data-plane relay (`kallip-lesche`) is a separate process that calls
@@ -168,7 +189,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    let app = routes::router(state.clone(), internal_hash);
+    let app = routes::router(state.clone(), internal_hash, args.admin_user_login);
 
     // Background sweep of expired WebAuthn ceremonies. Decoupled from the
     // request path so the DELETE never adds latency to a ceremony begin.

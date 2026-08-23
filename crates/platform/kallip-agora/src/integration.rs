@@ -50,7 +50,7 @@ async fn csrf_guard_blocks_cookie_post_without_marker() {
     let state = make_state_with(10, 10).await;
     // No `/internal` surface is needed for these control-plane middleware
     // tests.
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
     let mut request = req(
         Method::POST,
         "/v1/auth/login/begin",
@@ -70,7 +70,7 @@ async fn csrf_guard_passes_cookie_post_with_marker() {
     let state = make_state_with(10, 10).await;
     // No `/internal` surface is needed for these control-plane middleware
     // tests.
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
     let mut request = req(
         Method::POST,
         "/v1/auth/login/begin",
@@ -98,7 +98,7 @@ async fn csrf_guard_exempts_bearer() {
     let state = make_state_with(10, 10).await;
     // No `/internal` surface is needed for these control-plane middleware
     // tests.
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
     let mut request = req(
         Method::POST,
         "/v1/auth/login/begin",
@@ -158,7 +158,7 @@ async fn csrf_guard_blocks_tagma_mint_without_marker() {
     let cookie = seed_session(&state).await;
     // No `/internal` surface is needed for these control-plane middleware
     // tests.
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
     let mut request = req(Method::POST, "/v1/tagmata", "{}");
     request.headers_mut().append(
         axum::http::header::COOKIE,
@@ -175,7 +175,7 @@ async fn tagma_mint_with_marker_returns_200() {
     let cookie = seed_session(&state).await;
     // No `/internal` surface is needed for these control-plane middleware
     // tests.
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
     let mut request = req(Method::POST, "/v1/tagmata", "{}");
     request.headers_mut().append(
         axum::http::header::COOKIE,
@@ -196,7 +196,7 @@ async fn tagma_revoke_with_marker_reaches_handler() {
     let cookie = seed_session(&state).await;
     // No `/internal` surface is needed for these control-plane middleware
     // tests.
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
     let mut request = req(
         Method::DELETE,
         "/v1/tagmata/00000000-0000-0000-0000-000000000000",
@@ -222,7 +222,7 @@ async fn rate_limit_begins_but_not_finishes() {
     let state = make_state_with(2, 0).await;
     // No `/internal` surface is needed for these control-plane middleware
     // tests.
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
 
     // Two begins exhaust the bucket (handler may 400 on the username; we only
     // care it is not yet 429).
@@ -270,7 +270,7 @@ async fn rate_limit_enroll() {
     let state = make_state_with(2, 0).await;
     // No `/internal` surface is needed for these control-plane middleware
     // tests.
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
     for _ in 0..2 {
         let request = req(Method::POST, "/v1/tagmata/enroll", r#"{"code":"x"}"#);
         assert_ne!(
@@ -323,7 +323,7 @@ async fn gc_sweep_deletes_expired_only() {
 #[tokio::test]
 async fn internal_surface_absent_without_token() {
     let state = make_state_with(10, 10).await;
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
     let mut request = req(
         Method::POST,
         "/internal/verify-session",
@@ -340,7 +340,7 @@ async fn internal_surface_absent_without_token() {
 #[tokio::test]
 async fn internal_guard_rejects_missing_bearer() {
     let state = make_state_with(10, 10).await;
-    let app = routes::router(state, Some(TokenHash::of("internal-secret")));
+    let app = routes::router(state, Some(TokenHash::of("internal-secret")), false);
     let request = req(
         Method::POST,
         "/internal/verify-session",
@@ -353,7 +353,7 @@ async fn internal_guard_rejects_missing_bearer() {
 #[tokio::test]
 async fn internal_guard_rejects_wrong_bearer() {
     let state = make_state_with(10, 10).await;
-    let app = routes::router(state, Some(TokenHash::of("internal-secret")));
+    let app = routes::router(state, Some(TokenHash::of("internal-secret")), false);
     let mut request = req(
         Method::POST,
         "/internal/verify-session",
@@ -371,7 +371,7 @@ async fn internal_guard_rejects_wrong_bearer() {
 #[tokio::test]
 async fn internal_guard_passes_correct_bearer() {
     let state = make_state_with(10, 10).await;
-    let app = routes::router(state, Some(TokenHash::of("internal-secret")));
+    let app = routes::router(state, Some(TokenHash::of("internal-secret")), false);
     let mut request = req(
         Method::POST,
         "/internal/verify-session",
@@ -396,7 +396,7 @@ async fn internal_guard_passes_correct_bearer() {
 #[tokio::test]
 async fn admin_probe_mounted_at_no_slash_path() {
     let state = make_state_with(10, 10).await;
-    let app = routes::router(state, None);
+    let app = routes::router(state, None, false);
 
     // Valid admin bearer: `make_state` stores `TokenHash::of("test-admin")`.
     let mut ok = Request::builder()
