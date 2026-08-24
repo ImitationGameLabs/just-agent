@@ -17,6 +17,7 @@
   "manage_instances_token_label": "访问令牌",
   "manage_instances_token_placeholder": "粘贴守护进程令牌",
   "manage_instances_token_apply": "应用",
+  "manage_instances_token_rejected": "该令牌未被接受。",
   "manage_instances_spawn_heading": "新建实例",
   "manage_instances_spawn_slug_label": "实例标识",
   "manage_instances_spawn_slug_placeholder": "如 work-laptop",

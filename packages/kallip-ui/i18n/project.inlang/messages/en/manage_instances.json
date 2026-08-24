@@ -17,6 +17,7 @@
   "manage_instances_token_label": "Access token",
   "manage_instances_token_placeholder": "Paste the daemon token",
   "manage_instances_token_apply": "Apply",
+  "manage_instances_token_rejected": "That token was not accepted.",
   "manage_instances_spawn_heading": "Launch an instance",
   "manage_instances_spawn_slug_label": "Instance slug",
   "manage_instances_spawn_slug_placeholder": "e.g. work-laptop",

@@ -53,6 +53,7 @@
     manage_instances_error_not_running,
     manage_instances_error_bad_request,
     manage_instances_error_internal,
+    manage_instances_token_rejected,
   } from "../../paraglide/messages.js";
 
   $effect(() => {
@@ -184,12 +185,16 @@
   }
 
   // Store the token and retry immediately; a still-standing 401 keeps
-  // the banner, a green one dissolves into the normal page.
-  function onTokenApply(event: SubmitEvent) {
+  // the banner and marks the token as rejected so the user can tell a
+  // wrong token from no token; a green one dissolves into the page.
+  let tokenRejected = $state(false);
+
+  async function onTokenApply(event: SubmitEvent) {
     event.preventDefault();
     if (!tokenInput.trim()) return;
     sessionStorage.setItem(DAEMON_TOKEN_KEY, tokenInput.trim());
-    instancesStore.refresh();
+    await instancesStore.refresh();
+    tokenRejected = instancesStore.errorKind === "unauthorized";
   }
 
   // One human line per classified failure kind (page-level banner). The
@@ -246,6 +251,11 @@
               >{manage_instances_token_apply()}</button
             >
           </div>
+          {#if tokenRejected}
+            <p class="text-xs text-error-500 dark:text-error-400">
+              {manage_instances_token_rejected()}
+            </p>
+          {/if}
         </form>
       {:else}
         <p class="text-error-500 dark:text-error-400 text-sm">
