@@ -1,0 +1,15 @@
+{
+  "$schema": "https://inlang.com/schema/message-format",
+  "manage_instances_title": "KallipAI · instances",
+  "manage_instances_heading": "Instances",
+  "manage_instances_daemon_health": "Daemon health",
+  "manage_instances_daemon_running": "Daemon running",
+  "manage_instances_daemon_stopped": "Daemon not running",
+  "manage_instances_running": "Running",
+  "manage_instances_stopped": "Stopped",
+  "manage_instances_empty": "No instances on this machine yet.",
+  "manage_instances_load_failed": "Could not load instances from the daemon.",
+  "manage_instances_unauthorized": "This daemon requires an access token.",
+  "manage_instances_forbidden": "This session is not allowed to manage the daemon.",
+  "manage_instances_unreachable": "Cannot reach the daemon web proxy on this machine."
+}

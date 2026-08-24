@@ -17,6 +17,7 @@
     House,
     LayoutGrid,
     MessageSquare,
+    Server,
     Settings,
     Users,
     Wallet,
@@ -48,6 +49,7 @@
     manageAgents: Users,
     manageProfiles: Settings,
     manageSchedules: Calendar,
+    manageInstances: Server,
   };
 
   let { children } = $props();

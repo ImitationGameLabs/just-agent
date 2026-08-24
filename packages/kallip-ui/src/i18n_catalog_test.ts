@@ -33,6 +33,7 @@ const FILES = [
   "manage_budget",
   "manage_profiles",
   "manage_schedules",
+  "manage_instances",
 ] as const;
 
 type Loader = () => Promise<Record<string, string>>;
@@ -118,6 +119,10 @@ const loaders: Record<string, Loader> = {
     import("../i18n/project.inlang/messages/en/manage_schedules.json", {
       with: { type: "json" },
     }).then((m) => m.default as Record<string, string>),
+  "en|manage_instances": () =>
+    import("../i18n/project.inlang/messages/en/manage_instances.json", {
+      with: { type: "json" },
+    }).then((m) => m.default as Record<string, string>),
   "zh|common": () =>
     import("../i18n/project.inlang/messages/zh/common.json", {
       with: { type: "json" },
@@ -196,6 +201,10 @@ const loaders: Record<string, Loader> = {
     }).then((m) => m.default as Record<string, string>),
   "zh|manage_schedules": () =>
     import("../i18n/project.inlang/messages/zh/manage_schedules.json", {
+      with: { type: "json" },
+    }).then((m) => m.default as Record<string, string>),
+  "zh|manage_instances": () =>
+    import("../i18n/project.inlang/messages/zh/manage_instances.json", {
       with: { type: "json" },
     }).then((m) => m.default as Record<string, string>),
 };
@@ -305,6 +314,7 @@ const PREFIXES = new Set([
   "manage_budget",
   "manage_profiles",
   "manage_schedules",
+  "manage_instances",
 ]);
 const BARE_MANAGE_KEYS = new Set(["manage_opening", "manage_backend_failed"]);
 
@@ -368,6 +378,7 @@ const PREFIX_FILES: Record<string, string> = {
   manage_budget: "manage_budget",
   manage_profiles: "manage_profiles",
   manage_schedules: "manage_schedules",
+  manage_instances: "manage_instances",
 };
 
 Deno.test(
@@ -437,6 +448,7 @@ const SYNONYMS: string[][] = [
   ["nav_agents", "manage_agents_heading"],
   ["nav_profiles", "manage_profiles_heading"],
   ["nav_schedules", "manage_schedules_heading"],
+  ["nav_instances", "manage_instances_heading"],
   ["tagma_presence_online", "room_member_online_aria"],
   ["tagma_presence_offline", "room_member_offline_aria", "shell_offline"],
   ["auth_creating", "rooms_creating"],

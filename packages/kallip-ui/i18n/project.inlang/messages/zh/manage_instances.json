@@ -1,0 +1,15 @@
+{
+  "$schema": "https://inlang.com/schema/message-format",
+  "manage_instances_title": "KallipAI · 实例",
+  "manage_instances_heading": "实例",
+  "manage_instances_daemon_health": "守护进程状态",
+  "manage_instances_daemon_running": "守护进程运行中",
+  "manage_instances_daemon_stopped": "守护进程未运行",
+  "manage_instances_running": "运行中",
+  "manage_instances_stopped": "已停止",
+  "manage_instances_empty": "本机还没有实例。",
+  "manage_instances_load_failed": "无法从守护进程加载实例。",
+  "manage_instances_unauthorized": "此守护进程需要访问令牌。",
+  "manage_instances_forbidden": "当前会话无权管理此守护进程。",
+  "manage_instances_unreachable": "无法连接本机的守护进程代理。"
+}

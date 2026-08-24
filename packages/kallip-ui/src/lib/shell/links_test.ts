@@ -217,6 +217,7 @@ Deno.test("navFor offline -> Chat + Manage sections", () => {
         "/local/manage/agents",
         "/local/manage/profiles",
         "/local/manage/schedules",
+        "/local/manage/instances",
       ],
     },
   ]);

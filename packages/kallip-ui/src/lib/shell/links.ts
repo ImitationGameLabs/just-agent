@@ -22,6 +22,7 @@ import {
   nav_budget,
   nav_chat,
   nav_home,
+  nav_instances,
   nav_manage,
   nav_overview,
   nav_profiles,
@@ -70,6 +71,7 @@ export interface NavIcons {
   manageAgents: Component;
   manageProfiles: Component;
   manageSchedules: Component;
+  manageInstances: Component;
 }
 
 /** One enrolled tagma as a sidebar chat entry. `indicator` is the channel
@@ -159,6 +161,11 @@ export function navFor(args: {
             href: "/local/manage/schedules",
             label: nav_schedules(),
             icon: icons.manageSchedules,
+          },
+          {
+            href: "/local/manage/instances",
+            label: nav_instances(),
+            icon: icons.manageInstances,
           },
         ],
       },
