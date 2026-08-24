@@ -88,7 +88,7 @@ impl Daemon {
                 report: kallip_daemon_common::wire::HealthReport {
                     slug: None,
                     running: true,
-                    state: kallip_daemon_common::wire::InstanceState::Running,
+                    state: InstanceState::Running,
                     detail: None,
                 },
             }),

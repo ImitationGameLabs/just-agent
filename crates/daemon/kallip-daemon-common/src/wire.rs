@@ -5,9 +5,13 @@
 //! No streaming, no multiplexing — the four management verbs do not need it,
 //! and a plain JSON line stays debuggable with `nc -U`.
 //!
-//! The `v` field on both envelopes is the protocol version. v1 is the first
-//! shape; a future revision (e.g. the web proxy adding enroll parameters)
-//! bumps it, and unknown versions are rejected by the reader.
+//! The `v` field on both envelopes is the protocol version. The daemon
+//! family (common, daemon, ctl, web) ships as one unit, so additive
+//! evolution — new fields, new tokens — rides the atomic upgrade and does
+//! NOT bump `v`; mixed old/new binaries within one install are outside the
+//! contract and fail loudly (missing field). `v` bumps are reserved for
+//! changes no consumer can tolerate (removing a field, respelling a
+//! token); unknown versions are rejected by the reader.
 
 use serde::{Deserialize, Serialize};
 
@@ -107,6 +111,8 @@ pub struct InstanceInfo {
     pub instance_id: String,
     pub workspace: String,
     pub running: bool,
+    /// Mirrors `state == Running`, kept for one-field boolean checks
+    /// (the web render still keys on it); retire once `state` is settled.
     pub state: InstanceState,
     /// Owning uid recorded at spawn (SO_PEERCRED of the requesting
     /// peer); None when an adopted directory predates the field.
@@ -118,6 +124,8 @@ pub struct InstanceInfo {
 pub struct HealthReport {
     pub slug: Option<String>,
     pub running: bool,
+    /// Mirrors `state == Running`, kept for one-field boolean checks
+    /// (the web render still keys on it); retire once `state` is settled.
     pub state: InstanceState,
     /// Human-readable supplement when `running` is false; consumers must
     /// not parse this — match `state` instead.
