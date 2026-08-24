@@ -6,6 +6,7 @@
   import type { OfflineModeConfig } from "../lib/config/config.ts";
   import { navigate } from "../lib/shell/port.ts";
   import { classifyError } from "../lib/errors.ts";
+  import { CONNECT_TOKEN_KEY } from "../lib/daemon/client.ts";
   import Brand from "../components/Brand.svelte";
   import FormError from "../components/FormError.svelte";
   import {
@@ -29,9 +30,9 @@
   let tagmaUrl = $state(paramTagmaUrl ?? "http://127.0.0.1:3000");
   // The spawn form parks the new instance's operator token in sessionStorage
   // when the user typed one; pick it up exactly once (read + remove).
-  const handoffToken = sessionStorage.getItem("kallip:connect-token");
+  const handoffToken = sessionStorage.getItem(CONNECT_TOKEN_KEY);
   if (handoffToken !== null) {
-    sessionStorage.removeItem("kallip:connect-token");
+    sessionStorage.removeItem(CONNECT_TOKEN_KEY);
   }
   let authToken = $state(handoffToken ?? "");
   // Field-level validation (e.g. malformed URL); shown inline.
