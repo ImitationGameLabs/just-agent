@@ -129,7 +129,8 @@ async fn full_management_round_trip_with_guards() {
 
     let state = AppState {
         client: DaemonClient::new(&daemon.socket),
-        token: "itest-token".into(),
+        auth: kallip_daemon_web::guard::AuthMode::Token("itest-token".into()),
+        allowed_hosts: vec![],
     };
     let app = build_router(state, None);
 
@@ -231,4 +232,156 @@ async fn full_management_round_trip_with_guards() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("\"not_running\""), "{body}");
+}
+
+/// A scriptable stand-in for the agora verifier: each call consumes the next
+/// programmed outcome.
+struct MockVerifier {
+    outcomes: std::sync::Mutex<
+        Vec<
+            Result<
+                Option<kallip_agora_common::principal::Principal>,
+                kallip_agora_common::control_plane::ControlPlaneError,
+            >,
+        >,
+    >,
+}
+
+#[async_trait::async_trait]
+impl kallip_daemon_web::control_plane::BearerVerifier for MockVerifier {
+    async fn verify_bearer(
+        &self,
+        _token: &str,
+    ) -> Result<
+        Option<kallip_agora_common::principal::Principal>,
+        kallip_agora_common::control_plane::ControlPlaneError,
+    > {
+        self.outcomes
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("programmed outcome")
+    }
+}
+
+#[tokio::test]
+async fn platform_mode_admin_only_and_fail_closed() {
+    use kallip_agora_common::control_plane::ControlPlaneError;
+    use kallip_agora_common::ids::TagmaId;
+    use kallip_agora_common::principal::Principal;
+    use kallip_daemon_web::guard::AuthMode;
+
+    let verifier = std::sync::Arc::new(MockVerifier {
+        outcomes: std::sync::Mutex::new(vec![
+            // Last popped first: reverse program order.
+            Err(ControlPlaneError::Backend("agora down".into())),
+            Ok(None),
+            Ok(Some(Principal::User(
+                kallip_agora_common::ids::UserId::from("u1".to_string()),
+            ))),
+            Ok(Some(Principal::Tagma(TagmaId::from("t1".to_string())))),
+            Ok(Some(Principal::Admin)),
+        ]),
+    });
+    let state = AppState {
+        client: DaemonClient::new("/nonexistent-kallip-test.sock"),
+        auth: AuthMode::Platform(verifier),
+        allowed_hosts: vec![],
+    };
+    let app = build_router(state, None);
+
+    // Admin passes the gate (and dies at the daemon proxy: 503 proves the
+    // guard let it through).
+    let (status, _) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+
+    // A valid Tagma identity: 403.
+    let (status, body) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(body.contains("\"forbidden\""), "{body}");
+
+    // A valid User identity: 403.
+    let (status, _) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // An invalid token: 401.
+    let (status, body) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    // Agora unreachable: fail closed.
+    let (status, body) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("\"auth_backend_unavailable\""), "{body}");
+}
+
+#[test]
+fn refuses_to_start_unauthenticated_on_non_loopback() {
+    // The fail-safe rule: non-loopback bind without either auth mode.
+    let config = kallip_daemon_web::Config {
+        addr: "0.0.0.0:7300".into(),
+        daemon_socket: None,
+        static_dir: None,
+        token: None,
+        agora_internal_url: None,
+        agora_internal_token: None,
+        allowed_hosts_raw: String::new(),
+    };
+    let error = kallip_daemon_web::resolve_auth(&config, &config.addr).expect_err("must refuse");
+    assert!(error.to_string().contains("refusing to start"), "{error}");
+}
+
+#[test]
+fn open_mode_allowed_on_loopback() {
+    let config = kallip_daemon_web::Config {
+        addr: "127.0.0.1:7300".into(),
+        daemon_socket: None,
+        static_dir: None,
+        token: None,
+        agora_internal_url: None,
+        agora_internal_token: None,
+        allowed_hosts_raw: String::new(),
+    };
+    assert!(matches!(
+        kallip_daemon_web::resolve_auth(&config, &config.addr).expect("resolve"),
+        kallip_daemon_web::guard::AuthMode::Open
+    ));
+}
+#[test]
+fn half_configured_agora_url_refuses_to_start() {
+    // A URL without the internal token must not silently fall through
+    // to open mode on a loopback bind.
+    let config = kallip_daemon_web::Config {
+        addr: "127.0.0.1:7300".into(),
+        daemon_socket: None,
+        static_dir: None,
+        token: None,
+        agora_internal_url: Some("http://127.0.0.1:7100".into()),
+        agora_internal_token: None,
+        allowed_hosts_raw: String::new(),
+    };
+    let error = kallip_daemon_web::resolve_auth(&config, &config.addr).expect_err("must refuse");
+    assert!(
+        error
+            .to_string()
+            .contains("KALLIP_DAEMON_WEB_AGORA_INTERNAL_TOKEN"),
+        "{error}"
+    );
+}
+
+#[test]
+fn half_configured_agora_token_refuses_to_start() {
+    let config = kallip_daemon_web::Config {
+        addr: "127.0.0.1:7300".into(),
+        daemon_socket: None,
+        static_dir: None,
+        token: None,
+        agora_internal_url: None,
+        agora_internal_token: Some("internal-secret".into()),
+        allowed_hosts_raw: String::new(),
+    };
+    let error = kallip_daemon_web::resolve_auth(&config, &config.addr).expect_err("must refuse");
+    assert!(
+        error.to_string().contains("KALLIP_DAEMON_WEB_AGORA_URL"),
+        "{error}"
+    );
 }

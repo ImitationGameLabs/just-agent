@@ -1,9 +1,9 @@
-//! Thin binary: parse config, maybe generate a token, serve.
+//! Thin binary: parse config, resolve the auth mode, serve.
 
 use anyhow::{Context, Result};
 use clap::Parser as _;
 use kallip_daemon_client::DaemonClient;
-use kallip_daemon_web::{AppState, Config, build_router};
+use kallip_daemon_web::{AppState, Config, build_router, resolve_auth};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -12,25 +12,17 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let config = Config::parse();
-    let socket = config.resolve_socket();
+    let socket = config.resolve_socket()?;
     let addr = config.addr.clone();
 
-    let token = match &config.token {
-        Some(token) => token.clone(),
-        None => {
-            // Generated once at startup and printed once: it is the only
-            // chance to copy it, and it never lands in persistent state.
-            let mut bytes = [0u8; 16];
-            getrandom::fill(&mut bytes).context("generate token entropy")?;
-            let token = hex::encode(bytes);
-            tracing::info!("generated management token (shown once): {token}");
-            token
-        }
-    };
-
+    // Resolve the auth mode from the configuration. Fail-safe rule: a
+    // non-loopback bind with neither platform nor standalone credentials
+    // refuses to start — the open mode is a loopback-only convenience.
+    let auth = resolve_auth(&config, &addr)?;
     let state = AppState {
         client: DaemonClient::new(socket.clone()),
-        token,
+        auth,
+        allowed_hosts: config.allowed_hosts(),
     };
     let app = build_router(state, config.static_dir.as_deref());
 
