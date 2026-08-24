@@ -56,7 +56,7 @@ fn start_daemon() -> DaemonProc {
     let socket = state_dir.path().join("control.sock");
     let bin = resolve_bin("kallip-daemon");
     let mut child = std::process::Command::new(&bin)
-        .env("KALLIP_DATA_DIR", data_dir.path())
+        .env("KALLIP_DAEMON_DATA_DIR", data_dir.path())
         .env("KALLIP_STATE_DIR", state_dir.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

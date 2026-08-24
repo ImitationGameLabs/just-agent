@@ -2,7 +2,7 @@
 //! instances.
 //!
 //! Configuration is exactly two environment variables — no config file:
-//! - `KALLIP_DATA_DIR`: the instance tree root (default
+//! - `KALLIP_DAEMON_DATA_DIR`: the instance tree root (default
 //!   `~/.local/share/kallip`); each child directory with an `instance.id`
 //!   is a managed instance.
 //! - `KALLIP_STATE_DIR`: daemon-owned state, the control socket's home
@@ -71,11 +71,11 @@ fn main() -> Result<()> {
     })
 }
 
-/// Instance tree root: `KALLIP_DATA_DIR` verbatim, else the XDG data home
+/// Instance tree root: `KALLIP_DAEMON_DATA_DIR` verbatim, else the XDG data home
 /// namespaced `kallip` (matching `kallip_runtime::persistence`'s default, so
 /// daemon and instances agree on where the tree lives without sharing code).
 fn data_root() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("KALLIP_DATA_DIR") {
+    if let Some(dir) = std::env::var_os("KALLIP_DAEMON_DATA_DIR") {
         return Ok(PathBuf::from(dir));
     }
     dirs_data_home().map(|home| home.join("kallip"))
