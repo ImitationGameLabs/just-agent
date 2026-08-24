@@ -138,6 +138,7 @@ async fn health(
 }
 
 /// Render one backend outcome as the HTTP response: Ok → the plain JSON
+/// value; Err → the mapped status + `{code, message}`.
 fn respond<T: serde::Serialize>(outcome: Result<T, crate::wire::BackendError>) -> Response {
     match outcome {
         Ok(value) => Json(value).into_response(),
@@ -145,7 +146,6 @@ fn respond<T: serde::Serialize>(outcome: Result<T, crate::wire::BackendError>) -
         Err(crate::wire::BackendError::Transport(error)) => proxy_err(error),
     }
 }
-/// value; Err → the mapped status + `{code, message}`.
 /// A JSON body that failed to parse becomes 400 `bad_request` (not axum's
 /// default 415/422/500 text): the daemon's own grammar for a malformed
 /// request, so clients see one error shape.
