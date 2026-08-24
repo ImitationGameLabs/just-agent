@@ -325,7 +325,7 @@ where
             // this match is a compile error, never a silent suppress.
             SseEvent::Idle
             | SseEvent::MaxRoundsExceeded
-                | SseEvent::Waiting { .. }
+            | SseEvent::Waiting { .. }
             | SseEvent::Error { .. }
             | SseEvent::Cancelled
             | SseEvent::Interrupted
