@@ -535,42 +535,33 @@ fn state_rank(s: kallip_common::protocol::AgentState) -> u8 {
     }
 }
 
-/// One fleet row: label, state with the since distance (waiting gets the
-/// parenthesised form so a blocked agent reads at a glance), the full id
-/// (still the addressing anchor), workspace tail and a truncated description.
-fn fleet_row(a: &kallip_common::protocol::AgentSummary, now: u64) -> String {
-    // Description cap for the fleet row; truncation and the ellipsis check
-    // must agree, so it is a named constant rather than two bare literals.
-    const DESC_MAX: usize = 40;
+/// One agent block, shared by the fleet overview and the directory: labelled
+/// fields on their own lines. The description is untruncated and the
+/// workspace is the full absolute path — these views are read end-to-end,
+/// not scanned, so density would only hurt.
+fn render_agent_block(a: &kallip_common::protocol::AgentSummary, now: u64) -> String {
     let since = a
         .state_since
         .map(|t| timefmt::format_relative(now, t))
         .unwrap_or_else(|| "?".to_string());
-    let state = if a.state == kallip_common::protocol::AgentState::Waiting {
-        format!("waiting ({since})")
-    } else {
-        format!("{} {since}", a.state)
-    };
-    let ws = a
-        .workspace_root
-        .rsplit('/')
-        .next()
-        .unwrap_or(&a.workspace_root);
-    let mut line = format!("{}  {}  {}  ws={ws}", agent_label(a), state, a.id);
+    let state = format!("{} (since {since})", a.state);
+    let mut block = format!("role: {}\nid: {}", agent_label(a), a.id);
     if !a.description.is_empty() {
-        let desc: String = a.description.chars().take(DESC_MAX).collect();
-        let ellipsis = if a.description.chars().count() > DESC_MAX {
-            "…"
-        } else {
-            ""
-        };
-        line.push_str(&format!("  {desc}{ellipsis}"));
+        block.push_str(&format!("\ndesc: {}", a.description));
     }
-    line
+    block.push_str(&format!("\nstate: {state}\nws: {}", a.workspace_root));
+    block
+}
+
+/// Print agent blocks with one blank line between them; both the overview
+/// and the directory render through this single path.
+fn print_agent_blocks(agents: &[kallip_common::protocol::AgentSummary], now: u64) {
+    let blocks: Vec<String> = agents.iter().map(|a| render_agent_block(a, now)).collect();
+    println!("{}", blocks.join("\n\n"));
 }
 
 /// `kallip status` with no argument: the whole fleet at a glance — clock,
-/// budget, anomaly-sorted rows, and the drill-down tip.
+/// budget, anomaly-sorted agent blocks, and the drill-down tip.
 async fn print_status_overview(client: &TagmaClient) -> Result<()> {
     let now = timefmt::now_epoch();
     let mut agents = client.list_agents(None).await?;
@@ -591,15 +582,13 @@ async fn print_status_overview(client: &TagmaClient) -> Result<()> {
             .cmp(&state_rank(b.state))
             .then(a.state_since.cmp(&b.state_since))
     });
-    for a in &agents {
-        println!("{}", fleet_row(a, now));
-    }
+    print_agent_blocks(&agents, now);
     println!();
     println!("tips: kallip status <agent-id> for details");
     Ok(())
 }
 
-/// `kallip agent list`: the same rows in plain role order — a directory, not
+/// `kallip agent list`: the same blocks in plain role order — a directory,
 /// a triage board.
 async fn print_agent_directory(client: &TagmaClient) -> Result<()> {
     let now = timefmt::now_epoch();
@@ -609,9 +598,7 @@ async fn print_agent_directory(client: &TagmaClient) -> Result<()> {
         return Ok(());
     }
     agents.sort_by_key(agent_label);
-    for a in &agents {
-        println!("{}", fleet_row(a, now));
-    }
+    print_agent_blocks(&agents, now);
     Ok(())
 }
 /// Display label for an agent: its role, falling back to the id when no role
