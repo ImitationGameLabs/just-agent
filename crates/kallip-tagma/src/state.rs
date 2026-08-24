@@ -19,7 +19,7 @@ use kallip_runtime::config::AgentConfig;
 use kallip_runtime::context::ContextStore;
 use kallip_runtime::profile::{ProfileConfig, ProfileRegistry};
 use tokio::sync::{Mutex, Notify, RwLock, broadcast, mpsc};
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 /// Write the state byte and its transition timestamp together. The two
@@ -214,6 +214,7 @@ pub struct AgentRegistry {
 /// and the on-disk directory. Everything a supervisor needs to list, authorize
 /// against, relabel, or archive an agent -- independent of whether it currently
 /// has a running task.
+#[derive(Clone)]
 pub struct AgentIdentity {
     pub config: AgentConfig,
     pub agent_dir: Option<PathBuf>,
@@ -223,6 +224,7 @@ pub struct AgentIdentity {
 /// could not be brought up (e.g. restore failure). The enum makes "is there a
 /// live task?" a type-level question, forcing every runtime-field access to
 /// consciously handle the faulted case.
+#[allow(clippy::large_enum_variant)] // Live carries the full runtime handle set by design; Faulted is a placeholder
 pub enum RegistryEntry {
     /// A live, running agent: durable identity + runtime handle + known children.
     Live(AgentEntry),
@@ -262,7 +264,16 @@ pub struct Agent {
     pub prompt_tx: mpsc::Sender<String>,
     pub events_tx: broadcast::Sender<SseEvent>,
     pub approvals: Arc<Mutex<ApprovalStore>>,
-    pub agent_handle: JoinHandle<()>,
+    /// Abort handle for the agent task. The task's `JoinHandle` is consumed by
+    /// the panic watcher spawned next to it (see `agent_watch`), so this handle
+    /// is the only way to stop the task from the outside.
+    pub agent_abort: AbortHandle,
+    /// The panic watcher: awaits the agent task and, if it died from a panic,
+    /// swaps the registry entry from `Live` to `Faulted` in place (preserving
+    /// the supervisor chain and map slot) so a panicked agent is visible and
+    /// manageable instead of a silently dead `Live` entry. Clean exits and
+    /// aborts leave the entry untouched.
+    pub agent_watch: JoinHandle<()>,
     pub bridge_handle: JoinHandle<()>,
     pub store: Arc<Mutex<ContextStore>>,
     pub cancel: CancellationToken,
@@ -373,19 +384,21 @@ impl Agent {
     /// `false`. Consumes `self`, so all owned resources (store, channels, config)
     /// drop together once the tasks are done.
     ///
-    /// The handles are awaited by reference: when the timeout fires the inner
+    /// The watcher is joined instead of the agent task itself: it resolves
+    /// once the agent task has terminated (and any panic swap has been
+    /// applied), so shutdown still covers the agent task end-to-end. The
+    /// handles are awaited by reference: when the timeout fires the inner
     /// *non-move* async block is dropped and the field borrows are released,
-    /// leaving `self` owning the handles so we can call `.abort()`. (A `JoinSet`
-    /// would not work here — aborting its wrapper tasks only drops the
-    /// `JoinHandle`s, which does not abort the underlying tasks.)
+    /// leaving `self` owning the handles so we can call `.abort()`.
     pub(crate) async fn shutdown(mut self, timeout: Duration) -> bool {
         let graceful = tokio::time::timeout(timeout, async {
-            let _ = tokio::join!(&mut self.agent_handle, &mut self.bridge_handle);
+            let _ = tokio::join!(&mut self.agent_watch, &mut self.bridge_handle);
         })
         .await
         .is_ok();
         if !graceful {
-            self.agent_handle.abort();
+            self.agent_abort.abort();
+            self.agent_watch.abort();
             self.bridge_handle.abort();
         }
         graceful

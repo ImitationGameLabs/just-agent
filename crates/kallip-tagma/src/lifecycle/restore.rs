@@ -20,6 +20,7 @@ use kallip_common::policy::ExecPolicy;
 use kallip_runtime::config::AgentConfig;
 use kallip_runtime::persistence;
 use kallip_runtime::policy::classifier;
+use std::path::PathBuf;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -392,6 +393,40 @@ fn faulted_from_meta(
     }
 }
 
+/// Register scan-refused agents as faulted. Their meta.json is unreadable, so
+/// the entry is built from defaults plus the scan error; `workspace_root` is
+/// left empty (the one source of truth for it is the meta we cannot read).
+/// Refused agents stay visible and removable instead of vanishing.
+async fn register_refused(state: &SharedState, refused: &[persistence::RefusedRestore]) {
+    if refused.is_empty() {
+        return;
+    }
+    let mut registry = state.registry.write().await;
+    for r in refused {
+        let config = AgentConfig {
+            agent_id: Some(r.agent_id.clone()),
+            created_by: None,
+            role: String::new(),
+            description: String::new(),
+            workspace_root: PathBuf::new(),
+            permissions_class: kallip_runtime::config::PermissionClass::default(),
+            delegation_mode: kallip_runtime::config::DelegationMode::default(),
+            ..AgentConfig::default()
+        };
+        let entry = FaultedEntry {
+            identity: AgentIdentity {
+                config,
+                agent_dir: Some(r.agent_dir.clone()),
+            },
+            subagent_ids: vec![],
+            reason: format!("agent directory unreadable: {}", r.error),
+            at: kallip_common::timefmt::now_epoch(),
+        };
+        tracing::error!(id = %r.agent_id, "scan refused agent; registering as faulted");
+        registry.register(r.agent_id.clone(), RegistryEntry::Faulted(entry));
+    }
+}
+
 /// Restore persisted agents top-down, level by level.
 ///
 /// The single root agent (no supervisor) is restored first, then its children,
@@ -412,7 +447,8 @@ fn faulted_from_meta(
 /// `registry.len()` may exceed `max_agents`; new creation returns 503 until
 /// agents are removed to make room.
 pub async fn restore_agents(state: &SharedState) -> anyhow::Result<()> {
-    let pending = persistence::scan_agents();
+    let (pending, refused) = persistence::scan_agents()?;
+    register_refused(state, &refused).await;
     if pending.is_empty() {
         return Ok(());
     }
@@ -448,6 +484,9 @@ pub async fn restore_agents(state: &SharedState) -> anyhow::Result<()> {
     // are enqueued into the BFS so each still gets a chance to restore (or be
     // registered faulted itself).
     let mut orphan_faulted: Vec<(AgentId, FaultedEntry)> = Vec::new();
+    // Supervisors on disk whose scan was refused (unreadable meta): their
+    // children's orphan reason must say which case it is.
+    let refused_ids: HashSet<&AgentId> = refused.iter().map(|r| &r.agent_id).collect();
 
     for (id, p) in &pending_map {
         match &p.meta.created_by {
@@ -461,24 +500,26 @@ pub async fn restore_agents(state: &SharedState) -> anyhow::Result<()> {
                     .push(id.clone());
             }
             Some(supervisor_id) => {
-                // Supervisor not on disk (crash-loop-pruned, archived, or
-                // removed). Register this agent faulted with its chain intact
-                // so it stays individually manageable. We do NOT fabricate a
-                // ghost supervisor -- there is no source-of-truth metadata for
-                // one. See the plan's "Known limitation".
+                // Supervisor not restorable: absent from disk entirely
+                // (pruned, archived, or removed), or present but unreadable
+                // (already registered faulted by `register_refused`).
+                // Either way this agent is registered faulted with its chain
+                // intact so it stays individually manageable; no ghost
+                // supervisor is fabricated -- there is no source-of-truth
+                // metadata for one.
+                let reason = if refused_ids.contains(supervisor_id) {
+                    format!("supervisor {supervisor_id} unreadable (registered faulted)")
+                } else {
+                    format!("supervisor {supervisor_id} not present on disk")
+                };
                 tracing::error!(
                     id = %id,
                     supervisor = %supervisor_id,
-                    "supervisor not present on disk; registering agent as faulted"
+                    "supervisor not restorable; registering agent as faulted"
                 );
                 orphan_faulted.push((
                     id.clone(),
-                    faulted_from_meta(
-                        id,
-                        p.agent_dir.clone(),
-                        &p.meta,
-                        format!("supervisor {supervisor_id} not present on disk"),
-                    ),
+                    faulted_from_meta(id, p.agent_dir.clone(), &p.meta, reason),
                 ));
             }
         }
@@ -625,14 +666,25 @@ pub async fn restore_agents(state: &SharedState) -> anyhow::Result<()> {
     }
 
     // Any agent still pending here was never enqueued -- only possible for a
-    // cycle that defeated the BFS seed. Log it; `scan_agents` already warned
-    // about unreadable data dirs, and cycles are caught as restore errors above.
-    for (id, p) in &pending_map {
-        tracing::error!(
-            id = %id,
-            supervisor = ?p.meta.created_by,
-            "agent was not reached by restore (cycle or scan gap); leaving on disk"
-        );
+    // cycle that defeated the BFS seed. Register them faulted so they stay
+    // visible and manageable; every restore failure path must surface as a
+    // faulted agent, never a log line the operator cannot act on.
+    if !pending_map.is_empty() {
+        let mut registry = state.registry.write().await;
+        for (id, p) in &pending_map {
+            tracing::error!(
+                id = %id,
+                supervisor = ?p.meta.created_by,
+                "agent was not reached by restore (created_by cycle); registering as faulted"
+            );
+            let entry = faulted_from_meta(
+                id,
+                p.agent_dir.clone(),
+                &p.meta,
+                "not reached by restore: created_by cycle".to_string(),
+            );
+            registry.register_no_subagent_push(id.clone(), RegistryEntry::Faulted(entry));
+        }
     }
 
     // Warn if restored agents exceed configured limits.
@@ -674,8 +726,6 @@ mod tests {
             agent_id: AgentId::from(id.to_owned()),
             meta: AgentMeta {
                 workspace_root: std::path::PathBuf::from("/ws"),
-                last_restored_at: None,
-                consecutive_restart_count: 0,
                 created_by: None,
                 role: String::new(),
                 description: String::new(),
@@ -694,8 +744,6 @@ mod tests {
         let id = AgentId::from("deadbeef".to_owned());
         let meta = AgentMeta {
             workspace_root: std::path::PathBuf::from("/ws/proj"),
-            last_restored_at: None,
-            consecutive_restart_count: 0,
             created_by: Some(AgentId::from("parent".to_owned())),
             role: "researcher".into(),
             description: "goners".into(),
@@ -766,5 +814,82 @@ mod tests {
             "{}",
             err
         );
+    }
+    #[tokio::test]
+    async fn register_refused_marks_unreadable_agent_faulted() {
+        use crate::state::RegistryEntry;
+        use crate::test_helpers::make_state;
+        let state = make_state();
+        let id = AgentId::from("refused-1".to_owned());
+        let refused = vec![super::persistence::RefusedRestore {
+            agent_id: id.clone(),
+            agent_dir: std::path::PathBuf::from("/data/agents/refused-1"),
+            error: "reading meta.json: no such file".to_string(),
+        }];
+        super::register_refused(&state, &refused).await;
+        let registry = state.registry.read().await;
+        match registry.get(&id) {
+            Some(RegistryEntry::Faulted(entry)) => {
+                assert!(entry.reason.contains("unreadable"));
+                assert!(entry.reason.contains("meta.json"));
+                assert!(
+                    entry.identity.config.workspace_root.as_os_str().is_empty(),
+                    "workspace root stays empty when the meta cannot be read"
+                );
+            }
+            _ => panic!("expected faulted registration for {id}"),
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn restore_agents_registers_cycle_stragglers_faulted() {
+        // See the ensure-root test in routes::agent for why the data dir is
+        // created under /dev/shm rather than /tmp: this test mutates
+        // KALLIP_DATA_DIR and must not overlap concurrently-running tests'
+        // /tmp workspaces.
+        let tmp = tempfile::TempDir::new_in("/dev/shm").unwrap();
+        let base = tmp.path().join("agents");
+        std::fs::create_dir_all(&base).unwrap();
+        let a = AgentId::from("cycle-a".to_owned());
+        let b = AgentId::from("cycle-b".to_owned());
+        let write_meta = |id: &AgentId, created_by: Option<&AgentId>| {
+            std::fs::create_dir_all(base.join(id.as_ref())).unwrap();
+            std::fs::write(
+                base.join(id.as_ref()).join("meta.json"),
+                serde_json::to_string(&AgentMeta {
+                    workspace_root: std::path::PathBuf::from("/ws"),
+                    created_by: created_by.cloned(),
+                    role: String::new(),
+                    description: String::new(),
+                    permissions_class: PermissionClass::Normal,
+                    delegation_mode: kallip_runtime::config::DelegationMode::CarveOut,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        };
+        write_meta(&a, Some(&b));
+        write_meta(&b, Some(&a));
+        let path = tmp.path().to_str().unwrap().to_owned();
+        temp_env::with_var("KALLIP_DATA_DIR", Some(path.as_str()), || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                use crate::state::RegistryEntry;
+                use crate::test_helpers::make_state;
+                let state = make_state();
+                super::restore_agents(&state).await.unwrap();
+                let registry = state.registry.read().await;
+                for id in [&a, &b] {
+                    assert!(
+                        matches!(registry.get(id), Some(RegistryEntry::Faulted(_))),
+                        "cycle agent {id} must be registered faulted, not dropped"
+                    );
+                }
+            });
+        });
     }
 }

@@ -181,6 +181,23 @@ pub async fn ensure_root_agent(state: &SharedState) -> anyhow::Result<()> {
             return Ok(());
         }
     }
+    // A root on disk that did not make it into the registry means its restore
+    // failed (it is registered faulted, with the reason in the startup log).
+    // Minting a fresh root here would fork the fleet into two roots with no
+    // traceable lineage, so refuse to start instead and point at the failure.
+    // In the normal boot order restore_agents already aborted on contradictory
+    // disk state (duplicate roots) and a faulted root exited early above; this
+    // guard also covers an agents directory that cannot be read at all.
+    let disk_root = persistence::find_disk_root().map_err(|e| {
+        anyhow::anyhow!("cannot verify whether a disk root exists — refusing to mint: {e:#}")
+    })?;
+    if let Some(id) = disk_root {
+        anyhow::bail!(
+            "disk root agent {id} was not restored — refusing to mint a second \\
+             root; see the restore failure in the startup log and resolve it \\
+             (fix the underlying fault or remove the agent directory)"
+        );
+    }
     let id = AgentId::random();
     let token = MintedToken::generate(AGENT);
     let mut config = AgentConfig::load(None, Vec::new(), None)?;

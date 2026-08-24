@@ -245,8 +245,13 @@ pub(crate) async fn enqueue_prompt(
         }
 
         info!(id = %id, "reactivating agent");
-        live.agent.agent_handle.abort();
+        live.agent.agent_abort.abort();
         live.agent.bridge_handle.abort();
+        // The panic watcher cannot tell incarnations apart: if it wins the
+        // registry lock only after the fresh install, it faults the healthy
+        // replacement. Its swap duty is moot here -- reactivation replaces
+        // the entry wholesale.
+        live.agent.agent_watch.abort();
         // Release the dead incarnation's directory write-locks before re-spawn,
         // so the new incarnation starts with an empty lock set and any peer it
         // was blocking is freed. The workspace write-lock is re-acquired in

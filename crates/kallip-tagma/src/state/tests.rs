@@ -15,9 +15,13 @@ async fn agent_shutdown_aborts_straggler_after_timeout() {
     let completed = Arc::new(AtomicBool::new(false));
     let flag = completed.clone();
     let mut entry = make_entry(None, "tok".into());
-    entry.agent.agent_handle = tokio::spawn(async move {
+    let straggler = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(60)).await;
         flag.store(true, Ordering::SeqCst);
+    });
+    entry.agent.agent_abort = straggler.abort_handle();
+    entry.agent.agent_watch = tokio::spawn(async move {
+        let _ = straggler.await;
     });
     assert!(!entry.agent.shutdown(Duration::from_millis(50)).await);
     // Aborted before the 60s sleep elapsed, so the completion flag stays unset.

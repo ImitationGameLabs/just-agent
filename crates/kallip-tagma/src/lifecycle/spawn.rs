@@ -26,7 +26,9 @@ use tracing::info;
 use super::identity::{compose_system_prompt, inject_identity_env};
 use super::workspace::{establish_lock_api_error, establish_workspace_lock, exec_gate_failure};
 use crate::bridge::bridge_task;
-use crate::state::{Agent, AgentEntry, AgentIdentity, AgentState, RegistryEntry, SharedState};
+use crate::state::{
+    Agent, AgentEntry, AgentIdentity, AgentState, FaultedEntry, RegistryEntry, SharedState,
+};
 
 pub(crate) struct SpawnArgs {
     pub agent_id: AgentId,
@@ -245,6 +247,14 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
         prompt_rx,
         agent_tx,
     ));
+    // Panic isolation: see `watch_agent_task`. The abort handle goes to the
+    // `Agent` struct; the JoinHandle is consumed by the watcher task.
+    let agent_abort = agent_handle.abort_handle();
+    let agent_watch = tokio::spawn(watch_agent_task(
+        args.shared_state.clone(),
+        args.agent_id.clone(),
+        agent_handle,
+    ));
     let state = Arc::new(AtomicU8::new(AgentState::IDLE));
     let state_since = Arc::new(AtomicU64::new(kallip_common::timefmt::now_epoch()));
     let parked: Arc<std::sync::Mutex<Option<crate::state::ParkedSnapshot>>> =
@@ -270,7 +280,8 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
             prompt_tx,
             events_tx: args.events_tx,
             approvals: args.approvals,
-            agent_handle,
+            agent_abort,
+            agent_watch,
             bridge_handle,
             store: args.store,
             cancel,
@@ -331,10 +342,48 @@ async fn rollback_unspawned_create(
 /// Used when a spawned agent cannot be registered. The on-disk dir is no longer
 /// carried by `Agent` (it lives on `AgentIdentity`), so the caller passes it.
 pub(crate) fn abort_agent(agent: &crate::state::Agent, dir: Option<&std::path::Path>) {
-    agent.agent_handle.abort();
+    agent.agent_abort.abort();
     agent.bridge_handle.abort();
     if let Some(dir) = dir {
         remove_agent_dir(dir);
+    }
+}
+
+/// Panic isolation for one agent task. A panicking agent task must not leave
+/// a dead `Live` entry behind (nobody else awaits the handle at runtime): on
+/// a panic, swap the registry entry to `Faulted` in place — same map slot,
+/// same subagent links — so the agent stays listable and removable while the
+/// tagma itself keeps running. Clean task exits and aborts leave the entry
+/// untouched (an abort is an intentional stop: shutdown or reactivation).
+///
+/// The bridge task is deliberately not watched: it is a thin forwarding
+/// layer, and widening the watch surface is left until a real freeze-style
+/// failure implicates it.
+pub(crate) async fn watch_agent_task(
+    state: SharedState,
+    agent_id: AgentId,
+    task: tokio::task::JoinHandle<()>,
+) {
+    if let Err(joined) = task.await
+        && joined.is_panic()
+    {
+        let payload = joined.into_panic();
+        let detail = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_string());
+        let mut registry = state.registry.write().await;
+        if let Some(RegistryEntry::Live(live)) = registry.get_mut(&agent_id) {
+            let faulted = FaultedEntry {
+                identity: live.identity.clone(),
+                subagent_ids: live.subagent_ids.clone(),
+                reason: format!("agent task panicked: {detail}"),
+                at: kallip_common::timefmt::now_epoch(),
+            };
+            *registry.get_mut(&agent_id).expect("entry borrowed above") =
+                RegistryEntry::Faulted(faulted);
+        }
     }
 }
 
@@ -618,5 +667,66 @@ impl<'a> Materialize<'a> {
         drop(established);
         info!(id = %id, root = is_root, role = %log_role, ws = %log_ws, depth = log_depth, "created agent");
         Ok(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::watch_agent_task;
+    use crate::state::RegistryEntry;
+    use crate::test_helpers::{make_entry, make_state};
+    use kallip_common::agentid::AgentId;
+
+    fn live_entry_with_child() -> crate::state::AgentEntry {
+        let mut entry = make_entry(None, "tok".into());
+        entry.subagent_ids.push(AgentId::from("child".to_owned()));
+        entry
+    }
+
+    #[tokio::test]
+    async fn panicking_agent_task_becomes_faulted_in_place() {
+        let state = make_state();
+        let id = AgentId::from("panic-1".to_owned());
+        {
+            let mut registry = state.registry.write().await;
+            registry.register(id.clone(), RegistryEntry::Live(live_entry_with_child()));
+        }
+        let task = tokio::spawn(async {
+            panic!("boom");
+        });
+        watch_agent_task(state.clone(), id.clone(), task).await;
+        let registry = state.registry.read().await;
+        match registry.get(&id) {
+            Some(RegistryEntry::Faulted(f)) => {
+                assert!(f.reason.contains("agent task panicked"));
+                assert!(f.reason.contains("boom"), "{}", f.reason);
+                assert_eq!(f.subagent_ids.len(), 1, "subagent links survive the swap");
+            }
+            _ => panic!("panicked agent must be faulted, not live or dropped"),
+        }
+    }
+
+    #[tokio::test]
+    async fn clean_exit_and_abort_leave_the_live_entry_untouched() {
+        let state = make_state();
+        let id = AgentId::from("clean-1".to_owned());
+        {
+            let mut registry = state.registry.write().await;
+            registry.register(id.clone(), RegistryEntry::Live(live_entry_with_child()));
+        }
+        let done = tokio::spawn(async {});
+        watch_agent_task(state.clone(), id.clone(), done).await;
+        let stuck = tokio::spawn(async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+        stuck.abort();
+        watch_agent_task(state.clone(), id.clone(), stuck).await;
+        let registry = state.registry.read().await;
+        assert!(
+            matches!(registry.get(&id), Some(RegistryEntry::Live(_))),
+            "intentional stops must not fault the agent"
+        );
     }
 }

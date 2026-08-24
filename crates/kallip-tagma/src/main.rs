@@ -181,6 +181,9 @@ async fn main() -> Result<()> {
     // tagma-global root agent exists. Both run before the router accepts a single
     // connection, so the singleton root invariant holds for every client (clients
     // fetch it via `GET /agents/root` instead of check-then-create).
+    // A root that failed to restore boots the tagma degraded (registered
+    // faulted, fixable via the API); contradictory or unreadable disk state
+    // aborts the boot here instead of risking a second root.
     lifecycle::restore_agents(&state).await?;
     routes::ensure_root_agent(&state).await?;
 

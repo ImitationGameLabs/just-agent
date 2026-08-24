@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use kallip_common::policy::ExecPolicy;
 use serde::{Deserialize, Serialize};
-use time::{Duration as TimeDuration, OffsetDateTime};
 
 use crate::approval::ApprovalStore;
 use crate::context::ContextStore;
@@ -144,8 +143,7 @@ pub fn create_agent_dir(
 
     let meta = AgentMeta {
         workspace_root: workspace_root.to_path_buf(),
-        last_restored_at: None,
-        consecutive_restart_count: 0,
+
         created_by: created_by.cloned(),
         role: role.to_owned(),
         description: description.to_owned(),
@@ -164,8 +162,6 @@ pub fn create_agent_dir(
 ///
 /// Used by `PUT /agents/{id}/metadata`. Reads the current meta, applies the
 /// closures' values, and atomically rewrites — preserving
-/// `last_restored_at` / `consecutive_restart_count` / `created_by` (the same
-/// read-modify-write pattern `check_meta` uses for its restart counters).
 /// `None` leaves a field unchanged; `Some(s)` sets it.
 ///
 /// Call this outside the registry lock (file I/O); the caller then updates the
@@ -405,12 +401,6 @@ pub fn load_exec_policy(dir: &Path) -> Result<ExecPolicy> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMeta {
     pub workspace_root: PathBuf,
-    /// Time of the last successful restore.
-    #[serde(default, with = "time::serde::rfc3339::option")]
-    pub last_restored_at: Option<OffsetDateTime>,
-    /// Consecutive rapid restart counter (reset when outside the window).
-    #[serde(default)]
-    pub consecutive_restart_count: u32,
     /// Supervisor agent ID (for subagents).
     #[serde(default, rename = "created_by")]
     pub created_by: Option<AgentId>,
@@ -450,16 +440,19 @@ pub fn read_meta_from_dir(dir: &Path) -> Result<AgentMeta> {
     serde_json::from_str(&json).context("parsing meta.json")
 }
 
-/// Maximum consecutive rapid restarts before refusing restore.
-const MAX_CONSECUTIVE_RESTARTS: u32 = 3;
-/// Window in which restarts are considered consecutive.
-const CONSECUTIVE_RESTART_WINDOW: TimeDuration = TimeDuration::seconds(60);
-
 /// Lightweight handle produced by scanning the agents directory.
 pub struct PendingRestore {
     pub agent_id: AgentId,
     pub agent_dir: PathBuf,
     pub meta: AgentMeta,
+}
+/// An agent directory whose meta.json could not be read or parsed at scan
+/// time. The tagma registers these as faulted (visible and manageable) so
+/// unreadable agents never silently vanish from the fleet.
+pub struct RefusedRestore {
+    pub agent_id: AgentId,
+    pub agent_dir: PathBuf,
+    pub error: String,
 }
 
 /// An agent fully deserialized and ready to resume.
@@ -500,25 +493,66 @@ pub enum DegradationKind {
     PinsLost,
 }
 
+/// List the agents directory, mapping "missing" (a fresh install) to `None`.
+/// Any other read failure is an error: an unreadable agents directory must
+/// not be mistaken for an empty fleet, or a second root gets minted over
+/// the unreadable one.
+fn read_agents_dir() -> Result<Option<fs::ReadDir>> {
+    let base = agents_base().context("cannot resolve agents base")?;
+    match fs::read_dir(&base) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(anyhow::Error::new(e).context(format!(
+            "cannot read agents directory at {}",
+            base.display()
+        ))),
+    }
+}
+
+/// Find the on-disk root agent: a directory whose meta.json has no `created_by`.
+/// Returns the first hit (a second root is a legacy/corrupt state the tagma's
+/// restore already refuses), `None` when the data dir holds no root at all.
+/// Meta-read failures are skipped: an unreadable root surfaces through
+/// [`scan_agents`] as a refused restore instead. A directory that exists
+/// but cannot be read is an error, not "no root" -- callers must refuse
+/// to mint rather than guess.
+pub fn find_disk_root() -> Result<Option<AgentId>> {
+    let entries = match read_agents_dir()? {
+        Some(entries) => entries,
+        None => return Ok(None),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let is_root = read_meta_from_dir(&path)
+            .map(|meta| meta.created_by.is_none())
+            .unwrap_or(false);
+        if is_root {
+            return Ok(path
+                .file_name()
+                .map(|n| AgentId::from(n.to_string_lossy().into_owned())));
+        }
+    }
+    Ok(None)
+}
+
 /// Scan the agents directory and return agents eligible for restore.
 ///
-/// Reads only `meta.json` per agent (lightweight). Skips agents that
-/// fail crash-loop detection, logging warnings.
-pub fn scan_agents() -> Vec<PendingRestore> {
-    let base = match agents_base() {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!("cannot resolve agents base: {e:#}");
-            return Vec::new();
-        }
-    };
-
-    let entries = match fs::read_dir(&base) {
-        Ok(entries) => entries,
-        Err(_) => return Vec::new(),
+/// Reads only `meta.json` per agent (lightweight). Directories whose meta is
+/// unreadable are returned as [`RefusedRestore`] so the caller can surface
+/// them as faulted agents instead of dropping them from view. An agents
+/// directory that exists but cannot be listed is an error rather than an
+/// empty scan -- see `read_agents_dir`.
+pub fn scan_agents() -> Result<(Vec<PendingRestore>, Vec<RefusedRestore>)> {
+    let entries = match read_agents_dir()? {
+        Some(entries) => entries,
+        None => return Ok((Vec::new(), Vec::new())),
     };
 
     let mut pending = Vec::new();
+    let mut refused = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
@@ -531,51 +565,23 @@ pub fn scan_agents() -> Vec<PendingRestore> {
             Some(id) => id,
             None => continue,
         };
-        match check_meta(&path) {
+        match read_meta_from_dir(&path) {
             Ok(meta) => pending.push(PendingRestore {
                 agent_id,
                 agent_dir: path,
                 meta,
             }),
             Err(e) => {
-                tracing::warn!(id = %agent_id, "skipping agent: {e:#}");
+                tracing::warn!(id = %agent_id, "agent directory unreadable: {e:#}");
+                refused.push(RefusedRestore {
+                    agent_id,
+                    agent_dir: path,
+                    error: format!("{e:#}"),
+                });
             }
         }
     }
-    pending
-}
-
-/// Read, validate, and update meta.json for crash-loop detection.
-fn check_meta(dir: &Path) -> Result<AgentMeta> {
-    let meta_json = fs::read_to_string(dir.join("meta.json")).context("reading meta.json")?;
-    let mut meta: AgentMeta = serde_json::from_str(&meta_json).context("parsing meta.json")?;
-
-    let now = OffsetDateTime::now_utc();
-    let is_consecutive = meta.last_restored_at.is_some_and(|prev| {
-        let elapsed = now - prev;
-        elapsed > TimeDuration::ZERO && elapsed < CONSECUTIVE_RESTART_WINDOW
-    });
-
-    if is_consecutive {
-        meta.consecutive_restart_count += 1;
-    } else {
-        meta.consecutive_restart_count = 1;
-    }
-
-    if meta.consecutive_restart_count > MAX_CONSECUTIVE_RESTARTS {
-        anyhow::bail!(
-            "agent exceeded {MAX_CONSECUTIVE_RESTARTS} consecutive restarts, \
-             refusing restore to break crash loop"
-        );
-    }
-
-    meta.last_restored_at = Some(now);
-    atomic_write(
-        &dir.join("meta.json"),
-        &serde_json::to_string_pretty(&meta)?,
-    )?;
-
-    Ok(meta)
+    Ok((pending, refused))
 }
 
 /// Deserialize a single agent from its directory.
@@ -631,6 +637,11 @@ pub fn restore_agent(
     if migrate_pending {
         migrate_legacy_to_split(dir, &store)?;
     }
+    // Drop any restart notice carried over from a prior restore (legacy
+    // stores via `load_store`, split manifests written by older binaries
+    // whose projection did not exclude injected turns) so each restore
+    // leaves exactly one fresh notice below.
+    strip_restart_turns(&mut store);
 
     let restart_msgs = vec![ChatMessage::user(RESTART_MESSAGE)];
     let (restart_id, estimated_tokens) = store.push_turn(restart_msgs.clone());
@@ -1307,6 +1318,36 @@ mod tests {
             "archived only after the split documents landed"
         );
     }
+    /// Each restore pushes a fresh restart notice; the window must never
+    /// accumulate notices across restores (the strip before the push is what
+    /// keeps repeated restarts from growing the context).
+    #[test]
+    fn restore_twice_leaves_a_single_restart_notice() {
+        let dir = TempDir::new().unwrap();
+        let (mut store, convo) = legacy_fixture();
+        // A notice from a previous restore lives in the legacy store.
+        store.push_turn(vec![ChatMessage::user(RESTART_MESSAGE)]);
+        write_legacy(&dir, &store, true, &convo);
+        let id = AgentId::from("twice".to_owned());
+        let _ = restore_agent(&id, dir.path(), NO_TRUNCATION).unwrap();
+        // Second restore now loads the split documents the first one wrote.
+        let again = restore_agent(&id, dir.path(), NO_TRUNCATION).unwrap();
+        let notices = again
+            .store
+            .turns()
+            .iter()
+            .filter(|t| {
+                !t.is_pinned()
+                    && t.messages.len() == 1
+                    && t.messages[0].content() == Some(RESTART_MESSAGE)
+            })
+            .count();
+        assert_eq!(
+            notices, 1,
+            "exactly one fresh notice after the second restore"
+        );
+        assert!(again.degraded.is_empty());
+    }
 
     /// Inspecting (or repairing) a legacy directory writes nothing: the
     /// deferred migration is completed only by a restore.
@@ -1796,8 +1837,6 @@ mod tests {
     fn agent_meta_round_trips() {
         let meta = AgentMeta {
             workspace_root: PathBuf::from("/app"),
-            last_restored_at: None,
-            consecutive_restart_count: 0,
             created_by: None,
             role: "researcher".into(),
             description: "gathers sources".into(),
@@ -1838,8 +1877,6 @@ mod tests {
         // breaks (legacy meta.json files on disk carry these literals).
         let meta = AgentMeta {
             workspace_root: PathBuf::from("/app"),
-            last_restored_at: None,
-            consecutive_restart_count: 0,
             created_by: None,
             role: String::new(),
             description: String::new(),
@@ -1862,8 +1899,6 @@ mod tests {
         // A meta.json written before optional fields existed still restores.
         let legacy = r#"{
             "workspace_root": "/app",
-            "last_restored_at": null,
-            "consecutive_restart_count": 0,
             "created_by": null
         }"#;
         let meta: AgentMeta = serde_json::from_str(legacy).unwrap();
@@ -2054,10 +2089,107 @@ mod tests {
             .unwrap();
             archive_agent_dir(&id).unwrap();
 
-            let pending = scan_agents();
+            let (pending, refused) = scan_agents().expect("scan");
             assert!(
                 pending.iter().all(|p| p.agent_id != id),
                 "archived agent must not be eligible for restore"
+            );
+            assert!(refused.is_empty());
+        })
+    }
+    #[test]
+    #[serial]
+    fn scan_agents_reports_unreadable_meta_as_refused() {
+        with_data_dir(|_| {
+            let id = AgentId::from("scan-refused-1".to_owned());
+            create_agent_dir(
+                &id,
+                Path::new("/app"),
+                None,
+                "",
+                "",
+                crate::config::PermissionClass::Normal,
+                crate::config::DelegationMode::CarveOut,
+            )
+            .unwrap();
+            // Corrupt the meta so the directory cannot be scanned.
+            std::fs::write(agent_dir(&id).unwrap().join("meta.json"), "not json").unwrap();
+            let (pending, refused) = scan_agents().expect("scan");
+            assert!(pending.iter().all(|p| p.agent_id != id));
+            let hit = refused
+                .iter()
+                .find(|r| r.agent_id == id)
+                .expect("refused entry");
+            assert!(
+                hit.error.contains("meta.json"),
+                "error carries the cause: {}",
+                hit.error
+            );
+        })
+    }
+
+    #[test]
+    #[serial]
+    fn find_disk_root_returns_the_unsupervised_agent_only() {
+        with_data_dir(|_| {
+            assert_eq!(
+                find_disk_root().expect("find"),
+                None,
+                "empty data dir has no root"
+            );
+            let root = AgentId::from("disk-root-1".to_owned());
+            let sub = AgentId::from("disk-sub-1".to_owned());
+            create_agent_dir(
+                &root,
+                Path::new("/r"),
+                None,
+                "root",
+                "",
+                crate::config::PermissionClass::Normal,
+                crate::config::DelegationMode::CarveOut,
+            )
+            .unwrap();
+            create_agent_dir(
+                &sub,
+                Path::new("/s"),
+                Some(&root),
+                "sub",
+                "",
+                crate::config::PermissionClass::Normal,
+                crate::config::DelegationMode::CarveOut,
+            )
+            .unwrap();
+            assert_eq!(
+                find_disk_root().expect("find"),
+                Some(root),
+                "the created_by-less agent is the root"
+            );
+        })
+    }
+
+    #[test]
+    #[serial]
+    fn scan_and_find_error_when_the_agents_dir_is_unreadable() {
+        with_data_dir(|tmp| {
+            // agents/ exists but as a regular file: read_dir fails with
+            // ENOTDIR, standing in for permission-denied states the runner
+            // cannot reproduce (root ignores file modes).
+            std::fs::write(tmp.path().join("agents"), "not a directory").unwrap();
+            let err = match scan_agents() {
+                Ok(_) => panic!("scan must not swallow an unreadable dir"),
+                Err(e) => e,
+            };
+            assert!(
+                err.to_string().contains("cannot read agents directory"),
+                "error names the cause: {err:#}"
+            );
+            let err = match find_disk_root() {
+                Ok(_) => panic!("find must refuse to guess"),
+                Err(e) => e,
+            };
+            assert!(
+                err.to_string().contains("cannot read agents directory"),
+                "error names the cause: {err:#}"
             );
         })
     }
