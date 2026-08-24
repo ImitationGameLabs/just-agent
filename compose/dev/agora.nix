@@ -95,15 +95,38 @@ let
   instancesDataVolume =
     if instancesDataBind != null then instancesDataBind else "instances_data:/data";
 
+  # Parallel-stack overrides (the same env pattern as bindOverride above):
+  # unset -> the default single stack; set -> a second, independent dev stack
+  # with its own project name (own containers, networks, and volumes), for the
+  # dual-agora acceptance flow:
+  #   KALLIP_ARION_PROJECT_NAME=kallipai-dev2 \
+  #   KALLIP_ARION_AGORA_PORT=7101 KALLIP_ARION_LESCHE_PORT=7201 \
+  #   arion up -d agora lesche
+  # Only the HOST side of each publish is overridden (container ports and the
+  # compose-internal URLs stay fixed), and caddy keeps routing the
+  # agora2./lesche2. subdomains to the host ports -- so the second stack is
+  # reachable exactly where the old inline pair was. Bring up only agora +
+  # lesche (plus their deps): caddy would fight the first stack for :80/:443,
+  # and instances owns the loopback-only 7300.
+  envOrDefault =
+    name: default:
+    let
+      v = builtins.getEnv name;
+    in
+    if v == "" then default else v;
+  projectName = envOrDefault "KALLIP_ARION_PROJECT_NAME" "kallipai-dev";
+  agoraHostPort = envOrDefault "KALLIP_ARION_AGORA_PORT" "7100";
+  lescheHostPort = envOrDefault "KALLIP_ARION_LESCHE_PORT" "7200";
+  instancesHostPort = envOrDefault "KALLIP_ARION_INSTANCES_PORT" "7300";
 in
 {
   config = {
-    project.name = "kallipai-dev";
+    project.name = projectName;
 
     # Named volumes must be declared at the compose top level (compose rejects
-    # a reference to an undeclared named volume). The `kallipai-dev` project
-    # name prefixes every volume, so the internal name only carries the
-    # meaningful suffix.
+    # a reference to an undeclared named volume). The project name
+    # (`kallipai-dev` by default) prefixes every volume, so the internal
+    # name only carries the meaningful suffix.
     docker-compose.volumes = {
       agora_pgdata = { };
       lesche_pgdata = { };
@@ -178,7 +201,7 @@ in
       service.depends_on = [ "agora-postgres" ];
       service.useHostStore = true;
       service.command = [ "${workspace}/bin/kallip-agora" ];
-      service.ports = [ "7100:7100" ];
+      service.ports = [ "${agoraHostPort}:7100" ];
       # Optional stable admin token (else generated per boot, printed to
       # `arion logs agora`).
       service.env_file = [ ".env" ];
@@ -245,7 +268,7 @@ in
       ];
       service.useHostStore = true;
       service.command = [ "${workspace}/bin/kallip-lesche" ];
-      service.ports = [ "7200:7200" ];
+      service.ports = [ "${lescheHostPort}:7200" ];
       service.env_file = [ ".env" ];
       # reqwest (HttpControlPlane -> agora /internal) builds its Client at
       # startup and the rustls platform verifier loads the system trust store
@@ -284,7 +307,7 @@ in
       service.command = [ "${workspace}/bin/kallip-instances" ];
       # Loopback-tight publish: only host-side tooling (curl, the vite-less
       # dev flow) needs the direct port; the browser path is Caddy.
-      service.ports = [ "127.0.0.1:7300:7300" ];
+      service.ports = [ "127.0.0.1:${instancesHostPort}:7300" ];
       service.env_file = [ ".env" ];
       service.volumes = [
         instancesStateVolume

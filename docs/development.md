@@ -254,11 +254,14 @@ both exits named. Outbound frames fan out to every online relay; the first
 entry with stored credentials is the "primary" agora (frontend cache
 key).
 
-The dev compose ships a second agora+lesche pair for acceptance:
-`agora2` / `lesche2` on `:7101` / `:7201` (own Postgres instances; same dev
-admin-token fixture). Enroll a code on each side, fill `relays.toml`, and
-watch the tagma log for two `relay connector active` lines (one per
-entry name); a message sent on either side must arrive on both.
+Dual-agora acceptance runs on a second, parallel stack: the same compose
+file parameterized by env vars:
+`KALLIP_ARION_PROJECT_NAME=kallipai-dev2 KALLIP_ARION_AGORA_PORT=7101 KALLIP_ARION_LESCHE_PORT=7201 arion up -d agora lesche`
+-- with its own containers and volumes, reachable where the old inline
+pair was (caddy routes the agora2./lesche2. subdomains to those host
+ports). Enroll a code on each side, fill `relays.toml`, and watch the
+tagma log for two `relay connector active` lines (one per entry name); a
+message sent on either side must arrive on both.
 
 ### Manual KEX round-trip acceptance
 
@@ -276,8 +279,8 @@ setup:
    are E2E ciphertext, so compare rows, not content:
 
    ```sh
-   for pg in lesche-postgres lesche2-postgres; do
-     docker exec kallipai-dev-$pg-1 psql -U kallip -d kallip -c \
+   for c in kallipai-dev-lesche-postgres-1 kallipai-dev2-lesche-postgres-1; do
+     docker exec "$c" psql -U kallip -d kallip -c \
        'select room_id, seq, sender_kind, created_at
         from room_messages order by created_at desc limit 4'
    done
