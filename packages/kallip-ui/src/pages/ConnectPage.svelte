@@ -21,8 +21,19 @@
     connect_online_mode,
   } from "../paraglide/messages.js";
 
-  let tagmaUrl = $state("http://127.0.0.1:3000");
-  let authToken = $state("");
+  // A ?tagmaUrl= from the instances page (the fresh-spawn Chat CTA) wins
+  // over both the stored config and the default; tokens never ride the URL.
+  const paramTagmaUrl = new URLSearchParams(window.location.search).get(
+    "tagmaUrl",
+  );
+  let tagmaUrl = $state(paramTagmaUrl ?? "http://127.0.0.1:3000");
+  // The spawn form parks the new instance's operator token in sessionStorage
+  // when the user typed one; pick it up exactly once (read + remove).
+  const handoffToken = sessionStorage.getItem("kallip:connect-token");
+  if (handoffToken !== null) {
+    sessionStorage.removeItem("kallip:connect-token");
+  }
+  let authToken = $state(handoffToken ?? "");
   // Field-level validation (e.g. malformed URL); shown inline.
   let error = $state<string | null>(null);
   // Raw connection failure from connectDirect; classified into the inline
@@ -41,8 +52,8 @@
   $effect(() => {
     const cfg = configStore.value;
     if (!seeded && cfg?.offline) {
-      tagmaUrl = cfg.offline.tagmaUrl;
-      authToken = cfg.offline.authToken;
+      tagmaUrl = paramTagmaUrl ?? cfg.offline.tagmaUrl;
+      authToken = handoffToken ?? cfg.offline.authToken;
       seeded = true;
     }
   });

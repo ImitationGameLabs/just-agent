@@ -92,5 +92,10 @@ export default defineConfig({
       host: webHost,
       clientPort: 443,
     },
+    // The daemon web proxy owns /api/daemon/* in production (same origin);
+    // in dev, forward those calls to its loopback listener.
+    proxy: {
+      "/api/daemon": "http://127.0.0.1:7300",
+    },
   },
 });
