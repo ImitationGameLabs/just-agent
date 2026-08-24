@@ -18,7 +18,7 @@ use subtle::ConstantTimeEq;
 
 use crate::error::fault;
 
-/// How `/api/daemon/*` requests are authenticated.
+/// How `/api/instances/*` requests are authenticated.
 #[derive(Clone)]
 pub enum AuthMode {
     /// Platform mode: every request's bearer is verified with the agora;
@@ -53,7 +53,7 @@ pub struct AppState {
     pub allowed_hosts: Vec<String>,
 }
 
-/// Bearer-token guard for `/api/daemon/*`. Static assets sit outside this
+/// Bearer-token guard for `/api/instances/*`. Static assets sit outside this
 /// layer: the page loads first, then its API calls carry the credential.
 pub async fn token_guard(
     State(state): State<AppState>,

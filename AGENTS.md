@@ -30,12 +30,12 @@ The project brand is `kallipai` (literally `kallip` + `ai`); the technical stem 
 │       ├── kallip-agora-client/ # Agora relay HTTP client (enroll + admin surface)
 │       ├── kallip-lesche-client/ # Lesche data-plane relay HTTP client
 │       ├── kallip-admin/        # Headless agora admin CLI (sk-admin HTTP client)
-│   └── daemon/          # Local instance management subsystem (UDS daemon + wire types + clients + web proxy + CLI)
+│       ├── kallip-instances/   # Local instance management service (web API + static UI over the daemon)
+│   └── daemon/          # Local instance management subsystem (UDS daemon + wire types + clients + spawn helper + CLI)
 │       ├── kallip-daemon/        # Stateless, directory-driven manager for local instances (UDS control socket)
 │       ├── kallip-daemon-common/ # Wire types for the daemon protocol
 │       ├── kallip-daemon-client/ # UDS client library for the daemon
 │       ├── kallip-daemon-spawn/  # Detached spawn helper that launches instance processes
-│       ├── kallip-daemon-web/    # Local web management proxy (static UI + /api/daemon)
 │       └── kallipctl/            # Management CLI for the daemon
 ├── packages/                  # JS/TS workspace (Deno-first; see below)
 │   ├── kallip-common/         # Transport-agnostic shared types + SSE parser

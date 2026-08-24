@@ -2869,7 +2869,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "kallip-daemon-web"
+name = "kallip-e2ee"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chacha20poly1305",
+ "ed25519-dalek",
+ "getrandom 0.4.2",
+ "hkdf 0.13.0",
+ "sha2 0.11.0",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "kallip-instances"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2893,20 +2907,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "kallip-e2ee"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chacha20poly1305",
- "ed25519-dalek",
- "getrandom 0.4.2",
- "hkdf 0.13.0",
- "sha2 0.11.0",
- "x25519-dalek",
- "zeroize",
 ]
 
 [[package]]

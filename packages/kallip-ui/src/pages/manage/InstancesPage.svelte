@@ -1,12 +1,13 @@
 <script lang="ts">
-  // Read-only instance face of the offline home: the daemon proxy supplies
-  // list; the write face (spawn form, stop dialog, token entry) lives here.
-  import { instancesStore } from "../../lib/daemon/instances.svelte.ts";
+  // Read-only instance face of the offline home: the instances service
+  // supplies list; the write face (spawn form, stop dialog, token entry)
+  // lives here.
+  import { instancesStore } from "../../lib/instances/instances.svelte.ts";
   import {
     CONNECT_TOKEN_KEY,
-    DAEMON_TOKEN_KEY,
-    DaemonWebError,
-  } from "../../lib/daemon/client.ts";
+    INSTANCES_TOKEN_KEY,
+    InstancesError,
+  } from "../../lib/instances/client.ts";
   import ConfirmDialog from "../../components/ConfirmDialog.svelte";
   import FormError from "../../components/FormError.svelte";
   import {
@@ -83,7 +84,7 @@
   // --- standalone-mode token entry (the 401 banner) ---------------------
   let tokenInput = $state("");
 
-  // Daemon error codes to their localized line; the form and the stop
+  // Service error codes to their localized line; the form and the stop
   // dialog share this mapping through faultLine.
   const codeMessage: Record<string, () => string> = {
     slug_taken: manage_instances_error_slug_taken,
@@ -97,7 +98,7 @@
   };
 
   function faultLine(cause: unknown): string {
-    if (cause instanceof DaemonWebError) {
+    if (cause instanceof InstancesError) {
       const line = cause.code ? codeMessage[cause.code] : undefined;
       if (line) {
         return line();
@@ -192,7 +193,7 @@
   async function onTokenApply(event: SubmitEvent) {
     event.preventDefault();
     if (!tokenInput.trim()) return;
-    sessionStorage.setItem(DAEMON_TOKEN_KEY, tokenInput.trim());
+    sessionStorage.setItem(INSTANCES_TOKEN_KEY, tokenInput.trim());
     await instancesStore.refresh();
     tokenRejected = instancesStore.errorKind === "unauthorized";
   }

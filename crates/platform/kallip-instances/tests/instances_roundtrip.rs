@@ -6,7 +6,7 @@
 //! sibling workspace binaries — resolved the same way the daemon's own
 //! lifecycle tests do (KALLIP_BIN_DIR → CARGO_BIN_EXE_* → deps-parent →
 //! PATH). Build the workspace (or at least `cargo build -p kallip-daemon
-//! kallip-daemon-web kallip`) before running, or the resolve chain falls
+//! kallip-instances kallip`) before running, or the resolve chain falls
 //! through to PATH and the tests spuriously fail.
 
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use kallip_daemon_client::DaemonClient;
-use kallip_daemon_web::{AppState, build_router};
+use kallip_instances::{AppState, build_router};
 use tower::ServiceExt;
 
 struct DaemonProc {
@@ -129,18 +129,18 @@ async fn full_management_round_trip_with_guards() {
 
     let state = AppState {
         client: DaemonClient::new(&daemon.socket),
-        auth: kallip_daemon_web::guard::AuthMode::Token("itest-token".into()),
+        auth: kallip_instances::guard::AuthMode::Token("itest-token".into()),
         allowed_hosts: vec![],
     };
     let app = build_router(state, None);
 
     // No token: 401.
-    let (status, body) = send(&app, "GET", "/api/daemon/list", None, None).await;
+    let (status, body) = send(&app, "GET", "/api/instances/list", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(body.contains("\"unauthorized\""), "{body}");
 
     // Foreign Host: 403, even with a valid token.
-    let request = Request::get("/api/daemon/list")
+    let request = Request::get("/api/instances/list")
         .header("host", "evil.example")
         .header("authorization", "Bearer itest-token")
         .body(Body::empty())
@@ -149,7 +149,14 @@ async fn full_management_round_trip_with_guards() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     // Health (daemon itself): 200.
-    let (status, body) = send(&app, "GET", "/api/daemon/health", Some("itest-token"), None).await;
+    let (status, body) = send(
+        &app,
+        "GET",
+        "/api/instances/health",
+        Some("itest-token"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("\"running\":true"), "{body}");
     assert!(body.contains("\"state\":\"running\""), "{body}");
@@ -171,7 +178,7 @@ async fn full_management_round_trip_with_guards() {
     let (status, body) = send(
         &app,
         "POST",
-        "/api/daemon/spawn",
+        "/api/instances/spawn",
         Some("itest-token"),
         Some(&spawn_body),
     )
@@ -182,7 +189,14 @@ async fn full_management_round_trip_with_guards() {
     assert!(body.contains("\"port\":"), "{body}");
 
     // List sees it.
-    let (status, body) = send(&app, "GET", "/api/daemon/list", Some("itest-token"), None).await;
+    let (status, body) = send(
+        &app,
+        "GET",
+        "/api/instances/list",
+        Some("itest-token"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("\"web-e2e\""), "{body}");
 
@@ -190,7 +204,7 @@ async fn full_management_round_trip_with_guards() {
     let (status, body) = send(
         &app,
         "GET",
-        "/api/daemon/health?slug=web-e2e",
+        "/api/instances/health?slug=web-e2e",
         Some("itest-token"),
         None,
     )
@@ -203,7 +217,7 @@ async fn full_management_round_trip_with_guards() {
     let (status, body) = send(
         &app,
         "GET",
-        "/api/daemon/health?slug=missing",
+        "/api/instances/health?slug=missing",
         Some("itest-token"),
         None,
     )
@@ -215,7 +229,7 @@ async fn full_management_round_trip_with_guards() {
     let (status, body) = send(
         &app,
         "POST",
-        "/api/daemon/stop",
+        "/api/instances/stop",
         Some("itest-token"),
         Some(r#"{"slug":"web-e2e"}"#),
     )
@@ -227,7 +241,7 @@ async fn full_management_round_trip_with_guards() {
     let (status, body) = send(
         &app,
         "POST",
-        "/api/daemon/stop",
+        "/api/instances/stop",
         Some("itest-token"),
         Some(r#"{"slug":"web-e2e"}"#),
     )
@@ -250,7 +264,7 @@ struct MockVerifier {
 }
 
 #[async_trait::async_trait]
-impl kallip_daemon_web::control_plane::BearerVerifier for MockVerifier {
+impl kallip_instances::control_plane::BearerVerifier for MockVerifier {
     async fn verify_bearer(
         &self,
         _token: &str,
@@ -271,7 +285,7 @@ async fn platform_mode_admin_only_and_fail_closed() {
     use kallip_agora_common::control_plane::ControlPlaneError;
     use kallip_agora_common::ids::TagmaId;
     use kallip_agora_common::principal::Principal;
-    use kallip_daemon_web::guard::AuthMode;
+    use kallip_instances::guard::AuthMode;
 
     let verifier = std::sync::Arc::new(MockVerifier {
         outcomes: std::sync::Mutex::new(vec![
@@ -294,24 +308,24 @@ async fn platform_mode_admin_only_and_fail_closed() {
 
     // Admin passes the gate (and dies at the daemon proxy: 503 proves the
     // guard let it through).
-    let (status, _) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    let (status, _) = send(&app, "GET", "/api/instances/list", Some("any"), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 
     // A valid Tagma identity: 403.
-    let (status, body) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    let (status, body) = send(&app, "GET", "/api/instances/list", Some("any"), None).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert!(body.contains("\"forbidden\""), "{body}");
 
     // A valid User identity: 403.
-    let (status, _) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    let (status, _) = send(&app, "GET", "/api/instances/list", Some("any"), None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
     // An invalid token: 401.
-    let (status, body) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    let (status, body) = send(&app, "GET", "/api/instances/list", Some("any"), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
 
     // Agora unreachable: fail closed.
-    let (status, body) = send(&app, "GET", "/api/daemon/list", Some("any"), None).await;
+    let (status, body) = send(&app, "GET", "/api/instances/list", Some("any"), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert!(body.contains("\"auth_backend_unavailable\""), "{body}");
 }
@@ -319,7 +333,7 @@ async fn platform_mode_admin_only_and_fail_closed() {
 #[test]
 fn refuses_to_start_unauthenticated_on_non_loopback() {
     // The fail-safe rule: non-loopback bind without either auth mode.
-    let config = kallip_daemon_web::Config {
+    let config = kallip_instances::Config {
         addr: "0.0.0.0:7300".into(),
         daemon_socket: None,
         static_dir: None,
@@ -328,13 +342,13 @@ fn refuses_to_start_unauthenticated_on_non_loopback() {
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
     };
-    let error = kallip_daemon_web::resolve_auth(&config, &config.addr).expect_err("must refuse");
+    let error = kallip_instances::resolve_auth(&config, &config.addr).expect_err("must refuse");
     assert!(error.to_string().contains("refusing to start"), "{error}");
 }
 
 #[test]
 fn open_mode_allowed_on_loopback() {
-    let config = kallip_daemon_web::Config {
+    let config = kallip_instances::Config {
         addr: "127.0.0.1:7300".into(),
         daemon_socket: None,
         static_dir: None,
@@ -344,15 +358,15 @@ fn open_mode_allowed_on_loopback() {
         allowed_hosts_raw: String::new(),
     };
     assert!(matches!(
-        kallip_daemon_web::resolve_auth(&config, &config.addr).expect("resolve"),
-        kallip_daemon_web::guard::AuthMode::Open
+        kallip_instances::resolve_auth(&config, &config.addr).expect("resolve"),
+        kallip_instances::guard::AuthMode::Open
     ));
 }
 #[test]
 fn half_configured_agora_url_refuses_to_start() {
     // A URL without the internal token must not silently fall through
     // to open mode on a loopback bind.
-    let config = kallip_daemon_web::Config {
+    let config = kallip_instances::Config {
         addr: "127.0.0.1:7300".into(),
         daemon_socket: None,
         static_dir: None,
@@ -361,18 +375,18 @@ fn half_configured_agora_url_refuses_to_start() {
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
     };
-    let error = kallip_daemon_web::resolve_auth(&config, &config.addr).expect_err("must refuse");
+    let error = kallip_instances::resolve_auth(&config, &config.addr).expect_err("must refuse");
     assert!(
         error
             .to_string()
-            .contains("KALLIP_DAEMON_WEB_AGORA_INTERNAL_TOKEN"),
+            .contains("KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN"),
         "{error}"
     );
 }
 
 #[test]
 fn half_configured_agora_token_refuses_to_start() {
-    let config = kallip_daemon_web::Config {
+    let config = kallip_instances::Config {
         addr: "127.0.0.1:7300".into(),
         daemon_socket: None,
         static_dir: None,
@@ -381,9 +395,9 @@ fn half_configured_agora_token_refuses_to_start() {
         agora_internal_token: Some("internal-secret".into()),
         allowed_hosts_raw: String::new(),
     };
-    let error = kallip_daemon_web::resolve_auth(&config, &config.addr).expect_err("must refuse");
+    let error = kallip_instances::resolve_auth(&config, &config.addr).expect_err("must refuse");
     assert!(
-        error.to_string().contains("KALLIP_DAEMON_WEB_AGORA_URL"),
+        error.to_string().contains("KALLIP_INSTANCES_AGORA_URL"),
         "{error}"
     );
 }

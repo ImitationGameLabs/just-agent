@@ -1,6 +1,6 @@
 [package]
-name = "kallip-daemon-web"
-description = "Local web management proxy for the kallip daemon"
+name = "kallip-instances"
+description = "Local instance management service for the kallip daemon"
 edition = "2024"
 version.workspace = true
 license.workspace = true

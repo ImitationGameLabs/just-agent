@@ -25,7 +25,7 @@ members = [
   "crates/daemon/kallip-daemon",
   "crates/daemon/kallip-daemon-spawn",
   "crates/daemon/kallipctl",
-  "crates/daemon/kallip-daemon-web"
+  "crates/platform/kallip-instances",
 ]
 
 resolver = "3"
@@ -59,8 +59,8 @@ kallip-daemon-common = { path = "crates/daemon/kallip-daemon-common" }
 kallip-daemon-client = { path = "crates/daemon/kallip-daemon-client" }
 kallip-daemon = { path = "crates/daemon/kallip-daemon" }
 kallip-daemon-spawn = { path = "crates/daemon/kallip-daemon-spawn" }
-kallip-daemon-web = { path = "crates/daemon/kallip-daemon-web" }
 kallipctl = { path = "crates/daemon/kallipctl" }
+kallip-instances = { path = "crates/platform/kallip-instances" }
 
 anyhow = "1.0.102"
 async-trait = "0.1.89"

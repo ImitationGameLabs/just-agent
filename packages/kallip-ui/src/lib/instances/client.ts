@@ -1,12 +1,12 @@
-// Client for the daemon's local web proxy (kallip-daemon-web): the offline
-// home reads machine-level instance state through its /api/daemon/* HTTP
-// face. Deliberately separate from manage/backend.ts — the daemon proxy is a
-// third backend with its own uniform {code, message} error shape, and
-// instance lifecycle is not a tagma management concern.
+// Client for the local instances service (kallip-instances): the offline
+// home reads machine-level instance state through its /api/instances/* HTTP
+// face. Deliberately separate from manage/backend.ts — the instances
+// service is a third backend with its own uniform {code, message} error
+// shape, and instance lifecycle is not a tagma management concern.
 /** sessionStorage key holding the standalone-mode bearer token; when set,
  * every request carries it as the authorization header.
  */
-export const DAEMON_TOKEN_KEY = "kallip:daemon-token";
+export const INSTANCES_TOKEN_KEY = "kallip:instances-token";
 
 /** One-shot handoff key: the spawn form parks the new instance's operator
  * token here when the user provided one, and /connect picks it up exactly
@@ -14,9 +14,9 @@ export const DAEMON_TOKEN_KEY = "kallip:daemon-token";
  */
 export const CONNECT_TOKEN_KEY = "kallip:connect-token";
 
-/** One managed instance as the daemon reports it (wire mirror).
+/** One managed instance as the instances service reports it (wire mirror).
  */
-export interface DaemonInstance {
+export interface InstanceInfo {
   slug: string;
   instance_id: string;
   workspace: string;
@@ -27,7 +27,7 @@ export interface DaemonInstance {
 
 /** Liveness report: the daemon itself, or one instance by slug.
  */
-export interface DaemonHealth {
+export interface InstanceHealth {
   slug: string | null;
   running: boolean;
   state: "running" | "stopped" | "dead";
@@ -36,7 +36,7 @@ export interface DaemonHealth {
 
 /** Spawn request: the daemon's allowlisted env pairs ride as KEY=VALUE.
  */
-export interface DaemonSpawnInput {
+export interface InstanceSpawnInput {
   slug: string;
   workspace: string;
   env: string[];
@@ -44,7 +44,7 @@ export interface DaemonSpawnInput {
 
 /** One freshly launched instance (the proxy unwraps the wire payload).
  */
-export interface DaemonSpawnResult {
+export interface InstanceSpawnResult {
   slug: string;
   pid: number;
   port: number;
@@ -52,7 +52,7 @@ export interface DaemonSpawnResult {
 
 /** The error kinds the offline instances page branches on.
  */
-export type DaemonWebErrorKind =
+export type InstancesErrorKind =
   | "unauthorized"
   | "forbidden"
   | "unreachable"
@@ -60,9 +60,9 @@ export type DaemonWebErrorKind =
 
 /** One failed exchange, classified to the kind the page renders.
  */
-export class DaemonWebError extends Error {
+export class InstancesError extends Error {
   constructor(
-    readonly kind: DaemonWebErrorKind,
+    readonly kind: InstancesErrorKind,
     message: string,
     readonly status?: number,
     readonly code?: string,
@@ -72,30 +72,30 @@ export class DaemonWebError extends Error {
   }
 }
 
-export class DaemonWebClient {
+export class InstancesClient {
   private readonly base: string;
 
-  constructor(baseUrl = "/api/daemon") {
+  constructor(baseUrl = "/api/instances") {
     this.base = baseUrl.replace(/\/+$/, "");
   }
 
   /** The daemon's own liveness (no slug).
    */
-  health(): Promise<DaemonHealth> {
-    return this.get<DaemonHealth>("/health");
+  health(): Promise<InstanceHealth> {
+    return this.get<InstanceHealth>("/health");
   }
 
   /** Every instance the daemon sees, with its running bit.
    */
-  async list(): Promise<DaemonInstance[]> {
-    const body = await this.get<{ instances: DaemonInstance[] }>("/list");
+  async list(): Promise<InstanceInfo[]> {
+    const body = await this.get<{ instances: InstanceInfo[] }>("/list");
     return body.instances;
   }
 
   /** Launch one instance; the response carries its listen port.
    */
-  spawn(input: DaemonSpawnInput): Promise<DaemonSpawnResult> {
-    return this.post<DaemonSpawnResult>("/spawn", input);
+  spawn(input: InstanceSpawnInput): Promise<InstanceSpawnResult> {
+    return this.post<InstanceSpawnResult>("/spawn", input);
   }
 
   /** Stop one instance by slug.
@@ -112,9 +112,9 @@ export class DaemonWebClient {
         headers: { ...this.authHeaders(), ...init?.headers },
       });
     } catch (cause) {
-      throw new DaemonWebError(
+      throw new InstancesError(
         "unreachable",
-        "daemon web proxy unreachable: " + path,
+        "instances service unreachable: " + path,
         undefined,
         undefined,
         { cause },
@@ -142,7 +142,7 @@ export class DaemonWebClient {
    */
   private authHeaders(): Record<string, string> {
     const headers: Record<string, string> = { accept: "application/json" };
-    const token = sessionStorage.getItem(DAEMON_TOKEN_KEY);
+    const token = sessionStorage.getItem(INSTANCES_TOKEN_KEY);
     if (token) {
       headers.authorization = "Bearer " + token;
     }
@@ -152,29 +152,29 @@ export class DaemonWebClient {
   /** Map one non-2xx response onto the page's branch kinds, keeping the
    * proxy's machine-readable code for message selection.
    */
-  private async fault(response: Response): Promise<DaemonWebError> {
+  private async fault(response: Response): Promise<InstancesError> {
     const { code, message } = await faultBody(response);
     switch (response.status) {
       case 401:
-        return new DaemonWebError(
+        return new InstancesError(
           "unauthorized",
           message,
           response.status,
           code,
         );
       case 403:
-        return new DaemonWebError("forbidden", message, response.status, code);
+        return new InstancesError("forbidden", message, response.status, code);
       case 502:
       case 503:
       case 504:
-        return new DaemonWebError(
+        return new InstancesError(
           "unreachable",
           message,
           response.status,
           code,
         );
       default:
-        return new DaemonWebError("other", message, response.status, code);
+        return new InstancesError("other", message, response.status, code);
     }
   }
 }

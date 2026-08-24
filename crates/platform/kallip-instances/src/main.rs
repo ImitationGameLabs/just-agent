@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use clap::Parser as _;
 use kallip_daemon_client::DaemonClient;
-use kallip_daemon_web::{AppState, Config, build_router, resolve_auth};
+use kallip_instances::{AppState, Config, build_router, resolve_auth};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
     tracing::info!(
         addr = %addr,
         socket = %socket.display(),
-        "kallip-daemon-web listening"
+        "kallip-instances listening"
     );
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

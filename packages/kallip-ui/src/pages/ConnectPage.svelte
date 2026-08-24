@@ -6,7 +6,7 @@
   import type { OfflineModeConfig } from "../lib/config/config.ts";
   import { navigate } from "../lib/shell/port.ts";
   import { classifyError } from "../lib/errors.ts";
-  import { CONNECT_TOKEN_KEY } from "../lib/daemon/client.ts";
+  import { CONNECT_TOKEN_KEY } from "../lib/instances/client.ts";
   import Brand from "../components/Brand.svelte";
   import FormError from "../components/FormError.svelte";
   import {

@@ -1,33 +1,33 @@
-// Daemon instances store: the read-only face of the offline home. Polls
-// the daemon web proxy for the daemon's liveness and its instance list;
+// Instances store: the read-only face of the offline home. Polls the
+// local instances service for the daemon's liveness and its instance list;
 // spawn/stop mutations rethrow their classified errors for the calling
 // surface (form, confirm dialog) to render; the list refreshes on success.
 
 import {
-  type DaemonHealth,
-  type DaemonInstance,
-  type DaemonSpawnInput,
-  type DaemonSpawnResult,
-  DaemonWebClient,
-  DaemonWebError,
-  type DaemonWebErrorKind,
+  type InstanceHealth,
+  type InstanceInfo,
+  InstancesClient,
+  InstancesError,
+  type InstancesErrorKind,
+  type InstanceSpawnInput,
+  type InstanceSpawnResult,
 } from "./client.ts";
 import { manage_instances_load_failed } from "../../paraglide/messages.js";
 
 class InstancesStore {
-  private readonly client = new DaemonWebClient();
+  private readonly client = new InstancesClient();
   private pollHandle: ReturnType<typeof setInterval> | null = null;
 
-  health = $state<DaemonHealth | null>(null);
-  instances = $state<DaemonInstance[]>([]);
+  health = $state<InstanceHealth | null>(null);
+  instances = $state<InstanceInfo[]>([]);
   isLoading = $state(false);
   error = $state<string | null>(null);
-  errorKind = $state<DaemonWebErrorKind | null>(null);
+  errorKind = $state<InstancesErrorKind | null>(null);
   /** True once any refresh has succeeded; gates the first-frame loading
    * line so the 5s poll never flashes it over live data.
    */
   loaded = $state(false);
-  /** The proxy's machine-readable error code (e.g. host_forbidden). */
+  /** The service's machine-readable error code (e.g. host_forbidden). */
   errorCode = $state<string | null>(null);
   /** The listen port of each instance spawned in this session, by slug:
    * the list wire has no port, so the Chat CTA needs this memory.
@@ -49,7 +49,7 @@ class InstancesStore {
       this.errorKind = null;
       this.loaded = true;
     } catch (cause) {
-      if (cause instanceof DaemonWebError) {
+      if (cause instanceof InstancesError) {
         this.errorKind = cause.kind;
         this.errorCode = cause.code ?? null;
         this.error = cause.message;
@@ -65,7 +65,7 @@ class InstancesStore {
   /** Spawn one instance; success records its port and refreshes the list.
    * Errors rethrow classified for the form to render.
    */
-  async spawn(input: DaemonSpawnInput): Promise<DaemonSpawnResult> {
+  async spawn(input: InstanceSpawnInput): Promise<InstanceSpawnResult> {
     const result = await this.client.spawn(input);
     this.spawnedPorts[input.slug] = result.port;
     await this.refresh();

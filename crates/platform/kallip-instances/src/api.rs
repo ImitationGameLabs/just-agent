@@ -33,7 +33,7 @@ pub struct HealthQuery {
     pub slug: Option<String>,
 }
 
-/// The `/api/daemon` sub-router. The token guard is applied by the caller
+/// The `/api/instances` sub-router. The token guard is applied by the caller
 /// (`build_router`), not here, so tests can hit the handlers directly.
 pub fn api_routes() -> Router<AppState> {
     Router::new()

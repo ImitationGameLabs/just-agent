@@ -5,14 +5,15 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-/// Local web management proxy for the kallip daemon: serves the web UI's
-/// static build and proxies `/api/daemon/*` to the daemon's UDS socket.
+/// Local instance management service for the kallip daemon: serves
+/// the web UI's static build and proxies `/api/instances/*` to the
+/// daemon's UDS socket.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Config {
     /// Listen address. Loopback by default; a LAN deployment points this at
     /// the machine's LAN address explicitly.
-    #[arg(long, env = "KALLIP_DAEMON_WEB_ADDR", default_value = "127.0.0.1:7300")]
+    #[arg(long, env = "KALLIP_INSTANCES_ADDR", default_value = "127.0.0.1:7300")]
     pub addr: String,
 
     /// Daemon control socket. Defaults to the same XDG-derived path the
@@ -23,26 +24,26 @@ pub struct Config {
     pub daemon_socket: Option<PathBuf>,
 
     /// Directory of the web UI's static build to serve. Omitted = API-only
-    /// mode (dev: vite serves the frontend and proxies /api/daemon here).
-    #[arg(long, env = "KALLIP_DAEMON_WEB_STATIC_DIR")]
+    /// mode (dev: vite serves the frontend and proxies /api/instances here).
+    #[arg(long, env = "KALLIP_INSTANCES_STATIC_DIR")]
     pub static_dir: Option<PathBuf>,
 
-    /// Standalone-mode bearer token for /api/daemon/* (constant-time
+    /// Standalone-mode bearer token for /api/instances/* (constant-time
     /// compared; the platform mode uses the agora credentials below).
-    #[arg(long, env = "KALLIP_DAEMON_WEB_TOKEN")]
+    #[arg(long, env = "KALLIP_INSTANCES_TOKEN")]
     pub token: Option<String>,
     /// Agora internal root for platform mode (e.g. http://127.0.0.1:7100);
     /// together with the internal token this enables agora-backed auth.
-    #[arg(long, env = "KALLIP_DAEMON_WEB_AGORA_URL")]
+    #[arg(long, env = "KALLIP_INSTANCES_AGORA_URL")]
     pub agora_internal_url: Option<String>,
 
     /// Shared secret matching the agora's KALLIP_AGORA_INTERNAL_TOKEN.
-    #[arg(long, env = "KALLIP_DAEMON_WEB_AGORA_INTERNAL_TOKEN")]
+    #[arg(long, env = "KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN")]
     pub agora_internal_token: Option<String>,
 
     /// Extra Host values allowed through the host guard (comma separated;
     /// a reverse-proxied deployment names its public domain here).
-    #[arg(long, env = "KALLIP_DAEMON_WEB_ALLOWED_HOSTS", default_value = "")]
+    #[arg(long, env = "KALLIP_INSTANCES_ALLOWED_HOSTS", default_value = "")]
     pub allowed_hosts_raw: String,
 }
 

@@ -309,6 +309,10 @@ pairs must start with `KALLIP_` or be `RUST_LOG`; the four reserved
 keys (`KALLIP_INSTANCE_STATE_DIR`, `KALLIP_DATA_DIR`,
 `KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`) are daemon-owned.
 
+The web management face lives in `crates/platform/kallip-instances`: web API
+under `/api/instances/*` plus the static UI build, proxying the daemon over
+its UDS socket.
+
 ## Iterating
 
 `arion up` re-evaluates the flake each time, so Rust changes are picked up just

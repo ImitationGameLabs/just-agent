@@ -1,7 +1,7 @@
-//! Local web management proxy for the kallip daemon.
+//! Local instance management service for the kallip daemon.
 //!
 //! Serves the web UI's static build (when configured) and proxies the four
-//! management verbs from `/api/daemon/*` to the daemon's UDS socket. The
+//! management verbs from `/api/instances/*` to the daemon's UDS socket. The
 //! daemon itself never grows an HTTP or token surface; this crate is the
 //! only networked door: a Host-header check on everything, plus one of
 //! three auth modes for the API — agora-verified admin access, a
@@ -28,7 +28,7 @@ pub use guard::AppState;
 /// configured) outside it, and the Host guard over everything.
 pub fn build_router(state: AppState, static_dir: Option<&Path>) -> Router {
     let api = api::api_routes().layer(from_fn_with_state(state.clone(), guard::token_guard));
-    let mut app = Router::new().nest("/api/daemon", api);
+    let mut app = Router::new().nest("/api/instances", api);
 
     match static_dir {
         // The fallback serves the SPA: known files straight from disk,
@@ -55,7 +55,7 @@ async fn not_found() -> Response {
         StatusCode::NOT_FOUND,
         axum::Json(error::ApiFault {
             code: "not_found",
-            message: "no such path; the API lives under /api/daemon".to_string(),
+            message: "no such path; the API lives under /api/instances".to_string(),
         }),
     )
         .into_response()
@@ -80,12 +80,12 @@ pub fn resolve_auth(config: &Config, addr: &str) -> anyhow::Result<guard::AuthMo
         // A half-configured pair must refuse to start: falling through
         // would silently serve the API under a weaker mode than intended.
         (Some(_), None) => anyhow::bail!(
-            "refusing to start: KALLIP_DAEMON_WEB_AGORA_URL is set but \
-             KALLIP_DAEMON_WEB_AGORA_INTERNAL_TOKEN is missing"
+            "refusing to start: KALLIP_INSTANCES_AGORA_URL is set but \
+             KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN is missing"
         ),
         (None, Some(_)) => anyhow::bail!(
-            "refusing to start: KALLIP_DAEMON_WEB_AGORA_INTERNAL_TOKEN is set \
-             but KALLIP_DAEMON_WEB_AGORA_URL is missing"
+            "refusing to start: KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN is set \
+             but KALLIP_INSTANCES_AGORA_URL is missing"
         ),
         (None, None) => {}
     }
@@ -97,7 +97,7 @@ pub fn resolve_auth(config: &Config, addr: &str) -> anyhow::Result<guard::AuthMo
     }
     anyhow::bail!(
         "refusing to start: {addr} is not loopback and no auth is configured \
-         (set KALLIP_DAEMON_WEB_TOKEN, or agora internal URL + token for platform mode)"
+         (set KALLIP_INSTANCES_TOKEN, or agora internal URL + token for platform mode)"
     )
 }
 
@@ -150,7 +150,7 @@ mod tests {
         );
         let response = app
             .oneshot(
-                Request::get("/api/daemon/list")
+                Request::get("/api/instances/list")
                     .header("host", "127.0.0.1:7300")
                     .body(Body::empty())
                     .unwrap(),
@@ -170,7 +170,7 @@ mod tests {
         );
         let response = app
             .oneshot(
-                Request::get("/api/daemon/list")
+                Request::get("/api/instances/list")
                     .header("host", "127.0.0.1:7300")
                     .header("authorization", "Bearer test-token")
                     .body(Body::empty())
@@ -191,7 +191,7 @@ mod tests {
         );
         let response = app
             .oneshot(
-                Request::get("/api/daemon/list")
+                Request::get("/api/instances/list")
                     .header("host", "127.0.0.1:7300")
                     .header("authorization", "Bearer wrong")
                     .body(Body::empty())
@@ -207,7 +207,7 @@ mod tests {
         let app = build_router(test_state(crate::guard::AuthMode::Open), None);
         let response = app
             .oneshot(
-                Request::get("/api/daemon/list")
+                Request::get("/api/instances/list")
                     .header("host", "127.0.0.1:7300")
                     .body(Body::empty())
                     .unwrap(),
@@ -227,7 +227,7 @@ mod tests {
         );
         let response = app
             .oneshot(
-                Request::get("/api/daemon/list")
+                Request::get("/api/instances/list")
                     .header("host", "127.0.0.1:7300")
                     .header("authorization", "Bearer test-token")
                     .body(Body::empty())
@@ -248,7 +248,7 @@ mod tests {
         );
         let response = app
             .oneshot(
-                Request::get("/api/daemon/list")
+                Request::get("/api/instances/list")
                     .header("host", "evil.example")
                     .header("authorization", "Bearer test-token")
                     .body(Body::empty())
@@ -288,7 +288,7 @@ mod tests {
         );
         let response = app
             .oneshot(
-                Request::post("/api/daemon/spawn")
+                Request::post("/api/instances/spawn")
                     .header("host", "127.0.0.1:7300")
                     .header("authorization", "Bearer test-token")
                     .header("content-type", "application/json")
