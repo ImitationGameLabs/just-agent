@@ -152,6 +152,7 @@ async fn full_management_round_trip_with_guards() {
     let (status, body) = send(&app, "GET", "/api/daemon/health", Some("itest-token"), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("\"running\":true"), "{body}");
+    assert!(body.contains("\"state\":\"running\""), "{body}");
 
     // Spawn a real instance (minimal boot env from the daemon lifecycle
     // tests: operator token + the LLM profile trio).
@@ -196,6 +197,7 @@ async fn full_management_round_trip_with_guards() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("\"running\":true"), "{body}");
+    assert!(body.contains("\"state\":\"running\""), "{body}");
 
     // Unknown slug: the daemon's not_found maps to 404 with the code key.
     let (status, body) = send(

@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 use kallip_daemon_common::wire::{
-    ErrorCode, MAX_LINE_BYTES, OkPayload, PROTOCOL_VERSION, RequestBody, Response, decode_request,
-    encode_response, err, ok,
+    ErrorCode, InstanceState, MAX_LINE_BYTES, OkPayload, PROTOCOL_VERSION, RequestBody, Response,
+    decode_request, encode_response, err, ok,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt as _, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -88,6 +88,7 @@ impl Daemon {
                 report: kallip_daemon_common::wire::HealthReport {
                     slug: None,
                     running: true,
+                    state: kallip_daemon_common::wire::InstanceState::Running,
                     detail: None,
                 },
             }),
@@ -187,6 +188,7 @@ mod tests {
                 assert_eq!(instances.len(), 1);
                 assert_eq!(instances[0].slug, "alpha");
                 assert_eq!(instances[0].workspace, "/tmp/w");
+                assert_eq!(instances[0].state, InstanceState::Stopped);
             }
             other => panic!("expected ok, got {other:?}"),
         }
@@ -197,10 +199,14 @@ mod tests {
             })
             .await
             .expect("health");
-        assert!(matches!(
-            health.body,
-            kallip_daemon_common::wire::ResponseBody::Ok { .. }
-        ));
+        match health.body {
+            kallip_daemon_common::wire::ResponseBody::Ok {
+                payload: kallip_daemon_common::wire::OkPayload::Health { report },
+            } => {
+                assert_eq!(report.state, InstanceState::Stopped);
+            }
+            other => panic!("expected ok, got {other:?}"),
+        }
 
         let missing = client
             .call(RequestBody::Health {

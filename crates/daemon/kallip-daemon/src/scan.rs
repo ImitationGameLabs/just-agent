@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use kallip_daemon_common::wire::{HealthReport, InstanceInfo};
+use kallip_daemon_common::wire::{HealthReport, InstanceInfo, InstanceState};
 
 /// One scanned instance directory: what the tree says, without judging it.
 #[derive(Debug, Clone)]
@@ -23,28 +23,32 @@ pub struct ScannedInstance {
 }
 
 impl ScannedInstance {
-    /// Whether the recorded pid is alive and still looks like a tagma
-    /// (`/proc/<pid>/comm` match guards against pid reuse).
-    pub fn running(&self) -> bool {
+    /// The daemon's three-way classification: a live tagma pid is
+    /// Running, a missing pid file is a clean Stopped, and a recorded
+    /// pid that no longer lives (or no longer looks like a tagma) is
+    /// Dead. Single classification source — running() derives from it.
+    pub fn state(&self) -> InstanceState {
         match self.pid {
-            Some(pid) => pid_is_tagma(pid),
-            None => false,
+            None => InstanceState::Stopped,
+            Some(pid) if pid_is_tagma(pid) => InstanceState::Running,
+            Some(_) => InstanceState::Dead,
         }
     }
-
     pub fn info(&self) -> InstanceInfo {
+        let state = self.state();
         InstanceInfo {
             slug: self.slug.clone(),
             instance_id: self.instance_id.clone(),
             workspace: self.workspace.clone().unwrap_or_default(),
-            running: self.running(),
+            running: state == InstanceState::Running,
+            state,
             owner: self.owner,
         }
     }
 
     pub fn health(&self) -> HealthReport {
-        let running = self.running();
-        let detail = if running {
+        let state = self.state();
+        let detail = if state == InstanceState::Running {
             None
         } else if self.pid.is_none() {
             Some("no pid file".to_string())
@@ -53,7 +57,8 @@ impl ScannedInstance {
         };
         HealthReport {
             slug: Some(self.slug.clone()),
-            running,
+            running: state == InstanceState::Running,
+            state,
             detail,
         }
     }
@@ -150,9 +155,10 @@ mod tests {
         write(&root.join("a/instance.id"), "id");
         write(&root.join("a/pid"), "99999999");
         let scanned = scan_instances(&root);
-        assert!(!scanned[0].running());
+        assert_eq!(scanned[0].state(), InstanceState::Dead);
         let health = scanned[0].health();
         assert!(!health.running);
+        assert_eq!(health.state, InstanceState::Dead);
         assert!(
             health.detail.unwrap().contains("pid"),
             "stale pid named in detail"
@@ -166,6 +172,7 @@ mod tests {
         let scanned = scan_instances(&root);
         let health = scanned[0].health();
         assert!(!health.running);
+        assert_eq!(health.state, InstanceState::Stopped);
         assert_eq!(health.detail.as_deref(), Some("no pid file"));
     }
 

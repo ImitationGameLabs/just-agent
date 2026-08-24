@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use kallip_daemon_client::DaemonClient;
-use kallip_daemon_common::wire::{ErrorCode, OkPayload, RequestBody, ResponseBody};
+use kallip_daemon_common::wire::{ErrorCode, InstanceState, OkPayload, RequestBody, ResponseBody};
 
 // The daemon crate is a binary; integration tests cannot import it. The
 // lifecycle surface under test is the four verbs over the wire, so the
@@ -135,6 +135,7 @@ fn spawn_health_stop_round_trip() {
         panic!("expected health payload");
     };
     assert!(report.running, "spawned instance is running");
+    assert_eq!(report.state, InstanceState::Running);
 
     // The instance dir carries the metadata the scan adopts.
     let instance_dir = daemon.data_dir.path().join("e2e");
@@ -170,6 +171,7 @@ fn spawn_health_stop_round_trip() {
         panic!("expected health payload");
     };
     assert!(!report.running);
+    assert_eq!(report.state, InstanceState::Dead);
     assert!(instance_dir.exists(), "instance dir survives stop");
 }
 

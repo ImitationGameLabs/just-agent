@@ -79,12 +79,35 @@ pub enum OkPayload {
 }
 
 /// One managed instance as seen by a directory scan.
+/// The daemon's three-way liveness word. Clients match on this, never on
+/// the prose in `detail`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstanceState {
+    Running,
+    Stopped,
+    Dead,
+}
+
+impl InstanceState {
+    /// The lowercase wire token, ready for CLI rendering.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InstanceState::Running => "running",
+            InstanceState::Stopped => "stopped",
+            InstanceState::Dead => "dead",
+        }
+    }
+}
+
+/// One managed instance as seen by a directory scan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InstanceInfo {
     pub slug: String,
     pub instance_id: String,
     pub workspace: String,
     pub running: bool,
+    pub state: InstanceState,
     /// Owning uid recorded at spawn (SO_PEERCRED of the requesting
     /// peer); None when an adopted directory predates the field.
     pub owner: Option<u32>,
@@ -95,8 +118,9 @@ pub struct InstanceInfo {
 pub struct HealthReport {
     pub slug: Option<String>,
     pub running: bool,
-    /// Present when `running` is false: why (no pid file, stale pid, comm
-    /// mismatch after a pid reuse, ...).
+    pub state: InstanceState,
+    /// Human-readable supplement when `running` is false; consumers must
+    /// not parse this — match `state` instead.
     pub detail: Option<String>,
 }
 
