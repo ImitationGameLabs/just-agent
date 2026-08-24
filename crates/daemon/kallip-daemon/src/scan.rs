@@ -3,9 +3,9 @@
 //! The daemon holds no state of its own — `list`/`health` read the tree under
 //! the data root fresh on every call, so a daemon restart (or a crash)
 //! rebuilds the full view from disk, and manually created directories are
-//! adopted as long as they carry an `instance.id`.
+//! adopted as long as they carry a daemon-written `meta.json`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use kallip_daemon_common::wire::{HealthReport, InstanceInfo, InstanceState};
 
@@ -15,10 +15,9 @@ pub struct ScannedInstance {
     pub slug: String,
     pub instance_id: String,
     pub workspace: Option<String>,
-    /// The `pid` file content when present and parse-able.
+    /// The instance's `runtime.json` pid when present and parse-able.
     pub pid: Option<u32>,
-    /// The `owner` file content when present and parse-able (the
-    /// spawn-time uid of the requesting peer).
+    /// The spawn-time uid of the requesting peer, from `meta.json`.
     pub owner: Option<u32>,
 }
 
@@ -51,7 +50,7 @@ impl ScannedInstance {
         let detail = if state == InstanceState::Running {
             None
         } else if self.pid.is_none() {
-            Some("no pid file".to_string())
+            Some("no runtime.json".to_string())
         } else {
             Some("pid not alive (stale or reused)".to_string())
         };
@@ -87,7 +86,32 @@ pub fn pid_is_tagma(pid: u32) -> bool {
     matches!(comm, Ok(c) if c.trim_start_matches("kallip-").starts_with("tagma"))
 }
 
-/// Scan `<data_root>/*/instance.id`. Directories without `instance.id` are
+/// `meta.json`: the adopt marker for an instance directory. The
+/// daemon's spawn pipeline is the single writer; a directory without
+/// a parseable one is not managed. It carries the static identity
+/// (instance id, owning uid, canonical workspace); the volatile
+/// runtime facts live in `runtime.json`.
+/// `workspace` is the one optional key: a minimal hand-written marker
+/// still adopts — it just stops participating in overlap checks.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct InstanceMeta {
+    pub instance_id: String,
+    pub owner_uid: u32,
+    #[serde(default)]
+    pub workspace: Option<String>,
+}
+
+/// `runtime.json`: the instance's runtime identity, written by the
+/// tagma itself. The key set (`pid`, `port`) is a cross-crate
+/// contract — kallip-tagma serializes its own mirror of these keys
+/// and does not depend on the daemon crates, so the two definitions
+/// stay in lockstep by hand.
+#[derive(Debug, serde::Deserialize)]
+pub struct RuntimeFile {
+    pub pid: u32,
+    pub port: u16,
+}
+/// Scan `<data_root>/*/meta.json`. Directories without the marker are
 /// not managed (the legacy flat layout keeps running unmanaged).
 pub fn scan_instances(data_root: &Path) -> Vec<ScannedInstance> {
     let Ok(entries) = std::fs::read_dir(data_root) else {
@@ -99,31 +123,35 @@ pub fn scan_instances(data_root: &Path) -> Vec<ScannedInstance> {
         let Some(slug) = entry.file_name().into_string().ok() else {
             continue;
         };
-        let Some(instance_id) = read_trimmed(&dir.join("instance.id")) else {
+        let Some(meta) = read_meta(&dir) else {
             continue;
         };
         out.push(ScannedInstance {
             slug,
-            instance_id,
-            workspace: read_trimmed(&dir.join("workspace")),
-            pid: read_trimmed(&dir.join("pid")).and_then(|p| p.parse().ok()),
-            owner: read_trimmed(&dir.join("owner")).and_then(|o| o.parse().ok()),
+            instance_id: meta.instance_id,
+            workspace: meta.workspace.filter(|w| !w.is_empty()),
+            pid: read_runtime(&dir).map(|runtime| runtime.pid),
+            owner: Some(meta.owner_uid),
         });
     }
     out.sort_by(|a, b| a.slug.cmp(&b.slug));
     out
 }
 
-fn read_trimmed(path: &PathBuf) -> Option<String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+fn read_meta(dir: &Path) -> Option<InstanceMeta> {
+    let text = std::fs::read_to_string(dir.join("meta.json")).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn read_runtime(dir: &Path) -> Option<RuntimeFile> {
+    let text = std::fs::read_to_string(dir.join("runtime.json")).ok()?;
+    serde_json::from_str(&text).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn write(path: &Path, text: &str) {
         if let Some(parent) = path.parent() {
@@ -133,27 +161,44 @@ mod tests {
     }
 
     #[test]
-    fn scan_skips_dirs_without_instance_id_and_sorts_by_slug() {
+    fn scan_skips_dirs_without_meta_and_sorts_by_slug() {
         let root = tempfile_dir("skips");
-        write(&root.join("beta/instance.id"), "id-2");
-        write(&root.join("alpha/instance.id"), "id-1");
-        write(&root.join("alpha/owner"), "1000");
-        write(&root.join("workspace"), "id-x"); // legacy flat: not a dir
+        write(
+            &root.join("beta/meta.json"),
+            r#"{"instance_id":"id-2","owner_uid":1001}"#,
+        );
+        write(
+            &root.join("alpha/meta.json"),
+            r#"{"instance_id":"id-1","owner_uid":1000,"workspace":"/tmp/w"}"#,
+        );
+        write(&root.join("broken/meta.json"), "{ not json");
+        write(&root.join("noise-file"), "x"); // flat file: not a dir
         std::fs::create_dir(root.join("noise")).expect("noise dir");
 
         let scanned = scan_instances(&root);
         let slugs: Vec<_> = scanned.iter().map(|s| s.slug.as_str()).collect();
         assert_eq!(slugs, ["alpha", "beta"]);
         assert_eq!(scanned[0].instance_id, "id-1");
-        assert_eq!(scanned[0].owner, Some(1000));
-        assert_eq!(scanned[1].owner, None);
+        assert_eq!(scanned[0].workspace.as_deref(), Some("/tmp/w"));
+        assert_eq!(scanned[1].owner, Some(1001));
+        assert_eq!(scanned[1].workspace, None);
+        write(
+            &root.join("empty/meta.json"),
+            r#"{"instance_id":"id-3","owner_uid":1002,"workspace":""}"#,
+        );
+        // An empty-string workspace must read back as absent, not as a
+        // zero-component path that overlaps everything.
+        assert_eq!(scan_instances(&root)[2].workspace, None);
     }
 
     #[test]
     fn dead_pid_reports_not_running_with_detail() {
         let root = tempfile_dir("dead-pid");
-        write(&root.join("a/instance.id"), "id");
-        write(&root.join("a/pid"), "99999999");
+        write(
+            &root.join("a/meta.json"),
+            r#"{"instance_id":"id","owner_uid":1000}"#,
+        );
+        write(&root.join("a/runtime.json"), r#"{"pid":99999999,"port":1}"#);
         let scanned = scan_instances(&root);
         assert_eq!(scanned[0].state(), InstanceState::Dead);
         let health = scanned[0].health();
@@ -166,14 +211,17 @@ mod tests {
     }
 
     #[test]
-    fn no_pid_file_means_not_running() {
+    fn no_runtime_file_means_not_running() {
         let root = tempfile_dir("no-pid");
-        write(&root.join("a/instance.id"), "id");
+        write(
+            &root.join("a/meta.json"),
+            r#"{"instance_id":"id","owner_uid":1000}"#,
+        );
         let scanned = scan_instances(&root);
         let health = scanned[0].health();
         assert!(!health.running);
         assert_eq!(health.state, InstanceState::Stopped);
-        assert_eq!(health.detail.as_deref(), Some("no pid file"));
+        assert_eq!(health.detail.as_deref(), Some("no runtime.json"));
     }
 
     #[test]

@@ -139,11 +139,31 @@ fn spawn_health_stop_round_trip() {
 
     // The instance dir carries the metadata the scan adopts.
     let instance_dir = daemon.data_dir.path().join("e2e");
-    assert!(instance_dir.join("instance.id").exists());
-    assert!(instance_dir.join("workspace").exists());
+    assert!(instance_dir.join("meta.json").exists());
+    for retired in ["instance.id", "owner", "pid", "port", "workspace"] {
+        assert!(
+            !instance_dir.join(retired).exists(),
+            "retired marker {retired} must not appear"
+        );
+    }
     // The spawn recorded the requesting peer (this test process) as owner.
-    let owner = std::fs::read_to_string(instance_dir.join("owner")).expect("owner marker");
-    assert_eq!(owner.trim(), unsafe { libc::getuid() }.to_string());
+    let meta: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta.json"),
+    )
+    .expect("parse meta.json");
+    assert_eq!(
+        meta["owner_uid"],
+        serde_json::json!(unsafe { libc::getuid() })
+    );
+    assert_eq!(
+        meta["workspace"],
+        serde_json::json!(workspace.path().display().to_string())
+    );
+    assert!(
+        meta["instance_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
 
     // Stop: TERM grace.
     let stop = tokio_block_on(client.call(RequestBody::Stop { slug: "e2e".into() }));
@@ -220,6 +240,44 @@ fn spawn_rejects_slug_reuse_and_workspace_overlap() {
         ResponseBody::Err { code, .. } => assert_eq!(code, ErrorCode::WorkspaceOverlap),
         other => panic!("expected workspace_overlap, got {other:?}"),
     }
+}
+
+/// A manually booted tagma on an unmarked data root must stay unwritten:
+/// no meta.json means no daemon management, so no runtime.json. The
+/// gate runs between bind and serve, so a successful TCP connect to the
+/// fixed addr proves the gate already decided — no sleep needed.
+#[test]
+fn manual_boot_in_unmarked_dir_writes_nothing() {
+    let data_dir = tempfile::tempdir().expect("data tempdir");
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe bind");
+    let port = probe.local_addr().expect("probe addr").port();
+    drop(probe);
+    let mut tagma = std::process::Command::new(resolve_bin("kallip-tagma"))
+        .env("KALLIP_DATA_DIR", data_dir.path())
+        .env("KALLIP_TAGMA_ADDR", format!("127.0.0.1:{port}"))
+        .env("KALLIP_OPERATOR_TOKEN", "test-op-token")
+        .env("KALLIP_LLM_PROVIDER", "deepseek")
+        .env("KALLIP_LLM_MODEL", "test-model")
+        .env("KALLIP_LLM_DEEPSEEK_API_KEY", "test-key")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("manual tagma boot");
+    let mut connected = false;
+    for _ in 0..200 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            connected = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = tagma.kill();
+    let _ = tagma.wait();
+    assert!(connected, "manual tagma never listened on {port}");
+    assert!(
+        !data_dir.path().join("runtime.json").exists(),
+        "unmarked data root must not get a runtime.json"
+    );
 }
 
 /// Drive a tokio client call from a sync test: a minimal single-thread

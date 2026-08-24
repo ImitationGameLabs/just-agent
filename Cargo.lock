@@ -2834,6 +2834,7 @@ dependencies = [
  "kallip-daemon-client",
  "kallip-daemon-common",
  "libc",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",

@@ -1,6 +1,6 @@
-//! Stop semantics: read pid → verify it is really a
+//! Stop semantics: read the pid from runtime.json → verify it is really a
 //! tagma (pid reuse guard) → SIGTERM → poll for exit within the grace
-//! period → SIGKILL. The pid/port files stay (adoption semantics: a daemon
+//! period → SIGKILL. runtime.json stays (adoption semantics: a daemon
 //! restart rebuilds its view from the tree).
 
 use std::path::Path;
@@ -38,12 +38,11 @@ pub fn stop(
     pid_is_tagma: &dyn Fn(u32) -> bool,
 ) -> Result<(), StopError> {
     let instance_dir = data_root.join(slug);
-    let pid: u32 = std::fs::read_to_string(instance_dir.join("pid"))
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
+    let pid: u32 = crate::scan::read_runtime(&instance_dir)
+        .map(|runtime| runtime.pid)
         .ok_or_else(|| StopError::NotRunning(slug.to_string()))?;
     if !pid_is_tagma(pid) {
-        // Stale pid file (crash leftover) or a recycled pid: the instance
+        // Stale runtime state (crash leftover) or a recycled pid: the
         // is gone; report it rather than shooting an innocent process.
         return Err(StopError::NotRunning(slug.to_string()));
     }

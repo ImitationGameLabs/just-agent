@@ -1,6 +1,6 @@
 //! The spawn pipeline: validate → allocate → (uid provisioning is a
 //! no-op in the same-uid profile) → detach-exec via the helper →
-//! wait for the instance's self-written pid/port, rolling back on timeout.
+//! wait for the instance's self-written runtime.json, rolling back on timeout.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -30,8 +30,7 @@ pub enum SpawnError {
 }
 
 /// Env keys the daemon owns; a request may not override them.
-const RESERVED_KEYS: [&str; 4] = [
-    "KALLIP_INSTANCE_STATE_DIR",
+const RESERVED_KEYS: [&str; 3] = [
     "KALLIP_DATA_DIR",
     "KALLIP_WORKSPACE_ROOT",
     "KALLIP_TAGMA_ADDR",
@@ -129,21 +128,19 @@ pub fn spawn(
         let _ = std::fs::remove_dir_all(&instance_dir);
         SpawnError::Internal(e)
     };
-    std::fs::write(instance_dir.join("instance.id"), &instance_id)
-        .map_err(|e| rolled_back(anyhow::anyhow!("writing instance.id: {e}")))?;
-    std::fs::write(
-        instance_dir.join("workspace"),
-        workspace_canon.display().to_string(),
-    )
-    .map_err(|e| rolled_back(anyhow::anyhow!("writing workspace marker: {e}")))?;
-    std::fs::write(instance_dir.join("owner"), owner_uid.to_string())
-        .map_err(|e| rolled_back(anyhow::anyhow!("writing owner marker: {e}")))?;
+    let meta_bytes = serde_json::to_vec(&scan::InstanceMeta {
+        instance_id,
+        owner_uid,
+        workspace: Some(workspace_canon.display().to_string()),
+    })
+    .map_err(|e| rolled_back(anyhow::anyhow!("serializing meta.json: {e}")))?;
+    std::fs::write(instance_dir.join("meta.json"), &meta_bytes)
+        .map_err(|e| rolled_back(anyhow::anyhow!("writing meta.json: {e}")))?;
 
     // --- detach-exec ------------------------------------------------------
     let helper = bins::resolve("kallip-daemon-spawn");
     let tagma = bins::resolve("kallip-tagma");
     let mut env: Vec<String> = vec![
-        format!("KALLIP_INSTANCE_STATE_DIR={}", instance_dir.display()),
         format!("KALLIP_DATA_DIR={}", instance_dir.display()),
         format!("KALLIP_WORKSPACE_ROOT={}", workspace_canon.display()),
         "KALLIP_TAGMA_ADDR=127.0.0.1:0".to_string(),
@@ -160,20 +157,18 @@ pub fn spawn(
         return Err(rolled_back(anyhow::anyhow!("spawn helper exited {status}")));
     }
 
-    // --- wait for the self-written pid/port -------------------------------
+    // --- wait for the self-written runtime.json --------------------------
     let deadline = Instant::now() + timeout;
     loop {
-        if let (Some(pid), Some(port)) = (
-            read_num(&instance_dir, "pid"),
-            read_num(&instance_dir, "port"),
-        ) && scan::pid_is_tagma(pid)
+        if let Some(runtime) = scan::read_runtime(&instance_dir)
+            && scan::pid_is_tagma(runtime.pid)
         {
-            return Ok((pid, port));
+            return Ok((runtime.pid, runtime.port));
         }
         if Instant::now() >= deadline {
             // Rollback: kill whatever the helper left (a failed exec leaves
             // nothing; a half-boot leaves a tagma), then remove the dir.
-            if let Some(pid) = read_num::<u32>(&instance_dir, "pid") {
+            if let Some(pid) = scan::read_runtime(&instance_dir).map(|r| r.pid) {
                 unsafe { libc::kill(pid as i32, libc::SIGKILL) };
             }
             let _ = std::fs::remove_dir_all(&instance_dir);
@@ -191,12 +186,4 @@ pub fn spawn(
 /// workspaces were canonicalized when written.
 fn overlaps(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || b.starts_with(a)
-}
-
-fn read_num<T: std::str::FromStr>(dir: &Path, name: &str) -> Option<T> {
-    std::fs::read_to_string(dir.join(name))
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
 }

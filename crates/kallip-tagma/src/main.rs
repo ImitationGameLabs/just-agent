@@ -307,13 +307,13 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("binding listen addr {}", args.listen_addr))?;
     info!(addr = %args.listen_addr, advertise = %args.advertise_url, "tagma listening");
-    // Local daemon management (opt-in): when a supervisor sets
-    // KALLIP_INSTANCE_STATE_DIR, publish the pid + actual bound port next
-    // to the instance metadata, right after the bind. Unset keeps the
-    // single-instance behavior exactly: no directory is created, no
-    // file is written.
-    if let Some(state_dir) = std::env::var_os("KALLIP_INSTANCE_STATE_DIR") {
-        write_instance_state(std::path::Path::new(&state_dir), &listener)?;
+    // Local daemon management (opt-in): the daemon points KALLIP_DATA_DIR
+    // at the instance dir and marks it with its meta.json; publish
+    // runtime.json there right after the bind. An unmarked DATA_DIR keeps
+    // the single-instance behavior exactly: no file is written.
+    let instance_dir = data_root()?;
+    if instance_dir.join("meta.json").is_file() {
+        write_instance_state(&instance_dir, &listener)?;
     }
     let shutdown_token = state.shutdown.clone();
     axum::serve(listener, app)
@@ -340,22 +340,34 @@ fn ensure_credentials_root() -> Result<std::path::PathBuf> {
     credentials::set_owner_only(&credentials_dir)?;
     Ok(credentials_dir)
 }
-/// Publish the runtime identity of this instance (`pid` + the actually
-/// bound port) into `dir`, for the local instance daemon's spawn
-/// pipeline. Both files land owner-only via tmp+rename; the port is
-/// read back from the listener so a `:0` bind is discoverable. Called
-/// only from the `KALLIP_INSTANCE_STATE_DIR` gate in `main`.
+
+/// `runtime.json` payload — the tagma-written half of the instance-dir
+/// contract (the daemon writes `meta.json`; the tagma instance writes
+/// `runtime.json`). kallip-daemon deserializes its own mirror of these
+/// keys, so the two definitions must stay in lockstep.
+#[derive(serde::Serialize)]
+struct InstanceRuntime {
+    pid: u32,
+    port: u16,
+}
+/// Publish the runtime identity of this instance (pid + actually bound
+/// port) into `dir` as a single `runtime.json`, for the local instance
+/// daemon's spawn pipeline. The key set is a cross-crate contract with
+/// the daemon's reader, kept in lockstep by hand — tagma does not
+/// depend on the daemon crates. Owner-only via tmp+rename; the port is
+/// read back from the listener so a `:0` bind is discoverable.
 fn write_instance_state(dir: &std::path::Path, listener: &tokio::net::TcpListener) -> Result<()> {
     let port = listener
         .local_addr()
         .context("reading the bound local address")?
         .port();
-    let pid = std::process::id();
-    write_owner_only(&dir.join("pid"), &pid.to_string())
-        .context("writing the instance pid file")?;
-    write_owner_only(&dir.join("port"), &port.to_string())
-        .context("writing the instance port file")?;
-    info!(pid, port, state_dir = %dir.display(), "instance state published");
+    let runtime = InstanceRuntime {
+        pid: std::process::id(),
+        port,
+    };
+    write_owner_only(&dir.join("runtime.json"), &serde_json::to_string(&runtime)?)
+        .context("writing the instance runtime file")?;
+    info!(pid = runtime.pid, port, state_dir = %dir.display(), "instance state published");
     Ok(())
 }
 
@@ -811,11 +823,11 @@ mod tests {
         assert!(!msg.contains("re-enroll"), "{msg}");
     }
 
-    /// KALLIP_INSTANCE_STATE_DIR contract: when the state dir is handed to
-    /// `write_instance_state`, exactly `pid` + `port` appear, owner-only,
-    /// with the process pid and the actually bound (`:0`) port.
+    /// write_instance_state contract: handed a state dir, it writes
+    /// exactly one owner-only `runtime.json` carrying the process pid
+    /// and the actually bound (`:0`) port.
     #[tokio::test]
-    async fn instance_state_dir_gets_pid_and_port_owner_only() {
+    async fn instance_state_dir_gets_runtime_json_owner_only() {
         let dir = tempfile::tempdir().expect("tempdir");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -824,23 +836,21 @@ mod tests {
 
         write_instance_state(dir.path(), &listener).expect("write instance state");
 
-        let pid = std::fs::read_to_string(dir.path().join("pid")).expect("pid file");
-        assert_eq!(pid, std::process::id().to_string());
-        let port_text = std::fs::read_to_string(dir.path().join("port")).expect("port file");
-        assert_eq!(port_text, port.to_string());
+        let text = std::fs::read_to_string(dir.path().join("runtime.json")).expect("runtime.json");
+        let parsed: serde_json::Value = serde_json::from_str(&text).expect("parse runtime.json");
+        assert_eq!(parsed["pid"], serde_json::json!(std::process::id()));
+        assert_eq!(parsed["port"], serde_json::json!(port));
 
         use std::os::unix::fs::PermissionsExt as _;
-        for name in ["pid", "port"] {
-            let mode = std::fs::metadata(dir.path().join(name))
-                .expect("state file metadata")
-                .permissions()
-                .mode();
-            assert_eq!(mode & 0o777, 0o600, "{name} must be owner-only");
-        }
+        let mode = std::fs::metadata(dir.path().join("runtime.json"))
+            .expect("runtime.json metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "runtime.json must be owner-only");
         let entries: Vec<_> = std::fs::read_dir(dir.path())
             .expect("read state dir")
             .map(|entry| entry.expect("entry").file_name())
             .collect();
-        assert_eq!(entries.len(), 2, "exactly pid+port, no tmp leftovers");
+        assert_eq!(entries.len(), 1, "exactly runtime.json, no tmp leftovers");
     }
 }

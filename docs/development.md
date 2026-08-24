@@ -299,17 +299,18 @@ instances. The daemon is stateless — the instance tree under
 ```sh
 kallipctl spawn <slug> <workspace> -e KALLIP_LLM_PROVIDER=... \
     -e KALLIP_LLM_MODEL=... -e KALLIP_LLM_DEEPSEEK_API_KEY=...
-kallipctl list           # every <slug>/ with an instance.id
+kallipctl list           # every <slug>/ with a meta.json
 kallipctl health <slug>  # pid liveness via /proc/<pid>/comm
 kallipctl stop <slug>    # TERM, 10s grace, KILL
 ```
 
-Each instance directory carries `instance.id`, `workspace`, `owner`
-(the requesting peer's uid), and the runtime-written `pid`/`port`
-(published by the tagma itself when `KALLIP_INSTANCE_STATE_DIR` is
-set — unset boots write nothing). Env
-pairs must start with `KALLIP_` or be `RUST_LOG`; the four reserved
-keys (`KALLIP_INSTANCE_STATE_DIR`, `KALLIP_DATA_DIR`,
+Each instance directory carries exactly two metadata files: `meta.json`
+(instance_id + owner_uid + workspace, written by the daemon at spawn)
+and `runtime.json` (pid + port, written by the tagma itself when it
+boots inside a daemon-marked instance dir — an unmarked data root
+writes nothing). Env
+pairs must start with `KALLIP_` or be `RUST_LOG`; the three reserved
+keys (`KALLIP_DATA_DIR`,
 `KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`) are daemon-owned.
 
 The web management face lives in `crates/platform/kallip-instances`: web API

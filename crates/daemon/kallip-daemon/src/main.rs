@@ -3,7 +3,7 @@
 //!
 //! Configuration is exactly two environment variables — no config file:
 //! - `KALLIP_DAEMON_DATA_DIR`: the instance tree root (default
-//!   `~/.local/share/kallip`); each child directory with an `instance.id`
+//!   `~/.local/share/kallip`); each child directory with a `meta.json`
 //!   is a managed instance.
 //! - `KALLIP_STATE_DIR`: daemon-owned state, the control socket's home
 //!   (rootless default `~/.local/state/kallip-daemon`; a system install

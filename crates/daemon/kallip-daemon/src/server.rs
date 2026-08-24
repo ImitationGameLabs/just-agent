@@ -170,8 +170,11 @@ mod tests {
     async fn uds_round_trip_list_and_health() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir(dir.path().join("alpha")).expect("instance dir");
-        std::fs::write(dir.path().join("alpha/instance.id"), "id-1").expect("id");
-        std::fs::write(dir.path().join("alpha/workspace"), "/tmp/w").expect("workspace");
+        std::fs::write(
+            dir.path().join("alpha/meta.json"),
+            r#"{"instance_id":"id-1","owner_uid":1000,"workspace":"/tmp/w"}"#,
+        )
+        .expect("meta");
         let socket = dir.path().join("control.sock");
         let listener = UnixListener::bind(&socket).expect("bind");
 
