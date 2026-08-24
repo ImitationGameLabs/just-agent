@@ -45,6 +45,11 @@ pub struct Config {
     /// a reverse-proxied deployment names its public domain here).
     #[arg(long, env = "KALLIP_INSTANCES_ALLOWED_HOSTS", default_value = "")]
     pub allowed_hosts_raw: String,
+    /// Comma-separated CORS allowed origins (the app's origin(s)). Empty
+    /// = no cross-origin allowed. Never use a wildcard on a public-facing
+    /// deploy.
+    #[arg(long, env = "KALLIP_INSTANCES_CORS_ORIGINS", default_value = "")]
+    pub cors_origins: String,
 }
 
 impl Config {
@@ -91,6 +96,7 @@ mod tests {
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: String::new(),
+            cors_origins: String::new(),
         };
         assert_eq!(
             config.resolve_socket().expect("resolve"),
@@ -108,6 +114,7 @@ mod tests {
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: String::new(),
+            cors_origins: String::new(),
         };
         let socket = config.resolve_socket().expect("resolve");
         // Only the shape is asserted: the XDG root varies by environment.
@@ -123,6 +130,7 @@ mod tests {
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: String::new(),
+            cors_origins: String::new(),
         };
         // A system unit points both the daemon and this proxy at the
         // same state dir; skipping this tier is how the paths fork.
@@ -144,6 +152,7 @@ mod tests {
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: " platform.internal , localhost ,".into(),
+            cors_origins: String::new(),
         };
         assert_eq!(
             config.allowed_hosts(),

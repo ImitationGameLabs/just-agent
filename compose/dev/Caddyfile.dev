@@ -62,6 +62,12 @@
 			flush_interval -1
 		}
 	}
+
+	@instances host instances.{$KALLIP_DEV_DOMAIN}
+	handle @instances {
+		# local instance management service (published 127.0.0.1:7300)
+		reverse_proxy 127.0.0.1:7300
+	}
 	# Any other *.<devDomain> host (typo, or the bare apex) matched the wildcard
 	# site block's SNI but no route above -- surface it as a real 404 rather than
 	# Caddy's default empty 200, so misroutes are obvious.

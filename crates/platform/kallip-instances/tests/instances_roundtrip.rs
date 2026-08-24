@@ -131,6 +131,7 @@ async fn full_management_round_trip_with_guards() {
         client: DaemonClient::new(&daemon.socket),
         auth: kallip_instances::guard::AuthMode::Token("itest-token".into()),
         allowed_hosts: vec![],
+        cors_origins: String::new(),
     };
     let app = build_router(state, None);
 
@@ -303,6 +304,7 @@ async fn platform_mode_admin_only_and_fail_closed() {
         client: DaemonClient::new("/nonexistent-kallip-test.sock"),
         auth: AuthMode::Platform(verifier),
         allowed_hosts: vec![],
+        cors_origins: String::new(),
     };
     let app = build_router(state, None);
 
@@ -341,6 +343,7 @@ fn refuses_to_start_unauthenticated_on_non_loopback() {
         agora_internal_url: None,
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
+        cors_origins: String::new(),
     };
     let error = kallip_instances::resolve_auth(&config, &config.addr).expect_err("must refuse");
     assert!(error.to_string().contains("refusing to start"), "{error}");
@@ -356,6 +359,7 @@ fn open_mode_allowed_on_loopback() {
         agora_internal_url: None,
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
+        cors_origins: String::new(),
     };
     assert!(matches!(
         kallip_instances::resolve_auth(&config, &config.addr).expect("resolve"),
@@ -374,6 +378,7 @@ fn half_configured_agora_url_refuses_to_start() {
         agora_internal_url: Some("http://127.0.0.1:7100".into()),
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
+        cors_origins: String::new(),
     };
     let error = kallip_instances::resolve_auth(&config, &config.addr).expect_err("must refuse");
     assert!(
@@ -394,6 +399,7 @@ fn half_configured_agora_token_refuses_to_start() {
         agora_internal_url: None,
         agora_internal_token: Some("internal-secret".into()),
         allowed_hosts_raw: String::new(),
+        cors_origins: String::new(),
     };
     let error = kallip_instances::resolve_auth(&config, &config.addr).expect_err("must refuse");
     assert!(

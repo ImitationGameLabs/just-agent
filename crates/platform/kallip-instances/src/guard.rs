@@ -51,6 +51,8 @@ pub struct AppState {
     /// fronts this proxy with a reverse proxy, so the platform's domain
     /// must be nameable).
     pub allowed_hosts: Vec<String>,
+    /// Comma-separated CORS allowed origins (empty = no cross-origin).
+    pub cors_origins: String,
 }
 
 /// Bearer-token guard for `/api/instances/*`. Static assets sit outside this

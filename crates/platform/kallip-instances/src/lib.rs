@@ -27,7 +27,9 @@ pub use guard::AppState;
 /// Assemble the full router: the API under token auth, static files (when
 /// configured) outside it, and the Host guard over everything.
 pub fn build_router(state: AppState, static_dir: Option<&Path>) -> Router {
-    let api = api::api_routes().layer(from_fn_with_state(state.clone(), guard::token_guard));
+    let api = api::api_routes()
+        .layer(from_fn_with_state(state.clone(), guard::token_guard))
+        .layer(api::cors_layer(&state.cors_origins));
     let mut app = Router::new().nest("/api/instances", api);
 
     match static_dir {
@@ -134,6 +136,7 @@ mod tests {
             client: DaemonClient::new("/nonexistent-kallip-test.sock"),
             auth,
             allowed_hosts: vec![],
+            cors_origins: String::new(),
         }
     }
 

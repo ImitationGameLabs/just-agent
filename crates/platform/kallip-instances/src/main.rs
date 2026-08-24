@@ -23,6 +23,7 @@ async fn main() -> Result<()> {
         client: DaemonClient::new(socket.clone()),
         auth,
         allowed_hosts: config.allowed_hosts(),
+        cors_origins: config.cors_origins.clone(),
     };
     let app = build_router(state, config.static_dir.as_deref());
 

@@ -33,6 +33,7 @@ export {
   navigate,
 } from "./lib/shell/port.ts";
 export { initAgora, initLesche } from "./lib/session/agora.svelte.ts";
+export { initInstances } from "./lib/instances/client.ts";
 export {
   initConfigStorage,
   type OfflineModeConfig,

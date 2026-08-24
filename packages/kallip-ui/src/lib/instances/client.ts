@@ -73,9 +73,9 @@ export class InstancesError extends Error {
 }
 
 export class InstancesClient {
-  private readonly base: string;
+  readonly base: string;
 
-  constructor(baseUrl = "/api/instances") {
+  constructor(baseUrl: string) {
     this.base = baseUrl.replace(/\/+$/, "");
   }
 
@@ -194,4 +194,21 @@ async function faultBody(
   } catch {
     return { message: "http " + String(response.status) };
   }
+}
+
+// The service's base URL is injected via initInstances() at app bootstrap --
+// the package does not read import.meta.env (SvelteKit-only typing); a
+// same-origin deployment passes its origin ("" or "/api/instances").
+let instancesClient: InstancesClient | null = null;
+
+/** Inject the service base URL and construct the client. Called once at bootstrap. */
+export function initInstances(url: string): void {
+  instancesClient = new InstancesClient(url);
+}
+
+export function instancesClientOrFail(): InstancesClient {
+  if (!instancesClient) {
+    throw new Error("initInstances(url) must be called at app bootstrap");
+  }
+  return instancesClient;
 }

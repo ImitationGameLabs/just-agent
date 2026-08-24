@@ -7,6 +7,7 @@
     initShell,
     initAgora,
     initConfigStorage,
+    initInstances,
     initLesche,
     localStorageConfigStorage,
     type NavIcons,
@@ -34,6 +35,7 @@
   initAgora(import.meta.env.VITE_AGORA_URL ?? "http://localhost:7100");
   initLesche(import.meta.env.VITE_LESCHE_URL ?? "http://localhost:7200");
   initConfigStorage(localStorageConfigStorage);
+  initInstances(import.meta.env.VITE_INSTANCES_URL ?? "http://localhost:7300");
 
   const icons: NavIcons = {
     chat: MessageSquare,

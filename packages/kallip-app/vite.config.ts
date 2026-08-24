@@ -62,10 +62,5 @@ export default defineConfig({
     watch: {
       ignored: ["**/src-tauri/**"],
     },
-    // The instances service owns /api/instances/* in production (same
-    // origin); in dev, forward those calls to its loopback listener.
-    proxy: {
-      "/api/instances": "http://127.0.0.1:7300",
-    },
   },
 });

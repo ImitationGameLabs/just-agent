@@ -4,7 +4,8 @@
 
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -14,6 +15,7 @@ use serde::Deserialize;
 
 use crate::error::{daemon_err, proxy_err};
 use crate::guard::AppState;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 #[derive(Debug, Deserialize)]
 pub struct SpawnRequest {
@@ -34,6 +36,50 @@ pub struct HealthQuery {
 }
 
 /// The `/api/instances` sub-router. The token guard is applied by the caller
+/// Build a CORS layer from a comma-separated allowlist. Mirrors the
+/// agora/lesche `cors_layer` (credentials-aware, explicit method list,
+/// never a wildcard origin). The tagma has a separate permissive variant
+/// -- do NOT copy that one; this is the credentials-aware variant the
+/// browser app needs.
+pub fn cors_layer(origins: &str) -> CorsLayer {
+    let allowed: Vec<HeaderValue> = origins
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    let origin = if allowed.is_empty() {
+        AllowOrigin::list(Vec::new())
+    } else {
+        AllowOrigin::list(allowed)
+    };
+    CorsLayer::new()
+        .allow_origin(origin)
+        // Methods must be an explicit list, NOT `Any`: the Fetch spec
+        // forbids `Access-Control-Allow-Credentials: true` together with
+        // a wildcard (`Allow-Methods: *`), and tower-http panics at
+        // layer construction if they're combined. The management API
+        // speaks exactly these two verbs.
+        .allow_methods([Method::GET, Method::POST])
+        // Allow credentialed cross-origin requests so the web app --
+        // served from a different origin than this service -- can send
+        // its bearer header after a passing preflight. Safe because
+        // every wildcard-forbidden field is concrete: the origin
+        // allowlist is `AllowOrigin::list` (never `Any`) and the methods
+        // are enumerated above. A misconfigured
+        // `KALLIP_INSTANCES_CORS_ORIGINS=*` therefore yields an empty
+        // allowlist (no cross-origin allowed) rather than an open hole.
+        .allow_credentials(true)
+        // `Authorization` is excluded from the `*` wildcard by the Fetch
+        // spec, so list the request headers we actually send explicitly.
+        .allow_headers([
+            AUTHORIZATION,
+            CONTENT_TYPE,
+            ACCEPT,
+            HeaderName::from_static("x-requested-with"),
+        ])
+}
+
 /// (`build_router`), not here, so tests can hit the handlers directly.
 pub fn api_routes() -> Router<AppState> {
     Router::new()

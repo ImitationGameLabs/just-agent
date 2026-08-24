@@ -6,7 +6,7 @@
 import {
   type InstanceHealth,
   type InstanceInfo,
-  InstancesClient,
+  instancesClientOrFail,
   InstancesError,
   type InstancesErrorKind,
   type InstanceSpawnInput,
@@ -15,7 +15,9 @@ import {
 import { manage_instances_load_failed } from "../../paraglide/messages.js";
 
 class InstancesStore {
-  private readonly client = new InstancesClient();
+  private get client() {
+    return instancesClientOrFail();
+  }
   private pollHandle: ReturnType<typeof setInterval> | null = null;
 
   health = $state<InstanceHealth | null>(null);

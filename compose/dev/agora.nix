@@ -71,6 +71,30 @@ let
       throw "arion: KALLIP_ARION_CERT_PATH must be an absolute, colon-free path (got '${v}')"
     else
       v;
+
+  # Bind-override helpers (mirrors compose/dev/tagma.nix): unset -> docker
+  # named volume; set to an absolute, colon-free host path -> bind-mount.
+  # The instances service mounts the HOST daemon's socket dir + instance
+  # tree this way, so the containerized service manages the same real
+  # daemon a host-side kallipctl sees.
+  bindOverride =
+    name: target:
+    let
+      v = builtins.getEnv name;
+    in
+    if v == "" then
+      null
+    else if v == "/" || !(lib.hasPrefix "/" v) || lib.hasInfix ":" v then
+      throw "arion: ${name} must be an absolute, colon-free host path other than '/' (got '${v}')"
+    else
+      "${v}:${target}";
+  instancesStateBind = bindOverride "KALLIP_ARION_INSTANCES_STATE_PATH" "/state";
+  instancesDataBind = bindOverride "KALLIP_ARION_INSTANCES_DATA_PATH" "/data";
+  instancesStateVolume =
+    if instancesStateBind != null then instancesStateBind else "instances_state:/state";
+  instancesDataVolume =
+    if instancesDataBind != null then instancesDataBind else "instances_data:/data";
+
 in
 {
   config = {
@@ -85,7 +109,9 @@ in
       lesche_pgdata = { };
       agora2_pgdata = { };
       lesche2_pgdata = { };
-    };
+    }
+    // lib.optionalAttrs (instancesStateBind == null) { instances_state = { }; }
+    // lib.optionalAttrs (instancesDataBind == null) { instances_data = { }; };
 
     # Dev-only hardcoded creds (prod reads them from .env).
     services.agora-postgres = {
@@ -327,6 +353,43 @@ in
         KALLIP_LESCHE_AGORA_INTERNAL_URL = "http://agora2:7101";
         KALLIP_LESCHE_AGORA_TOKEN = "dev-internal-secret";
         KALLIP_LESCHE_CORS_ORIGINS = "https://web.${devDomain}";
+        RUST_LOG = "info";
+      };
+    };
+
+    # Instances: the local instance management service (kallip-instances),
+    # proxying the HOST daemon's UDS socket. Both the socket dir and the
+    # instance tree come from the host via bind overrides (unset -> empty
+    # named volumes, i.e. an unreachable daemon and an empty list -- enough
+    # for a pure UI bring-up). The browser reaches it via Caddy at
+    # https://instances.<devDomain>; host tooling uses the published
+    # 127.0.0.1:7300. Token mode with a dev fixture token (the agora
+    # admin-token pattern); prod reads it from .env.
+    services.instances = {
+      service.useHostStore = true;
+      service.command = [ "${workspace}/bin/kallip-instances" ];
+      # Loopback-tight publish: only host-side tooling (curl, the vite-less
+      # dev flow) needs the direct port; the browser path is Caddy.
+      service.ports = [ "127.0.0.1:7300:7300" ];
+      service.env_file = [ ".env" ];
+      service.volumes = [
+        instancesStateVolume
+        instancesDataVolume
+      ];
+      image.contents = [
+        workspace
+      ]
+      ++ cacert;
+      service.environment = {
+        PATH = "${workspace}/bin";
+        KALLIP_INSTANCES_ADDR = "0.0.0.0:7300";
+        # The mounted host dirs carry the daemon's socket + instance tree;
+        # both point INTO the container mounts, never at host paths.
+        KALLIP_DAEMON_SOCKET = "/state/control.sock";
+        KALLIP_DAEMON_DATA_DIR = "/data";
+        KALLIP_INSTANCES_TOKEN = "sk-instances-dev-0123456789abcdef0123456789abcdef";
+        KALLIP_INSTANCES_ALLOWED_HOSTS = "instances.${devDomain}";
+        KALLIP_INSTANCES_CORS_ORIGINS = "https://web.${devDomain}";
         RUST_LOG = "info";
       };
     };

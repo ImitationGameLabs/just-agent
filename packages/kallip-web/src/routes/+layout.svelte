@@ -7,6 +7,7 @@
     initShell,
     initAgora,
     initConfigStorage,
+    initInstances,
     initLesche,
     localStorageConfigStorage,
     type NavIcons,
@@ -36,6 +37,7 @@
   const devDomain = import.meta.env.KALLIP_DEV_DOMAIN ?? "kallipai.com";
   initAgora(import.meta.env.VITE_AGORA_URL ?? `https://agora.${devDomain}`);
   initLesche(import.meta.env.VITE_LESCHE_URL ?? `https://lesche.${devDomain}`);
+  initInstances(import.meta.env.VITE_INSTANCES_URL ?? `https://instances.${devDomain}`);
   initConfigStorage(localStorageConfigStorage);
 
   const icons: NavIcons = {
