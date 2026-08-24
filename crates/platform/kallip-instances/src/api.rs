@@ -35,7 +35,10 @@ pub struct HealthQuery {
     pub slug: Option<String>,
 }
 
-/// The `/api/instances` sub-router. The token guard is applied by the caller
+/// The `/api/instances` sub-router. The token guard and CORS layer are
+/// applied by the caller (`build_router`), not here, so tests can hit
+/// the handlers directly.
+
 /// Build a CORS layer from a comma-separated allowlist. Mirrors the
 /// agora/lesche `cors_layer` (credentials-aware, explicit method list,
 /// never a wildcard origin). The tagma has a separate permissive variant
@@ -80,7 +83,6 @@ pub fn cors_layer(origins: &str) -> CorsLayer {
         ])
 }
 
-/// (`build_router`), not here, so tests can hit the handlers directly.
 pub fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/spawn", post(spawn))

@@ -197,8 +197,9 @@ async function faultBody(
 }
 
 // The service's base URL is injected via initInstances() at app bootstrap --
-// the package does not read import.meta.env (SvelteKit-only typing); a
-// same-origin deployment passes its origin ("" or "/api/instances").
+// the package does not read import.meta.env (SvelteKit-only typing). The
+// value is the FULL API prefix (origin + /api/instances): the service nests
+// its routes there, unlike the agora's root-mounted /v1.
 let instancesClient: InstancesClient | null = null;
 
 /** Inject the service base URL and construct the client. Called once at bootstrap. */
