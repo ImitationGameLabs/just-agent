@@ -92,10 +92,10 @@ async fn main() -> Result<()> {
         .call(body)
         .await
         .context("talking to the kallip daemon")?;
-    print(response, &client).await
+    print(response)
 }
 
-async fn print(response: Response, client: &DaemonClient) -> Result<()> {
+fn print(response: Response) -> Result<()> {
     match response.body {
         ResponseBody::Ok { payload } => {
             match payload {
@@ -118,41 +118,7 @@ async fn print(response: Response, client: &DaemonClient) -> Result<()> {
                             println!();
                         }
                         println!("{}", i.slug);
-                        // The list wire carries only a live/stopped
-                        // boolean; one per-slug health probe recovers the
-                        // daemon's richer state (stale pid vs no pid file).
-                        let (state, detail) = if i.running {
-                            ("running", None)
-                        } else {
-                            match client
-                                .call(RequestBody::Health {
-                                    slug: Some(i.slug.clone()),
-                                })
-                                .await
-                            {
-                                Ok(Response {
-                                    body:
-                                        ResponseBody::Ok {
-                                            payload: OkPayload::Health { report },
-                                        },
-                                    ..
-                                }) => match report.detail.as_deref() {
-                                    // "no pid file" is the scan module's
-                                    // wording — pinned by its dead-pid tests;
-                                    // any other detail means the pid went stale.
-                                    Some("no pid file") => ("stopped", None),
-                                    _ => ("dead", report.detail),
-                                },
-                                // A probe can only race the list scan (the
-                                // instance vanished in between); degrade to
-                                // the boolean's word rather than failing.
-                                _ => ("stopped", None),
-                            }
-                        };
-                        println!("  state: {state}");
-                        if let Some(d) = detail {
-                            println!("    detail: {d}");
-                        }
+                        println!("  state: {}", i.state.as_str());
                         println!("  workspace: {}", i.workspace);
                         println!(
                             "  owner-uid: {}",

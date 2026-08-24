@@ -21,6 +21,7 @@ export interface DaemonInstance {
   instance_id: string;
   workspace: string;
   running: boolean;
+  state: "running" | "stopped" | "dead";
   owner: number | null;
 }
 
@@ -29,6 +30,7 @@ export interface DaemonInstance {
 export interface DaemonHealth {
   slug: string | null;
   running: boolean;
+  state: "running" | "stopped" | "dead";
   detail: string | null;
 }
 
