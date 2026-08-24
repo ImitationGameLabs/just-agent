@@ -211,6 +211,22 @@
       {manage_instances_heading()}
     </h1>
 
+    <!-- Outside the error branches: spawn can succeed while the
+           refresh that follows it fails, and the success line must
+           outlive that banner. -->
+    {#if spawnResult}
+      <p class="text-sm text-success-500 dark:text-success-400">
+        {manage_instances_spawn_success({
+          slug: spawnResult.slug,
+          port: spawnResult.port,
+        })}
+        <a
+          class="underline underline-offset-2 ml-1"
+          href={"/connect?tagmaUrl=http://127.0.0.1:" + spawnResult.port}
+          >{nav_chat()}</a
+        >
+      </p>
+    {/if}
     {#if instancesStore.errorKind}
       {#if instancesStore.errorKind === "unauthorized"}
         <form class="space-y-2" onsubmit={onTokenApply}>
@@ -339,19 +355,6 @@
             </label>
           </div>
           <FormError message={spawnError} />
-          {#if spawnResult}
-            <p class="text-sm text-success-500 dark:text-success-400">
-              {manage_instances_spawn_success({
-                slug: spawnResult.slug,
-                port: spawnResult.port,
-              })}
-              <a
-                class="underline underline-offset-2 ml-1"
-                href={"/connect?tagmaUrl=http://127.0.0.1:" + spawnResult.port}
-                >{nav_chat()}</a
-              >
-            </p>
-          {/if}
           <button
             type="submit"
             class="btn preset-filled-primary-500"
