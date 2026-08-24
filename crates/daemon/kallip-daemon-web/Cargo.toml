@@ -1,0 +1,29 @@
+[package]
+name = "kallip-daemon-web"
+description = "Local web management proxy for the kallip daemon"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+kallip-common = { workspace = true, features = ["axum"] }
+kallip-daemon-client = { workspace = true }
+kallip-daemon-common = { workspace = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+clap = { workspace = true }
+dirs = { workspace = true }
+getrandom = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+subtle = { workspace = true }
+tokio = { workspace = true, features = ["net"] }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["fs"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+http-body-util = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
