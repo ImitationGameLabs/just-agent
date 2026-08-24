@@ -128,10 +128,10 @@ async fn full_management_round_trip_with_guards() {
         .await;
 
     let state = AppState {
-        client: DaemonClient::new(&daemon.socket),
+        backend: kallip_instances::backend::UdsBackend::arc(DaemonClient::new(&daemon.socket)),
         auth: kallip_instances::guard::AuthMode::Token("itest-token".into()),
-        allowed_hosts: vec![],
         cors_origins: String::new(),
+        allowed_hosts: vec![],
     };
     let app = build_router(state, None);
 
@@ -301,7 +301,9 @@ async fn platform_mode_admin_only_and_fail_closed() {
         ]),
     });
     let state = AppState {
-        client: DaemonClient::new("/nonexistent-kallip-test.sock"),
+        backend: kallip_instances::backend::UdsBackend::arc(DaemonClient::new(
+            "/nonexistent-kallip-test.sock",
+        )),
         auth: AuthMode::Platform(verifier),
         allowed_hosts: vec![],
         cors_origins: String::new(),

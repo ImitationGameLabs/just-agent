@@ -2,6 +2,8 @@
 //! one UDS exchange via `DaemonClient` → the unwrapped payload as plain
 //! JSON (the wire's `v`/`kind`/`status` tags stay behind the proxy).
 
+use crate::error::{daemon_err, proxy_err};
+use crate::guard::AppState;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
@@ -9,12 +11,8 @@ use axum::http::{HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use kallip_daemon_client::ClientError;
-use kallip_daemon_common::wire::{InstanceInfo, OkPayload, RequestBody, ResponseBody};
+use kallip_daemon_common::wire::InstanceInfo;
 use serde::Deserialize;
-
-use crate::error::{daemon_err, proxy_err};
-use crate::guard::AppState;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 #[derive(Debug, Deserialize)]
@@ -34,10 +32,6 @@ pub struct StopRequest {
 pub struct HealthQuery {
     pub slug: Option<String>,
 }
-
-/// The `/api/instances` sub-router. The token guard and CORS layer are
-/// applied by the caller (`build_router`), not here, so tests can hit
-/// the handlers directly.
 
 /// Build a CORS layer from a comma-separated allowlist. Mirrors the
 /// agora/lesche `cors_layer` (credentials-aware, explicit method list,
@@ -83,6 +77,9 @@ pub fn cors_layer(origins: &str) -> CorsLayer {
         ])
 }
 
+/// The `/api/instances` sub-router. The token guard and CORS layer are
+/// applied by the caller (`build_router`), not here, so tests can hit
+/// the handlers directly.
 pub fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/spawn", post(spawn))
@@ -103,15 +100,8 @@ async fn spawn(
         Ok(Json(body)) => Json(body),
         Err(rejection) => return bad_body(rejection),
     };
-    let response = state
-        .client
-        .call(RequestBody::Spawn {
-            slug,
-            workspace,
-            env,
-        })
-        .await;
-    unwrap(response)
+    let outcome = state.backend.spawn(slug, workspace, env).await;
+    respond(outcome)
 }
 
 async fn stop(
@@ -122,13 +112,17 @@ async fn stop(
         Ok(Json(body)) => Json(body),
         Err(rejection) => return bad_body(rejection),
     };
-    let response = state.client.call(RequestBody::Stop { slug }).await;
-    unwrap(response)
+    let outcome = state.backend.stop(slug).await;
+    respond(outcome)
 }
 
 async fn list(State(state): State<AppState>) -> Response {
-    let response = state.client.call(RequestBody::List).await;
-    unwrap(response)
+    let outcome = state
+        .backend
+        .list()
+        .await
+        .map(|instances| InstanceList { instances });
+    respond(outcome)
 }
 
 async fn health(
@@ -139,34 +133,19 @@ async fn health(
         Ok(query) => query,
         Err(rejection) => return bad_body(rejection),
     };
-    let response = state.client.call(RequestBody::Health { slug }).await;
-    unwrap(response)
+    let outcome = state.backend.health(slug).await;
+    respond(outcome)
 }
 
-/// Translate one UDS exchange into an HTTP response: Ok → the unwrapped
-/// payload's plain JSON; Err → the mapped status + `{code, message}`.
-fn unwrap(response: Result<kallip_daemon_common::wire::Response, ClientError>) -> Response {
-    match response {
-        Ok(wire) => match wire.body {
-            ResponseBody::Ok { payload } => ok_payload(payload).into_response(),
-            ResponseBody::Err { code, message } => daemon_err(code, message),
-        },
-        Err(error) => proxy_err(error),
+/// Render one backend outcome as the HTTP response: Ok → the plain JSON
+fn respond<T: serde::Serialize>(outcome: Result<T, crate::wire::BackendError>) -> Response {
+    match outcome {
+        Ok(value) => Json(value).into_response(),
+        Err(crate::wire::BackendError::Fault { code, message }) => daemon_err(code, message),
+        Err(crate::wire::BackendError::Transport(error)) => proxy_err(error),
     }
 }
-
-/// Strip the wire tags from a success payload so the browser sees plain
-/// JSON (`spawn` → `{slug, pid, port}`, `list` → `{instances: [...]}`, and
-/// so on).
-fn ok_payload(payload: OkPayload) -> Response {
-    match payload {
-        OkPayload::Spawn { slug, pid, port } => Json(Spawned { slug, pid, port }).into_response(),
-        OkPayload::Stop { slug } => Json(Stopped { slug }).into_response(),
-        OkPayload::List { instances } => Json(InstanceList { instances }).into_response(),
-        OkPayload::Health { report } => Json(report).into_response(),
-    }
-}
-
+/// value; Err → the mapped status + `{code, message}`.
 /// A JSON body that failed to parse becomes 400 `bad_request` (not axum's
 /// default 415/422/500 text): the daemon's own grammar for a malformed
 /// request, so clients see one error shape.
@@ -184,8 +163,8 @@ fn bad_body(rejection: impl std::fmt::Display) -> Response {
 #[derive(Debug, serde::Serialize)]
 pub struct Spawned {
     pub slug: String,
-    pid: u32,
-    port: u16,
+    pub pid: u32,
+    pub port: u16,
 }
 
 #[derive(Debug, serde::Serialize)]

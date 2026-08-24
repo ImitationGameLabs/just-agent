@@ -8,10 +8,12 @@
 //! configured standalone token, or open on bare loopback.
 
 pub mod api;
+pub mod backend;
 pub mod config;
 pub mod control_plane;
 pub mod error;
 pub mod guard;
+pub mod wire;
 
 use std::path::Path;
 
@@ -132,8 +134,10 @@ mod tests {
     fn test_state(auth: crate::guard::AuthMode) -> AppState {
         AppState {
             // A socket that never exists: API calls resolve to 503
-            // daemon_unreachable, proving the proxy layer is wired.
-            client: DaemonClient::new("/nonexistent-kallip-test.sock"),
+            // daemon_unreachable, proving the backend layer is wired.
+            backend: crate::backend::UdsBackend::arc(DaemonClient::new(
+                "/nonexistent-kallip-test.sock",
+            )),
             auth,
             allowed_hosts: vec![],
             cors_origins: String::new(),

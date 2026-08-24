@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use clap::Parser as _;
 use kallip_daemon_client::DaemonClient;
+use kallip_instances::backend::UdsBackend;
 use kallip_instances::{AppState, Config, build_router, resolve_auth};
 
 #[tokio::main]
@@ -20,7 +21,7 @@ async fn main() -> Result<()> {
     // refuses to start — the open mode is a loopback-only convenience.
     let auth = resolve_auth(&config, &addr)?;
     let state = AppState {
-        client: DaemonClient::new(socket.clone()),
+        backend: UdsBackend::arc(DaemonClient::new(socket.clone())),
         auth,
         allowed_hosts: config.allowed_hosts(),
         cors_origins: config.cors_origins.clone(),

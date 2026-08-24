@@ -45,7 +45,7 @@ impl std::fmt::Debug for AuthMode {
 /// Shared handler state.
 #[derive(Clone)]
 pub struct AppState {
-    pub client: kallip_daemon_client::DaemonClient,
+    pub backend: std::sync::Arc<dyn crate::backend::InstanceBackend>,
     pub auth: AuthMode,
     /// Extra Host values allowed through the host guard (platform mode
     /// fronts this proxy with a reverse proxy, so the platform's domain
