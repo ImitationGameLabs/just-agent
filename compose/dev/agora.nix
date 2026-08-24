@@ -72,28 +72,38 @@ let
     else
       v;
 
-  # Bind-override helpers (mirrors compose/dev/tagma.nix): unset -> docker
-  # named volume; set to an absolute, colon-free host path -> bind-mount.
-  # The instances service mounts the HOST daemon's socket dir + instance
-  # tree this way, so the containerized service manages the same real
-  # daemon a host-side kallipctl sees.
+  # Bind helper (mirrors compose/dev/tagma.nix): an absolute, colon-free
+  # host path -> "<path>:<target>" bind-mount. The named env var wins; unset
+  # falls back to the daemon-standard host dir. Both paths go through the
+  # same shape check, so a malformed HOME or override fails fast at eval
+  # time instead of half-working at up time.
   bindOverride =
-    name: target:
+    name: target: fallback:
     let
       v = builtins.getEnv name;
+      src = if v == "" then fallback else v;
     in
-    if v == "" then
-      null
-    else if v == "/" || !(lib.hasPrefix "/" v) || lib.hasInfix ":" v then
-      throw "arion: ${name} must be an absolute, colon-free host path other than '/' (got '${v}')"
+    if src == "/" || !(lib.hasPrefix "/" src) || lib.hasInfix ":" src then
+      throw "arion: ${name} must resolve to an absolute, colon-free host path other than '/' (got '${src}')"
     else
-      "${v}:${target}";
-  instancesStateBind = bindOverride "KALLIP_ARION_INSTANCES_STATE_PATH" "/state";
-  instancesDataBind = bindOverride "KALLIP_ARION_INSTANCES_DATA_PATH" "/data";
-  instancesStateVolume =
-    if instancesStateBind != null then instancesStateBind else "instances_state:/state";
-  instancesDataVolume =
-    if instancesDataBind != null then instancesDataBind else "instances_data:/data";
+      "${src}:${target}";
+  # Unset defaults: the HOST daemon's standard dirs, so a plain arion up
+  # has the service manage the SAME real daemon + instance tree a
+  # host-side kallipctl sees (the daemon's own code defaults -- see
+  # crates/daemon/kallip-daemon/src/main.rs; the data default is
+  # ~/.local/share/kallip).
+  homeDir = builtins.getEnv "HOME";
+  daemonDir =
+    if homeDir == "" then
+      throw "arion: HOME unset; defaulting the instances binds needs it (or set KALLIP_ARION_INSTANCES_STATE/DATA_PATH)"
+    else
+      sub: "${homeDir}/.local/${sub}";
+  instancesStateBind = bindOverride "KALLIP_ARION_INSTANCES_STATE_PATH" "/state" (
+    daemonDir "state/kallip-daemon"
+  );
+  instancesDataBind = bindOverride "KALLIP_ARION_INSTANCES_DATA_PATH" "/data" (
+    daemonDir "share/kallip"
+  );
 
   # Parallel-stack overrides (the same env pattern as bindOverride above):
   # unset -> the default single stack; set -> a second, independent dev stack
@@ -130,9 +140,7 @@ in
     docker-compose.volumes = {
       agora_pgdata = { };
       lesche_pgdata = { };
-    }
-    // lib.optionalAttrs (instancesStateBind == null) { instances_state = { }; }
-    // lib.optionalAttrs (instancesDataBind == null) { instances_data = { }; };
+    };
 
     # Dev-only hardcoded creds (prod reads them from .env).
     services.agora-postgres = {
@@ -296,9 +304,9 @@ in
 
     # Instances: the local instance management service (kallip-instances),
     # proxying the HOST daemon's UDS socket. Both the socket dir and the
-    # instance tree come from the host via bind overrides (unset -> empty
-    # named volumes, i.e. an unreachable daemon and an empty list -- enough
-    # for a pure UI bring-up). The browser reaches it via Caddy at
+    # instance tree are host bind mounts: the KALLIP_ARION_INSTANCES_*
+    # overrides, or unset the HOST daemon's standard dirs (the same real
+    # daemon a host-side kallipctl sees). The browser reaches it via
     # https://instances.<devDomain>; host tooling uses the published
     # 127.0.0.1:7300. Token mode with a dev fixture token (the agora
     # admin-token pattern); prod reads it from .env.
@@ -310,8 +318,8 @@ in
       service.ports = [ "127.0.0.1:${instancesHostPort}:7300" ];
       service.env_file = [ ".env" ];
       service.volumes = [
-        instancesStateVolume
-        instancesDataVolume
+        instancesStateBind
+        instancesDataBind
       ];
       image.contents = [
         workspace
