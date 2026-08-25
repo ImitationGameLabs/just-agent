@@ -184,6 +184,7 @@ impl ControlPlane for MockControlPlane {
             .map(|user_id| VerifiedSession {
                 username: user_id.to_string(),
                 display_name: None,
+                local_admin: false,
                 user_id,
             }))
     }

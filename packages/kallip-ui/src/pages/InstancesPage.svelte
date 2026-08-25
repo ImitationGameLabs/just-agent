@@ -58,6 +58,7 @@
     manage_instances_token_placeholder,
     manage_instances_token_rejected,
     manage_instances_unauthorized,
+    manage_instances_session_required,
     manage_instances_unreachable,
     nav_chat,
     tagmata_expired_badge,
@@ -368,7 +369,13 @@
     {/if}
 
     {#if instancesStore.errorKind}
-      {#if instancesStore.errorKind === "unauthorized"}
+      {#if instancesStore.errorKind === "unauthorized" && instancesStore.errorCode === "admin_session_required"}
+        <!-- Platform mode, cookie channel: no token to paste -- the
+             admin login itself carries the right. -->
+        <p class="text-error-500 dark:text-error-400 text-sm">
+          {manage_instances_session_required()}
+        </p>
+      {:else if instancesStore.errorKind === "unauthorized"}
         <form class="space-y-2" onsubmit={onTokenApply}>
           <p class="text-error-500 dark:text-error-400 text-sm">
             {manage_instances_unauthorized()}

@@ -5,16 +5,18 @@
 
 use kallip_agora_common::bytes::Ed25519PublicKey;
 use kallip_agora_common::control_plane::{
-    ControlPlane, ControlPlaneError, TagmaProfile, UserIdentity, VerifiedSession,
+    ControlPlane, ControlPlaneError, LOCAL_ADMIN_PROVIDER, LOCAL_ADMIN_SUBJECT, TagmaProfile,
+    UserIdentity, VerifiedSession,
 };
 use kallip_agora_common::ids::{TagmaId, UserId};
 use kallip_agora_common::principal::Principal;
 use kallip_common::authtoken::TokenHash;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::sea_query::{Expr, Query};
+use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QuerySelect};
 use time::OffsetDateTime;
 
 use crate::db::Db;
-use crate::db::entity::{sessions, tagma_tokens, tagmata, users};
+use crate::db::entity::{external_identities, sessions, tagma_tokens, tagmata, users};
 
 /// The registry, DB-backed. Cheap to construct (a cloned `Db` handle + the admin
 /// hash), so the agora control-plane's own `AuthPrincipal` extractor and the
@@ -38,6 +40,17 @@ fn map_err(e: sea_orm::DbErr) -> ControlPlaneError {
     ControlPlaneError::Backend(e.to_string())
 }
 
+/// The `verify_session` user row: the users columns plus the local-admin
+/// marker flag projected in the same single query (an EXISTS subselect).
+#[derive(FromQueryResult)]
+struct SessionUserRow {
+    id: String,
+    username: String,
+    display_name: Option<String>,
+    disabled_at: Option<OffsetDateTime>,
+    local_admin: bool,
+}
+
 #[async_trait::async_trait]
 impl ControlPlane for DbControlPlane {
     async fn verify_session(
@@ -58,9 +71,29 @@ impl ControlPlane for DbControlPlane {
         }
         // Owner-disabled re-check: disabling a user takes effect immediately on
         // every authenticated request, not just at next login. The display
-        // identity is resolved in the same pass (the row is already loaded) so
-        // the relay gets the authoritative handle once per connection-open.
+        // identity AND the local-admin marker flag resolve in the same single
+        // query (an EXISTS projection onto the user row), so a session check
+        // never costs a second marker lookup.
         let user = users::Entity::find_by_id(row.user_id.clone())
+            .expr_as(
+                Expr::exists(
+                    Query::select()
+                        .column(external_identities::Column::Id)
+                        .from(external_identities::Entity)
+                        .cond_where(
+                            Expr::col((
+                                external_identities::Entity,
+                                external_identities::Column::UserId,
+                            ))
+                            .eq(Expr::col((users::Entity, users::Column::Id))),
+                        )
+                        .cond_where(external_identities::Column::Provider.eq(LOCAL_ADMIN_PROVIDER))
+                        .cond_where(external_identities::Column::Subject.eq(LOCAL_ADMIN_SUBJECT))
+                        .take(),
+                ),
+                "local_admin",
+            )
+            .into_model::<SessionUserRow>()
             .one(&self.db)
             .await
             .map_err(map_err)?;
@@ -74,6 +107,7 @@ impl ControlPlane for DbControlPlane {
             user_id: UserId::from(user.id),
             username: user.username,
             display_name: user.display_name,
+            local_admin: user.local_admin,
         }))
     }
 
@@ -256,7 +290,7 @@ impl ControlPlane for DbControlPlane {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::entity::{sessions, tagmata};
+    use crate::db::entity::{external_identities, sessions, tagmata};
     use crate::test_helpers::{make_state, seed_tagma, seed_user};
     use crate::token::SESSION;
     use kallip_agora_common::control_plane::ControlPlane;
@@ -313,6 +347,57 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// The `local_admin` flag follows the external_identities marker row:
+    /// the fixed admin-login account's session carries it, a plain user's
+    /// does not — the single query resolves both without a second lookup.
+    #[tokio::test]
+    async fn verify_session_flags_the_local_admin_marker_row() {
+        let state = make_state().await;
+        let plain_id = seed_user(&state, "plain").await;
+        let admin_id = seed_user(&state, "op").await;
+        let now = OffsetDateTime::now_utc();
+        external_identities::ActiveModel {
+            id: Set(uuid::Uuid::new_v4()),
+            user_id: Set(admin_id.to_string()),
+            provider: Set(LOCAL_ADMIN_PROVIDER.to_string()),
+            subject: Set(LOCAL_ADMIN_SUBJECT.to_string()),
+            display_name: Set(None),
+            created_at: Set(now),
+            last_used_at: Set(None),
+        }
+        .insert(&state.db)
+        .await
+        .expect("insert marker row");
+        let plain = mint_session(&state, plain_id.to_string(), now).await;
+        let admin = mint_session(&state, admin_id.to_string(), now).await;
+        let control = cp(&state);
+        let plain = control.verify_session(plain.secret()).await.unwrap();
+        assert!(plain.as_ref().unwrap().local_admin == false);
+        let admin = control.verify_session(admin.secret()).await.unwrap();
+        assert!(admin.unwrap().local_admin);
+    }
+
+    /// Seed one live session row for `user_id` and return its plaintext
+    /// cookie value (shared by the session tests above).
+    async fn mint_session(
+        state: &crate::state::SharedState,
+        user_id: String,
+        now: OffsetDateTime,
+    ) -> MintedToken {
+        let session = MintedToken::generate(SESSION);
+        sessions::ActiveModel {
+            token_hash: Set(session.hash().as_bytes().to_vec()),
+            user_id: Set(user_id),
+            created_at: Set(now),
+            expires_at: Set(now + Duration::hours(1)),
+            authed_at: Set(None),
+        }
+        .insert(&state.db)
+        .await
+        .expect("insert session");
+        session
     }
 
     /// Resolving a user by handle returns the canonical identity (with the

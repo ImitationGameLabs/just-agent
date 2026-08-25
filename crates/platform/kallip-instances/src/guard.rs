@@ -1,11 +1,13 @@
 //! Request guards: API authentication (three modes) and the Host check.
 //!
 //! Auth follows the deployment modes (operator decision): the platform mode
-//! verifies the caller's bearer against the agora (only Admin may manage
-//! instance life cycles — instance control is an operator surface); the
-//! standalone mode compares a locally configured token; bare loopback with
-//! nothing configured trusts the local process, mirroring the daemon's own
-//! "the socket's file mode is the auth" stance for a single-user machine.
+//! is dual-channel, mirroring the lesche — a bearer token verifies with the
+//! agora (only Admin may pass) and, absent a bearer, the agora session
+//! cookie authenticates the fixed local-admin account (instance control is
+//! an operator surface, so any other user session is 403); the standalone
+//! mode compares a locally configured token; bare loopback with nothing
+//! configured trusts the local process, mirroring the daemon's own
+//! "the socket's file mode is the auth" stance.
 
 use std::sync::Arc;
 
@@ -22,9 +24,12 @@ use crate::error::fault;
 #[derive(Clone)]
 pub enum AuthMode {
     /// Platform mode: every request's bearer is verified with the agora;
-    /// only `Principal::Admin` passes (a valid Tagma/User identity still
-    /// gets 403 — instance life cycles are the operator's surface).
-    Platform(Arc<dyn crate::control_plane::BearerVerifier>),
+    /// only `Principal::Admin` passes. Without a bearer, the agora session
+    /// cookie is verified instead and passes only for the local-admin
+    /// account's session (a valid non-admin identity — Tagma, User, or a
+    /// plain user session — still gets 403; instance life cycles are the
+    /// operator's surface).
+    Platform(Arc<dyn crate::control_plane::AuthVerifier>),
     /// Standalone mode: compare against a locally configured token.
     Token(String),
     /// Bare loopback, nothing configured: trust the local process.
@@ -55,7 +60,7 @@ pub struct AppState {
     pub cors_origins: String,
 }
 
-/// Bearer-token guard for `/api/instances/*`. Static assets sit outside this
+/// Credential guard for `/api/instances/*`. Static assets sit outside this
 /// layer: the page loads first, then its API calls carry the credential.
 pub async fn token_guard(
     State(state): State<AppState>,
@@ -63,24 +68,19 @@ pub async fn token_guard(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    let presented = match kallip_common::auth_header::extract_bearer_token(&headers) {
-        Ok(token) => token,
-        // Both "missing" and "malformed" mean no usable credential; only
-        // the Open mode lets that through.
-        Err(_) => {
-            return match state.auth {
-                AuthMode::Open => next.run(request).await,
-                _ => fault(
-                    StatusCode::UNAUTHORIZED,
-                    "unauthorized",
-                    "a bearer token is required (Authorization: Bearer <token>)",
-                ),
-            };
-        }
-    };
+    let presented = kallip_common::auth_header::extract_bearer_token(&headers);
     match &state.auth {
         AuthMode::Open => next.run(request).await,
         AuthMode::Token(expected) => {
+            // Both "missing" and "malformed" mean no usable credential;
+            // standalone mode has no cookie channel.
+            let Ok(presented) = presented else {
+                return fault(
+                    StatusCode::UNAUTHORIZED,
+                    "unauthorized",
+                    "a bearer token is required (Authorization: Bearer <token>)",
+                );
+            };
             // Constant-time compare, length-checked first: ct_eq only
             // guarantees timing safety for equal lengths, and the length
             // itself is not secret (the token format is fixed).
@@ -97,28 +97,66 @@ pub async fn token_guard(
                 )
             }
         }
-        AuthMode::Platform(control) => match control.verify_bearer(presented).await {
-            Ok(Some(Principal::Admin)) => next.run(request).await,
-            // A valid non-admin identity: authenticated but not allowed.
-            Ok(Some(_)) => fault(
-                StatusCode::FORBIDDEN,
-                "forbidden",
-                "instance management is restricted to platform administrators",
-            ),
-            // Unknown/invalid token.
-            Ok(None) => fault(
-                StatusCode::UNAUTHORIZED,
-                "unauthorized",
-                "invalid bearer token",
-            ),
-            // Agora unreachable or off-contract: fail closed.
-            Err(error) => {
-                tracing::warn!(%error, "agora verify_bearer failed");
-                fault(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "auth_backend_unavailable",
-                    "the auth backend could not be reached; access is denied",
-                )
+        AuthMode::Platform(control) => match presented {
+            Ok(token) => match control.verify_bearer(token).await {
+                Ok(Some(Principal::Admin)) => next.run(request).await,
+                // A valid non-admin identity: authenticated but not allowed.
+                Ok(Some(_)) => fault(
+                    StatusCode::FORBIDDEN,
+                    "forbidden",
+                    "instance management is restricted to platform administrators",
+                ),
+                // Unknown/invalid token.
+                Ok(None) => fault(
+                    StatusCode::UNAUTHORIZED,
+                    "unauthorized",
+                    "invalid bearer token",
+                ),
+                // Agora unreachable or off-contract: fail closed.
+                Err(error) => {
+                    tracing::warn!(%error, "agora verify_bearer failed");
+                    fault(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "auth_backend_unavailable",
+                        "the auth backend could not be reached; access is denied",
+                    )
+                }
+            },
+            // No bearer: the browser channel. A session cookie belonging to
+            // the fixed local-admin account carries instance rights (the
+            // admin login IS the instances credential); any other user
+            // session stays 403, an absent one 401.
+            Err(_) => {
+                let Some(cookie) = crate::middleware::read_session_cookie(&headers) else {
+                    return fault(
+                        StatusCode::UNAUTHORIZED,
+                        "unauthorized",
+                        "a bearer token or administrator session is required",
+                    );
+                };
+                match control.verify_session(&cookie).await {
+                    Ok(Some(session)) if session.local_admin => next.run(request).await,
+                    Ok(Some(_)) => fault(
+                        StatusCode::FORBIDDEN,
+                        "forbidden",
+                        "instance management is restricted to platform administrators",
+                    ),
+                    // Absent / expired / disabled session.
+                    Ok(None) => fault(
+                        StatusCode::UNAUTHORIZED,
+                        "admin_session_required",
+                        "sign in as the platform administrator to manage instances",
+                    ),
+                    // Agora unreachable or off-contract: fail closed.
+                    Err(error) => {
+                        tracing::warn!(%error, "agora verify_session failed");
+                        fault(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "auth_backend_unavailable",
+                            "the auth backend could not be reached; access is denied",
+                        )
+                    }
+                }
             }
         },
     }

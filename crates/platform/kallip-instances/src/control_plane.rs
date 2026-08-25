@@ -1,30 +1,44 @@
-//! Thin HTTP client for the agora's service-to-service verify-bearer call.
+//! Thin HTTP client for the agora's service-to-service auth calls.
 //!
 //! The lesche reaches the agora through `HttpControlPlane` (private to that
 //! crate, and implementing the full six-method `ControlPlane` trait); this
-//! proxy needs exactly one call, so it carries a one-method verifier of its
-//! own rather than pulling the relay crate in or refactoring a shared
-//! client out (a tracked follow-up if a third consumer appears).
+//! proxy needs exactly two calls (bearer + session verify), so it carries
+//! a verifier of its own rather than pulling the relay crate in or
+//! refactoring a shared client out (a tracked follow-up if a third
+//! consumer appears).
 
-use kallip_agora_common::control_plane::ControlPlaneError;
-use kallip_agora_common::internal_api::{VerifyBearerRequest, VerifyBearerResponse};
+use kallip_agora_common::control_plane::{ControlPlaneError, VerifiedSession};
+use kallip_agora_common::internal_api::{
+    VerifyBearerRequest, VerifyBearerResponse, VerifySessionRequest,
+};
 use kallip_agora_common::principal::Principal;
 
 /// Per-call timeout: a tiny JSON round trip against a local agora; 10s is a
 /// generous backstop, matching the lesche's client.
 const INTERNAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// What the auth guard needs from an auth backend: verify one bearer token.
+/// What the auth guard needs from an auth backend: verify one bearer token
+/// or one session cookie.
 #[async_trait::async_trait]
-pub trait BearerVerifier: Send + Sync {
+pub trait AuthVerifier: Send + Sync {
     /// `Err` = the backend could not be reached or answered outside the
     /// contract (the guard fails closed on this); `Ok(None)` = the token is
     /// simply not valid.
     async fn verify_bearer(&self, token: &str) -> Result<Option<Principal>, ControlPlaneError>;
+
+    /// Verify a `kallip_session` cookie value against the agora. Same error
+    /// contract as [`Self::verify_bearer`]: `Ok(None)` = absent/expired/
+    /// disabled, `Ok(Some)` carries the `local_admin` flag the guard's
+    /// cookie channel admits on.
+    async fn verify_session(
+        &self,
+        cookie: &str,
+    ) -> Result<Option<VerifiedSession>, ControlPlaneError>;
 }
 
-/// Agora-backed [`BearerVerifier`]: one POST per call to
-/// `/internal/verify-bearer`, guarded by the shared internal secret.
+/// Agora-backed [`AuthVerifier`]: one POST per call to the agora's
+/// `/internal/verify-bearer` / `/internal/verify-session`, guarded by the
+/// shared internal secret.
 #[derive(Clone)]
 pub struct AgoraVerifier {
     /// Agora internal root (e.g. `http://127.0.0.1:7100`).
@@ -49,7 +63,7 @@ impl AgoraVerifier {
 }
 
 #[async_trait::async_trait]
-impl BearerVerifier for AgoraVerifier {
+impl AuthVerifier for AgoraVerifier {
     async fn verify_bearer(&self, token: &str) -> Result<Option<Principal>, ControlPlaneError> {
         let response = self
             .http
@@ -70,6 +84,33 @@ impl BearerVerifier for AgoraVerifier {
             404 => Ok(None),
             status => Err(ControlPlaneError::Backend(format!(
                 "agora /internal/verify-bearer returned HTTP {status}"
+            ))),
+        }
+    }
+
+    async fn verify_session(
+        &self,
+        cookie: &str,
+    ) -> Result<Option<VerifiedSession>, ControlPlaneError> {
+        let response = self
+            .http
+            .post(format!("{}/internal/verify-session", self.base_url))
+            .bearer_auth(&self.internal_token)
+            .json(&VerifySessionRequest {
+                cookie: cookie.to_string(),
+            })
+            .send()
+            .await
+            .map_err(|e| ControlPlaneError::Backend(e.to_string()))?;
+        match response.status().as_u16() {
+            200 => response
+                .json::<VerifiedSession>()
+                .await
+                .map(Some)
+                .map_err(|e| ControlPlaneError::Backend(e.to_string())),
+            404 => Ok(None),
+            status => Err(ControlPlaneError::Backend(format!(
+                "agora /internal/verify-session returned HTTP {status}"
             ))),
         }
     }

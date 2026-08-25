@@ -13,6 +13,7 @@ pub mod config;
 pub mod control_plane;
 pub mod error;
 pub mod guard;
+pub mod middleware;
 pub mod wire;
 
 use axum::Router;
@@ -27,6 +28,7 @@ pub use guard::AppState;
 pub fn build_router(state: AppState) -> Router {
     let api = api::api_routes()
         .layer(from_fn_with_state(state.clone(), guard::token_guard))
+        .layer(axum::middleware::from_fn(middleware::csrf_guard))
         .layer(api::cors_layer(&state.cors_origins));
     let app = Router::new()
         .nest("/api/instances", api)

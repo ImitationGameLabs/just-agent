@@ -95,6 +95,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use kallip_agora_common::control_plane::{LOCAL_ADMIN_PROVIDER, LOCAL_ADMIN_SUBJECT};
 use kallip_agora_common::ids::UserId;
 use kallip_agora_common::principal::Principal;
 use kallip_common::authtoken::MintedToken;
@@ -974,9 +975,9 @@ pub(crate) async fn mint_session_row(
 /// [`admin_login`] creates: `(provider, subject)` is the lookup key, so these
 /// are stable identities like the OAuth provider names -- never rename. The
 /// username the account carries is boot config (`KALLIP_AGORA_ADMIN_USER_NAME`),
-/// NOT the subject; renaming the env var changes only the display handle.
-const LOCAL_ADMIN_PROVIDER: &str = "local-admin";
-const LOCAL_ADMIN_SUBJECT: &str = "admin";
+/// NOT the subject; renaming the env var changes only the display handle. The
+/// constants live in `kallip-agora-common` and are shared with
+/// `DbControlPlane::verify_session`'s `local_admin` flag.
 
 /// The local-platform login route. Mounted only when the boot flag
 /// `KALLIP_AGORA_ADMIN_USER_LOGIN` is set (see `routes::router`); the route

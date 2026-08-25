@@ -12,6 +12,7 @@
   "manage_instances_forbidden": "当前会话无权管理实例。",
   "manage_instances_unreachable": "无法连接本机的实例服务。",
   "manage_instances_host_forbidden": "此主机不被允许访问实例服务。",
+  "manage_instances_session_required": "请以平台管理员身份登录后再管理实例。",
   "manage_instances_loading": "正在加载实例……",
   "manage_instances_token_label": "访问令牌",
   "manage_instances_token_placeholder": "粘贴服务令牌",

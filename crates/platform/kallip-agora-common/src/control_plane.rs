@@ -89,7 +89,19 @@ pub struct VerifiedSession {
     pub username: String,
     /// Optional human label (the user's chosen display name).
     pub display_name: Option<String>,
+    /// True when this session belongs to the fixed local-platform admin
+    /// account (the external_identities marker row): operator surfaces
+    /// (e.g. instances) admit such sessions while plain user sessions
+    /// stay 403. `#[serde(default)]`: an additive wire field, so an older
+    /// peer consuming this struct still deserializes without it.
+    #[serde(default)]
+    pub local_admin: bool,
 }
+/// Marker-row constants for the fixed local-platform admin account (the one
+/// POST /v1/auth/admin-login binds). Shared by the login route and
+/// `verify_session`'s `local_admin` flag so the two can never drift.
+pub const LOCAL_ADMIN_PROVIDER: &str = "local-admin";
+pub const LOCAL_ADMIN_SUBJECT: &str = "admin";
 
 /// Why a [`ControlPlane`] call failed. Surfaces as HTTP 500 at the relay; the
 /// relay maps "not found / unauthorized" outcomes to `Option::None` rather than

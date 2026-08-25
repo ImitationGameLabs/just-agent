@@ -112,11 +112,16 @@ export class InstancesClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    // The session cookie is the browser-channel credential (the admin
+    // login carries instances rights); a stored bearer token still rides
+    // along when present (app / manual entry).
+    const credentials: RequestCredentials = "include";
     let response: Response;
     try {
       response = await fetch(this.base + path, {
         ...init,
-        headers: { ...this.authHeaders(), ...init?.headers },
+        credentials,
+        headers: { ...this.authHeaders(init?.method), ...init?.headers },
       });
     } catch (cause) {
       throw new InstancesError(
@@ -145,10 +150,14 @@ export class InstancesClient {
     });
   }
 
-  /** Headers every exchange carries; a stored token rides along.
-   */
-  private authHeaders(): Record<string, string> {
+  /** Headers every exchange carries; a stored token rides along, and
+   * non-GETs carry the CSRF marker the cookie channel requires (the
+   * bearer channel is exempt; sending it anyway is harmless). */
+  private authHeaders(method?: string): Record<string, string> {
     const headers: Record<string, string> = { accept: "application/json" };
+    if (method !== undefined && method !== "GET") {
+      headers["x-requested-with"] = "kallip";
+    }
     const token = sessionStorage.getItem(INSTANCES_TOKEN_KEY);
     if (token) {
       headers.authorization = "Bearer " + token;

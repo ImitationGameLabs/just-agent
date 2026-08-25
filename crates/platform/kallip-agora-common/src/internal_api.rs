@@ -175,6 +175,7 @@ mod tests {
             user_id: UserId::from("u1".to_string()),
             username: "alice".to_string(),
             display_name: Some("Alice".to_string()),
+            local_admin: false,
         };
         let json = serde_json::to_string(&resp).unwrap();
         let back: VerifySessionResponse = serde_json::from_str(&json).unwrap();
@@ -192,6 +193,7 @@ mod tests {
             user_id: UserId::from("u1".to_string()),
             username: "alice".to_string(),
             display_name: None,
+            local_admin: false,
         };
         let json = serde_json::to_string(&session).unwrap();
         let obj: std::collections::BTreeSet<_> = serde_json::from_str::<serde_json::Value>(&json)
@@ -201,11 +203,22 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        let expected: std::collections::BTreeSet<_> = ["user_id", "username", "display_name"]
-            .into_iter()
-            .map(str::to_string)
-            .collect();
+        let expected: std::collections::BTreeSet<_> =
+            ["user_id", "username", "display_name", "local_admin"]
+                .into_iter()
+                .map(str::to_string)
+                .collect();
         assert_eq!(obj, expected);
+    }
+
+    #[test]
+    fn verified_session_defaults_local_admin_when_absent() {
+        // Additive-field contract: a payload from an older producer (or the
+        // default-constructed test shape) must deserialize with
+        // local_admin = false, never fail.
+        let legacy = r#"{"user_id":"u1","username":"alice","display_name":null}"#;
+        let back: VerifySessionResponse = serde_json::from_str(legacy).unwrap();
+        assert!(!back.local_admin);
     }
 
     #[test]

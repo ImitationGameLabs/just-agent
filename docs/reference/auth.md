@@ -144,7 +144,12 @@ marker row, so it can never collide with or take over a real signup's
 username -- a collision fails fast and names the env knob). The session
 mints through the same `mint_session_row` path as every other login, so
 the whole user-scoped surface (profiles, tagma mint/enroll) works
-unchanged; the true admin principal keeps `/v1/admin` and the CLI.
+unchanged; the true admin principal keeps `/v1/admin` and the CLI. The
+session also carries instance rights: `verify-session` reports
+`local_admin: true` for the marker account, and the instances service's
+platform mode admits that session on its cookie channel (next section),
+so the admin login IS the instances credential -- no separate token to
+configure or paste.
 
 Security boundary, three sentences: only the admin principal may enter
 (any other credential is a plain 401); the route is not mounted unless
@@ -155,3 +160,16 @@ token is exempt). Deleting the marker row together with its user row
 resets the account -- the next admin-login recreates both. Mounting the
 route is an explicit operator act that pre-provisions an operator
 account, so `KALLIP_AGORA_SIGNUP_ENABLED` does not gate it.
+
+### Instances service auth (platform mode)
+
+The instances service mirrors the lesche's dual-channel auth: a bearer
+token verifies via `/internal/verify-bearer` (only `Principal::Admin`
+passes -- the app and CLI channel), and, absent a bearer, the agora
+session cookie verifies via `/internal/verify-session`, passing only for
+the fixed local-admin account's session (`local_admin`; any other user
+session is 403, an absent one 401 with code `admin_session_required`).
+Cookie-bearing state-changing requests carry the same two-pillar CSRF
+defense as the agora/lesche (`SameSite=Strict` + the mandatory
+`X-Requested-With: kallip` marker on non-GETs; bearer requests are
+exempt).

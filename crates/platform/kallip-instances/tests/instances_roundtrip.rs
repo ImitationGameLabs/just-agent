@@ -293,10 +293,20 @@ struct MockVerifier {
             >,
         >,
     >,
+    /// Same scripting shape for the session-cookie channel; popped only
+    /// when a request arrives without a bearer.
+    session_outcomes: std::sync::Mutex<
+        Vec<
+            Result<
+                Option<kallip_agora_common::control_plane::VerifiedSession>,
+                kallip_agora_common::control_plane::ControlPlaneError,
+            >,
+        >,
+    >,
 }
 
 #[async_trait::async_trait]
-impl kallip_instances::control_plane::BearerVerifier for MockVerifier {
+impl kallip_instances::control_plane::AuthVerifier for MockVerifier {
     async fn verify_bearer(
         &self,
         _token: &str,
@@ -310,6 +320,23 @@ impl kallip_instances::control_plane::BearerVerifier for MockVerifier {
             .pop()
             .expect("programmed outcome")
     }
+
+    async fn verify_session(
+        &self,
+        _cookie: &str,
+    ) -> Result<
+        Option<kallip_agora_common::control_plane::VerifiedSession>,
+        kallip_agora_common::control_plane::ControlPlaneError,
+    > {
+        // The session-channel tests script `session_outcomes`; an
+        // unprogrammed pop means a bearer-path test unexpectedly took
+        // the cookie branch.
+        self.session_outcomes
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("programmed session outcome")
+    }
 }
 
 #[tokio::test]
@@ -320,6 +347,7 @@ async fn platform_mode_admin_only_and_fail_closed() {
     use kallip_instances::guard::AuthMode;
 
     let verifier = std::sync::Arc::new(MockVerifier {
+        session_outcomes: std::sync::Mutex::new(vec![]),
         outcomes: std::sync::Mutex::new(vec![
             // Last popped first: reverse program order.
             Err(ControlPlaneError::Backend("agora down".into())),
@@ -363,6 +391,162 @@ async fn platform_mode_admin_only_and_fail_closed() {
     let (status, body) = send(&app, "GET", "/api/instances/list", Some("any"), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert!(body.contains("\"auth_backend_unavailable\""), "{body}");
+}
+
+/// The browser channel: no bearer, the `kallip_session` cookie instead.
+/// Only the local-admin account's session passes; a plain user session
+/// is 403, an absent one 401.
+#[tokio::test]
+async fn platform_mode_session_channel_local_admin_only() {
+    use kallip_agora_common::control_plane::VerifiedSession;
+    use kallip_agora_common::ids::UserId;
+    use kallip_instances::guard::AuthMode;
+
+    let session = |local_admin| VerifiedSession {
+        user_id: UserId::from("u1".to_string()),
+        username: "admin".to_string(),
+        display_name: None,
+        local_admin,
+    };
+    let verifier = std::sync::Arc::new(MockVerifier {
+        outcomes: std::sync::Mutex::new(vec![]),
+        // Last popped first: reverse program order.
+        session_outcomes: std::sync::Mutex::new(vec![
+            Ok(None),
+            Ok(Some(session(false))),
+            Ok(Some(session(true))),
+        ]),
+    });
+    let state = AppState {
+        backend: kallip_instances::backend::UdsBackend::arc(DaemonClient::new(
+            "/nonexistent-kallip-test.sock",
+        )),
+        auth: AuthMode::Platform(verifier),
+        allowed_hosts: vec![],
+        cors_origins: String::new(),
+    };
+    let app = build_router(state);
+
+    // The local-admin session passes the gate (503 = the dead daemon
+    // proxy answered, so the guard let it through).
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/instances/list")
+                .header("host", "127.0.0.1:7300")
+                .header("cookie", "kallip_session=sk-sess-x")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    // A plain user session: authenticated but not allowed.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/instances/list")
+                .header("host", "127.0.0.1:7300")
+                .header("cookie", "kallip_session=sk-sess-x")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // An absent/expired session: 401.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/instances/list")
+                .header("host", "127.0.0.1:7300")
+                .header("cookie", "kallip_session=sk-sess-x")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The CSRF pillar for the cookie channel: a cookie-bearing mutating
+/// request without the custom marker is 403 before it reaches auth; with
+/// the marker it proceeds; a bearer request is exempt (the header is
+/// itself proof of intent).
+#[tokio::test]
+async fn csrf_guard_cookie_channel() {
+    use kallip_agora_common::control_plane::VerifiedSession;
+    use kallip_agora_common::ids::UserId;
+    use kallip_agora_common::principal::Principal;
+    use kallip_instances::guard::AuthMode;
+
+    let verifier = std::sync::Arc::new(MockVerifier {
+        outcomes: std::sync::Mutex::new(vec![Ok(Some(Principal::Admin))]),
+        session_outcomes: std::sync::Mutex::new(vec![Ok(Some(VerifiedSession {
+            user_id: UserId::from("u1".to_string()),
+            username: "admin".to_string(),
+            display_name: None,
+            local_admin: true,
+        }))]),
+    });
+    let state = AppState {
+        backend: kallip_instances::backend::UdsBackend::arc(DaemonClient::new(
+            "/nonexistent-kallip-test.sock",
+        )),
+        auth: AuthMode::Platform(verifier),
+        allowed_hosts: vec![],
+        cors_origins: String::new(),
+    };
+    let app = build_router(state);
+
+    // 1) Cookie-bearing POST without the marker: 403 at the CSRF layer
+    // (the plain-text body is the guard's, not an ApiFault).
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/instances/spawn")
+                .header("host", "127.0.0.1:7300")
+                .header("cookie", "kallip_session=sk-sess-x")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // 2) With the marker it proceeds through auth (503 = dead daemon).
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/instances/stop")
+                .header("host", "127.0.0.1:7300")
+                .header("cookie", "kallip_session=sk-sess-x")
+                .header("x-requested-with", "kallip")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"slug":"x"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    // 3) Bearer exemption: no cookie, no marker, still proceeds.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/instances/stop")
+                .header("host", "127.0.0.1:7300")
+                .header("authorization", "Bearer any")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"slug":"x"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[test]

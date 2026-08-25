@@ -12,6 +12,7 @@
   "manage_instances_forbidden": "This session is not allowed to manage instances.",
   "manage_instances_unreachable": "Cannot reach the instances service on this machine.",
   "manage_instances_host_forbidden": "This host is not allowed to reach the instances service.",
+  "manage_instances_session_required": "Sign in as the platform administrator to manage instances.",
   "manage_instances_loading": "Loading instances…",
   "manage_instances_token_label": "Access token",
   "manage_instances_token_placeholder": "Paste the service token",
