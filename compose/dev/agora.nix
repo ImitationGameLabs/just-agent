@@ -98,9 +98,6 @@ let
       throw "arion: HOME unset; defaulting the instances binds needs it (or set KALLIP_ARION_INSTANCES_STATE/DATA_PATH)"
     else
       sub: "${homeDir}/.local/${sub}";
-  # The web UI's static build (deno task build; VITE_OFFLINE_LOGIN=1 for
-  # the local-platform SPA), served by kallip-instances from the bind.
-  webDist = "${toString ../..}/packages/kallip-web/build";
   instancesStateBind = bindOverride "KALLIP_ARION_INSTANCES_STATE_PATH" "/state" (
     daemonDir "state/kallip-daemon"
   );
@@ -313,20 +310,20 @@ in
     # https://instances.<devDomain>; host tooling uses the published
     # 127.0.0.1:7300. Platform mode: the agora's internal root + shared
     # secret verify the SPA's sk-admin- bearer (the local-platform
-    # login key), replacing the standalone token. The web UI's static
-    # build rides a host bind (built with VITE_OFFLINE_LOGIN=1 for the
-    # operator-key branch; see docs/development.md).
+    # login key), replacing the standalone token. API-only: the SPA is
+    # served by the host vite dev server (Caddy @web -> :5173); the
+    # browser calls this service cross-origin from the web origin
+    # (KALLIP_INSTANCES_CORS_ORIGINS below).
     services.instances = {
       service.useHostStore = true;
       service.command = [ "${workspace}/bin/kallip-instances" ];
-      # Loopback-tight publish: only host-side tooling (curl, the vite-less
+      # Loopback-tight publish: only host-side tooling (curl, the
       # dev flow) needs the direct port; the browser path is Caddy.
       service.ports = [ "127.0.0.1:${instancesHostPort}:7300" ];
       service.env_file = [ ".env" ];
       service.volumes = [
         instancesStateBind
         instancesDataBind
-        "${webDist}:/web:ro"
       ];
       image.contents = [
         workspace
@@ -344,8 +341,7 @@ in
         # KALLIP_AGORA_INTERNAL_TOKEN (dev fixture, same discipline).
         KALLIP_INSTANCES_AGORA_URL = "http://agora:7100";
         KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN = "dev-internal-secret";
-        KALLIP_INSTANCES_STATIC_DIR = "/web";
-        KALLIP_INSTANCES_ALLOWED_HOSTS = "instances.${devDomain}, web.${devDomain}";
+        KALLIP_INSTANCES_ALLOWED_HOSTS = "instances.${devDomain}";
         KALLIP_INSTANCES_CORS_ORIGINS = "https://web.${devDomain}";
         RUST_LOG = "info";
       };
