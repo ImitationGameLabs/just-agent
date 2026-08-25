@@ -9,7 +9,7 @@
 //     AgoraSessionStore: `undefined` = unresolved (whoami running / failed),
 //     `null` = resolved logged-out, object = signed in. `authError` is set when
 //     whoami failed with a non-auth error (e.g. agora unreachable). Online routes
-//     are /tagmata + /settings + /chat/{server-id} (relay conversations). `/`,
+//     are /tagmata + /settings + /chat/{server-id} (relay conversations) + the mode-neutral /instances (the unified instances page). `/`,
 //     /local/* (offline-only routes), and the retired `/chat/local` marker are
 //     not valid online destinations, so all redirect to /tagmata.
 //
@@ -115,8 +115,14 @@ export function appGateDecision(args: {
   // Protected routes.
   if (args.mode === "offline") {
     // All /local/* routes render in offline mode (the single local-only gate
-    // covering chat + management).
-    if (args.pathname === "/local" || args.pathname.startsWith("/local/")) {
+    // covering chat + management). /instances is mode-neutral: the unified
+    // instances page (enroll-code + instance cards) is reached from either
+    // family's nav, so it renders in offline mode too.
+    if (
+      args.pathname === "/instances" ||
+      args.pathname === "/local" ||
+      args.pathname.startsWith("/local/")
+    ) {
       return { kind: "render" };
     }
     // Back-compat: old /chat/local → /local.

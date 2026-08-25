@@ -19,6 +19,8 @@
 
 import {
   addPasskey,
+  adminLoginWithKey,
+  type AdminLoginResult,
   type AddPasskeyResult,
   AgoraApiError,
   AgoraClient,
@@ -39,6 +41,7 @@ import {
   type TagmaView,
 } from "@kallipai/kallip-agora-client";
 import type { PairingCodeView } from "../passkeys.svelte.ts";
+import { INSTANCES_TOKEN_KEY } from "../instances/client.ts";
 import { LescheClient } from "@kallipai/kallip-lesche-client";
 import {
   auth_couldnt_reach,
@@ -315,6 +318,20 @@ class AgoraSessionStore {
     const result = await loginWithPasskey(client(), username);
     this.lastCeremony = result;
     if (result.ok) await this.whoami();
+    return result;
+  }
+  /** Operator-key login (local-platform deployments): exchange the sk-admin-
+   * key for a session, then park it in sessionStorage so the instances
+   * client's bearer header reuses it (token double-use; cleared on logout).
+   * Failures are typed statuses the login page maps to copy; transport
+   * errors still throw.
+   */
+  async adminLogin(key: string): Promise<AdminLoginResult> {
+    const result = await adminLoginWithKey(client(), key);
+    if (result.ok) {
+      sessionStorage.setItem(INSTANCES_TOKEN_KEY, key);
+      await this.whoami();
+    }
     return result;
   }
 
@@ -736,6 +753,7 @@ class AgoraSessionStore {
     this.pairingCode = null;
     this.pairingError = null;
     this.lastPair = null;
+    sessionStorage.removeItem(INSTANCES_TOKEN_KEY);
   }
 }
 

@@ -13,7 +13,13 @@
     auth_passkey_cancelled,
     auth_rate_limited,
     auth_create_account,
-    auth_offline_mode,
+    login_offline_switch,
+    auth_online_mode,
+    login_offline_key_label,
+    login_offline_key_placeholder,
+    login_offline_submit,
+    login_offline_failed,
+    login_offline_disabled,
     login_title,
     login_welcome_back,
     login_username,
@@ -27,7 +33,10 @@
     auth_add_this_device,
   } from "../paraglide/messages.js";
 
-  let { returnPath = undefined }: { returnPath?: string } = $props();
+  let {
+    returnPath = undefined,
+    offlineLogin = false,
+  }: { returnPath?: string; offlineLogin?: boolean } = $props();
 
   let username = $state("");
   let submitting = $state(false);
@@ -39,6 +48,18 @@
   // `navigator.credentials.get()` calls deadlock some browsers (notably
   // Firefox), so the pending discoverable autofill MUST be killed first.
   let discoverableCtl: AbortController | null = null;
+  // Operator-key (offline-branch) login state. The branch itself is
+  // deployment-driven: the app shell passes offlineLogin from its build-time
+  // injection, so a cloud build never renders it (two-way information
+  // hiding). "offline" here names the LOGIN branch only -- the session it
+  // produces is the standard online form (see the design's terminology note);
+  // it is unrelated to the AppMode offline of the legacy /local family.
+  let mode = $state<"online" | "offline">("online");
+  let adminKey = $state("");
+  let offlineBusy = $state(false);
+  let offlineError = $state<string | null>(null);
+  let offlineDisabled = $state(false);
+  const canKeySubmit = $derived(adminKey.trim().length > 0 && !offlineBusy);
 
   // The reverse guard (already signed in -> /tagmata) and the forward guard
   // (logged out -> /login) live in <RootLayout>; this page is only reached for a
@@ -87,6 +108,33 @@
       error = auth_couldnt_reach();
     } finally {
       submitting = false;
+    }
+  }
+
+  // Offline-branch submit: one POST, no authenticator step. 401 keeps the
+  // form usable (wrong key); 404 means the route is not mounted on this
+  // deployment -- surface the disabled copy rather than a generic failure.
+  async function submitKey(e: Event) {
+    e.preventDefault();
+    if (!canKeySubmit) return;
+    discoverableCtl?.abort();
+    offlineBusy = true;
+    offlineError = null;
+    try {
+      const r = await agoraSession.adminLogin(adminKey.trim());
+      if (r.ok) {
+        await navigate(returnPath ?? "/tagmata");
+      } else if (r.status === 404) {
+        offlineDisabled = true;
+        offlineError = login_offline_disabled();
+      } else {
+        offlineError = login_offline_failed();
+      }
+    } catch (e) {
+      console.error(e);
+      offlineError = auth_couldnt_reach();
+    } finally {
+      offlineBusy = false;
     }
   }
 
@@ -151,73 +199,110 @@
 <div class="flex items-center justify-center min-h-dvh p-4 bg-surface-200-800">
   <form
     class="w-full max-w-sm space-y-6 p-6 bg-surface-100-900 border border-surface-200-800 shadow-sm rounded-xl"
-    onsubmit={submit}
+    onsubmit={mode === "offline" ? submitKey : submit}
   >
     <div class="text-center space-y-1">
       <Brand size="lg" />
       <p class="text-sm opacity-60">{login_welcome_back()}</p>
     </div>
 
-    <OAuthProviderButtons {returnPath} />
-
-    <label class="block space-y-1">
-      <span class="text-sm opacity-70">
-        {login_username()}
-        <span class="text-error-500 dark:text-error-400">*</span>
-      </span>
-      <input
-        class="input"
-        type="text"
-        autocomplete="username webauthn"
-        placeholder={login_username_placeholder()}
-        bind:value={username}
-        required
-      />
-      {#if username.length > 0 && !usernameValid}
-        <span class="text-xs text-error-500 dark:text-error-400"
-          >{login_username_invalid()}</span
-        >
+    {#if mode === "offline"}
+      <label class="block space-y-1">
+        <span class="text-sm opacity-70">
+          {login_offline_key_label()}
+          <span class="text-error-500 dark:text-error-400">*</span>
+        </span>
+        <input
+          class="input"
+          type="password"
+          autocomplete="off"
+          placeholder={login_offline_key_placeholder()}
+          bind:value={adminKey}
+          required
+          disabled={offlineDisabled}
+        />
+      </label>
+      {#if offlineError}
+        <FormError message={offlineError} />
       {/if}
-    </label>
-    {#if error}
-      <FormError message={error} />
-    {:else if result && !result.ok}
-      <FormError message={reasonMessage(result)} />
+      <button
+        type="submit"
+        class="btn preset-filled-primary-500 w-full"
+        disabled={!canKeySubmit || offlineDisabled}
+      >
+        {offlineBusy ? login_signing_in() : login_offline_submit()}
+      </button>
+      <p class="text-center text-sm">
+        <button
+          type="button"
+          class="font-medium text-primary-500 dark:text-primary-400 hover:underline cursor-pointer"
+          onclick={() => (mode = "online")}>{auth_online_mode()}</button
+        >
+      </p>
+    {:else}
+      <OAuthProviderButtons {returnPath} />
+
+      <label class="block space-y-1">
+        <span class="text-sm opacity-70">
+          {login_username()}
+          <span class="text-error-500 dark:text-error-400">*</span>
+        </span>
+        <input
+          class="input"
+          type="text"
+          autocomplete="username webauthn"
+          placeholder={login_username_placeholder()}
+          bind:value={username}
+          required
+        />
+        {#if username.length > 0 && !usernameValid}
+          <span class="text-xs text-error-500 dark:text-error-400"
+            >{login_username_invalid()}</span
+          >
+        {/if}
+      </label>
+      {#if error}
+        <FormError message={error} />
+      {:else if result && !result.ok}
+        <FormError message={reasonMessage(result)} />
+      {/if}
+
+      <button
+        type="submit"
+        class="btn preset-filled-primary-500 w-full"
+        disabled={!canSubmit}
+      >
+        {submitting ? login_signing_in() : login_submit()}
+      </button>
+
+      <p class="text-center text-sm">
+        {login_new_here()}
+        <a
+          href="/register"
+          class="font-medium text-primary-500 dark:text-primary-400 hover:underline cursor-pointer"
+          >{auth_create_account()}</a
+        >
+      </p>
+
+      <p class="text-center text-sm">
+        {login_new_device()}
+        <a
+          href="/pair"
+          class="font-medium text-primary-500 dark:text-primary-400 hover:underline cursor-pointer"
+          >{auth_add_this_device()}</a
+        >
+        >
+      </p>
+
+      {#if offlineLogin}
+        <p class="text-center text-sm">
+          <button
+            type="button"
+            class="font-medium text-primary-500 dark:text-primary-400 hover:underline cursor-pointer"
+            onclick={() => (mode = "offline")}>{login_offline_switch()}</button
+          >
+        </p>
+      {/if}
     {/if}
-
-    <button
-      type="submit"
-      class="btn preset-filled-primary-500 w-full"
-      disabled={!canSubmit}
-    >
-      {submitting ? login_signing_in() : login_submit()}
-    </button>
-
-    <p class="text-center text-sm">
-      {login_new_here()}
-      <a
-        href="/register"
-        class="font-medium text-primary-500 dark:text-primary-400 hover:underline cursor-pointer"
-        >{auth_create_account()}</a
-      >
-    </p>
-
-    <p class="text-center text-sm">
-      {login_new_device()}
-      <a
-        href="/pair"
-        class="font-medium text-primary-500 dark:text-primary-400 hover:underline cursor-pointer"
-        >{auth_add_this_device()}</a
-      >
-      >
-    </p>
-
-    <p class="text-center text-sm">
-      <a
-        href="/connect"
-        class="font-medium text-primary-500 dark:text-primary-400 hover:underline cursor-pointer"
-        >{auth_offline_mode()}</a
-      >
-    </p>
   </form>
 </div>

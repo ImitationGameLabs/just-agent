@@ -12,6 +12,7 @@ export { AgoraClient } from "./http.ts";
 export type { LoginBeginRequest, RegisterBeginRequest } from "./http.ts";
 export {
   addPasskey,
+  adminLoginWithKey,
   completeOAuth,
   completeOAuthSignup,
   loginWithDiscoverablePasskey,
@@ -23,6 +24,7 @@ export {
 export type {
   AddPasskeyArgs,
   AddPasskeyResult,
+  AdminLoginResult,
   CeremonyResult,
   OAuthCompleteResult,
   OAuthSignupResult,

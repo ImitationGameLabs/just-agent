@@ -163,7 +163,7 @@ export function navFor(args: {
             icon: icons.manageSchedules,
           },
           {
-            href: "/local/manage/instances",
+            href: "/instances",
             label: nav_instances(),
             icon: icons.manageInstances,
           },
@@ -175,7 +175,7 @@ export function navFor(args: {
     {
       title: nav_tagmata(),
       manage: {
-        href: "/tagmata",
+        href: "/instances",
         label: nav_tagma_management(),
         icon: icons.settings,
       },

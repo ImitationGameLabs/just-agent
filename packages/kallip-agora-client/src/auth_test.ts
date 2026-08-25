@@ -1,6 +1,7 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import {
   addPasskey,
+  adminLoginWithKey,
   classifyRegisterConflict,
   completeOAuth,
   completeOAuthSignup,
@@ -250,4 +251,43 @@ Deno.test("completeOAuthSignup maps a 403 signup-disabled", async () => {
     reason: "signup-disabled",
     message: "signup disabled",
   });
+});
+
+Deno.test("adminLoginWithKey maps a 200 body to ok", async () => {
+  const client = asClient({
+    adminLogin: () => Promise.resolve({ user_id: "u1" }),
+  });
+  assertEquals(await adminLoginWithKey(client, "sk-admin-x"), {
+    ok: true,
+    userId: "u1",
+  });
+});
+
+Deno.test("adminLoginWithKey maps 401/404 to typed statuses", async () => {
+  const wrongKey = asClient({
+    adminLogin: () =>
+      Promise.reject(new AgoraApiError(401, "admin token required")),
+  });
+  assertEquals(await adminLoginWithKey(wrongKey, "sk-admin-bad"), {
+    ok: false,
+    status: 401,
+  });
+  const unmounted = asClient({
+    adminLogin: () => Promise.reject(new AgoraApiError(404, "not found")),
+  });
+  assertEquals(await adminLoginWithKey(unmounted, "sk-admin-x"), {
+    ok: false,
+    status: 404,
+  });
+});
+
+Deno.test("adminLoginWithKey rethrows transport-level errors", async () => {
+  const client = asClient({
+    adminLogin: () => Promise.reject(new Error("network down")),
+  });
+  await assertRejects(
+    () => adminLoginWithKey(client, "sk-admin-x"),
+    Error,
+    "network down",
+  );
 });

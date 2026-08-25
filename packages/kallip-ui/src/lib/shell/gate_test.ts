@@ -31,14 +31,16 @@ Deno.test("isPublicRoute flags /login, /register, /connect", () => {
 });
 
 Deno.test("config not loaded -> skeleton on every route (incl. /login)", () => {
-  for (const pathname of [
-    "/",
-    "/login",
-    "/register",
-    "/connect",
-    "/tagmata",
-    "/settings",
-  ]) {
+  for (
+    const pathname of [
+      "/",
+      "/login",
+      "/register",
+      "/connect",
+      "/tagmata",
+      "/settings",
+    ]
+  ) {
     assertEquals(decide({ loaded: false, mode: "online", pathname }), {
       kind: "skeleton",
     });
@@ -169,15 +171,39 @@ Deno.test(
 );
 
 Deno.test("offline protected routes render (the local chat + settings)", () => {
-  for (const pathname of [
-    "/local/chat",
-    "/local/manage/overview",
-    "/local/manage/budget",
-    "/settings",
-  ]) {
+  for (
+    const pathname of [
+      "/local/chat",
+      "/local/manage/overview",
+      "/local/manage/budget",
+      "/settings",
+      "/instances",
+    ]
+  ) {
     assertEquals(decide({ mode: "offline", pathname }), { kind: "render" });
   }
 });
+
+Deno.test(
+  "online + /instances is a normal protected route (signed in -> render, logged out -> /login)",
+  () => {
+    assertEquals(
+      decide({
+        mode: "online",
+        pathname: "/instances",
+        user: { user_id: "u1" },
+      }),
+      { kind: "render" },
+    );
+    assertEquals(
+      decide({ mode: "online", pathname: "/instances", user: null }),
+      {
+        kind: "redirect",
+        url: "/login?next=%2Finstances",
+      },
+    );
+  },
+);
 
 Deno.test(
   "/account renders in both modes (the account hub is mode-agnostic)",

@@ -112,6 +112,32 @@ export async function loginWithPasskey(
   }
 }
 
+/** The outcome of the operator-key login (no browser ceremony).
+ * 404 = the route is not mounted (a deployment without the boot flag);
+ * 401 = the key was wrong.
+ */
+export type AdminLoginResult =
+  | { ok: true; userId: string }
+  | { ok: false; status: number };
+
+/** Exchange the operator's sk-admin- key for a session (local-platform
+ * deployments). Unlike the passkey ceremonies there is no authenticator
+ * step, so the only failure modes are the typed statuses; transport-level
+ * errors still throw for the caller to render as unreachable.
+ */
+export async function adminLoginWithKey(
+  client: AgoraClient,
+  key: string,
+): Promise<AdminLoginResult> {
+  try {
+    const finish = await client.adminLogin(key);
+    return { ok: true, userId: finish.user_id };
+  } catch (e) {
+    if (e instanceof AgoraApiError) return { ok: false, status: e.status };
+    throw e;
+  }
+}
+
 /**
  * Run the discoverable (usernameless) login ceremony. No identifier is supplied:
  * the authenticator surfaces matching resident credentials via conditional-UI

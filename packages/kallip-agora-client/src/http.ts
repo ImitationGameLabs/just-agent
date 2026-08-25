@@ -68,13 +68,17 @@ export interface LoginBeginRequest {
 abstract class BaseClient {
   constructor(protected readonly baseUrl: string) {}
 
-  /** JSON fetch with the CSRF marker on non-GETs; `AgoraApiError` on non-2xx. */
+  /** JSON fetch with the CSRF marker on non-GETs; `AgoraApiError` on non-2xx.
+   * `bearer` adds an Authorization header for the token-authenticated routes
+   * (the admin-login exchange). */
   protected async json<T>(
     path: string,
     method: string,
     body?: unknown,
+    bearer?: string,
   ): Promise<T> {
     const headers: Record<string, string> = { accept: "application/json" };
+    if (bearer) headers.authorization = `Bearer ${bearer}`;
     // Send the CSRF marker on every non-GET unconditionally: it is required on
     // cookie-bearing mutating requests and harmless otherwise.
     const isStateChanging = method !== "GET";
@@ -120,6 +124,12 @@ export class AgoraClient extends BaseClient {
 
   loginFinish(body: LoginFinishRequest): Promise<AuthFinishResponse> {
     return this.json("/v1/auth/login/finish", "POST", body);
+  }
+  /** `POST /v1/auth/admin-login` — exchange the operator's `sk-admin-` key
+   * for a User session on the fixed local account. The route is mounted only
+   * where the deployment's boot flag set it; elsewhere this 404s. */
+  adminLogin(key: string): Promise<AuthFinishResponse> {
+    return this.json("/v1/auth/admin-login", "POST", undefined, key);
   }
 
   /** `POST /v1/auth/login/discoverable/begin` — start a usernameless login. No
