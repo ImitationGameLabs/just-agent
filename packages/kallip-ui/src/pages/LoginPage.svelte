@@ -13,7 +13,7 @@
     auth_passkey_cancelled,
     auth_rate_limited,
     auth_create_account,
-    login_offline_switch,
+    auth_offline_mode,
     auth_online_mode,
     login_offline_key_label,
     login_offline_key_placeholder,
@@ -299,7 +299,7 @@
           <button
             type="button"
             class="font-medium text-primary-500 dark:text-primary-400 hover:underline cursor-pointer"
-            onclick={() => (mode = "offline")}>{login_offline_switch()}</button
+            onclick={() => (mode = "offline")}>{auth_offline_mode()}</button
           >
         </p>
       {/if}
