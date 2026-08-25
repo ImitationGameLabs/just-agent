@@ -469,6 +469,11 @@ async fn platform_mode_session_channel_local_admin_only() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    // The UI branches on this machine-readable code: without it a drift
+    // would silently fall back to the standalone token form.
+    let bytes = response.into_body().collect().await.expect("read");
+    let body = String::from_utf8(bytes.to_bytes().to_vec()).expect("utf8");
+    assert!(body.contains("admin_session_required"), "{body}");
 }
 
 /// The CSRF pillar for the cookie channel: a cookie-bearing mutating

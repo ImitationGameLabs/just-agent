@@ -374,13 +374,13 @@ mod tests {
         let admin = mint_session(&state, admin_id.to_string(), now).await;
         let control = cp(&state);
         let plain = control.verify_session(plain.secret()).await.unwrap();
-        assert!(plain.as_ref().unwrap().local_admin == false);
+        assert!(!plain.as_ref().unwrap().local_admin);
         let admin = control.verify_session(admin.secret()).await.unwrap();
         assert!(admin.unwrap().local_admin);
     }
 
     /// Seed one live session row for `user_id` and return its plaintext
-    /// cookie value (shared by the session tests above).
+    /// cookie value (used by the marker-row test above).
     async fn mint_session(
         state: &crate::state::SharedState,
         user_id: String,
