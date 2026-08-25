@@ -37,7 +37,7 @@
     manage_budget_clear_hint,
   } from "../../paraglide/messages.js";
   $effect(() => {
-    budgetStore.startPolling(5000);
+    budgetStore.startPolling(30_000);
     return () => budgetStore.stopPolling();
   });
 

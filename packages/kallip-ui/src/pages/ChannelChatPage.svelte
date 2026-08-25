@@ -128,6 +128,14 @@
     }
     return () => statusCardStore.detach();
   });
+  // Roster rows follow status events: each snapshot update -- the relay
+  // `tagma_status` push online, the direct SSE drain offline -- nudges an
+  // immediate status-card refresh, so busy/idle flips paint at once. The
+  // store's own interval is only the reconciliation backstop.
+  $effect(() => {
+    void conv?.statusSnapshot;
+    statusCardStore.nudge();
+  });
 
   const disabled = $derived(!conv || conv.status !== "open");
   const pendingCount = $derived(conv?.pending.length ?? 0);

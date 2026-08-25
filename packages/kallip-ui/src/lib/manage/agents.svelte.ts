@@ -4,6 +4,7 @@
 import type { WireAgentManagementSummary } from "@kallipai/kallip-client";
 import { SvelteSet } from "svelte/reactivity";
 import { type ManagementBackend, managementBackend } from "./client.ts";
+import { startVisibleInterval } from "../visibleInterval.ts";
 import { displayError } from "./errors.ts";
 import {
   manage_agents_action_failed,
@@ -22,7 +23,7 @@ class AgentsStore {
   hasLoaded = $state(false);
   error = $state<string | null>(null);
 
-  private pollHandle: ReturnType<typeof setInterval> | null = null;
+  private pollStop: (() => void) | null = null;
   private inFlight = new SvelteSet<string>();
   private snapshots = new Map<string, WireAgentManagementSummary>();
 
@@ -51,17 +52,18 @@ class AgentsStore {
     }
   }
 
+  /** Reconciliation backstop for a mounted page, not a live feed:
+   * management actions already refresh optimistically, so a slow (and
+   * hidden-paused, see visibleInterval) interval is enough. */
   startPolling(intervalMs = 5000): void {
     this.stopPolling();
-    this.pollHandle = setInterval(() => this.refresh(), intervalMs);
+    this.pollStop = startVisibleInterval(() => this.refresh(), intervalMs);
     this.refresh();
   }
 
   stopPolling(): void {
-    if (this.pollHandle !== null) {
-      clearInterval(this.pollHandle);
-      this.pollHandle = null;
-    }
+    this.pollStop?.();
+    this.pollStop = null;
   }
 
   /** Switch backend. Resets all state. */

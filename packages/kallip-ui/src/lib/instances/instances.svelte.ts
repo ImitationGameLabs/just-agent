@@ -13,12 +13,13 @@ import {
   type InstanceSpawnResult,
 } from "./client.ts";
 import { manage_instances_load_failed } from "../../paraglide/messages.js";
+import { startVisibleInterval } from "../visibleInterval.ts";
 
 class InstancesStore {
   private get client() {
     return instancesClientOrFail();
   }
-  private pollHandle: ReturnType<typeof setInterval> | null = null;
+  private pollStop: (() => void) | null = null;
 
   health = $state<InstanceHealth | null>(null);
   instances = $state<InstanceInfo[]>([]);
@@ -100,16 +101,14 @@ class InstancesStore {
   startPolling(intervalMs = 5000): void {
     this.stopPolling();
     this.refresh();
-    this.pollHandle = setInterval(() => {
+    this.pollStop = startVisibleInterval(() => {
       if (!this.isLoading) this.refresh();
     }, intervalMs);
   }
 
   stopPolling(): void {
-    if (this.pollHandle !== null) {
-      clearInterval(this.pollHandle);
-      this.pollHandle = null;
-    }
+    this.pollStop?.();
+    this.pollStop = null;
   }
 }
 

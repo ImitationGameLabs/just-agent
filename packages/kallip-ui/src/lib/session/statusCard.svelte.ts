@@ -1,13 +1,18 @@
-// Status-card rows: the per-agent list under the chat status bar. Owns two
-// cadences (roster 2.5s, per-agent context 10s) over whichever
+// Status-card rows: the per-agent list under the chat status bar. Roster
+// refresh is event-nudged first -- the chat page routes every status-snapshot
+// update (relay `tagma_status` push online, direct SSE drain offline) into
+// nudge() -- with a slow reconciliation poll (15s) as the dropped-frame
+// backstop; the per-agent context poll runs slower still (30s, occupancy is
+// approximate). Both cadences pause while the tab is hidden, over whichever
 // ManagementBackend the conversation provides (OnlineBackend on the relay
 // channel, OfflineBackend direct). Context occupancy mirrors the detail
-// page's approximation (turn tokens + pinned) with the registry
-// profile's max window as denominator; faulted/parked agents get no
-// context column -- their status response is a 409 or meaningless.
+// page's approximation (turn tokens + pinned) with the registry profile's
+// max window as denominator; faulted/parked agents get no context column --
+// their status response is a 409 or meaningless.
 
 import type { AgentState, WireParkedReason } from "@kallipai/kallip-client";
 import { type ManagementBackend } from "../manage/backend.ts";
+import { startVisibleInterval } from "../visibleInterval.ts";
 
 /** One rendered row. `contextTokens` is null until the slow poll lands (or
  * forever, for faulted/parked agents). */
@@ -45,8 +50,8 @@ class StatusCardStore {
   subRows = $state<readonly StatusCardRow[]>([]);
 
   private backend: ManagementBackend | null = null;
-  private rosterHandle: ReturnType<typeof setInterval> | null = null;
-  private contextHandle: ReturnType<typeof setInterval> | null = null;
+  private rosterStop: (() => void) | null = null;
+  private contextStop: (() => void) | null = null;
   private contexts = new Map<string, number>();
   private lastSubSignature = "";
   // Denominator data: the profile registry pulled once per attach (it
@@ -63,16 +68,19 @@ class StatusCardStore {
     this.detach();
     this.backend = backend;
     this.refreshRoster();
-    this.rosterHandle = setInterval(() => this.refreshRoster(), 2_500);
-    this.contextHandle = setInterval(() => this.refreshContexts(), 10_000);
+    this.rosterStop = startVisibleInterval(() => this.refreshRoster(), 15_000);
+    this.contextStop = startVisibleInterval(
+      () => this.refreshContexts(),
+      30_000,
+    );
     void this.refreshProfileWindows(backend);
   }
 
   detach(): void {
-    if (this.rosterHandle !== null) clearInterval(this.rosterHandle);
-    if (this.contextHandle !== null) clearInterval(this.contextHandle);
-    this.rosterHandle = null;
-    this.contextHandle = null;
+    this.rosterStop?.();
+    this.contextStop?.();
+    this.rosterStop = null;
+    this.contextStop = null;
     this.backend = null;
     this.rootRow = null;
     this.subRows = [];
@@ -80,6 +88,15 @@ class StatusCardStore {
     this.profileWindows.clear();
     this.profileIds.clear();
     this.lastSubSignature = "";
+  }
+
+  /** Event-driven roster refresh: the chat page routes every status-snapshot
+   * update (the relay `tagma_status` push online, the direct SSE drain
+   * offline) into this, so state flips paint at once instead of waiting for
+   * the reconciliation poll. The re-entry guard collapses overlapping
+   * nudges; the interval remains the dropped-frame backstop. */
+  nudge(): void {
+    void this.refreshRoster();
   }
 
   private async refreshRoster(): Promise<void> {

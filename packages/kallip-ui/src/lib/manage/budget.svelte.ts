@@ -1,7 +1,8 @@
 // Budget store: tagma-wide token budget status + mutations.
 //
-// Polls GET /budget on an interval while mounted. Mutations (adjust, set
-// remaining, pause all) use optimistic updates with revert-on-error.
+// Polls GET /budget on an interval while mounted (paused while hidden).
+// Mutations (adjust, set remaining, pause all) use optimistic updates with
+// revert-on-error.
 // An inFlightMutation flag suppresses auto-refresh polls so the optimistic
 // state isn't overwritten by a stale server response.
 
@@ -15,6 +16,7 @@ import {
 } from "./compute.ts";
 import { type ManagementBackend, managementBackend } from "./client.ts";
 import { displayError } from "./errors.ts";
+import { startVisibleInterval } from "../visibleInterval.ts";
 import {
   manage_budget_load_failed,
   manage_budget_update_failed,
@@ -50,7 +52,7 @@ class BudgetStore {
   get isBusy(): boolean {
     return this.inFlightMutation;
   }
-  private pollHandle: ReturnType<typeof setInterval> | null = null;
+  private pollStop: (() => void) | null = null;
 
   /** Burn rate (tokens/min) computed from recent samples. Null if insufficient data. */
   get burnRate(): number | null {
@@ -76,17 +78,18 @@ class BudgetStore {
     }
   }
 
+  /** Reconciliation backstop for a mounted page, not a live feed:
+   * budget mutations already refresh optimistically, so a slow (and
+   * hidden-paused, see visibleInterval) interval is enough. */
   startPolling(intervalMs = 5000): void {
     this.stopPolling();
-    this.pollHandle = setInterval(() => this.refresh(), intervalMs);
+    this.pollStop = startVisibleInterval(() => this.refresh(), intervalMs);
     this.refresh();
   }
 
   stopPolling(): void {
-    if (this.pollHandle !== null) {
-      clearInterval(this.pollHandle);
-      this.pollHandle = null;
-    }
+    this.pollStop?.();
+    this.pollStop = null;
     this.samples = [];
   }
 

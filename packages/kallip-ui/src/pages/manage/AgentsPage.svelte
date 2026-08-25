@@ -20,7 +20,7 @@
   } from "../../paraglide/messages.js";
 
   $effect(() => {
-    agentsStore.startPolling(5000);
+    agentsStore.startPolling(30_000);
     return () => agentsStore.stopPolling();
   });
 
