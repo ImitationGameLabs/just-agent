@@ -98,6 +98,14 @@
     channelsStore.setStatusBackfill((tagmaId) =>
       realtimeStore.statusFor(tagmaId),
     );
+
+    // An offline-class channel-open failure (the KEX came back 503) means the
+    // lesche just proved the tagma unreachable: retract the stale-online
+    // presence entry so both the dot and the auto-open driver read the
+    // truth. Bound here for the same decoupling reason as the backfill.
+    channelsStore.setOfflineCorrection((tagmaId) =>
+      realtimeStore.markOffline(tagmaId),
+    );
     // Wire presence transitions to auto-connect: an offline -> online tagma is
     // opened on demand. Same shell-binding discipline as the envelope sink.
     // NOTE: this is a pre-warm convenience only -- it is no longer load-bearing
@@ -109,6 +117,10 @@
       const tagma = agoraSession.tagmata.find(
         (t) => t.tagma_id === tagmaId && t.state === "enrolled",
       );
+      // No budget reset here: an online transition cannot be told apart
+      // from a flapping one, and resetting on every event would defeat
+      // the failure budget (the auto path caps at six attempts per
+      // session; the user-driven retry is the re-arm channel).
       if (tagma) void channelsStore.ensureOpen(tagma);
     });
     // Wire room-membership-changed nudges into the room roster refresh: a

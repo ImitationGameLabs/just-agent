@@ -338,14 +338,7 @@ class RealtimeStore {
         break;
       case "tagma_offline":
         if (!this.presence.has(ev.tagma_id)) break;
-        this.presence.delete(ev.tagma_id);
-        // Evict the last status snapshot so an offline tagma does not keep
-        // rendering stale agent counts/budget -- `statusFor` returns undefined
-        // (the card hides its line, the header shows "waiting…") until the
-        // tagma reconnects and a fresh snapshot arrives.
-        this.status.delete(ev.tagma_id);
-        this.statusSink?.(ev.tagma_id, undefined);
-        this.presenceSink?.(ev.tagma_id, false);
+        this.applyOffline(ev.tagma_id);
         break;
       case "envelope":
         this.envelopeSink?.(ev.envelope);
@@ -395,6 +388,29 @@ class RealtimeStore {
         break;
       }
     }
+  }
+
+  /** Shared offline application: retract presence, evict the stale status
+   *  snapshot (an offline tagma must not keep rendering agent counts or
+   *  budget), and notify both sinks. Used by the `tagma_offline` event and
+   *  by `markOffline` below -- one path, no divergence. */
+  private applyOffline(tagmaId: string): void {
+    this.presence.delete(tagmaId);
+    this.status.delete(tagmaId);
+    this.statusSink?.(tagmaId, undefined);
+    this.presenceSink?.(tagmaId, false);
+  }
+
+  /** Correct a stale-online entry from outside the event stream: the
+   *  channels store reports an offline-class open failure (the lesche just
+   *  refused the KEX because the tagma is unreachable), which is better
+   *  evidence than a `tagma_offline` event that was missed during an SSE
+   *  gap. No-op when the tagma already reads offline; a genuine
+   *  `tagma_online` re-adds it (the open budget re-arms only
+   *  via a successful explicit open). */
+  markOffline(tagmaId: string): void {
+    if (!this.presence.has(tagmaId)) return;
+    this.applyOffline(tagmaId);
   }
 }
 

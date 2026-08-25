@@ -12,6 +12,7 @@
 import { type TagmaView } from "@kallipai/kallip-agora-client";
 import {
   type Envelope,
+  LescheApiError,
   openRelayChannel,
   type SignalEvent,
 } from "@kallipai/kallip-lesche-client";
@@ -34,6 +35,18 @@ import { clearConvCache, readTail } from "@kallipai/kallip-lesche-client";
 import { configStore } from "../config/config.svelte.ts";
 import type { ConversationLine } from "../transcript.ts";
 
+/** Automatic channel-open backoff: first retry after 1s, doubling, capped at
+ *  60s; six straight failures silence the automatic path for the session. */
+const OPEN_BACKOFF_BASE_MS = 1_000;
+const OPEN_BACKOFF_CAP_MS = 60_000;
+const OPEN_FAILURE_LIMIT = 6;
+
+/** Failure memory backing `ensureOpen`'s automatic path. */
+interface OpenBudget {
+  failures: number;
+  cooldownUntil: number;
+  terminal: boolean;
+}
 /** Per-tagma transport state, exposed for the sidebar indicator and the
  *  tagma-keyed chat page (see `ChannelsStore.getTagmaChannelState`). */
 export type TagmaChannelState =
@@ -43,7 +56,7 @@ export type TagmaChannelState =
   | { kind: "offline"; conversationId: string }
   | { kind: "error"; conversationId: string };
 
-class ChannelsStore {
+export class ChannelsStore {
   /** conversationId -> conversation state. `SvelteMap` (not `$state(new
    *  Map())`): Svelte's `$state` proxy does not wrap Map/Set, so a raw Map's
    *  in-place `.set()` would be invisible to reactivity and the sidebar would
@@ -68,6 +81,12 @@ class ChannelsStore {
    *  A plain Set would leave the sidebar stuck on a spinner for an open
    *  channel; SvelteSet makes the removal observable. */
   private pendingOpens = new SvelteSet<string>();
+
+  /** Per-tagma auto-open failure budget (backoff cooldown + terminal
+   *  flag). `SvelteMap` so the chat page can react when the automatic
+   *  path gives up (`isAutoOpenExhausted`); writes happen only on open
+   *  failures/success, so the reactivity cost is negligible. */
+  private openBudgets = new SvelteMap<string, OpenBudget>();
 
   /** Teardown generation, bumped by `tearDownAll` (and thus by `reset`, which
    *  calls it). `openRelay` captures this before its awaits and bails if it has
@@ -95,6 +114,17 @@ class ChannelsStore {
     ) => import("../tagmata.svelte.ts").TagmaStatusSummary | undefined,
   ): void {
     this.statusBackfill = fn;
+  }
+
+  /** Injected stale-presence corrector: the shell (which owns both stores)
+   *  binds this to realtime's markOffline, so an offline-class open failure
+   *  can retract a stale-online entry without this store depending on
+   *  realtime. Same decoupling reason as the status backfill above. */
+  private offlineCorrection: ((tagmaId: string) => void) | null = null;
+
+  /** Bind the stale-presence corrector. Called once by the shell at boot. */
+  setOfflineCorrection(fn: (tagmaId: string) => void): void {
+    this.offlineCorrection = fn;
   }
 
   /** Offline boot/switch failure surfaced on the layout banner. Set by the
@@ -293,9 +323,28 @@ class ChannelsStore {
   /** Idempotent, best-effort auto-open driven by the shell on presence
    *  transitions and at boot. Skips tagmas already open or with an open in
    *  flight. A dead conversation is torn down first WITHOUT purging its cache,
-   *  so the re-KEX rehydrates the prior transcript. */
-  async ensureOpen(tagma: TagmaView): Promise<void> {
+   *  so the re-KEX rehydrates the prior transcript.
+   *
+   *  `explicit` marks a user-initiated open (the chat page's mount or its
+   *  retry button): it bypasses the failure budget's gates -- a failed
+   *  explicit open still counts, so the session terminal silences the
+   *  automatic path without ever locking the user out. */
+  async ensureOpen(
+    tagma: TagmaView,
+    opts: { explicit?: boolean } = {},
+  ): Promise<void> {
     if (this.pendingOpens.has(tagma.tagma_id)) return;
+    const budget = this.openBudgets.get(tagma.tagma_id);
+    if (opts.explicit) {
+      // Bypass the terminal/cooldown gates (user intent outranks failure
+      // history) but do NOT clear the budget: a failed explicit open
+      // still counts, so an effect re-fire cannot turn into an unbounded
+      // storm; only success clears it.
+    } else if (budget?.terminal) {
+      return;
+    } else if (budget && this.now() < budget.cooldownUntil) {
+      return;
+    }
     const existing = this.findByTagma(tagma.tagma_id);
     if (
       existing &&
@@ -307,7 +356,9 @@ class ChannelsStore {
     this.pendingOpens.add(tagma.tagma_id);
     try {
       await this.openRelay(tagma);
+      this.openBudgets.delete(tagma.tagma_id);
     } catch (e) {
+      this.recordOpenFailure(tagma.tagma_id, e);
       console.warn(
         `[channels] auto-open failed for tagma ${tagma.tagma_id}:`,
         e instanceof Error ? e.message : e,
@@ -317,6 +368,51 @@ class ChannelsStore {
     }
   }
 
+  /** Count one auto-open failure: an exponential cooldown (1s doubling,
+   *  capped at 60s) between automatic attempts, and a session terminal
+   *  after OPEN_FAILURE_LIMIT straight failures so a flapping peer cannot
+   *  drive a request storm. An offline-class failure (KEX 503) additionally
+   *  asks the shell to correct stale presence: the lesche just proved the
+   *  tagma unreachable, which is better evidence than a `tagma_offline`
+   *  event missed during an SSE gap. */
+  private recordOpenFailure(tagmaId: string, e: unknown): void {
+    const failures = (this.openBudgets.get(tagmaId)?.failures ?? 0) + 1;
+    const delay = Math.min(
+      OPEN_BACKOFF_BASE_MS * 2 ** (failures - 1),
+      OPEN_BACKOFF_CAP_MS,
+    );
+    this.openBudgets.set(tagmaId, {
+      failures,
+      cooldownUntil: this.now() + delay,
+      terminal: failures >= OPEN_FAILURE_LIMIT,
+    });
+    if (e instanceof LescheApiError && e.status === 503) {
+      this.offlineCorrection?.(tagmaId);
+    }
+  }
+
+  /** True when the last open attempt failed and none is in flight (the
+   *  chat page swaps its opening placeholder for the unavailable + retry
+   *  row). Covers the session terminal too: a budget entry always exists
+   *  by the time the automatic path gives up. */
+  isAutoOpenFailed(tagmaId: string): boolean {
+    return this.openBudgets.has(tagmaId);
+  }
+
+  /** User-initiated retry from the chat page's terminal row: look the tagma
+   *  up in the registry (it may have been revoked since) and open it
+   *  explicitly, ignoring the failure budget. */
+  retryTagma(tagmaId: string): void {
+    const tagma = agoraSession.tagmata.find(
+      (t) => t.tagma_id === tagmaId && t.state === "enrolled",
+    );
+    if (tagma) void this.ensureOpen(tagma, { explicit: true });
+  }
+
+  /** Clock seam for the budget's cooldown math; overridable in tests. */
+  protected now(): number {
+    return Date.now();
+  }
   /** Send a prompt to a conversation. Renders the optimistic line and hands off
    *  to the conversation's send path (single-in-flight pump for relay; inline
    *  POST for local). */
@@ -359,6 +455,10 @@ class ChannelsStore {
     this.conversations.clear();
     this.tagmaIndex.clear();
     this.pendingOpens.clear();
+    // The failure budget is session-scoped: a logout or mode switch ends
+    // the session, so the next one must not inherit the previous one's
+    // cooldown/terminal state.
+    this.openBudgets.clear();
     // Advance the teardown generation so any in-flight openRelay whose awaits
     // straddle this clear bails instead of resurrecting its conversation.
     this.generation++;

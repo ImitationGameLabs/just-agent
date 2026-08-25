@@ -13,6 +13,9 @@
   import { navigate } from "../lib/shell/port.ts";
   import {
     tagma_chat_not_enrolled,
+    chat_channel_error,
+    chat_channel_unavailable,
+    common_retry,
     chat_opening,
     chat_go_tagmata,
   } from "../paraglide/messages.js";
@@ -46,11 +49,13 @@
   // gate -- deliberately not `channelState` -- so a status transition (peer
   // snapshot, drain death, error) does not re-fire this and re-KEX. ensureOpen
   // is idempotent and the page mount is the single trigger; retry after a hard
-  // error is "navigate away and back" (mount re-fires this, ensureOpen tears
-  // down the dead conversation and re-KEXes).
+  // error is the terminal row's Retry button or navigate away and back (both
+  // re-fire this, ensureOpen tears down the dead conversation and re-KEXes).
+  // The open is explicit: a user visit outranks the failure budget's
+  // gates (an explicit FAILURE still counts; success clears it).
   $effect(() => {
     if (!agoraSession.user) return;
-    if (tagma) void channelsStore.ensureOpen(tagma);
+    if (tagma) void channelsStore.ensureOpen(tagma, { explicit: true });
   });
 </script>
 
@@ -70,9 +75,45 @@
     </div>
   </div>
 {:else if conversationId}
+  {#if channelState.kind === "error"}
+    <!-- The channel died after opening (transport error). The transcript
+         stays readable below; this row carries the user-facing retry. -->
+    <div
+      class="border-b border-surface-200-800 px-4 py-2 flex items-center justify-center gap-3"
+    >
+      <p class="text-xs text-error-500 dark:text-error-400">
+        {chat_channel_error()}
+      </p>
+      <button
+        type="button"
+        class="btn btn-sm preset-tonal-surface"
+        onclick={() => channelsStore.retryTagma(tagmaId)}
+      >
+        {common_retry()}
+      </button>
+    </div>
+  {/if}
   <div class="h-full flex flex-col">
     <div class="flex-1 min-h-0">
       <ChannelChatPage {conversationId} />
+    </div>
+  </div>
+{:else if channelsStore.isAutoOpenFailed(tagmaId) && channelState.kind !== "pending"}
+  <!-- The last open attempt failed (budget entry) and none is in flight;
+       without this branch the opening placeholder would spin forever.
+       Retry re-arms and opens explicitly. -->
+  <div class="h-full grid place-items-center p-6">
+    <div class="text-center flex flex-col gap-3 max-w-sm">
+      <p class="text-sm text-error-500 dark:text-error-400">
+        {chat_channel_unavailable()}
+      </p>
+      <button
+        type="button"
+        class="btn preset-tonal-surface self-center"
+        onclick={() => channelsStore.retryTagma(tagmaId)}
+      >
+        {common_retry()}
+      </button>
     </div>
   </div>
 {:else}
