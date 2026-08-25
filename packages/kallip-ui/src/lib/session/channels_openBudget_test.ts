@@ -133,3 +133,23 @@ Deno.test(
     assertEquals(h.isAutoOpenFailed("t-1"), false);
   },
 );
+
+Deno.test(
+  "getTagmaChannelState derives unavailable from a recorded failure",
+  async () => {
+    const h = new Harness();
+    // Before any attempt: no conversation, no budget entry -> absent (the
+    // auto path is about to try, so the spinner is honest).
+    assertEquals(h.getTagmaChannelState("t-1").kind, "absent");
+    h.script = [new Error("net down")];
+    await h.ensureOpen(tagma);
+    // Budget entry, no conversation, nothing in flight: the settled dot,
+    // matching the chat page's unavailable + retry row (same source).
+    assertEquals(h.getTagmaChannelState("t-1").kind, "unavailable");
+    // A successful explicit retry clears the budget; the stub never
+    // inserts a conversation, so the state settles back to absent.
+    h.script = ["ok"];
+    await h.ensureOpen(tagma, { explicit: true });
+    assertEquals(h.getTagmaChannelState("t-1").kind, "absent");
+  },
+);

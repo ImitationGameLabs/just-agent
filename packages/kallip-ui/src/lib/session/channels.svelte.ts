@@ -51,6 +51,7 @@ interface OpenBudget {
  *  tagma-keyed chat page (see `ChannelsStore.getTagmaChannelState`). */
 export type TagmaChannelState =
   | { kind: "absent" }
+  | { kind: "unavailable" }
   | { kind: "pending"; conversationId?: string }
   | { kind: "open"; conversationId: string }
   | { kind: "offline"; conversationId: string }
@@ -133,17 +134,29 @@ export class ChannelsStore {
   localError: unknown = $state(null);
 
   /** Per-tagma transport state for the sidebar + the tagma-keyed chat page.
-   *  `absent` = no conversation and no open in flight; `pending` covers both an
-   *  in-flight `ensureOpen` (pendingOpens) and a conversation still in KEX
-   *  (status "opening"). `conversationId` is attached to every settled
-   *  non-absent kind so the tagma page can delegate to ChannelChatPage once the
-   *  channel exists. Reactive when read in `$derived`/`$effect`: it reads the
-   *  SvelteSet (pendingOpens), the SvelteMap (findByTagma lookup), and the
-   *  conversation's `$state` status. */
+   * `absent` = no conversation and no open in flight and no failure on
+   * record (auto-open is about to try); `unavailable` = no conversation
+   * but the failure budget holds an entry (cooldown or session-terminal:
+   * nothing is in flight and nothing will retry until a presence
+   * transition or an explicit retry, so the sidebar shows a settled dot
+   * instead of a spinner); `pending` covers both an
+   * in-flight `ensureOpen` (pendingOpens) and a conversation still in KEX
+   * (status "opening"). `conversationId` is attached to every settled
+   * non-absent kind so the tagma page can delegate to ChannelChatPage once the
+   * channel exists. Reactive when read in `$derived`/`$effect`: it reads the
+   * SvelteSet (pendingOpens), the SvelteMap (findByTagma lookup, openBudgets),
+   * and the conversation's `$state` status. */
   getTagmaChannelState(tagmaId: string): TagmaChannelState {
     if (this.pendingOpens.has(tagmaId)) return { kind: "pending" };
     const conv = this.findByTagma(tagmaId);
-    if (!conv) return { kind: "absent" };
+    if (!conv) {
+      // A recorded failure with no live conversation: the settled state.
+      // isAutoOpenFailed and the chat page's unavailable row read the same
+      // budget entry, so the sidebar and the chat page cannot disagree.
+      return this.openBudgets.has(tagmaId)
+        ? { kind: "unavailable" }
+        : { kind: "absent" };
+    }
     // A conv is normally inserted only after status "open"; the "opening" arm
     // is defensive for any future pre-open insertion path.
     switch (conv.status) {

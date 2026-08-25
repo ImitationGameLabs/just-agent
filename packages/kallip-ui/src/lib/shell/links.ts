@@ -98,6 +98,8 @@ export interface NavRoom {
  *    open      -> live (green)
  *    pending   -> pending (spinner; in-flight open or KEX)
  *    absent    -> pending (spinner; no channel yet -- click to connect)
+ *    unavailable -> down (grey; the auto-open budget holds a failure --
+ *    nothing in flight; the chat page shows its unavailable + retry row)
  *    offline   -> down (grey; we had a channel and the peer went away)
  *    error     -> error (red; click to retry) */
 export function tagmaNavIndicator(channel: TagmaChannelState): NavIndicator {
@@ -107,6 +109,8 @@ export function tagmaNavIndicator(channel: TagmaChannelState): NavIndicator {
     case "pending":
     case "absent":
       return "pending";
+    case "unavailable":
+      return "down";
     case "offline":
       return "down";
     case "error":
@@ -172,12 +176,12 @@ export function navFor(args: {
           // when it answers with an empty set.
           ...(instancesAvailable
             ? [
-              {
-                href: "/instances",
-                label: nav_instances(),
-                icon: icons.manageInstances,
-              },
-            ]
+                {
+                  href: "/instances",
+                  label: nav_instances(),
+                  icon: icons.manageInstances,
+                },
+              ]
             : []),
         ],
       },

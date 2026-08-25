@@ -176,7 +176,7 @@ Deno.test(
 
 Deno.test("tagmaNavIndicator maps each channel state (transport-only)", () => {
   // open -> live; pending/absent -> pending (spinner, click to connect);
-  // offline -> down; error -> error.
+  // unavailable/offline -> down; error -> error.
   assertEquals(
     tagmaNavIndicator({ kind: "open", conversationId: "c" }),
     "live",
@@ -186,6 +186,7 @@ Deno.test("tagmaNavIndicator maps each channel state (transport-only)", () => {
     "pending",
   );
   assertEquals(tagmaNavIndicator({ kind: "absent" }), "pending");
+  assertEquals(tagmaNavIndicator({ kind: "unavailable" }), "down");
   assertEquals(
     tagmaNavIndicator({ kind: "offline", conversationId: "c" }),
     "down",
