@@ -34,6 +34,11 @@ pub trait InstanceBackend: Send + Sync + 'static {
 
     /// Liveness of the backend itself, or one instance by slug.
     async fn health(&self, slug: Option<String>) -> Result<HealthReport, BackendError>;
+    /// Provisioning methods this backend supports, as the shared
+    /// product vocabulary (designated-user / isolated-user /
+    /// container). The web renders the create flow from this list;
+    /// an empty set hides the create entry, not the page.
+    fn capabilities(&self) -> Vec<String>;
 }
 
 /// The local backend: one UDS exchange per call against the host daemon.
@@ -79,6 +84,9 @@ impl InstanceBackend for UdsBackend {
     async fn health(&self, slug: Option<String>) -> Result<HealthReport, BackendError> {
         let wire = self.client.call(RequestBody::Health { slug }).await?;
         unwrap_health(wire)
+    }
+    fn capabilities(&self) -> Vec<String> {
+        vec!["designated-user".to_string()]
     }
 }
 

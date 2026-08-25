@@ -21,6 +21,10 @@ pub struct SpawnRequest {
     pub workspace: String,
     #[serde(default)]
     pub env: Vec<String>,
+    /// Provisioning method from the capability vocabulary; omitted =
+    /// the backend default. A value the backend does not support is
+    /// rejected before the backend is touched.
+    pub method: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +90,7 @@ pub fn api_routes() -> Router<AppState> {
         .route("/stop", post(stop))
         .route("/list", get(list))
         .route("/health", get(health))
+        .route("/capabilities", get(capabilities))
 }
 
 async fn spawn(
@@ -96,10 +101,24 @@ async fn spawn(
         slug,
         workspace,
         env,
+        method,
     }) = match payload {
         Ok(Json(body)) => Json(body),
         Err(rejection) => return bad_body(rejection),
     };
+    // Validate the provisioning method against the backend's advertised
+    // set before touching the backend: an unsupported value is a client
+    // error, and omitted keeps the backend default (zero change for
+    // existing callers).
+    if let Some(method) = &method
+        && !state.backend.capabilities().iter().any(|m| m == method)
+    {
+        return crate::error::fault(
+            StatusCode::BAD_REQUEST,
+            "unsupported_method",
+            format!("provisioning method not supported: {method}"),
+        );
+    }
     let outcome = state.backend.spawn(slug, workspace, env).await;
     respond(outcome)
 }
@@ -125,6 +144,10 @@ async fn list(State(state): State<AppState>) -> Response {
     respond(outcome)
 }
 
+async fn capabilities(State(state): State<AppState>) -> Response {
+    let supported = state.backend.capabilities();
+    Json(Capabilities { methods: supported }).into_response()
+}
 async fn health(
     State(state): State<AppState>,
     query: Result<Query<HealthQuery>, QueryRejection>,
@@ -172,6 +195,10 @@ pub struct Stopped {
     pub slug: String,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct Capabilities {
+    pub methods: Vec<String>,
+}
 #[derive(Debug, serde::Serialize)]
 pub struct InstanceList {
     pub instances: Vec<InstanceInfo>,

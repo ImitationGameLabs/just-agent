@@ -32,6 +32,10 @@ pub struct Config {
     /// compared; the platform mode uses the agora credentials below).
     #[arg(long, env = "KALLIP_INSTANCES_TOKEN")]
     pub token: Option<String>,
+    /// Instance source: the host daemon (the only implementation today;
+    /// a cloud orchestration backend is reserved but not built yet).
+    #[arg(long, env = "KALLIP_INSTANCES_BACKEND", default_value = "daemon")]
+    pub backend: String,
     /// Agora internal root for platform mode (e.g. http://127.0.0.1:7100);
     /// together with the internal token this enables agora-backed auth.
     #[arg(long, env = "KALLIP_INSTANCES_AGORA_URL")]
@@ -93,6 +97,7 @@ mod tests {
             daemon_socket: Some(PathBuf::from("/tmp/flag.sock")),
             static_dir: None,
             token: None,
+            backend: "daemon".into(),
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: String::new(),
@@ -111,6 +116,7 @@ mod tests {
             daemon_socket: None,
             static_dir: None,
             token: None,
+            backend: "daemon".into(),
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: String::new(),
@@ -127,6 +133,7 @@ mod tests {
             daemon_socket: None,
             static_dir: None,
             token: None,
+            backend: "daemon".into(),
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: String::new(),
@@ -149,6 +156,7 @@ mod tests {
             daemon_socket: None,
             static_dir: None,
             token: None,
+            backend: "daemon".into(),
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: " platform.internal , localhost ,".into(),

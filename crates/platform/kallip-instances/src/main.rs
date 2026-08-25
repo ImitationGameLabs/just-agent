@@ -20,8 +20,17 @@ async fn main() -> Result<()> {
     // non-loopback bind with neither platform nor standalone credentials
     // refuses to start — the open mode is a loopback-only convenience.
     let auth = resolve_auth(&config, &addr)?;
+    // The backend seam: daemon is the only implementation; anything else
+    // (a future cloud orchestration source) fails fast at boot rather
+    // than serving a half-configured surface.
+    let backend = match config.backend.as_str() {
+        "daemon" => UdsBackend::arc(DaemonClient::new(socket.clone())),
+        other => anyhow::bail!(
+            "KALLIP_INSTANCES_BACKEND={other} is not implemented; only \"daemon\" exists"
+        ),
+    };
     let state = AppState {
-        backend: UdsBackend::arc(DaemonClient::new(socket.clone())),
+        backend,
         auth,
         allowed_hosts: config.allowed_hosts(),
         cors_origins: config.cors_origins.clone(),

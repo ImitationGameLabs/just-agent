@@ -139,6 +139,9 @@ async fn full_management_round_trip_with_guards() {
     let (status, body) = send(&app, "GET", "/api/instances/list", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(body.contains("\"unauthorized\""), "{body}");
+    // Capabilities sits behind the same guard: no token, no list.
+    let (status, _body) = send(&app, "GET", "/api/instances/capabilities", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     // Foreign Host: 403, even with a valid token.
     let request = Request::get("/api/instances/list")
@@ -188,6 +191,34 @@ async fn full_management_round_trip_with_guards() {
     assert!(body.contains("\"slug\":\"web-e2e\""), "{body}");
     assert!(body.contains("\"pid\":"), "{body}");
     assert!(body.contains("\"port\":"), "{body}");
+    // An advertised-method fetch and an unsupported spawn method both
+    // speak the capability vocabulary.
+    let (status, body) = send(
+        &app,
+        "GET",
+        "/api/instances/capabilities",
+        Some("itest-token"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("designated-user"), "{body}");
+    let bad_method = serde_json::json!({
+        "slug": "web-e2e",
+        "workspace": "/tmp/itest",
+        "method": "container",
+    })
+    .to_string();
+    let (status, body) = send(
+        &app,
+        "POST",
+        "/api/instances/spawn",
+        Some("itest-token"),
+        Some(&bad_method),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("unsupported_method"), "{body}");
 
     // List sees it.
     let (status, body) = send(
@@ -342,6 +373,7 @@ fn refuses_to_start_unauthenticated_on_non_loopback() {
         daemon_socket: None,
         static_dir: None,
         token: None,
+        backend: "daemon".into(),
         agora_internal_url: None,
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
@@ -358,6 +390,7 @@ fn open_mode_allowed_on_loopback() {
         daemon_socket: None,
         static_dir: None,
         token: None,
+        backend: "daemon".into(),
         agora_internal_url: None,
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
@@ -377,6 +410,7 @@ fn half_configured_agora_url_refuses_to_start() {
         daemon_socket: None,
         static_dir: None,
         token: None,
+        backend: "daemon".into(),
         agora_internal_url: Some("http://127.0.0.1:7100".into()),
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
@@ -398,6 +432,7 @@ fn half_configured_agora_token_refuses_to_start() {
         daemon_socket: None,
         static_dir: None,
         token: None,
+        backend: "daemon".into(),
         agora_internal_url: None,
         agora_internal_token: Some("internal-secret".into()),
         allowed_hosts_raw: String::new(),
