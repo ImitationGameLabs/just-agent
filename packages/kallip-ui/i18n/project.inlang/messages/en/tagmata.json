@@ -9,5 +9,7 @@
   "tagmata_expired_badge": "expired",
   "tagmata_pending_badge": "pending",
   "tagmata_secret_title": "Secret shown only at mint time",
-  "tagmata_expires_in": "expires in {duration}"
+  "tagmata_expires_in": "expires in {duration}",
+  "tagmata_badge_hosted": "Hosted here",
+  "tagmata_badge_connected": "Self-run"
 }

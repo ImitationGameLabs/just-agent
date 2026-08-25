@@ -449,7 +449,7 @@ const SYNONYMS: string[][] = [
   ["nav_agents", "manage_agents_heading"],
   ["nav_profiles", "manage_profiles_heading"],
   ["nav_schedules", "manage_schedules_heading"],
-  ["nav_instances", "manage_instances_heading"],
+  ["nav_tagmata", "manage_instances_heading"],
   ["manage_instances_token_apply", "manage_profiles_apply"],
   ["tagma_presence_online", "room_member_online_aria"],
   ["tagma_presence_offline", "room_member_offline_aria", "shell_offline"],

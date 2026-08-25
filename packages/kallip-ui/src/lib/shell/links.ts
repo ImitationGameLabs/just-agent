@@ -22,7 +22,6 @@ import {
   nav_budget,
   nav_chat,
   nav_home,
-  nav_instances,
   nav_manage,
   nav_overview,
   nav_profiles,
@@ -171,14 +170,14 @@ export function navFor(args: {
             label: nav_schedules(),
             icon: icons.manageSchedules,
           },
-          // The instances entry is capability-driven: hidden while the
-          // service is unreachable, present (with the create card hidden)
-          // when it answers with an empty set.
+          // The tagmata entry is capability-driven: hidden while the
+          // local process host is unreachable, present (with the create
+          // card hidden) when it answers with an empty set.
           ...(instancesAvailable
             ? [
                 {
-                  href: "/instances",
-                  label: nav_instances(),
+                  href: "/tagmata",
+                  label: nav_tagmata(),
                   icon: icons.manageInstances,
                 },
               ]
@@ -191,7 +190,7 @@ export function navFor(args: {
     {
       title: nav_tagmata(),
       manage: {
-        href: "/instances",
+        href: "/tagmata",
         label: nav_tagma_management(),
         icon: icons.settings,
       },

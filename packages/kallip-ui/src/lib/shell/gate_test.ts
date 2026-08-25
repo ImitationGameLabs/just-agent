@@ -31,16 +31,14 @@ Deno.test("isPublicRoute flags /login, /register, /connect", () => {
 });
 
 Deno.test("config not loaded -> skeleton on every route (incl. /login)", () => {
-  for (
-    const pathname of [
-      "/",
-      "/login",
-      "/register",
-      "/connect",
-      "/tagmata",
-      "/settings",
-    ]
-  ) {
+  for (const pathname of [
+    "/",
+    "/login",
+    "/register",
+    "/connect",
+    "/tagmata",
+    "/settings",
+  ]) {
     assertEquals(decide({ loaded: false, mode: "online", pathname }), {
       kind: "skeleton",
     });
@@ -122,10 +120,9 @@ Deno.test(
 
 // --- offline protected ---
 
-Deno.test("offline + /tagmata -> redirect /local (no tagmata offline)", () => {
+Deno.test("offline + /tagmata -> render (mode-neutral unified page)", () => {
   assertEquals(decide({ mode: "offline", pathname: "/tagmata" }), {
-    kind: "redirect",
-    url: "/local",
+    kind: "render",
   });
 });
 
@@ -170,40 +167,21 @@ Deno.test(
   },
 );
 
-Deno.test("offline protected routes render (the local chat + settings)", () => {
-  for (
-    const pathname of [
+Deno.test(
+  "offline protected routes render (local chat + settings + /tagmata)",
+  () => {
+    for (const pathname of [
       "/local/chat",
       "/local/manage/overview",
       "/local/manage/budget",
       "/settings",
-      "/instances",
-    ]
-  ) {
-    assertEquals(decide({ mode: "offline", pathname }), { kind: "render" });
-  }
-});
-
-Deno.test(
-  "online + /instances is a normal protected route (signed in -> render, logged out -> /login)",
-  () => {
-    assertEquals(
-      decide({
-        mode: "online",
-        pathname: "/instances",
-        user: { user_id: "u1" },
-      }),
-      { kind: "render" },
-    );
-    assertEquals(
-      decide({ mode: "online", pathname: "/instances", user: null }),
-      {
-        kind: "redirect",
-        url: "/login?next=%2Finstances",
-      },
-    );
+      "/tagmata",
+    ]) {
+      assertEquals(decide({ mode: "offline", pathname }), { kind: "render" });
+    }
   },
 );
+
 
 Deno.test(
   "/account renders in both modes (the account hub is mode-agnostic)",

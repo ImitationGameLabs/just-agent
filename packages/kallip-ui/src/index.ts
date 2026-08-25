@@ -92,7 +92,6 @@ export { default as AgentsPage } from "./pages/manage/AgentsPage.svelte";
 export { default as AgentDetailPage } from "./pages/manage/AgentDetailPage.svelte";
 export { default as ProfilesPage } from "./pages/manage/ProfilesPage.svelte";
 export { default as SchedulesPage } from "./pages/manage/SchedulesPage.svelte";
-export { default as InstancesPage } from "./pages/InstancesPage.svelte";
 export { default as OnlineManagePage } from "./pages/manage/OnlineManagePage.svelte";
 export { budgetStore } from "./lib/manage/budget.svelte.ts";
 export { agentsStore } from "./lib/manage/agents.svelte.ts";
@@ -113,8 +112,6 @@ export { default as Composer } from "./components/Composer.svelte";
 export { default as ConversationView } from "./components/ConversationView.svelte";
 export { default as TagmaStatusHeader } from "./components/TagmaStatusHeader.svelte";
 
-// Tagmata dashboard
-export { default as TagmataDashboard } from "./components/tagmata/TagmataDashboard.svelte";
 export { default as TagmaCard } from "./components/tagmata/TagmaCard.svelte";
 export { default as EnrollmentCodeCard } from "./components/tagmata/EnrollmentCodeCard.svelte";
 export type {

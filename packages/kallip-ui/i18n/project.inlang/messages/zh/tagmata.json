@@ -9,5 +9,7 @@
   "tagmata_expired_badge": "已过期",
   "tagmata_pending_badge": "待注册",
   "tagmata_secret_title": "密钥仅在生成时显示",
-  "tagmata_expires_in": "{duration} 后过期"
+  "tagmata_expires_in": "{duration} 后过期",
+  "tagmata_badge_hosted": "本机托管",
+  "tagmata_badge_connected": "自托管"
 }

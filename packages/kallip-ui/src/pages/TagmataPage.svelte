@@ -1,10 +1,510 @@
 <script lang="ts">
-  import TagmataSection from "../components/tagmata/TagmataSection.svelte";
-  import { tagmata_title } from "../paraglide/messages.js";
+  // The unified tagmata page: one card per tagma across its lifecycle -- a
+  // pending enrollment code, an enrolled identity, and (when one backs the
+  // card) its host-side process, joined by the slug prefix convention. The
+  // registry half (codes + identities) is agora-side; the process half is
+  // the local process host, so the page is mode-neutral: offline the
+  // registry is simply absent and the page degrades to the process list.
+  // The page owns every store call; the cards and dialogs stay
+  // presentational (the CreateRoomDialog discipline). The AppShell expects
+  // the page root to scroll itself (h-full overflow-y-auto).
+  import {
+    agoraBaseUrlOrFail,
+    agoraSession,
+    lescheBaseUrlOrFail,
+  } from "../lib/session/agora.svelte";
+  import { channelsStore } from "../lib/session/channels.svelte";
+  import { realtimeStore } from "../lib/session/realtime.svelte.ts";
+  import { instancesStore } from "../lib/instances/instances.svelte.ts";
+  import {
+    CONNECT_TOKEN_KEY,
+    INSTANCES_TOKEN_KEY,
+    InstancesError,
+    instanceSlugFor,
+  } from "../lib/instances/client.ts";
+  import type { TagmaCardProps } from "../lib/tagmata.svelte.ts";
+  import ConfirmDialog from "../components/ConfirmDialog.svelte";
+  import CreateInstanceDialog, {
+    type AdvancedSpawnFields,
+  } from "../components/instances/CreateInstanceDialog.svelte";
+  import EnrollmentCodeCard from "../components/tagmata/EnrollmentCodeCard.svelte";
+  import TagmaCard from "../components/tagmata/TagmaCard.svelte";
+  import {
+    manage_instances_create_failed,
+    manage_instances_create_mint_failed,
+    manage_instances_empty,
+    manage_instances_error_bad_request,
+    manage_instances_error_internal,
+    manage_instances_error_invalid_spawn_input,
+    manage_instances_error_not_found,
+    manage_instances_error_not_running,
+    manage_instances_error_slug_taken,
+    manage_instances_error_spawn_timeout,
+    manage_instances_error_workspace_overlap,
+    manage_instances_forbidden,
+    manage_instances_heading,
+    manage_instances_host_forbidden,
+    manage_instances_load_failed,
+    manage_instances_loading,
+    manage_instances_new,
+    manage_instances_spawn_success,
+    manage_instances_stop,
+    manage_instances_stop_description,
+    manage_instances_stop_title,
+    manage_instances_token_apply,
+    manage_instances_token_label,
+    manage_instances_token_placeholder,
+    manage_instances_token_rejected,
+    manage_instances_unauthorized,
+    manage_instances_session_required,
+    manage_instances_unreachable,
+    nav_chat,
+    tagmata_load_failed,
+    tagmata_new,
+    tagmata_new_hint,
+    tagmata_title,
+  } from "../paraglide/messages.js";
+
+  $effect(() => {
+    instancesStore.startPolling(5000);
+    return () => instancesStore.stopPolling();
+  });
+
+  // --- create dialog (the two-path "New tagma" flow) ---------------------
+  let createOpen = $state(false);
+  let createBusy = $state(false);
+  let createError = $state<string | null>(null);
+  // The just-spawned success line lives here (not in the dialog): it must
+  // outlive the dialog, which closes on success.
+  let spawnResult = $state<{ slug: string; port: number } | null>(null);
+
+  const canSpawn = $derived(
+    instancesStore.capabilities?.includes("designated-user") ?? false,
+  );
+
+  // Service error codes to their localized line; the spawn paths and the
+  // stop dialog share this mapping through faultLine.
+  const codeMessage: Record<string, () => string> = {
+    slug_taken: manage_instances_error_slug_taken,
+    workspace_overlap: manage_instances_error_workspace_overlap,
+    invalid_spawn_input: manage_instances_error_invalid_spawn_input,
+    spawn_timeout: manage_instances_error_spawn_timeout,
+    not_found: manage_instances_error_not_found,
+    not_running: manage_instances_error_not_running,
+    bad_request: manage_instances_error_bad_request,
+    internal: manage_instances_error_internal,
+  };
+
+  function faultLine(cause: unknown): string {
+    if (cause instanceof InstancesError) {
+      const line = cause.code ? codeMessage[cause.code] : undefined;
+      if (line) {
+        return line();
+      }
+      if (cause.kind === "unauthorized") {
+        return manage_instances_unauthorized();
+      }
+    }
+    return manage_instances_error_internal();
+  }
+
+  // One-click (dialog path A): mint, then spawn with the relay env
+  // pointing at this deployment so the tagma enrolls itself on first
+  // start. On success close the dialog and surface the port line.
+  async function onOneClick(opts: { workspace: string }): Promise<void> {
+    createBusy = true;
+    spawnResult = null;
+    createError = null;
+    try {
+      const minted = await agoraSession.mintTagma();
+      if (!minted) {
+        createError = manage_instances_create_mint_failed();
+        return;
+      }
+      const slug = instanceSlugFor(minted.id);
+      const env = [
+        `KALLIP_TAGMA_RELAY_AGORA_URL=${agoraBaseUrlOrFail()}`,
+        `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=${minted.code}`,
+        `KALLIP_TAGMA_RELAY_LESCHE_URL=${lescheBaseUrlOrFail()}`,
+      ];
+      try {
+        const result = await instancesStore.spawn({
+          slug,
+          workspace: opts.workspace,
+          env,
+        });
+        spawnResult = { slug: result.slug, port: result.port };
+        createOpen = false;
+      } catch (cause) {
+        // The minted code stays valid (the pending card shows its masked
+        // form); the advanced path can redeem it by hand.
+        console.error("[tagmata] one-click spawn failed:", cause);
+        createError = manage_instances_create_failed();
+      }
+    } finally {
+      createBusy = false;
+    }
+  }
+
+  // Advanced (dialog path A's disclosure): assemble the daemon env
+  // allowlist from the fixed optional fields -- no free-form KEY=VALUE
+  // entry (the daemon validates keys).
+  async function onSpawn(f: AdvancedSpawnFields): Promise<void> {
+    createBusy = true;
+    spawnResult = null;
+    createError = null;
+    const env: string[] = [];
+    if (f.agoraUrl.trim()) {
+      env.push("KALLIP_TAGMA_RELAY_AGORA_URL=" + f.agoraUrl.trim());
+    }
+    if (f.enrollmentCode.trim()) {
+      env.push("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=" + f.enrollmentCode.trim());
+    }
+    if (f.lescheUrl.trim()) {
+      env.push("KALLIP_TAGMA_RELAY_LESCHE_URL=" + f.lescheUrl.trim());
+    }
+    if (f.instanceToken.trim()) {
+      env.push("KALLIP_AUTH_TOKEN=" + f.instanceToken.trim());
+    }
+    if (f.llmProvider.trim()) {
+      env.push("KALLIP_LLM_PROVIDER=" + f.llmProvider.trim());
+    }
+    if (f.llmModel.trim()) {
+      env.push("KALLIP_LLM_MODEL=" + f.llmModel.trim());
+    }
+    // The key variable name follows the provider choice.
+    if (f.llmApiKey.trim()) {
+      const keyVar =
+        f.llmProvider.trim() === "openai-compatible"
+          ? "KALLIP_LLM_OPENAI_COMPAT_API_KEY"
+          : "KALLIP_LLM_DEEPSEEK_API_KEY";
+      env.push(keyVar + "=" + f.llmApiKey.trim());
+    }
+    try {
+      const result = await instancesStore.spawn({
+        slug: f.slug,
+        workspace: f.workspace,
+        env,
+      });
+      spawnResult = { slug: result.slug, port: result.port };
+      if (f.instanceToken.trim()) {
+        sessionStorage.setItem(CONNECT_TOKEN_KEY, f.instanceToken.trim());
+      }
+      createOpen = false;
+    } catch (cause) {
+      createError = faultLine(cause);
+    } finally {
+      createBusy = false;
+    }
+  }
+
+  // Local-agent (dialog path B): mint only; the dialog holds the
+  // plaintext + QR. mintTagma self-reports failure (null + its own error
+  // state), so map null to the dialog's error line here.
+  async function onMint(): Promise<{ id: string; code: string } | null> {
+    createBusy = true;
+    createError = null;
+    try {
+      const minted = await agoraSession.mintTagma();
+      if (!minted) createError = manage_instances_create_mint_failed();
+      return minted;
+    } finally {
+      createBusy = false;
+    }
+  }
+
+  // --- stop dialog (the hosted card's Stop action) ------------------------
+  let stopTarget = $state<string | null>(null);
+  let stopBusy = $state(false);
+  let stopError = $state<string | null>(null);
+
+  async function onStopConfirmed() {
+    if (!stopTarget || stopBusy) return;
+    stopBusy = true;
+    stopError = null;
+    try {
+      await instancesStore.stop(stopTarget);
+      stopTarget = null;
+    } catch (cause) {
+      stopError = faultLine(cause);
+    } finally {
+      stopBusy = false;
+    }
+  }
+
+  // --- standalone-mode token entry (the 401 banner) -----------------------
+  let tokenInput = $state("");
+  let tokenRejected = $state(false);
+
+  async function onTokenApply(event: SubmitEvent) {
+    event.preventDefault();
+    if (!tokenInput.trim()) return;
+    sessionStorage.setItem(INSTANCES_TOKEN_KEY, tokenInput.trim());
+    await instancesStore.refresh();
+    tokenRejected = instancesStore.errorKind === "unauthorized";
+  }
+
+  const kindMessage = {
+    unauthorized: manage_instances_unauthorized,
+    forbidden: manage_instances_forbidden,
+    unreachable: manage_instances_unreachable,
+    other: manage_instances_load_failed,
+  } as const;
+
+  // --- the card list -------------------------------------------------------
+  // Join identities (enrolled tagmas) with processes by the one-click slug
+  // prefix convention; unmatched entries keep their own card shape (the
+  // identity half or the process half alone). Identity cards re-derive
+  // presence here ("checking" until realtime's snapshot resolves).
+  const devices = $derived.by(() => {
+    const bySlug = new Map(
+      instancesStore.instances.map((i) => [i.slug, i] as const),
+    );
+    const matched = new Set<string>();
+    const rows: {
+      key: string;
+      tagma?: TagmaCardProps;
+      process?: {
+        slug: string;
+        workspace: string;
+        running: boolean;
+        port?: number;
+      };
+    }[] = [];
+    for (const c of agoraSession.enrolledCards) {
+      const slug = instanceSlugFor(c.tagmaId);
+      const inst = bySlug.get(slug);
+      if (inst) matched.add(slug);
+      rows.push({
+        key: c.tagmaId,
+        tagma: {
+          ...c,
+          presence: realtimeStore.resolved
+            ? realtimeStore.has(c.tagmaId)
+              ? "online"
+              : "offline"
+            : "checking",
+          status: realtimeStore.statusFor(c.tagmaId),
+        },
+        process: inst
+          ? {
+              slug: inst.slug,
+              workspace: inst.workspace,
+              running: inst.running,
+              port: instancesStore.spawnedPorts[inst.slug],
+            }
+          : undefined,
+      });
+    }
+    for (const inst of instancesStore.instances) {
+      if (matched.has(inst.slug)) continue;
+      rows.push({
+        key: inst.slug,
+        process: {
+          slug: inst.slug,
+          workspace: inst.workspace,
+          running: inst.running,
+          port: instancesStore.spawnedPorts[inst.slug],
+        },
+      });
+    }
+    return rows;
+  });
+
+  const pending = $derived(agoraSession.pending);
+
+  // Both halves must settle before the empty state may fire (the process
+  // list loaded or failed; the registry loaded or failed for the signed-in
+  // user) -- else a "no tagmas" hero flashes over an in-flight fetch. A
+  // daemon error keeps the banner up instead of the hero.
+  const settled = $derived(
+    (instancesStore.loaded || instancesStore.errorKind !== null) &&
+      (agoraSession.user == null ||
+        agoraSession.tagmataLoaded ||
+        agoraSession.tagmataError !== null),
+  );
+  const empty = $derived(
+    settled &&
+      instancesStore.errorKind === null &&
+      devices.length === 0 &&
+      pending.length === 0,
+  );
+
+  function openCreate() {
+    createError = null;
+    createOpen = true;
+  }
+
+  // Revoke tears down the revoked tagma's open channel + purges its cache,
+  // so a shared device does not keep the previous user's plaintext
+  // transcript (the retired section's discipline).
+  async function onRevoke(id: string) {
+    await agoraSession.revokeTagma(id);
+    channelsStore.closeByTagma(id);
+  }
 </script>
 
 <svelte:head><title>{tagmata_title()}</title></svelte:head>
 
-<!-- Thin /tagmata route: the registry lives in TagmataSection so this page
-     and the unified /instances page share one source. -->
-<TagmataSection />
+<!-- Single scroll root (the AppShell overflow-hidden contract); the
+     centered narrow column matches the other manage pages. -->
+<div class="h-full overflow-y-auto">
+  <div class="p-6 max-w-2xl mx-auto space-y-6">
+    <h1 class="text-xl font-semibold hidden md:block">
+      {manage_instances_heading()}
+    </h1>
+
+    {#if spawnResult}
+      <p class="text-sm text-success-500 dark:text-success-400">
+        {manage_instances_spawn_success({
+          slug: spawnResult.slug,
+          port: spawnResult.port,
+        })}
+        <a
+          class="underline underline-offset-2 ml-1"
+          href={"/connect?tagmaUrl=http://127.0.0.1:" + spawnResult.port}
+          >{nav_chat()}</a
+        >
+      </p>
+    {/if}
+
+    <!-- The process-host banner is non-blocking: the registry cards do not
+         depend on it, so its failure costs the process rows only. -->
+    {#if instancesStore.errorKind}
+      {#if instancesStore.errorKind === "unauthorized" && instancesStore.errorCode === "admin_session_required"}
+        <!-- Platform mode, cookie channel: no token to paste -- the
+             admin login itself carries the right. -->
+        <p class="text-error-500 dark:text-error-400 text-sm">
+          {manage_instances_session_required()}
+        </p>
+      {:else if instancesStore.errorKind === "unauthorized"}
+        <form class="space-y-2" onsubmit={onTokenApply}>
+          <p class="text-error-500 dark:text-error-400 text-sm">
+            {manage_instances_unauthorized()}
+          </p>
+          <div class="flex gap-2">
+            <input
+              class="input"
+              type="password"
+              autocomplete="off"
+              bind:value={tokenInput}
+              placeholder={manage_instances_token_placeholder()}
+              aria-label={manage_instances_token_label()}
+            />
+            <button type="submit" class="btn preset-filled-primary-500 shrink-0"
+              >{manage_instances_token_apply()}</button
+            >
+          </div>
+          {#if tokenRejected}
+            <p class="text-xs text-error-500 dark:text-error-400">
+              {manage_instances_token_rejected()}
+            </p>
+          {/if}
+        </form>
+      {:else}
+        <p class="text-error-500 dark:text-error-400 text-sm">
+          {#if instancesStore.errorKind === "forbidden" && instancesStore.errorCode === "host_forbidden"}
+            {manage_instances_host_forbidden()}
+          {:else}
+            {kindMessage[instancesStore.errorKind]()}
+          {/if}
+        </p>
+      {/if}
+    {/if}
+
+    {#if agoraSession.tagmataError}
+      <p class="text-error-500 dark:text-error-400 text-sm">
+        {tagmata_load_failed()}
+      </p>
+    {/if}
+
+    {#if instancesStore.errorKind === null && !instancesStore.loaded}
+      <p class="text-sm opacity-70">{manage_instances_loading()}</p>
+    {:else if agoraSession.user != null && !agoraSession.tagmataLoaded && !agoraSession.tagmataError}
+      <p class="text-sm opacity-70">{manage_instances_loading()}</p>
+    {/if}
+
+    <!-- Header row: the single create action. The daemon health line is
+         deliberately gone -- process trouble surfaces through the error
+         banner above, not a service-status readout. -->
+    <div class="flex items-center justify-end gap-4 flex-wrap">
+      <button
+        type="button"
+        class="btn preset-filled-primary-500 shrink-0"
+        onclick={openCreate}
+      >
+        + {manage_instances_new()}
+      </button>
+    </div>
+
+    {#if empty}
+      <!-- First-run empty state: promote the single primary action (the
+           retired dashboard's hero pattern, opening the two-path dialog). -->
+      <div class="p-10 grid place-items-center gap-4">
+        <p class="text-sm opacity-70">{manage_instances_empty()}</p>
+        <button
+          type="button"
+          class="card preset-filled-primary-500 w-full max-w-md p-8 text-center transition hover:brightness-110"
+          onclick={openCreate}
+        >
+          <div class="text-2xl font-semibold">{tagmata_new()}</div>
+          <div class="opacity-80">{tagmata_new_hint()}</div>
+        </button>
+      </div>
+    {:else}
+      <!-- Pending cards first (time-sensitive codes), then the joined
+           device cards. -->
+      <div class="flex flex-col gap-3">
+        {#each pending as code (code.id)}
+          <EnrollmentCodeCard
+            {code}
+            onCopy={(id, secret) => agoraSession.copySecret(id, secret)}
+            {onRevoke}
+            onRename={(id, label) => agoraSession.renameTagma(id, label)}
+            copied={agoraSession.copiedCodeId === code.id}
+          />
+        {/each}
+        {#each devices as d (d.key)}
+          <TagmaCard
+            tagma={d.tagma}
+            process={d.process}
+            onRename={(id, label) => agoraSession.renameTagma(id, label)}
+            {onRevoke}
+            onStop={(slug) => {
+              stopTarget = slug;
+              stopError = null;
+            }}
+          />
+        {/each}
+      </div>
+    {/if}
+
+    <ConfirmDialog
+      open={stopTarget !== null}
+      title={manage_instances_stop_title()}
+      description={manage_instances_stop_description({
+        slug: stopTarget ?? "",
+      })}
+      confirmLabel={manage_instances_stop()}
+      busy={stopBusy}
+      tone="danger"
+      error={stopError}
+      onConfirm={onStopConfirmed}
+      onCancel={() => {
+        stopTarget = null;
+        stopError = null;
+      }}
+    />
+
+    <CreateInstanceDialog
+      open={createOpen}
+      busy={createBusy}
+      error={createError}
+      {canSpawn}
+      {onOneClick}
+      {onSpawn}
+      {onMint}
+      onCancel={() => (createOpen = false)}
+    />
+  </div>
+</div>

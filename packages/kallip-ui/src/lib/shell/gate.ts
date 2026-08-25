@@ -9,13 +9,13 @@
 //     AgoraSessionStore: `undefined` = unresolved (whoami running / failed),
 //     `null` = resolved logged-out, object = signed in. `authError` is set when
 //     whoami failed with a non-auth error (e.g. agora unreachable). Online routes
-//     are /tagmata + /settings + /chat/{server-id} (relay conversations) + the mode-neutral /instances (the unified instances page). `/`,
-//     /local/* (offline-only routes), and the retired `/chat/local` marker are
-//     not valid online destinations, so all redirect to /tagmata.
-//
+//     are /settings + /chat/{server-id} (relay conversations) + the mode-neutral
+//     /tagmata (the unified tagmata page: registry cards + local processes). `/`,
+//     /local/* (offline-only routes), and the retired `/chat/local` marker
+//     are not valid online destinations and redirect to /tagmata.
 //   - "offline" -- no auth, no identity. `connected` reflects the local tagma
-//     transport. Offline routes are /local/* (chat + management). /tagmata
-//     is unavailable and redirects to /local; `/` redirects to /local.
+//     transport. Offline routes are /local/* (chat + management) + the
+//     mode-neutral /tagmata; the pre-merge /instances route is gone (404).
 //
 // Public (front-door) routes are /login, /register (online) and /connect
 // (offline). The gate owns all post-mode-flip / post-connect navigation: pages
@@ -115,11 +115,11 @@ export function appGateDecision(args: {
   // Protected routes.
   if (args.mode === "offline") {
     // All /local/* routes render in offline mode (the single local-only gate
-    // covering chat + management). /instances is mode-neutral: the unified
-    // instances page (enroll-code + instance cards) is reached from either
-    // family's nav, so it renders in offline mode too.
+    // covering chat + management). /tagmata is mode-neutral: the unified
+    // tagmata page is reached from either family's nav, so it renders in
+    // offline mode too.
     if (
-      args.pathname === "/instances" ||
+      args.pathname === "/tagmata" ||
       args.pathname === "/local" ||
       args.pathname.startsWith("/local/")
     ) {
@@ -129,12 +129,11 @@ export function appGateDecision(args: {
     if (args.pathname === "/chat/local") {
       return { kind: "redirect", url: "/local" };
     }
-    // /tagmata + /rooms are online-only (the agora control plane is
+    // /rooms is online-only (the agora control plane is
     // unreachable offline); `/` is the old offline root. A non-local
     // /chat/{id} deep link is meaningless offline (no relay conversations
     // exist). All collapse to the local home.
     if (
-      args.pathname === "/tagmata" ||
       args.pathname === "/rooms" ||
       args.pathname === "/" ||
       args.pathname.startsWith("/chat/") ||

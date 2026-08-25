@@ -40,7 +40,7 @@ Deno.test(
     assertEquals(shape(sections), [
       {
         title: "Tagmata",
-        manage: "/instances",
+        manage: "/tagmata",
         hub: null,
         smallScreenHidden: false,
         items: [],
@@ -70,7 +70,7 @@ Deno.test(
     assertEquals(shape(sections), [
       {
         title: "Tagmata",
-        manage: "/instances",
+        manage: "/tagmata",
         hub: null,
         smallScreenHidden: false,
         items: [],
@@ -116,7 +116,7 @@ Deno.test("navFor online lists every enrolled tagma under Tagmata", () => {
     [
       {
         title: "Tagmata",
-        manage: "/instances",
+        manage: "/tagmata",
         hub: null,
         smallScreenHidden: false,
         items: [
@@ -158,7 +158,7 @@ Deno.test(
     assertEquals(shape(sections), [
       {
         title: "Tagmata",
-        manage: "/instances",
+        manage: "/tagmata",
         hub: null,
         smallScreenHidden: false,
         items: [],
@@ -240,7 +240,7 @@ Deno.test(
         "/local/manage/agents",
         "/local/manage/profiles",
         "/local/manage/schedules",
-        "/instances",
+        "/tagmata",
       ],
     );
   },
