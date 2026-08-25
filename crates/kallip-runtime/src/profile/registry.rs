@@ -32,13 +32,11 @@ pub struct ProfileRegistry {
 }
 
 impl ProfileRegistry {
-    /// Construct and validate: non-empty tier list, every tier non-empty. Provider existence,
-    /// family, and base_url are validated by the tagma when it builds the active set (see
-    /// `kallip_tagma::backend`); the registry only checks structure.
+    /// Construct and validate: every tier non-empty; an empty tier list is allowed
+    /// (profile-less boot — select_* errors per call until a profile is added). Provider
+    /// existence, family, and base_url are validated by the tagma when it builds the
+    /// active set (see `kallip_tagma::backend`); the registry only checks structure.
     pub fn new(tiers: Vec<Tier>, source: Arc<dyn BackendSource>) -> Result<Self> {
-        if tiers.is_empty() {
-            bail!("profile registry has no tiers");
-        }
         for (i, tier) in tiers.iter().enumerate() {
             if tier.profiles.is_empty() {
                 bail!("tier at index {i} has no profiles");
@@ -52,15 +50,16 @@ impl ProfileRegistry {
     }
 
     /// Resolve the agent's tier by supervisor depth: `tiers[depth.min(len-1)]`. Root (depth 0)
-    /// maps to the highest-capability tier; deeper delegation maps to lower tiers. Infallible —
-    /// [`new`](Self::new) guarantees a non-empty tier list, so the index always clamps in range.
+    /// maps to the highest-capability tier; deeper delegation maps to lower tiers.
+    /// Errors with a management-page hint when the registry is empty (profile-less boot).
     ///
     /// Returns the resolved [`Tier`] handle so the caller (and the failover loop) can walk
     /// `tier.profiles`. The active profile is always `tier.profiles[0]`. Callers that need to
     /// know whether `depth` was clamped (e.g. to warn) compare `depth` against
     /// [`tiers().len()`](Self::tiers).
-    pub fn select_profile(&self, depth: usize) -> &Tier {
-        &self.tiers[self.tier_index(depth)]
+    pub fn select_profile(&self, depth: usize) -> Result<&Tier> {
+        let idx = self.tier_index(depth).ok_or_else(no_profile_configured)?;
+        Ok(&self.tiers[idx])
     }
 
     /// Same resolution as [`select_profile`](Self::select_profile), but also returns the
@@ -68,15 +67,18 @@ impl ProfileRegistry {
     /// carry the pair without re-deriving it. The pair is taken atomically at resolution
     /// time — after a registry swap but before an apply, a live agent still holds its old
     /// (index, tier) pair, which is what its client is actually using.
-    pub fn select_tier(&self, depth: usize) -> (usize, &Tier) {
-        let idx = self.tier_index(depth);
-        (idx, &self.tiers[idx])
+    pub fn select_tier(&self, depth: usize) -> Result<(usize, &Tier)> {
+        let idx = self.tier_index(depth).ok_or_else(no_profile_configured)?;
+        Ok((idx, &self.tiers[idx]))
     }
 
     /// The clamped tier index for `depth` (the single resolution rule; see
     /// [`select_profile`](Self::select_profile)).
-    fn tier_index(&self, depth: usize) -> usize {
-        depth.min(self.tiers.len() - 1)
+    fn tier_index(&self, depth: usize) -> Option<usize> {
+        if self.tiers.is_empty() {
+            return None;
+        }
+        Some(depth.min(self.tiers.len() - 1))
     }
 
     /// Build a [`ChatClient`] for a profile, looking up its provider's backend via the
@@ -99,6 +101,15 @@ impl ProfileRegistry {
         }
         Ok(ChatClient::new(backend, options))
     }
+}
+
+/// Hint surfaced by `select_*` on an empty registry (and reused verbatim by the
+/// tagma's sentinel backend, so the zero-profile story reads one voice).
+pub const NO_PROFILE_HINT: &str =
+    "no model profile is configured; add one via the tagma management page";
+
+fn no_profile_configured() -> anyhow::Error {
+    anyhow::anyhow!(NO_PROFILE_HINT)
 }
 
 #[cfg(test)]
@@ -157,7 +168,7 @@ mod tests {
     #[test]
     fn select_profile_depth_zero_is_first_tier() {
         let reg = single_tier_registry();
-        let tier = reg.select_profile(0);
+        let tier = reg.select_profile(0).unwrap();
         assert_eq!(tier.active_profile().id, "p1");
         assert_eq!(tier.active_profile().model, "deepseek-test");
     }
@@ -166,13 +177,16 @@ mod tests {
     fn select_profile_depth_routes_and_clamps() {
         let reg = two_tier_registry();
         // depth 0 (root) → tiers[0] (pro); depth 1 → tiers[1] (flash); beyond clamps to the last.
-        assert_eq!(reg.select_profile(0).active_profile().model, "deepseek-pro");
         assert_eq!(
-            reg.select_profile(1).active_profile().model,
+            reg.select_profile(0).unwrap().active_profile().model,
+            "deepseek-pro"
+        );
+        assert_eq!(
+            reg.select_profile(1).unwrap().active_profile().model,
             "deepseek-flash"
         );
         assert_eq!(
-            reg.select_profile(9).active_profile().model,
+            reg.select_profile(9).unwrap().active_profile().model,
             "deepseek-flash"
         );
     }
@@ -181,10 +195,10 @@ mod tests {
         let reg = two_tier_registry();
         // The pair must agree with select_profile at every clamped depth.
         for depth in [0, 1, 9] {
-            let (idx, tier) = reg.select_tier(depth);
+            let (idx, tier) = reg.select_tier(depth).unwrap();
             assert_eq!(
                 tier.active_profile().model,
-                reg.select_profile(depth).active_profile().model
+                reg.select_profile(depth).unwrap().active_profile().model
             );
             let clamped = depth.min(reg.tiers().len() - 1);
             assert_eq!(idx, clamped);
@@ -194,16 +208,24 @@ mod tests {
     #[test]
     fn build_client_binds_model_and_system_prompt() {
         let reg = single_tier_registry();
-        let p = reg.select_profile(0).active_profile().clone();
+        let p = reg.select_profile(0).unwrap().active_profile().clone();
         let client = reg.build_client(&p, Some("sp".into())).unwrap();
         assert_eq!(client.model(), "deepseek-test");
         assert_eq!(client.system_prompt(), Some("sp"));
     }
 
     #[test]
-    fn new_rejects_empty_tier_list() {
-        let res = ProfileRegistry::new(vec![], Arc::new(MapSource(HashMap::new())));
-        assert!(res.is_err());
+    fn new_allows_empty_tier_list_and_select_errors() {
+        let reg = ProfileRegistry::new(vec![], Arc::new(MapSource(HashMap::new())))
+            .expect("empty tier list is constructible");
+        let err = reg
+            .select_tier(0)
+            .expect_err("select on an empty registry errors");
+        assert!(
+            format!("{err}").contains("management page"),
+            "error should point at the management page, got: {err}"
+        );
+        assert!(reg.select_profile(0).is_err());
     }
 
     #[test]
@@ -230,7 +252,7 @@ mod tests {
             Arc::new(MapSource(HashMap::new())),
         )
         .unwrap();
-        let profile = reg.select_profile(0).active_profile().clone();
+        let profile = reg.select_profile(0).unwrap().active_profile().clone();
         let err = reg
             .build_client(&profile, None)
             .expect_err("build_client should error on a missing provider");

@@ -13,4 +13,4 @@ pub mod registry;
 pub use config::{ProfileConfig, config_path, load, save};
 pub use just_llm_client::ChatClient;
 pub use model::{Profile, Provider, Tier};
-pub use registry::{BackendSource, ProfileRegistry};
+pub use registry::{BackendSource, NO_PROFILE_HINT, ProfileRegistry};

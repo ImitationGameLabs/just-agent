@@ -268,7 +268,10 @@ pub(crate) async fn enqueue_prompt(
         let config = live.identity.config.clone();
         let (tier_index, tier) = {
             let bundle = state.profiles.load();
-            let (idx, tier) = bundle.registry.select_tier(config.permissions.depth());
+            let (idx, tier) = bundle
+                .registry
+                .select_tier(config.permissions.depth())
+                .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
             (idx, tier.clone())
         };
 

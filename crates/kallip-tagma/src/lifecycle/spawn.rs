@@ -115,14 +115,19 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
         // Install the active profile's declared context window (authoritative on both paths — the
         // implicit env profile derives it from KALLIP_CONTEXT_WINDOW_TOKENS), then build the
         // client. The tier's remaining profiles are the within-tier failover chain, walked by the
-        // runner on `RequestFailure::Failover`.
+        // runner on `RequestFailure::Failover`. The profile-less root instead
+        // gets the sentinel client (see `backend::UnconfiguredBackend`).
         let profile = args.tier.active_profile();
         args.config.set_context_window(profile.max_context_window)?;
-        args.shared_state
-            .profiles
-            .load()
-            .registry
-            .build_client(profile, Some(system_prompt.clone()))?
+        if profile.endpoint == crate::backend::UNCONFIGURED {
+            crate::backend::unconfigured_client(Some(system_prompt.clone()))
+        } else {
+            args.shared_state
+                .profiles
+                .load()
+                .registry
+                .build_client(profile, Some(system_prompt.clone()))?
+        }
     };
 
     // Mint the prompt channel before building the tool dispatch so a background
@@ -429,8 +434,18 @@ impl<'a> Materialize<'a> {
         let depth = config.permissions.depth();
         let (tier_index, tier) = {
             let bundle = state.profiles.load();
-            let (idx, tier) = bundle.registry.select_tier(depth);
-            (idx, tier.clone())
+            match bundle.registry.select_tier(depth) {
+                Ok((idx, tier)) => (idx, tier.clone()),
+                // Profile-less boot: the root registers against a placeholder
+                // profile (endpoint "unconfigured" has no provider), so the
+                // tagma — and its management page — comes up; the root's
+                // first LLM call then fails per call with the
+                // management-page hint (see `backend::unconfigured_tier`).
+                // Subagent spawns reject instead — a client error the caller
+                // can act on.
+                Err(_) if is_root => crate::backend::unconfigured_tier(),
+                Err(e) => return Err(ApiError::bad_request(format!("{e:#}"))),
+            }
         };
 
         let store = Arc::new(tokio::sync::Mutex::new(ContextStore::new()));

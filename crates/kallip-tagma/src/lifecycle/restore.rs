@@ -201,6 +201,23 @@ fn validate_permission_class_from_chain(
 }
 
 /// Restore a single persisted agent to a running agent.
+/// Resolve the restore-time tier, mirroring the spawn path's profile-less
+/// boot: a root restoring against an empty registry gets the placeholder
+/// tier (its LLM calls fail per call with the management-page hint until
+/// a profile is applied); a subagent without a tier stays a restore
+/// failure → Faulted.
+fn tier_for_restore(
+    registry: &kallip_runtime::profile::ProfileRegistry,
+    depth: usize,
+    is_root: bool,
+) -> anyhow::Result<(usize, kallip_runtime::profile::Tier)> {
+    match registry.select_tier(depth) {
+        Ok((idx, tier)) => Ok((idx, tier.clone())),
+        Err(_) if is_root => Ok(crate::backend::unconfigured_tier()),
+        Err(e) => Err(e),
+    }
+}
+
 async fn restore_one(
     p: persistence::PendingRestore,
     shutdown: CancellationToken,
@@ -272,7 +289,7 @@ async fn restore_one(
     // the agent's depth exceeds the tier list: it clamps to the lowest-capability tier.
     let depth = config.permissions.depth();
     let tier_count = shared_state.profiles.load().registry.tiers().len();
-    if depth >= tier_count {
+    if depth >= tier_count && tier_count > 0 {
         tracing::warn!(
             depth,
             tier_count,
@@ -281,8 +298,7 @@ async fn restore_one(
     }
     let (tier_index, tier) = {
         let bundle = shared_state.profiles.load();
-        let (idx, tier) = bundle.registry.select_tier(depth);
-        (idx, tier.clone())
+        tier_for_restore(&bundle.registry, depth, p.meta.created_by.is_none())?
     };
 
     let store = Arc::new(tokio::sync::Mutex::new(restored.store));
@@ -713,12 +729,35 @@ pub async fn restore_agents(state: &SharedState) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChainNode, faulted_from_meta, validate_permission_class_from_chain};
+    use super::{
+        ChainNode, faulted_from_meta, tier_for_restore, validate_permission_class_from_chain,
+    };
     use kallip_common::agentid::AgentId;
     use kallip_common::policy::ExecPolicy;
     use kallip_runtime::config::PermissionClass;
     use kallip_runtime::persistence::AgentMeta;
 
+    // Minimal BackendSource: an empty registry never consults it.
+    struct NilSource;
+    impl kallip_runtime::profile::BackendSource for NilSource {
+        fn get(&self, _: &str) -> anyhow::Result<std::sync::Arc<dyn just_llm_client::LlmBackend>> {
+            anyhow::bail!("nil source")
+        }
+    }
+
+    #[test]
+    fn empty_registry_restores_root_against_placeholder_and_faults_subagent() {
+        let reg = kallip_runtime::profile::ProfileRegistry::new(
+            Vec::new(),
+            std::sync::Arc::new(NilSource),
+        )
+        .expect("empty tier list is constructible");
+        let (idx, tier) = tier_for_restore(&reg, 0, true).expect("root restores");
+        assert_eq!(idx, 0);
+        assert_eq!(tier.active_profile().endpoint, crate::backend::UNCONFIGURED);
+        let err = tier_for_restore(&reg, 1, false).expect_err("subagent faults");
+        assert!(format!("{err:#}").contains("management page"));
+    }
     // A supervisor chain node carrying only the fields the validator reads
     // (permissions_class) — the rest are defaulted/minimal.
     fn node(id: &str, class: PermissionClass) -> ChainNode {

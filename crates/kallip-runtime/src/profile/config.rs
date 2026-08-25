@@ -45,12 +45,23 @@ pub fn load() -> Result<ProfileConfig> {
 }
 
 /// Build the implicit single-profile registry from `KALLIP_LLM_*` env (the env path).
+/// With no KALLIP_LLM_PROVIDER set, returns an empty config so the tagma
+/// boots profile-less; the management page then adds the first profile.
 ///
 /// The profile's `max_context_window` is derived from `KALLIP_CONTEXT_WINDOW_TOKENS`
 /// (default `128_000`), so the env path and the config-file path both carry an authoritative
 /// window installed via `set_context_window` at spawn.
 pub fn from_env() -> Result<ProfileConfig> {
-    let provider = env_str("KALLIP_LLM_PROVIDER")?;
+    // An unset provider boots the empty registry; a set-but-incomplete
+    // provider spec falls through to the hard errors below (fail loud on
+    // half-configuration, not a silent empty profile).
+    let Ok(provider) = std::env::var("KALLIP_LLM_PROVIDER") else {
+        return Ok(ProfileConfig {
+            tiers: Vec::new(),
+            endpoints: HashMap::new(),
+            parking: Vec::new(),
+        });
+    };
     let model = env_str("KALLIP_LLM_MODEL")?;
     let (family_id, api_key, base_url) = match provider.as_str() {
         family::DEEPSEEK => {
@@ -326,6 +337,30 @@ mod tests {
             assert_eq!(p.max_context_window, 200_000); // implicit env profile derives the window from the env var
             assert!(cfg.parking.is_empty()); // env path has no draft space
         });
+    }
+
+    #[test]
+    fn from_env_without_provider_boots_empty() {
+        temp_env::with_vars([("KALLIP_LLM_PROVIDER", None::<&str>)], || {
+            let cfg = from_env().unwrap();
+            assert!(cfg.tiers.is_empty());
+            assert!(cfg.endpoints.is_empty());
+            assert!(cfg.parking.is_empty());
+        });
+    }
+
+    #[test]
+    fn from_env_half_configured_fails_loud() {
+        temp_env::with_vars(
+            [
+                ("KALLIP_LLM_PROVIDER", Some("deepseek")),
+                ("KALLIP_LLM_MODEL", None),
+            ],
+            || {
+                let err = from_env().unwrap_err();
+                assert!(format!("{err:#}").contains("KALLIP_LLM_MODEL"));
+            },
+        );
     }
 
     #[test]

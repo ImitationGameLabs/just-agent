@@ -50,6 +50,17 @@ pub async fn put_profiles(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     crate::auth::require_operator(auth.identity())?;
 
+    // The sentinel endpoint id is reserved (it routes the profile-less
+    // root to the placeholder backend); a user profile named the same
+    // would silently collide with that switch.
+    for id in wire.endpoints.keys() {
+        if id == crate::backend::UNCONFIGURED {
+            return Err(ApiError::bad_request(format!(
+                "endpoint id '{}' is reserved",
+                crate::backend::UNCONFIGURED
+            )));
+        }
+    }
     let config = merge_wire(&state.profiles.load().config, wire)?;
     // Validate: build backends + trial registry. If this fails, nothing changes.
     let factory = just_llm_client::client::BackendFactory::new();
@@ -285,7 +296,13 @@ pub async fn apply_profiles(
                     return (targets, skipped);
                 };
                 let depth = live.identity.config.permissions.depth();
-                let (tier_index, tier) = registry.select_tier(depth);
+                // Empty registry: no new tier to push; the live agent keeps
+                // its current pair (an apply after the first profile lands
+                // re-syncs it).
+                let Some((tier_index, tier)) = registry.select_tier(depth).ok() else {
+                    skipped += 1;
+                    return (targets, skipped);
+                };
                 targets.push((
                     kallip_runtime::ProfileReset {
                         tier: tier.clone(),

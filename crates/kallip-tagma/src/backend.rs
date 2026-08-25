@@ -13,10 +13,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use just_llm_client::LlmBackend;
+use just_llm_client::CapabilityNegotiation;
 use just_llm_client::client::BackendFactory;
 use just_llm_client::family;
-use kallip_runtime::profile::{BackendSource, ProfileConfig, Provider};
+use just_llm_client::types::chat::{
+    ChatCompletionRequest, ChatCompletionResponse, ChatMessage, ToolDefinition,
+};
+use just_llm_client::{
+    BackendConstructError, BackendError, ChatClient, ChatClientOptions, ChatCompletionStream,
+    Identifiable, LlmBackend,
+};
+use kallip_runtime::profile::{BackendSource, NO_PROFILE_HINT, ProfileConfig, Provider};
 
 /// Default timeout for establishing the outbound LLM HTTP connection (DNS + TCP + TLS). Distinct
 /// from [`DEFAULT_READ_TIMEOUT`], which bounds per-read idle.
@@ -169,10 +176,12 @@ impl BackendSource for TagmaBackendSource {
         }
         // Slow path: resolve + build OUTSIDE the lock, so concurrent first-failover lookups for
         // *other* providers aren't blocked on reqwest/rustls client construction.
-        let provider = self
-            .providers
-            .get(provider_id)
-            .with_context(|| format!("unknown provider '{provider_id}'"))?;
+        let provider = self.providers.get(provider_id).with_context(|| {
+            format!(
+                "unknown provider '{provider_id}'; if no profile is \
+                    configured yet, add one via the tagma management page"
+            )
+        })?;
         let backend = build_one(&self.factory, provider, &self.user_agent)?;
         // Re-lock to publish; a racing builder may have inserted first — reuse theirs. Poison is
         // recovered (the map is still valid data), so a prior panic doesn't propagate.
@@ -188,12 +197,128 @@ impl BackendSource for TagmaBackendSource {
     }
 }
 
+/// Sentinel marker for the profile-less root (empty-profile boot): the
+/// placeholder profile's endpoint id and the sentinel backend's family.
+pub(crate) const UNCONFIGURED: &str = "unconfigured";
+
+/// The profile-less root's placeholder tier: `(0, Tier { one placeholder
+/// profile })`, shared by first boot (`Materialize::run`) and restore
+/// (`restore_one`) so both paths register the root against the sentinel.
+pub(crate) fn unconfigured_tier() -> (usize, kallip_runtime::profile::Tier) {
+    let placeholder = kallip_runtime::profile::Profile {
+        id: UNCONFIGURED.into(),
+        endpoint: UNCONFIGURED.into(),
+        model: UNCONFIGURED.into(),
+        max_context_window: 128_000,
+    };
+    (
+        0,
+        kallip_runtime::profile::Tier {
+            profiles: vec![placeholder],
+        },
+    )
+}
+
+/// Backend handed to the profile-less root's `ChatClient`: every call fails
+/// with the management-page hint until the first profile lands, at which
+/// point `apply_pending_profile_reset` rebuilds the client with a real
+/// backend — keeping `ChatClient` non-optional throughout the runtime.
+struct UnconfiguredBackend;
+
+fn unconfigured_error() -> BackendError {
+    BackendError::provider(UNCONFIGURED, std::io::Error::other(NO_PROFILE_HINT))
+}
+
+impl Identifiable for UnconfiguredBackend {
+    fn family(&self) -> &'static str {
+        UNCONFIGURED
+    }
+}
+
+// Defaults surface every capability as unsupported for this family.
+impl CapabilityNegotiation for UnconfiguredBackend {}
+
+#[async_trait::async_trait]
+impl LlmBackend for UnconfiguredBackend {
+    fn prepare(&self, _: ChatCompletionRequest) -> Result<reqwest::Request, BackendError> {
+        Err(unconfigured_error())
+    }
+
+    fn prepare_streaming(
+        &self,
+        _: ChatCompletionRequest,
+    ) -> Result<reqwest::Request, BackendError> {
+        Err(unconfigured_error())
+    }
+
+    async fn send(&self, _: reqwest::Request) -> Result<reqwest::Response, BackendError> {
+        Err(unconfigured_error())
+    }
+
+    async fn parse(&self, _: reqwest::Response) -> Result<ChatCompletionResponse, BackendError> {
+        Err(unconfigured_error())
+    }
+
+    async fn parse_streaming(
+        &self,
+        _: reqwest::Response,
+    ) -> Result<ChatCompletionStream, BackendError> {
+        Err(unconfigured_error())
+    }
+
+    fn render_messages(&self, _: &[ChatMessage]) -> Result<String, BackendError> {
+        Err(unconfigured_error())
+    }
+
+    fn render_tools(&self, _: &[ToolDefinition]) -> Result<String, BackendError> {
+        Err(unconfigured_error())
+    }
+
+    fn family() -> &'static str
+    where
+        Self: Sized,
+    {
+        UNCONFIGURED
+    }
+
+    // Never factory-constructed; inputs are ignored.
+    fn new(
+        _http: reqwest::ClientBuilder,
+        _api_key: &str,
+        _base_url: Option<&str>,
+    ) -> Result<Arc<dyn LlmBackend>, BackendConstructError>
+    where
+        Self: Sized,
+    {
+        Ok(Arc::new(UnconfiguredBackend))
+    }
+}
+
+/// The profile-less root's client: typed, but every LLM call fails with the
+/// management-page hint until a real profile is applied.
+pub(crate) fn unconfigured_client(system_prompt: Option<String>) -> ChatClient {
+    let mut options = ChatClientOptions::new(UNCONFIGURED.to_string());
+    if let Some(sp) = system_prompt {
+        options = options.with_system_prompt(sp);
+    }
+    ChatClient::new(Arc::new(UnconfiguredBackend), options)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use just_llm_client::types::chat::{ChatCompletionRequest, ChatMessage};
     use kallip_runtime::profile::{Profile, Tier};
 
+    #[test]
+    fn sentinel_errors_carry_the_management_page_hint() {
+        let err = UnconfiguredBackend
+            .render_messages(&[])
+            .expect_err("sentinel render fails");
+        assert!(
+            format!("{err}").contains(kallip_runtime::profile::NO_PROFILE_HINT),
+            "got: {err}"
+        );
+    }
     /// One deepseek provider + a single-profile tier referencing it.
     fn ds_cfg() -> ProfileConfig {
         single_tier_cfg("ds", "p", "ds")
