@@ -284,4 +284,22 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+
+    #[tokio::test]
+    async fn foreign_host_is_forbidden_off_api_paths() {
+        // The fallback sits outside the API routes, and a Router layer
+        // only covers what was registered before it: this locks the
+        // host guard's reach over the fallback itself.
+        let app = build_router(test_state(crate::guard::AuthMode::Open));
+        let response = app
+            .oneshot(
+                Request::get("/")
+                    .header("host", "evil.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
 }
