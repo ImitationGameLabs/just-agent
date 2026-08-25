@@ -978,7 +978,6 @@ pub(crate) async fn mint_session_row(
 /// NOT the subject; renaming the env var changes only the display handle. The
 /// constants live in `kallip-agora-common` and are shared with
 /// `DbControlPlane::verify_session`'s `local_admin` flag.
-
 /// The local-platform login route. Mounted only when the boot flag
 /// `KALLIP_AGORA_ADMIN_USER_LOGIN` is set (see `routes::router`); the route
 /// does not exist in the default production surface.
