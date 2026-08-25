@@ -220,3 +220,12 @@ export function instancesClientOrFail(): InstancesClient {
   }
   return instancesClient;
 }
+
+/** The single source of the tagma->instance slug convention: one-click
+ *  spawns name the instance `tagma-<first 8 id chars>`, and the devices list
+ *  joins identities to processes by this same prefix. Keeping both sides on
+ *  this function is what makes the join verifiable instead of a duplicated
+ *  template that can silently drift apart. */
+export function instanceSlugFor(tagmaId: string): string {
+  return `tagma-${tagmaId.slice(0, 8)}`;
+}
