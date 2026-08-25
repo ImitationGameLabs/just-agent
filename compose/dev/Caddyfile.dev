@@ -27,8 +27,11 @@
 
 	@web host web.{$KALLIP_DEV_DOMAIN}
 	handle @web {
-		# vite dev server on the host
-		reverse_proxy 127.0.0.1:5173
+		# kallip-instances serves the SPA's static build (webDist bind;
+		# VITE_OFFLINE_LOGIN=1 build) and its instance API; the same
+		# service also answers the @instances host below. For vite HMR,
+		# point this back at 127.0.0.1:5173 instead.
+		reverse_proxy 127.0.0.1:7300
 	}
 
 	@agora host agora.{$KALLIP_DEV_DOMAIN}

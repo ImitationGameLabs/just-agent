@@ -98,6 +98,9 @@ let
       throw "arion: HOME unset; defaulting the instances binds needs it (or set KALLIP_ARION_INSTANCES_STATE/DATA_PATH)"
     else
       sub: "${homeDir}/.local/${sub}";
+  # The web UI's static build (deno task build; VITE_OFFLINE_LOGIN=1 for
+  # the local-platform SPA), served by kallip-instances from the bind.
+  webDist = "${toString ../..}/packages/kallip-web/build";
   instancesStateBind = bindOverride "KALLIP_ARION_INSTANCES_STATE_PATH" "/state" (
     daemonDir "state/kallip-daemon"
   );
@@ -308,8 +311,11 @@ in
     # overrides, or unset the HOST daemon's standard dirs (the same real
     # daemon a host-side kallipctl sees). The browser reaches it via
     # https://instances.<devDomain>; host tooling uses the published
-    # 127.0.0.1:7300. Token mode with a dev fixture token (the agora
-    # admin-token pattern); prod reads it from .env.
+    # 127.0.0.1:7300. Platform mode: the agora's internal root + shared
+    # secret verify the SPA's sk-admin- bearer (the local-platform
+    # login key), replacing the standalone token. The web UI's static
+    # build rides a host bind (built with VITE_OFFLINE_LOGIN=1 for the
+    # operator-key branch; see docs/development.md).
     services.instances = {
       service.useHostStore = true;
       service.command = [ "${workspace}/bin/kallip-instances" ];
@@ -320,6 +326,7 @@ in
       service.volumes = [
         instancesStateBind
         instancesDataBind
+        "${webDist}:/web:ro"
       ];
       image.contents = [
         workspace
@@ -332,8 +339,13 @@ in
         # both point INTO the container mounts, never at host paths.
         KALLIP_DAEMON_SOCKET = "/state/control.sock";
         KALLIP_DAEMON_DATA_DIR = "/data";
-        KALLIP_INSTANCES_TOKEN = "sk-instances-dev-0123456789abcdef0123456789abcdef";
-        KALLIP_INSTANCES_ALLOWED_HOSTS = "instances.${devDomain}";
+        # Platform mode: the agora's internal face verifies the SPA's
+        # sk-admin- bearer; the token must equal the agora's
+        # KALLIP_AGORA_INTERNAL_TOKEN (dev fixture, same discipline).
+        KALLIP_INSTANCES_AGORA_URL = "http://agora:7100";
+        KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN = "dev-internal-secret";
+        KALLIP_INSTANCES_STATIC_DIR = "/web";
+        KALLIP_INSTANCES_ALLOWED_HOSTS = "instances.${devDomain}, web.${devDomain}";
         KALLIP_INSTANCES_CORS_ORIGINS = "https://web.${devDomain}";
         RUST_LOG = "info";
       };

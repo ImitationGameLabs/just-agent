@@ -314,8 +314,19 @@ keys (`KALLIP_DATA_DIR`,
 `KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`) are daemon-owned.
 
 The web management face lives in `crates/platform/kallip-instances`: web API
-under `/api/instances/*` plus the static UI build, proxying the daemon over
-its UDS socket.
+under `/api/instances/*` plus the static UI build (the compose binds
+`packages/kallip-web/build` into the container), proxying the daemon
+over its UDS socket. Platform mode: the agora's internal face
+verifies the SPA's `sk-admin-` key (the operator-key login), so the
+local build carries the offline branch:
+
+```sh
+VITE_OFFLINE_LOGIN=1 KALLIP_DEV_DOMAIN=$KALLIP_DEV_DOMAIN deno task build   # web dist for the instances static bind
+```
+
+A cloud build omits `VITE_OFFLINE_LOGIN` (the login page hides the
+branch). For vite HMR instead of the static build, point the
+Caddyfile's `@web` handle back at `127.0.0.1:5173`.
 
 ## Iterating
 
