@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
         allowed_hosts: config.allowed_hosts(),
         cors_origins: config.cors_origins.clone(),
     };
-    let app = build_router(state, config.static_dir.as_deref());
+    let app = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

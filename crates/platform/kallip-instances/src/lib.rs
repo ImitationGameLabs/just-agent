@@ -1,11 +1,11 @@
 //! Local instance management service for the kallip daemon.
 //!
-//! Serves the web UI's static build (when configured) and proxies the four
-//! management verbs from `/api/instances/*` to the daemon's UDS socket. The
-//! daemon itself never grows an HTTP or token surface; this crate is the
-//! only networked door: a Host-header check on everything, plus one of
-//! three auth modes for the API — agora-verified admin access, a
-//! configured standalone token, or open on bare loopback.
+//! Proxies the four management verbs from `/api/instances/*` to the
+//! daemon's UDS socket. The daemon itself never grows an HTTP or token
+//! surface; this crate is the only networked door: a Host-header check
+//! on everything, plus one of three auth modes for the API —
+//! agora-verified admin access, a configured standalone token, or open
+//! on bare loopback.
 
 pub mod api;
 pub mod backend;
@@ -15,45 +15,31 @@ pub mod error;
 pub mod guard;
 pub mod wire;
 
-use std::path::Path;
-
 use axum::Router;
 use axum::http::StatusCode;
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
-use tower_http::services::{ServeDir, ServeFile};
 
 pub use config::Config;
 pub use guard::AppState;
 
-/// Assemble the full router: the API under token auth, static files (when
-/// configured) outside it, and the Host guard over everything.
-pub fn build_router(state: AppState, static_dir: Option<&Path>) -> Router {
+/// Assemble the full router: the API under token auth, a 404 fallback
+pub fn build_router(state: AppState) -> Router {
     let api = api::api_routes()
         .layer(from_fn_with_state(state.clone(), guard::token_guard))
         .layer(api::cors_layer(&state.cors_origins));
-    let mut app = Router::new().nest("/api/instances", api);
-
-    match static_dir {
-        // The fallback serves the SPA: known files straight from disk,
-        // unknown paths rewritten to index.html so client-side routes
-        // survive a hard refresh.
-        Some(dir) => {
-            let spa = ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html")));
-            app = app.fallback_service(spa);
-        }
-        // API-only mode (dev: vite serves the frontend).
-        None => app = app.fallback(not_found),
-    }
+    let app = Router::new()
+        .nest("/api/instances", api)
+        .fallback(not_found);
 
     // Layered last so the guard also wraps the fallback: a Router layer
-    // only covers routes registered before it, and the static surface
-    // (a rebind attacker's actual target) hangs off the fallback.
+    // only covers routes registered before it, and unknown paths must
+    // meet the same Host check as the API.
     app.layer(from_fn_with_state(state.clone(), guard::host_guard))
         .with_state(state)
 }
 
-/// API-only mode: anything off the API is a plain 404.
+/// Anything off the API is a plain 404.
 async fn not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
@@ -151,10 +137,9 @@ mod tests {
 
     #[tokio::test]
     async fn api_requires_a_token() {
-        let app = build_router(
-            test_state(crate::guard::AuthMode::Token("test-token".into())),
-            None,
-        );
+        let app = build_router(test_state(crate::guard::AuthMode::Token(
+            "test-token".into(),
+        )));
         let response = app
             .oneshot(
                 Request::get("/api/instances/list")
@@ -171,10 +156,9 @@ mod tests {
 
     #[tokio::test]
     async fn token_mode_accepts_the_configured_token() {
-        let app = build_router(
-            test_state(crate::guard::AuthMode::Token("test-token".into())),
-            None,
-        );
+        let app = build_router(test_state(crate::guard::AuthMode::Token(
+            "test-token".into(),
+        )));
         let response = app
             .oneshot(
                 Request::get("/api/instances/list")
@@ -192,10 +176,9 @@ mod tests {
 
     #[tokio::test]
     async fn api_rejects_a_wrong_token() {
-        let app = build_router(
-            test_state(crate::guard::AuthMode::Token("test-token".into())),
-            None,
-        );
+        let app = build_router(test_state(crate::guard::AuthMode::Token(
+            "test-token".into(),
+        )));
         let response = app
             .oneshot(
                 Request::get("/api/instances/list")
@@ -211,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_mode_lets_the_api_through_without_a_token() {
-        let app = build_router(test_state(crate::guard::AuthMode::Open), None);
+        let app = build_router(test_state(crate::guard::AuthMode::Open));
         let response = app
             .oneshot(
                 Request::get("/api/instances/list")
@@ -228,10 +211,9 @@ mod tests {
 
     #[tokio::test]
     async fn unreachable_daemon_maps_to_503() {
-        let app = build_router(
-            test_state(crate::guard::AuthMode::Token("test-token".into())),
-            None,
-        );
+        let app = build_router(test_state(crate::guard::AuthMode::Token(
+            "test-token".into(),
+        )));
         let response = app
             .oneshot(
                 Request::get("/api/instances/list")
@@ -249,10 +231,9 @@ mod tests {
 
     #[tokio::test]
     async fn foreign_host_is_forbidden_even_with_token() {
-        let app = build_router(
-            test_state(crate::guard::AuthMode::Token("test-token".into())),
-            None,
-        );
+        let app = build_router(test_state(crate::guard::AuthMode::Token(
+            "test-token".into(),
+        )));
         let response = app
             .oneshot(
                 Request::get("/api/instances/list")
@@ -269,30 +250,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn static_mode_rejects_a_foreign_host() {
-        // The SPA fallback is registered after the routes; the host
-        // guard must still cover it (a rebind attacker targets the
-        // static surface, not the API).
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join("index.html"), "<html>kallip</html>").expect("write index");
-        let app = build_router(test_state(crate::guard::AuthMode::Open), Some(dir.path()));
-        let response = app
-            .oneshot(
-                Request::get("/")
-                    .header("host", "evil.example")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-    #[tokio::test]
     async fn malformed_json_body_is_bad_request() {
-        let app = build_router(
-            test_state(crate::guard::AuthMode::Token("test-token".into())),
-            None,
-        );
+        let app = build_router(test_state(crate::guard::AuthMode::Token(
+            "test-token".into(),
+        )));
         let response = app
             .oneshot(
                 Request::post("/api/instances/spawn")
@@ -311,7 +272,7 @@ mod tests {
 
     #[tokio::test]
     async fn api_only_mode_404s_off_api_paths() {
-        let app = build_router(test_state(crate::guard::AuthMode::Open), None);
+        let app = build_router(test_state(crate::guard::AuthMode::Open));
         let response = app
             .oneshot(
                 Request::get("/")
@@ -322,27 +283,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn static_mode_serves_index_and_falls_back_for_spa_routes() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join("index.html"), "<html>kallip</html>").expect("write index");
-        let app = build_router(test_state(crate::guard::AuthMode::Open), Some(dir.path()));
-        for path in ["/", "/some/client/route"] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::get(path)
-                        .header("host", "127.0.0.1:7300")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK, "GET {path}");
-            let body = body_string(response).await;
-            assert!(body.contains("kallip"), "GET {path}: {body}");
-        }
     }
 }

@@ -133,7 +133,7 @@ async fn full_management_round_trip_with_guards() {
         cors_origins: String::new(),
         allowed_hosts: vec![],
     };
-    let app = build_router(state, None);
+    let app = build_router(state);
 
     // No token: 401.
     let (status, body) = send(&app, "GET", "/api/instances/list", None, None).await;
@@ -339,7 +339,7 @@ async fn platform_mode_admin_only_and_fail_closed() {
         allowed_hosts: vec![],
         cors_origins: String::new(),
     };
-    let app = build_router(state, None);
+    let app = build_router(state);
 
     // Admin passes the gate (and dies at the daemon proxy: 503 proves the
     // guard let it through).
@@ -371,7 +371,6 @@ fn refuses_to_start_unauthenticated_on_non_loopback() {
     let config = kallip_instances::Config {
         addr: "0.0.0.0:7300".into(),
         daemon_socket: None,
-        static_dir: None,
         token: None,
         backend: "daemon".into(),
         agora_internal_url: None,
@@ -388,7 +387,6 @@ fn open_mode_allowed_on_loopback() {
     let config = kallip_instances::Config {
         addr: "127.0.0.1:7300".into(),
         daemon_socket: None,
-        static_dir: None,
         token: None,
         backend: "daemon".into(),
         agora_internal_url: None,
@@ -408,7 +406,6 @@ fn half_configured_agora_url_refuses_to_start() {
     let config = kallip_instances::Config {
         addr: "127.0.0.1:7300".into(),
         daemon_socket: None,
-        static_dir: None,
         token: None,
         backend: "daemon".into(),
         agora_internal_url: Some("http://127.0.0.1:7100".into()),
@@ -430,7 +427,6 @@ fn half_configured_agora_token_refuses_to_start() {
     let config = kallip_instances::Config {
         addr: "127.0.0.1:7300".into(),
         daemon_socket: None,
-        static_dir: None,
         token: None,
         backend: "daemon".into(),
         agora_internal_url: None,

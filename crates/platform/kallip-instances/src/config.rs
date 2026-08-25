@@ -1,13 +1,12 @@
-//! Startup configuration: bind address, daemon socket, static directory,
-//! and the auth-mode inputs (platform credentials or a standalone token).
+//! Startup configuration: bind address, daemon socket, and the
+//! auth-mode inputs (platform credentials or a standalone token).
 
 use std::path::PathBuf;
 
 use clap::Parser;
 
-/// Local instance management service for the kallip daemon: serves
-/// the web UI's static build and proxies `/api/instances/*` to the
-/// daemon's UDS socket.
+/// Local instance management service for the kallip daemon: proxies
+/// `/api/instances/*` to the daemon's UDS socket.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Config {
@@ -22,11 +21,6 @@ pub struct Config {
     /// main.rs instead of sharing code).
     #[arg(long, env = "KALLIP_DAEMON_SOCKET")]
     pub daemon_socket: Option<PathBuf>,
-
-    /// Directory of the web UI's static build to serve. Omitted = API-only
-    /// mode (dev: vite serves the frontend and proxies /api/instances here).
-    #[arg(long, env = "KALLIP_INSTANCES_STATIC_DIR")]
-    pub static_dir: Option<PathBuf>,
 
     /// Standalone-mode bearer token for /api/instances/* (constant-time
     /// compared; the platform mode uses the agora credentials below).
@@ -95,7 +89,6 @@ mod tests {
         let config = Config {
             addr: "127.0.0.1:7300".into(),
             daemon_socket: Some(PathBuf::from("/tmp/flag.sock")),
-            static_dir: None,
             token: None,
             backend: "daemon".into(),
             agora_internal_url: None,
@@ -114,7 +107,6 @@ mod tests {
         let config = Config {
             addr: "127.0.0.1:7300".into(),
             daemon_socket: None,
-            static_dir: None,
             token: None,
             backend: "daemon".into(),
             agora_internal_url: None,
@@ -131,7 +123,6 @@ mod tests {
         let config = Config {
             addr: "127.0.0.1:7300".into(),
             daemon_socket: None,
-            static_dir: None,
             token: None,
             backend: "daemon".into(),
             agora_internal_url: None,
@@ -154,7 +145,6 @@ mod tests {
         let config = Config {
             addr: "127.0.0.1:7300".into(),
             daemon_socket: None,
-            static_dir: None,
             token: None,
             backend: "daemon".into(),
             agora_internal_url: None,
