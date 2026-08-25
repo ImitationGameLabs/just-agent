@@ -31,6 +31,11 @@ class InstancesStore {
   loaded = $state(false);
   /** The service's machine-readable error code (e.g. host_forbidden). */
   errorCode = $state<string | null>(null);
+  /** Provisioning methods the backend advertises; null = unknown or the
+   * service is unreachable (the nav entry hides), [] = reachable with no
+   * create capability (the entry stays, the create entry hides).
+   */
+  capabilities = $state<string[] | null>(null);
   /** The listen port of each instance spawned in this session, by slug:
    * the list wire has no port, so the Chat CTA needs this memory.
    */
@@ -44,6 +49,7 @@ class InstancesStore {
         this.client.health(),
         this.client.list(),
       ]);
+      void this.fetchCapabilities();
       this.health = health;
       this.instances = instances;
       this.error = null;
@@ -61,6 +67,17 @@ class InstancesStore {
       }
     } finally {
       this.isLoading = false;
+    }
+  }
+  /** One capability probe; best-effort (failure leaves the entry hidden).
+   * Called from refresh and once at layout boot (the nav entry needs it
+   * before the instances page is ever visited).
+   */
+  async fetchCapabilities(): Promise<void> {
+    try {
+      this.capabilities = await this.client.capabilities();
+    } catch {
+      this.capabilities = null;
     }
   }
 

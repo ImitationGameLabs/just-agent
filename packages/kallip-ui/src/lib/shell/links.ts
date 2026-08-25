@@ -119,8 +119,13 @@ export function navFor(args: {
   icons: NavIcons;
   tagmata?: NavTagma[];
   rooms?: NavRoom[];
+  /** Whether the instances service answered its capability probe: while
+   * false the nav omits the instances entry entirely (graceful
+   * degradation); true with an empty capability set keeps the entry and
+   * the page hides only the create card. */
+  instancesAvailable?: boolean;
 }): NavSection[] {
-  const { mode, icons, tagmata, rooms } = args;
+  const { mode, icons, tagmata, rooms, instancesAvailable } = args;
   if (mode === "offline") {
     return [
       {
@@ -162,11 +167,18 @@ export function navFor(args: {
             label: nav_schedules(),
             icon: icons.manageSchedules,
           },
-          {
-            href: "/instances",
-            label: nav_instances(),
-            icon: icons.manageInstances,
-          },
+          // The instances entry is capability-driven: hidden while the
+          // service is unreachable, present (with the create card hidden)
+          // when it answers with an empty set.
+          ...(instancesAvailable
+            ? [
+              {
+                href: "/instances",
+                label: nav_instances(),
+                icon: icons.manageInstances,
+              },
+            ]
+            : []),
         ],
       },
     ];

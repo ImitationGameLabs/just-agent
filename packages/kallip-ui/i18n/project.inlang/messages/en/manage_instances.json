@@ -42,5 +42,11 @@
   "manage_instances_error_not_found": "That instance no longer exists.",
   "manage_instances_error_not_running": "That instance is not running.",
   "manage_instances_error_bad_request": "The request was rejected.",
-  "manage_instances_error_internal": "The instances service hit an internal error."
+  "manage_instances_error_internal": "The instances service hit an internal error.",
+  "manage_instances_create_heading": "Create an instance",
+  "manage_instances_create_workspace_label": "Workspace directory",
+  "manage_instances_create_workspace_placeholder": "/home/me/kallip-agent",
+  "manage_instances_create_creating": "Creating instance…",
+  "manage_instances_create_failed": "The instance could not be started; the enrollment code stays valid on the card above.",
+  "manage_instances_create_mint_failed": "The enrollment code could not be minted; try again."
 }

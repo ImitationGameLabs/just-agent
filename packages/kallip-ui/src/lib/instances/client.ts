@@ -91,6 +91,13 @@ export class InstancesClient {
     const body = await this.get<{ instances: InstanceInfo[] }>("/list");
     return body.instances;
   }
+  /** Provisioning methods the backend advertises (empty = the create
+   * entry hides, the page stays).
+   */
+  async capabilities(): Promise<string[]> {
+    const body = await this.get<{ methods: string[] }>("/capabilities");
+    return body.methods;
+  }
 
   /** Launch one instance; the response carries its listen port.
    */

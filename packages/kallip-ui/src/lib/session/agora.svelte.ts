@@ -59,10 +59,12 @@ import type {
 } from "../tagmata.svelte.ts";
 
 let agoraClient: AgoraClient | null = null;
+let agoraBaseUrl = "";
 
 /** Inject the agora base URL and construct the client. Called once at bootstrap. */
 export function initAgora(url: string): void {
   agoraClient = new AgoraClient(url);
+  agoraBaseUrl = url;
 }
 
 function client(): AgoraClient {
@@ -78,16 +80,26 @@ function client(): AgoraClient {
 export function agoraClientOrFail(): AgoraClient {
   return client();
 }
+/** The injected agora base URL; the one-click instance spawn relays it to
+ * the new tagma as bootstrap environment. Throws pre-init. */
+export function agoraBaseUrlOrFail(): string {
+  if (!agoraBaseUrl) {
+    throw new Error("initAgora(url) must be called at app bootstrap");
+  }
+  return agoraBaseUrl;
+}
 
 // The lesche (data-plane) client lives on a separate origin from the agora; its
 // URL is injected the same way (no import.meta.env in this library). The session
 // cookie is shared cross-subdomain, so the same credentialed fetch works.
 let lescheClient: LescheClient | null = null;
+let lescheBaseUrl = "";
 
 /** Inject the lesche base URL and construct the data-plane client. Called once
  * at bootstrap alongside initAgora. */
 export function initLesche(url: string): void {
   lescheClient = new LescheClient(url);
+  lescheBaseUrl = url;
 }
 
 /** The data-plane (lesche) client; throws if initLesche has not been called.
@@ -98,6 +110,13 @@ export function lescheClientOrFail(): LescheClient {
     throw new Error("initLesche(url) must be called at app bootstrap");
   }
   return lescheClient;
+}
+/** The injected lesche base URL; same relay purpose as the agora one. */
+export function lescheBaseUrlOrFail(): string {
+  if (!lescheBaseUrl) {
+    throw new Error("initLesche(url) must be called at app bootstrap");
+  }
+  return lescheBaseUrl;
 }
 
 /** sessionStorage key stashing the in-flight OAuth provider + action across the
@@ -390,7 +409,7 @@ class AgoraSessionStore {
    * Mint a new pending tagma (enrollment code); the plaintext is shown once on
    * the new card. Prepend so the freshly-minted card is on top.
    */
-  async mintTagma(): Promise<void> {
+  async mintTagma(): Promise<{ id: string; code: string } | null> {
     this.minting = true;
     try {
       const minted = await client().mintTagma();
@@ -408,9 +427,11 @@ class AgoraSessionStore {
       ];
       this.tagmataLoaded = true;
       this.tagmataError = null;
+      return { id: minted.id, code: minted.code };
     } catch (e) {
       console.error("[agora] mintTagma failed:", e);
       this.tagmataError = rooms_couldnt_reach();
+      return null;
     } finally {
       this.minting = false;
     }

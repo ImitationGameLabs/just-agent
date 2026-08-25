@@ -42,5 +42,11 @@
   "manage_instances_error_not_found": "该实例已不存在。",
   "manage_instances_error_not_running": "该实例未在运行。",
   "manage_instances_error_bad_request": "请求被拒绝。",
-  "manage_instances_error_internal": "实例服务发生内部错误。"
+  "manage_instances_error_internal": "实例服务发生内部错误。",
+  "manage_instances_create_heading": "创建实例",
+  "manage_instances_create_workspace_label": "工作区目录",
+  "manage_instances_create_workspace_placeholder": "/home/me/kallip-agent",
+  "manage_instances_create_creating": "创建实例中…",
+  "manage_instances_create_failed": "实例未能启动；上方的登记码仍然有效。",
+  "manage_instances_create_mint_failed": "登记码铸造失败，请重试。"
 }

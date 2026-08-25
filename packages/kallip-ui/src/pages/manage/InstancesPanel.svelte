@@ -9,6 +9,7 @@
     InstancesError,
   } from "../../lib/instances/client.ts";
   import ConfirmDialog from "../../components/ConfirmDialog.svelte";
+  import CreateInstanceCard from "../../components/instances/CreateInstanceCard.svelte";
   import FormError from "../../components/FormError.svelte";
   import {
     manage_instances_title,
@@ -292,6 +293,9 @@
         {/if}
       </section>
 
+      {#if instancesStore.capabilities && instancesStore.capabilities.length > 0}
+        <CreateInstanceCard />
+      {/if}
       <section class="card preset-tonal-surface p-5 space-y-4">
         <h2 class="text-sm font-medium">{manage_instances_spawn_heading()}</h2>
         <form class="space-y-4" onsubmit={onSubmitSpawn}>

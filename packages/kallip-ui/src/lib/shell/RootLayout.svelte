@@ -11,6 +11,7 @@
   import { channelsStore } from "../session/channels.svelte";
   import { statusCardStore } from "../session/statusCard.svelte.ts";
   import { roomsStore } from "../session/rooms.svelte";
+  import { instancesStore } from "../instances/instances.svelte.ts";
   import { realtimeStore } from "../session/realtime.svelte";
   import { roomConversationsStore } from "../session/roomConversations.svelte";
   import { connectDirect } from "../session/connect.ts";
@@ -143,6 +144,9 @@
         void agoraSession.whoami();
       }
     });
+    // One capability probe at boot (both modes): the nav's instances
+    // entry is driven by it -- hidden while the service is unreachable.
+    void instancesStore.fetchCapabilities();
   });
 
   // Load the tagma registry + auto-open channels for online tagmas. Keyed on
@@ -257,6 +261,7 @@
         roomId: r.room_id,
         label: r.name || `room ${r.room_id.slice(0, 8)}`,
       })),
+      instancesAvailable: instancesStore.capabilities !== null,
     }),
   );
 
