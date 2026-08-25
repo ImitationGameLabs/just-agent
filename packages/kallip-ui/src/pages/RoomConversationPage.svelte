@@ -29,6 +29,7 @@
   import { agoraSession } from "../lib/session/agora.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import { profileHref } from "../lib/room-message.ts";
+  import { startVisibleInterval } from "../lib/visibleInterval.ts";
   import { TONAL_ICON_SURF } from "../lib/classes.ts";
   import {
     common_loading,
@@ -89,7 +90,7 @@
   // roster nudge + offline-member catch-up. Bounded so a long-idle open tab
   // does not spin. Cleared on unmount.
   onMount(() => {
-    const id = setInterval(() => {
+    const stop = startVisibleInterval(() => {
       // A terminal error (e.g. this member was removed) stops the poll: the
       // room is gone to this user, and refreshing would only loop the failure.
       if (conv?.status === "error") return;
@@ -98,7 +99,7 @@
       // the room_membership_changed SSE is the faster trigger.
       void roomConversationsStore.refreshRoster(roomId);
     }, 10_000);
-    return () => clearInterval(id);
+    return () => stop();
   });
 
   // Stick to the tail as lines arrive; stop once the user scrolls up to read.

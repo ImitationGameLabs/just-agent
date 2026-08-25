@@ -81,7 +81,7 @@ class BudgetStore {
   /** Reconciliation backstop for a mounted page, not a live feed:
    * budget mutations already refresh optimistically, so a slow (and
    * hidden-paused, see visibleInterval) interval is enough. */
-  startPolling(intervalMs = 5000): void {
+  startPolling(intervalMs = 30_000): void {
     this.stopPolling();
     this.pollStop = startVisibleInterval(() => this.refresh(), intervalMs);
     this.refresh();

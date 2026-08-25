@@ -15,6 +15,7 @@
   import { formatTokenCount } from "../../lib/tagmata.svelte.ts";
   import { navigate } from "../../lib/shell/port.ts";
   import { TONAL_ICON_SURF } from "../../lib/classes.ts";
+  import { startVisibleInterval } from "../../lib/visibleInterval.ts";
   import ConfirmDialog from "../../components/ConfirmDialog.svelte";
   import AgentIdentityDialog from "../../components/manage/AgentIdentityDialog.svelte";
   import CopyButton from "../../components/CopyButton.svelte";
@@ -80,7 +81,7 @@
   let profileConfig = $state<ProfileConfig | null>(null);
   let statusError = $state<string | null>(null);
   let isLoading = $state(false);
-  let pollHandle: ReturnType<typeof setInterval> | null = null;
+  let stopPoll: (() => void) | null = null;
 
   let showRemoveDialog = $state(false);
   let showIdentityDialog = $state(false);
@@ -115,9 +116,9 @@
       .catch(() => {});
     fetchStatus();
     agentsStore.refresh();
-    pollHandle = setInterval(fetchStatus, 5000);
+    stopPoll = startVisibleInterval(fetchStatus, 5000);
     return () => {
-      if (pollHandle) clearInterval(pollHandle);
+      if (stopPoll) stopPoll();
     };
   });
 
