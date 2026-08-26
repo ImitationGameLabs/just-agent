@@ -469,7 +469,6 @@ const SYNONYMS: string[][] = [
     "manage_agent_provider",
     "manage_profiles_tier_dialog_provider_label",
     "manage_profiles_parking_dialog_endpoint_label",
-    "settings_provider_family_label",
   ],
   ["manage_agent_retry_error_unknown", "shell_error"],
   ["manage_agent_tier", "manage_profiles_tier"],

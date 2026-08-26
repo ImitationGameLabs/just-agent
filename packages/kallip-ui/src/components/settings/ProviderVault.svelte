@@ -14,6 +14,7 @@
   } from "../../paraglide/messages.js";
   import ProviderVaultCard from "./ProviderVaultCard.svelte";
   import ProviderVaultForm from "./ProviderVaultForm.svelte";
+  import InfoBadge from "../InfoBadge.svelte";
 
   let {
     entries,
@@ -49,9 +50,12 @@
 
 <section class="space-y-3">
   <div class="flex items-center justify-between gap-2">
-    <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
-      {settings_providers()}
-    </h2>
+    <div class="flex items-center gap-1">
+      <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
+        {settings_providers()}
+      </h2>
+      <InfoBadge text={settings_provider_intro()} />
+    </div>
     <button
       class="btn btn-sm preset-tonal-surface"
       onclick={() => (formOpen = !formOpen)}
@@ -59,8 +63,6 @@
       {formOpen ? "–" : settings_provider_add()}
     </button>
   </div>
-
-  <p class="text-xs opacity-60">{settings_provider_intro()}</p>
 
   {#if error}
     <div class="text-xs text-error-600 dark:text-error-500">{error}</div>

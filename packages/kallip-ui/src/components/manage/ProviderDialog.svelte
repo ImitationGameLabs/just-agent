@@ -6,6 +6,7 @@
   // leaves isDirty alone; the id is locked because renaming would dangle every
   // profile referencing it (the PUT's validate_providers rejects that).
   import type { ProfileProvider } from "@kallipai/kallip-client";
+  import { MODEL_PROVIDER_FAMILIES } from "../../lib/providerFamilies.ts";
 
   export interface ProviderDialogResult {
     readonly id: string;
@@ -56,12 +57,11 @@
     onRemove?: (() => void) | null;
   } = $props();
 
-  // Families the tagma backend knows how to build.
-  const FAMILIES = ["deepseek", "openai-compatible"];
+  const FAMILIES = MODEL_PROVIDER_FAMILIES;
 
   // Drafts, reset on each open transition (plain latch, no self-trigger).
   let id = $state("");
-  let family = $state(FAMILIES[0]!);
+  let family = $state<string>(MODEL_PROVIDER_FAMILIES[0]);
   let baseUrl = $state("");
   let apiKey = $state("");
   let lastOpen = false;

@@ -1,26 +1,27 @@
 <script lang="ts">
-  // The "add key" form. Prop-driven like AddPasskey: the owner passes the
+  // The "add key" dialog. Prop-driven like AddPasskey: the owner passes the
   // submit callback (which throws on failure) and `canFlip`, which decides
-  // the default storage mode -- encrypted when this session arrived via
-  // passkey (the device vault key exists / will exist), plaintext otherwise
-  // (an OAuth-only account has no flip affordance later, so encryption
-  // would produce a row it could never offer to reveal inline).
+  // whether the encrypt option is offered -- checked by default when this
+  // session arrived via passkey (the device vault key exists / will exist),
+  // forced off otherwise. The checkbox stays visible-but-disabled without
+  // canFlip so an OAuth-only session still learns the feature exists; the
+  // "!" badge hover explains why (native title tooltips are pointer-only,
+  // touch screens get no hover).
+  import { Dialog, Portal } from "@skeletonlabs/skeleton-svelte";
   import type { ProviderKeyMode } from "@kallipai/kallip-agora-client";
   import { AgoraApiError } from "@kallipai/kallip-agora-client";
+  import { MODEL_PROVIDER_FAMILIES } from "../../lib/providerFamilies.ts";
+  import InfoBadge from "../InfoBadge.svelte";
   import {
     settings_provider_new_title,
     settings_provider_name_label,
     settings_provider_name_placeholder,
     settings_provider_family_label,
-    settings_provider_family_placeholder,
     settings_provider_base_url_label,
     settings_provider_key_label,
-    settings_provider_badge_encrypted,
-    settings_provider_badge_plaintext,
-    settings_provider_mode_label,
-    settings_provider_mode_encrypted_hint,
-    settings_provider_mode_plaintext_hint,
-    settings_provider_plain_only_hint,
+    settings_provider_encrypt_label,
+    settings_provider_encrypt_lock_hint,
+    settings_provider_intro,
     settings_provider_name_duplicate,
     settings_error_unknown,
     common_adding,
@@ -30,7 +31,7 @@
 
   let {
     open = false,
-    // Whether encrypted storage is offered; also picks the default mode.
+    // Whether encrypted storage is offered; also picks the default.
     canFlip = false,
     onCreate,
     onClosed,
@@ -51,23 +52,35 @@
   } = $props();
 
   let name = $state("");
-  let family = $state("");
+  let selectedFamily = $state<string>(MODEL_PROVIDER_FAMILIES[0]);
   let baseUrl = $state("");
   let key = $state("");
-  let mode = $state<ProviderKeyMode>("encrypted");
+  let encrypt = $state(true);
   let error = $state<string | null>(null);
   let busy = $state(false);
 
   function begin() {
     name = "";
-    family = "";
+    selectedFamily = MODEL_PROVIDER_FAMILIES[0];
     baseUrl = "";
     key = "";
-    mode = canFlip ? "encrypted" : "plaintext";
+    encrypt = canFlip;
     error = null;
   }
 
   begin();
+
+  // Reset drafts on each open transition (lastOpen latch, like
+  // ProviderDialog): a fresh dialog never shows the previous attempt.
+  let lastOpen = false;
+  $effect(() => {
+    if (open && !lastOpen) begin();
+    lastOpen = open;
+  });
+
+  function onOpenChange(e: { open: boolean }): void {
+    if (!e.open) onClosed?.();
+  }
 
   async function submit() {
     const trimmedName = name.trim();
@@ -77,10 +90,10 @@
       const ok =
         (await onCreate?.({
           name: trimmedName,
-          provider: family.trim(),
+          provider: selectedFamily,
           base_url: baseUrl.trim() || null,
           key_material: key,
-          mode,
+          mode: encrypt ? "encrypted" : "plaintext",
         })) ?? false;
       if (ok) {
         begin();
@@ -98,96 +111,121 @@
   }
 </script>
 
-{#if open}
-  <div class="card preset-tonal-surface p-3 space-y-2">
-    <div class="text-sm font-medium">{settings_provider_new_title()}</div>
-    <label class="block space-y-1">
-      <span class="text-xs opacity-60">{settings_provider_name_label()}</span>
-      <input
-        class="input input-sm w-full"
-        placeholder={settings_provider_name_placeholder()}
-        maxlength={64}
-        bind:value={name}
-        disabled={busy}
-      />
-    </label>
-    <div class="flex flex-wrap gap-2">
-      <label class="block flex-1 min-w-32 space-y-1">
-        <span class="text-xs opacity-60"
-          >{settings_provider_family_label()}</span
-        >
-        <input
-          class="input input-sm w-full"
-          placeholder={settings_provider_family_placeholder()}
-          maxlength={64}
-          bind:value={family}
-          disabled={busy}
-        />
-      </label>
-      <label class="block flex-1 min-w-32 space-y-1">
-        <span class="text-xs opacity-60"
-          >{settings_provider_base_url_label()}</span
-        >
-        <input
-          class="input input-sm w-full font-mono"
-          type="url"
-          maxlength={256}
-          bind:value={baseUrl}
-          disabled={busy}
-        />
-      </label>
-    </div>
-    <label class="block space-y-1">
-      <span class="text-xs opacity-60">{settings_provider_key_label()}</span>
-      <input
-        class="input input-sm w-full font-mono"
-        type="password"
-        autocomplete="off"
-        bind:value={key}
-        disabled={busy}
-      />
-    </label>
-    <!-- Mode choice only when a choice exists; the plaintext-only hint takes
-         its place otherwise, so an OAuth-only session sees why, not a dead
-         radio. -->
-    {#if canFlip}
-      <fieldset class="space-y-1" disabled={busy}>
-        <legend class="text-xs opacity-60">
-          {settings_provider_mode_label()}
-        </legend>
-        <label class="flex items-center gap-2 text-xs select-none">
-          <input type="radio" value="encrypted" bind:group={mode} />
-          <span
-            >{settings_provider_badge_encrypted()} —
-            {settings_provider_mode_encrypted_hint()}</span
-          >
-        </label>
-        <label class="flex items-center gap-2 text-xs select-none">
-          <input type="radio" value="plaintext" bind:group={mode} />
-          <span
-            >{settings_provider_badge_plaintext()} —
-            {settings_provider_mode_plaintext_hint()}</span
-          >
-        </label>
-      </fieldset>
-    {:else}
-      <p class="text-xs opacity-60">{settings_provider_plain_only_hint()}</p>
-    {/if}
-    {#if error}
-      <div class="text-xs text-error-600 dark:text-error-500">{error}</div>
-    {/if}
-    <div class="flex gap-2">
-      <button
-        class="btn btn-sm preset-filled-primary-500"
-        disabled={!name.trim() || !key || busy}
-        onclick={submit}
+<Dialog {open} {onOpenChange}>
+  <Portal>
+    <Dialog.Backdrop class="fixed inset-0 bg-surface-50-950/60 z-50" />
+    <Dialog.Positioner class="fixed inset-0 z-50 grid place-items-center p-4">
+      <Dialog.Content
+        class="card preset-tonal-surface w-full max-w-md p-6 flex flex-col gap-4"
       >
-        {busy ? common_adding() : common_create()}
-      </button>
-      <button
-        class="btn btn-sm preset-tonal-surface"
-        onclick={() => onClosed?.()}>{common_cancel()}</button
-      >
-    </div>
-  </div>
-{/if}
+        <Dialog.Title class="text-lg font-semibold">
+          {settings_provider_new_title()}
+        </Dialog.Title>
+        <Dialog.Description class="sr-only">
+          {settings_provider_intro()}
+        </Dialog.Description>
+
+        <form
+          class="flex flex-col gap-4"
+          onsubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
+        >
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium">
+              {settings_provider_name_label()}
+              <span class="text-error-500 dark:text-error-400">*</span>
+            </span>
+            <input
+              class="input text-sm"
+              placeholder={settings_provider_name_placeholder()}
+              maxlength={64}
+              bind:value={name}
+              disabled={busy}
+            />
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium">
+              {settings_provider_family_label()}
+            </span>
+            <select
+              class="select text-sm"
+              bind:value={selectedFamily}
+              disabled={busy}
+            >
+              {#each MODEL_PROVIDER_FAMILIES as f (f)}
+                <option value={f}>{f}</option>
+              {/each}
+            </select>
+          </label>
+
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium">
+              {settings_provider_base_url_label()}
+            </span>
+            <input
+              class="input text-sm font-mono"
+              type="url"
+              maxlength={256}
+              bind:value={baseUrl}
+              disabled={busy}
+            />
+          </label>
+
+          <!-- Key input above; its encrypt option sits right below as a
+               sibling row -- never a checkbox nested inside the key label
+               (click routing). -->
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium">
+              {settings_provider_key_label()}
+              <span class="text-error-500 dark:text-error-400">*</span>
+            </span>
+            <input
+              class="input text-sm font-mono"
+              type="password"
+              autocomplete="off"
+              bind:value={key}
+              disabled={busy}
+            />
+          </label>
+          <label class="flex items-center gap-2 text-sm select-none">
+            <input
+              type="checkbox"
+              bind:checked={encrypt}
+              disabled={busy || !canFlip}
+            />
+            <span>{settings_provider_encrypt_label()}</span>
+            {#if !canFlip}
+              <InfoBadge text={settings_provider_encrypt_lock_hint()} />
+            {/if}
+          </label>
+
+          {#if error}
+            <div class="text-xs text-error-600 dark:text-error-500">
+              {error}
+            </div>
+          {/if}
+
+          <div class="flex gap-2">
+            <button
+              type="button"
+              class="btn flex-1 preset-outlined-surface-500 hover:preset-filled-surface-500"
+              onclick={() => onClosed?.()}
+            >
+              {common_cancel()}
+            </button>
+            <button
+              type="submit"
+              class="btn flex-1 preset-filled-primary-500 text-on-primary-500 transition hover:brightness-110"
+              disabled={!name.trim() || !key || busy}
+            >
+              {busy ? common_adding() : common_create()}
+            </button>
+          </div>
+        </form>
+      </Dialog.Content>
+    </Dialog.Positioner>
+  </Portal>
+</Dialog>
