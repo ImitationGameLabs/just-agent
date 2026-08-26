@@ -4,19 +4,11 @@
     ProfileConfig,
   } from "@kallipai/kallip-client";
   import { agentStateLabel } from "../../lib/agentState.ts";
-  import { CalendarClock, Clock } from "@lucide/svelte";
   import { MoreVertical, Pencil, Trash } from "@lucide/svelte";
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
-  import {
-    fmtAbsoluteRetry,
-    fmtRelativeRetry,
-    retryOutcome,
-    type RetryEntry,
-  } from "../../lib/manage/retryFormat.ts";
   import { managementBackend } from "../../lib/manage/client.ts";
   import { KallipError } from "@kallipai/kallip-common";
   import { agentsStore } from "../../lib/manage/agents.svelte.ts";
-  import { formatTokenCount } from "../../lib/tagmata.svelte.ts";
   import { navigate } from "../../lib/shell/port.ts";
   import { TONAL_ICON_SURF } from "../../lib/classes.ts";
   import { startVisibleInterval } from "../../lib/visibleInterval.ts";
@@ -24,9 +16,9 @@
   import AgentIdentityDialog from "../../components/manage/AgentIdentityDialog.svelte";
   import CopyButton from "../../components/CopyButton.svelte";
   import StateDot from "../../components/manage/StateDot.svelte";
-  import BudgetBar from "../../components/manage/BudgetBar.svelte";
   import CurrentProfileCard from "../../components/manage/CurrentProfileCard.svelte";
-  import { getLocale } from "../../paraglide/runtime.js";
+  import AgentStatusCard from "../../components/manage/AgentStatusCard.svelte";
+  import RetryListCard from "../../components/manage/RetryListCard.svelte";
 
   import {
     common_edit,
@@ -46,32 +38,6 @@
     manage_agent_created_by,
     manage_agent_workspace,
     manage_agent_description,
-    manage_agent_context_usage,
-    manage_agent_context_label,
-    manage_agent_context_tokens,
-    manage_agent_turns,
-    manage_agent_pinned_items,
-    manage_agent_turn_tokens,
-    manage_agent_last_prompt,
-    manage_agent_cumulative_in,
-    manage_agent_cumulative_out,
-    manage_agent_recent_retries,
-    manage_agent_retry_line,
-    manage_agent_retry_retried,
-    manage_agent_retry_exhausted,
-    manage_agent_retry_show_relative,
-    manage_agent_retry_show_less,
-    manage_agent_retry_show_absolute,
-    manage_agent_retry_show_all,
-    manage_agent_retry_just_now,
-    manage_agent_retry_minutes_ago,
-    manage_agent_retry_hours_ago,
-    manage_agent_retry_days_ago,
-    manage_agent_retry_error_network,
-    manage_agent_retry_error_timeout,
-    manage_agent_retry_error_rate_limit,
-    manage_agent_retry_error_auth,
-    manage_agent_retry_error_unknown,
     manage_agent_toggle_duty,
     manage_agent_interrupt,
     manage_agent_wake,
@@ -89,8 +55,6 @@
 
   let showRemoveDialog = $state(false);
   let showIdentityDialog = $state(false);
-  let retryMode = $state<"relative" | "absolute">("relative");
-  let showAllRetries = $state(false);
 
   async function fetchStatus() {
     isLoading = true;
@@ -296,121 +260,9 @@
     {/if}
 
     {#if status}
-      <section class="card preset-tonal-surface p-5 space-y-3">
-        <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
-          {manage_agent_context_usage()}
-        </h2>
-        {#if contextWindow}
-          <BudgetBar
-            consumed={windowTokens}
-            budget={contextWindow}
-            label={manage_agent_context_label()}
-          />
-          <p class="text-xs opacity-70">
-            {manage_agent_context_tokens({
-              consumed: formatTokenCount(windowTokens),
-              budget: formatTokenCount(contextWindow),
-            })}
-          </p>
-        {:else}
-          <!-- window size unknown (profile gone or config not loaded):
-            a bar against a wrong denominator lies, so hide the pair -->
-        {/if}
-        <div class="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <span class="opacity-60 text-xs">{manage_agent_turns()}</span><span
-              class="font-medium ml-2">{status.context.turn_count}</span
-            >
-          </div>
-          <div>
-            <span class="opacity-60 text-xs">{manage_agent_pinned_items()}</span
-            ><span class="font-medium ml-2"
-              >{status.context.pinned_items.length}</span
-            >
-          </div>
-          <div>
-            <span class="opacity-60 text-xs">{manage_agent_turn_tokens()}</span
-            ><span class="font-medium ml-2"
-              >{formatTokenCount(status.context.turn_tokens)}</span
-            >
-          </div>
-          <div>
-            <span class="opacity-60 text-xs">{manage_agent_last_prompt()}</span
-            ><span class="font-medium ml-2"
-              >{status.context.last_prompt_tokens
-                ? formatTokenCount(status.context.last_prompt_tokens)
-                : "—"}</span
-            >
-          </div>
-          <div>
-            <span class="opacity-60 text-xs"
-              >{manage_agent_cumulative_in()}</span
-            ><span class="font-medium ml-2"
-              >{formatTokenCount(
-                status.context.cumulative_usage.prompt_tokens,
-              )}</span
-            >
-          </div>
-          <div>
-            <span class="opacity-60 text-xs"
-              >{manage_agent_cumulative_out()}</span
-            ><span class="font-medium ml-2"
-              >{formatTokenCount(
-                status.context.cumulative_usage.completion_tokens,
-              )}</span
-            >
-          </div>
-        </div>
-      </section>
-
+      <AgentStatusCard {status} {windowTokens} {contextWindow} />
       {#if status.recent_retries.length > 0}
-        <section class="card preset-tonal-surface p-5 space-y-2">
-          <div class="flex items-center justify-between gap-2">
-            <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
-              {manage_agent_recent_retries()}
-            </h2>
-            <button
-              type="button"
-              aria-pressed={retryMode === "relative"}
-              title={retryMode === "relative"
-                ? manage_agent_retry_show_absolute()
-                : manage_agent_retry_show_relative()}
-              aria-label={retryMode === "relative"
-                ? manage_agent_retry_show_absolute()
-                : manage_agent_retry_show_relative()}
-              onclick={() =>
-                (retryMode =
-                  retryMode === "relative" ? "absolute" : "relative")}
-              class="rounded p-1.5 text-surface-500 dark:text-surface-400 hover:bg-surface-200-800 transition"
-            >
-              {#if retryMode === "relative"}
-                <CalendarClock class="size-4" />
-              {:else}
-                <Clock class="size-4" />
-              {/if}
-            </button>
-          </div>
-          {#each showAllRetries ? status.recent_retries : status.recent_retries.slice(0, 3) as r}
-            <div class="text-xs opacity-70">
-              {retryMode === "relative"
-                ? fmtRelativeRetry(r, Math.floor(Date.now() / 1000))
-                : fmtAbsoluteRetry(r)}
-            </div>
-          {/each}
-          {#if status.recent_retries.length > 3}
-            <button
-              type="button"
-              onclick={() => (showAllRetries = !showAllRetries)}
-              class="text-xs opacity-60 hover:opacity-100 transition"
-            >
-              {showAllRetries
-                ? manage_agent_retry_show_less()
-                : manage_agent_retry_show_all({
-                    count: status.recent_retries.length,
-                  })}
-            </button>
-          {/if}
-        </section>
+        <RetryListCard {status} />
       {/if}
     {/if}
 

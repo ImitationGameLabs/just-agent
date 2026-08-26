@@ -3,8 +3,8 @@
 // retry.ts owns bucketing (relativeTime) and the string->kind mapping
 // (classifyRetryError); this file owns kind->message and the assembled line
 // (i18n via paraglide -- same-layer precedent as compute.ts/profiles-view).
-// `now` is an explicit parameter so tests drive the clock; the page passes
-// Date.now()/1000 per render, which the 5s status poll refreshes anyway.
+// `now` is an explicit parameter so tests drive the clock; RetryListCard
+// passes Date.now()/1000 per render, which the 5s status poll refreshes anyway.
 
 import { getLocale } from "../../paraglide/runtime.js";
 import {
