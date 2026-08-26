@@ -62,6 +62,7 @@
     manage_instances_new,
     manage_instances_push_failed,
     manage_instances_push_pending,
+    manage_instances_push_not_applied,
     manage_instances_push_unreachable,
     manage_instances_push_unverified,
     manage_instances_push_verified,
@@ -98,7 +99,7 @@
   let spawnResult = $state<{ slug: string; port: number } | null>(null);
   let pushStatus = $state<{
     slug: string;
-    kind: "pending" | PushOutcome["state"];
+    kind: "pending" | PushOutcome["state"] | "locked" | "not-applied";
     probeOk?: boolean;
     message?: string;
   } | null>(null);
@@ -139,6 +140,7 @@
   async function onOneClick(opts: {
     workspace: string;
     providerId?: string | null;
+    model?: string;
   }): Promise<void> {
     createBusy = true;
     spawnResult = null;
@@ -165,7 +167,12 @@
         spawnResult = { slug: result.slug, port: result.port };
         createOpen = false;
         if (opts.providerId) {
-          void kickCredentialPush(minted.id, result.slug, opts.providerId);
+          void kickCredentialPush(
+            minted.id,
+            result.slug,
+            opts.providerId,
+            opts.model ?? "",
+          );
         }
       } catch (cause) {
         // The minted code stays valid (the pending card shows its masked
@@ -188,16 +195,13 @@
     tagmaId: string,
     slug: string,
     providerId: string,
+    model: string,
   ): Promise<void> {
     pushStatus = { slug, kind: "pending" };
     const entry = agoraSession.providers.find((p) => p.id === providerId);
     const viaPasskey = agoraSession.canFlipKeys();
     if (!entry || isLocked(entry, viaPasskey)) {
-      pushStatus = {
-        slug,
-        kind: "failed",
-        message: manage_instances_create_provider_locked_hint(),
-      };
+      pushStatus = { slug, kind: "locked" };
       return;
     }
     let apiKey: string | null;
@@ -207,11 +211,7 @@
       apiKey = await agoraSession.revealProviderKey(entry);
       if (!apiKey) {
         // Sealed on another device: not deliverable from THIS session.
-        pushStatus = {
-          slug,
-          kind: "failed",
-          message: manage_instances_create_provider_locked_hint(),
-        };
+        pushStatus = { slug, kind: "locked" };
         return;
       }
     }
@@ -220,6 +220,7 @@
       family: entry.provider,
       apiKey,
       baseUrl: entry.base_url,
+      model,
     };
     try {
       const user = agoraSession.user;
@@ -237,6 +238,7 @@
         fetchLive: () => backend.getProfiles(),
         put: (body) => backend.updateProfiles(body),
         probe: (body) => backend.probeProfiles(body),
+        apply: () => backend.applyProfiles(),
         now: () => Date.now(),
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
         close: () => channel.close(),
@@ -254,7 +256,11 @@
   function applyPushOutcome(slug: string, outcome: PushOutcome): void {
     switch (outcome.state) {
       case "pushed":
-        pushStatus = { slug, kind: "pushed", probeOk: outcome.probeOk };
+      case "pushed":
+        pushStatus =
+          outcome.applied >= 1
+            ? { slug, kind: "pushed", probeOk: outcome.probeOk }
+            : { slug, kind: "not-applied" };
         break;
       case "unreachable":
         pushStatus = { slug, kind: "unreachable" };
@@ -463,6 +469,14 @@
         {:else if pushStatus.kind === "unreachable"}
           <p class="text-sm text-warning-500 dark:text-warning-400">
             {manage_instances_push_unreachable({ slug: spawnResult.slug })}
+          </p>
+        {:else if pushStatus.kind === "not-applied"}
+          <p class="text-sm text-warning-500 dark:text-warning-400">
+            {manage_instances_push_not_applied({ slug: spawnResult.slug })}
+          </p>
+        {:else if pushStatus.kind === "locked"}
+          <p class="text-sm text-error-500 dark:text-error-400">
+            {manage_instances_create_provider_locked_hint()}
           </p>
         {:else}
           <p class="text-sm text-error-500 dark:text-error-400">

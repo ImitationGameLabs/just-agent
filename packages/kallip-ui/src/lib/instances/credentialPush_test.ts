@@ -5,6 +5,8 @@
 import { assertEquals } from "@std/assert";
 import {
   buildPushConfig,
+  applyReachedAgent,
+  putEchoedOurKey,
   ENROLL_PUSH_INTERVAL_MS,
   ENROLL_PUSH_WINDOW_MS,
   isLocked,
@@ -50,6 +52,7 @@ const target = {
   family: "deepseek",
   apiKey: "sk-vault-secret",
   baseUrl: null,
+  model: "deepseek-chat",
 };
 
 function instantPorts(
@@ -63,8 +66,19 @@ function instantPorts(
     fetchLive: () => Promise.resolve(live),
     put: (_body: ProfileConfig) => {
       ports.puts++;
-      return Promise.resolve({});
+      // A faithful echo masks our key as head4+8stars+tail4 (mask_key).
+      return Promise.resolve({
+        endpoints: {
+          [target.endpointKey]: {
+            id: target.endpointKey,
+            family: target.family,
+            api_key: "sk-v********cret",
+            base_url: null,
+          },
+        },
+      });
     },
+    apply: () => Promise.resolve({ applied: 1, skipped: 0 }),
     probe: () =>
       Promise.resolve({
         results: [],
@@ -98,8 +112,15 @@ Deno.test("eligibility: encrypted rows lock outside a passkey session", () => {
 
 Deno.test("wire assembly round-trips live rows and adds one endpoint", () => {
   const body = buildPushConfig(live, target);
-  // Tiers pass through verbatim (positional rotation untouched).
-  assertEquals(body.tiers, live.tiers);
+  // Tiers round-trip plus one appended binding (failover slot).
+  assertEquals(body.tiers.length, live.tiers.length);
+  assertEquals(body.tiers[0].profiles[0], live.tiers[0].profiles[0]);
+  assertEquals(body.tiers[0].profiles[1], {
+    id: `profile:${target.endpointKey}`,
+    endpoint: target.endpointKey,
+    model: target.model,
+    max_context_window: 128_000,
+  });
   // The existing endpoint keeps by tri-state, ours carries the real key.
   assertEquals(body.endpoints["main"].api_key, null);
   assertEquals(body.endpoints["main"].base_url, null);
@@ -110,13 +131,22 @@ Deno.test("wire assembly round-trips live rows and adds one endpoint", () => {
 });
 
 Deno.test(
-  "wire assembly over an empty config (fresh instance) adds only us",
+  "wire assembly over an empty config makes our binding the active tier",
   () => {
     const body = buildPushConfig(
       { tiers: [], endpoints: {}, parking: [] },
       target,
     );
     assertEquals(Object.keys(body.endpoints), [target.endpointKey]);
+    assertEquals(body.tiers.length, 1);
+    assertEquals(body.tiers[0].profiles, [
+      {
+        id: `profile:${target.endpointKey}`,
+        endpoint: target.endpointKey,
+        model: target.model,
+        max_context_window: 128_000,
+      },
+    ]);
   },
 );
 
@@ -158,6 +188,47 @@ Deno.test("probe verdict maps only our endpoint's ok to true", () => {
   assertEquals(probeVerdict(ok, target.endpointKey), true);
   assertEquals(probeVerdict(bad, target.endpointKey), false);
   assertEquals(probeVerdict(other, target.endpointKey), false);
+});
+
+Deno.test("mask echo: our key's tail + stars reads as stored", () => {
+  const body = buildPushConfig(live, target);
+  // The tagma masks a 15-char key as head4+8stars+tail4.
+  const masked = {
+    ...body,
+    endpoints: {
+      ...body.endpoints,
+      [target.endpointKey]: {
+        ...body.endpoints[target.endpointKey],
+        api_key: "sk-v********cret",
+      },
+    },
+  };
+  assertEquals(
+    putEchoedOurKey(masked, target.endpointKey, target.apiKey),
+    true,
+  );
+  // A null keep means our endpoint never landed: not stored.
+  assertEquals(putEchoedOurKey(body, target.endpointKey, target.apiKey), false);
+  // An unrelated string (wrong tail) is not our key either.
+  const other = {
+    ...masked,
+    endpoints: {
+      ...masked.endpoints,
+      [target.endpointKey]: {
+        ...masked.endpoints[target.endpointKey],
+        api_key: "zz-z********zz-z",
+      },
+    },
+  };
+  assertEquals(
+    putEchoedOurKey(other, target.endpointKey, target.apiKey),
+    false,
+  );
+});
+
+Deno.test("apply gate: applied>=1 is the delivery bar", () => {
+  assertEquals(applyReachedAgent({ applied: 1, skipped: 0 }), true);
+  assertEquals(applyReachedAgent({ applied: 0, skipped: 2 }), false);
 });
 
 Deno.test("error classification: transient vs terminal", () => {
@@ -254,7 +325,17 @@ Deno.test("push loop: recovery inside the window still pushes", async () => {
     put: () => {
       attempts++;
       if (attempts < 3) return Promise.reject(new TransportError("soon"));
-      return Promise.resolve({});
+      // Faithful masked echo (see the shared stub above).
+      return Promise.resolve({
+        endpoints: {
+          [target.endpointKey]: {
+            id: target.endpointKey,
+            family: target.family,
+            api_key: "sk-v********cret",
+            base_url: null,
+          },
+        },
+      });
     },
   });
   const outcome = await pushCredentials(target, ports);
@@ -269,10 +350,7 @@ Deno.test(
       probe: () => Promise.reject(new TransportError("probe dropped")),
     });
     const outcome = await pushCredentials(target, ports);
-    assertEquals(outcome, {
-      state: "pushed",
-      endpointKey: target.endpointKey,
-      probeOk: false,
-    });
+    assertEquals(outcome.state, "pushed");
+    if (outcome.state === "pushed") assertEquals(outcome.probeOk, false);
   },
 );

@@ -38,6 +38,8 @@
     manage_instances_create_creating,
     manage_instances_create_provider_label,
     manage_instances_create_provider_locked_hint,
+    manage_instances_create_provider_model_label,
+    manage_instances_create_provider_model_placeholder,
     manage_instances_create_provider_none,
     manage_instances_create_workspace_label,
     manage_instances_create_workspace_placeholder,
@@ -88,6 +90,8 @@
     onOneClick: (opts: {
       workspace: string;
       providerId?: string | null;
+      /** Required when providerId is set (D3': the tier binding's model). */
+      model?: string;
     }) => Promise<void> | void;
     onSpawn: (fields: AdvancedSpawnFields) => Promise<void> | void;
     onMint: () => Promise<{ id: string; code: string } | null>;
@@ -99,6 +103,7 @@
   let method = $state<"cloud" | "local">("cloud");
   let workspace = $state("");
   let providerId = $state<string | null>(null);
+  let pushModel = $state("");
   let advanced = $state(false);
   let fields = $state<AdvancedSpawnFields>({
     slug: "",
@@ -119,6 +124,7 @@
       method = canSpawn ? "cloud" : "local";
       workspace = "";
       providerId = null;
+      pushModel = "";
       advanced = false;
       fields = {
         slug: "",
@@ -137,8 +143,13 @@
     lastOpen = open;
   });
 
+  const pickedProvider = $derived(
+    providerId ? (providers.find((p) => p.id === providerId) ?? null) : null,
+  );
+  // Fail closed: a credential pick without a model name cannot launch.
   const canSubmit = $derived(
     !busy &&
+      !(providerId && !pushModel.trim()) &&
       (method === "local" ||
         (advanced
           ? fields.slug.trim().length > 0 && fields.workspace.trim().length > 0
@@ -185,6 +196,7 @@
     void onOneClick({
       workspace: workspace.trim(),
       providerId,
+      model: pushModel.trim(),
     });
   }
 </script>
@@ -289,6 +301,19 @@
                   <span class="text-xs opacity-70">
                     {manage_instances_create_provider_locked_hint()}
                   </span>
+                {/if}
+                {#if pickedProvider}
+                  <span class="text-sm font-medium">
+                    {manage_instances_create_provider_model_label()}
+                    <span class="text-error-500 dark:text-error-400">*</span>
+                  </span>
+                  <input
+                    class="input text-sm"
+                    placeholder={manage_instances_create_provider_model_placeholder()}
+                    bind:value={pushModel}
+                    disabled={busy}
+                    required
+                  />
                 {/if}
               </label>
             {/if}

@@ -13,6 +13,7 @@
 
 import { KallipError, TransportError } from "@kallipai/kallip-common";
 import type {
+  ProfileApplyResponse,
   ProfileConfig,
   ProfileProbeRequest,
   ProfileProbeResponse,
@@ -61,8 +62,35 @@ export function isLocked(
   return entry.mode === "encrypted" && !sessionViaPasskey;
 }
 
+/**
+ * The PUT response echoes every endpoint with its api_key masked. Asserting
+ * OUR key arrived means finding the mask shape (last-4 tail, per the tagma's
+ * mask_key) rather than a null keep -- a null would mean our endpoint was
+ * dropped, not stored.
+ */
+export function putEchoedOurKey(
+  returned: ProfileConfig,
+  endpointKey: string,
+  apiKey: string,
+): boolean {
+  const echoed = returned.endpoints[endpointKey]?.api_key;
+  if (typeof echoed !== "string" || echoed.length === 0) return false;
+  const tail = apiKey.slice(-4);
+  return echoed.endsWith(tail) && echoed.includes("*");
+}
+
+/** True when apply reached at least one live agent (the D3' delivery bar). */
+export function applyReachedAgent(response: ProfileApplyResponse): boolean {
+  return response.applied >= 1;
+}
+
 export type PushOutcome =
-  | { state: "pushed"; endpointKey: string; probeOk: boolean }
+  | {
+      state: "pushed";
+      endpointKey: string;
+      probeOk: boolean;
+      applied: number;
+    }
   | { state: "unreachable"; endpointKey: string }
   | { state: "failed"; endpointKey: string; message: string };
 
@@ -70,6 +98,7 @@ export interface PushPorts {
   fetchLive(): Promise<ProfileConfig>;
   put(body: ProfileConfig): Promise<unknown>;
   probe(body: ProfileProbeRequest): Promise<ProfileProbeResponse>;
+  apply(): Promise<ProfileApplyResponse>;
   now(): number;
   sleep(ms: number): Promise<void>;
   /** Release transport resources once the outcome is decided. */
@@ -83,24 +112,43 @@ export interface PushTarget {
   readonly family: string;
   readonly apiKey: string;
   readonly baseUrl: string | null;
+  /** The model the picked credential powers (operator-entered; the vault
+   *  does not carry model names). */
+  readonly model: string;
+  /** Tier context window, kept at the backend's placeholder constant. */
+  readonly maxContextWindow?: number;
 }
 
 /**
  * Assemble the additive PUT body: every live tier/parking row round-trips
  * unchanged, existing endpoints come back with tri-state nulls (keep), and
- * exactly one endpoint carries the real credential. Re-pushing the same
- * instance overwrites its prior entry in place, which keeps the flow
- * idempotent. No apply call here -- running agents keep their backends
- * until someone applies from the profiles page.
+ * exactly one endpoint carries the real credential plus a tier[0] binding
+ * (D3' -- an endpoint nothing references is dead config: apply skips it
+ * wholesale when tiers are empty, so the binding is what makes a following
+ * apply actually reach agents).
  */
 export function buildPushConfig(
   live: ProfileConfig,
   add: PushTarget,
 ): ProfileConfig {
+  const binding = {
+    id: `profile:${add.endpointKey}`,
+    endpoint: add.endpointKey,
+    model: add.model,
+    max_context_window: add.maxContextWindow ?? 128_000,
+  };
+  const tiers = live.tiers.map((t) => ({
+    profiles: t.profiles.map((p) => ({ ...p })),
+  }));
+  if (tiers.length === 0) {
+    // Fresh instance: live store is empty; ours becomes the active slot.
+    tiers.push({ profiles: [binding] });
+  } else {
+    // Append as failover; never dethrone the operator-tuned active[0].
+    tiers[0]!.profiles.push(binding);
+  }
   return {
-    tiers: live.tiers.map((t) => ({
-      profiles: t.profiles.map((p) => ({ ...p })),
-    })),
+    tiers,
     endpoints: Object.fromEntries([
       ...Object.entries(live.endpoints).map(([key, ep]) => [
         key,
@@ -188,7 +236,21 @@ export async function pushCredentials(
     for (;;) {
       try {
         const live = await ports.fetchLive();
-        await ports.put(buildPushConfig(live, target));
+        const returned = await ports.put(buildPushConfig(live, target));
+        // Masked echo with our key's tail = the tagma actually stored it
+        // (a null keep here would mean the endpoint never landed). A PUT
+        // whose echo lost our endpoint is folded to unreachable via retry:
+        // it repeats once, then the deadline ends the loop honestly.
+        const stored =
+          returned &&
+          putEchoedOurKey(
+            returned as ProfileConfig,
+            target.endpointKey,
+            target.apiKey,
+          );
+        if (!stored) {
+          throw new TransportError("PUT echo did not confirm the endpoint");
+        }
         let probeOk = false;
         try {
           const response = await ports.probe(probeRequestFor(target));
@@ -198,7 +260,20 @@ export async function pushCredentials(
           // keep the credential in place (rollback could strand the tagma
           // profile-less over what might be a provider-side blip).
         }
-        return { state: "pushed", endpointKey: target.endpointKey, probeOk };
+        let applied = 0;
+        try {
+          const applyResp = await ports.apply();
+          applied = applyResp.applied;
+        } catch {
+          // Apply hiccup does not unsend the stored credential; the UI
+          // reads applied===0 as 'stored but not live -- hand-apply'.
+        }
+        return {
+          state: "pushed",
+          endpointKey: target.endpointKey,
+          probeOk,
+          applied,
+        };
       } catch (e) {
         if (pushErrorKind(e) === "terminal") {
           return {
