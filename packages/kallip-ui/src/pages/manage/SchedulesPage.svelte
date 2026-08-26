@@ -22,6 +22,7 @@
   import SchedulePeriodEditor from "../../components/manage/SchedulePeriodEditor.svelte";
   import ScheduleWarnCard from "../../components/manage/ScheduleWarnCard.svelte";
   import type { WarnField } from "../../components/manage/ScheduleWarnCard.svelte";
+  import ScheduleSaveBar from "../../components/manage/ScheduleSaveBar.svelte";
   import {
     applyFrame,
     canSave as canSaveImpl,
@@ -35,8 +36,6 @@
   import type { Draft } from "../../lib/manage/scheduleDraft.ts";
   import { untrack } from "svelte";
   import {
-    common_save,
-    manage_profiles_discard,
     manage_schedules_clock_local,
     manage_schedules_clock_utc,
     manage_schedules_dst_note,
@@ -51,8 +50,6 @@
     manage_schedules_switch_blocked,
     manage_schedules_team_desc,
     manage_schedules_title,
-    manage_schedules_unsaved,
-    manage_schedules_unrepresentable,
     manage_schedules_wake_now,
     manage_schedules_warn_invalid,
   } from "../../paraglide/messages.js";
@@ -382,42 +379,13 @@
 
       <!-- save bar -->
       {#if dirty}
-        <div
-          class="flex flex-wrap items-center gap-3 sticky bottom-0 rounded-xl border border-warning-200-800 preset-tonal-warning px-4 py-3"
-        >
-          <span class="chip preset-outlined-warning-500 text-xs font-medium">
-            <span class="size-2 rounded-full bg-warning-500" aria-hidden="true"
-            ></span>
-            {manage_schedules_unsaved()}</span
-          >
-          <!-- The error text is breakable CJK: left unwrapped it
-               collapses to ~1 char per line under flex shrink (the
-               rigid chip + buttons consume the rest), so it owns its
-               own full row below md and goes inline from md up. -->
-          {#if wireSpec === null}
-            <span
-              class="text-xs text-error-500 dark:text-error-400 basis-full md:basis-auto min-w-0"
-            >
-              {manage_schedules_unrepresentable()}
-            </span>
-          {/if}
-          <div class="ml-auto flex gap-3 shrink-0">
-            <button
-              class="btn btn-sm preset-outlined-surface-500 hover:preset-filled-surface-500"
-              disabled={schedulesStore.isSaving}
-              onclick={discard}
-            >
-              {manage_profiles_discard()}
-            </button>
-            <button
-              class="btn btn-sm preset-filled-primary-200-800"
-              disabled={!canSave}
-              onclick={save}
-            >
-              {common_save()}
-            </button>
-          </div>
-        </div>
+        <ScheduleSaveBar
+          isSaving={schedulesStore.isSaving}
+          representable={wireSpec !== null}
+          {canSave}
+          onDiscard={discard}
+          onSave={save}
+        />
       {/if}
     {/if}
   </div>
