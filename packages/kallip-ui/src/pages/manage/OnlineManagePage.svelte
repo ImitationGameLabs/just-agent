@@ -9,7 +9,9 @@
 
   import { onMount } from "svelte";
   import { channelsStore } from "../../lib/session/channels.svelte.ts";
+  import { realtimeStore } from "../../lib/session/realtime.svelte.ts";
   import { OnlineBackend } from "../../lib/manage/backend.ts";
+  import { manageChannelStalled } from "../../lib/manage/channelStalled.ts";
   import { budgetStore } from "../../lib/manage/budget.svelte.ts";
   import { agentsStore } from "../../lib/manage/agents.svelte.ts";
   import { profilesStore } from "../../lib/manage/profiles.svelte.ts";
@@ -22,7 +24,9 @@
   import SchedulesPage from "./SchedulesPage.svelte";
   import {
     manage_backend_failed,
+    chat_channel_unavailable,
     manage_opening,
+    common_retry,
   } from "../../paraglide/messages.js";
 
   let {
@@ -44,6 +48,16 @@
       : null,
   );
 
+  // Can this channel still open on its own? absent to a confirmed-offline
+  // peer and unavailable cannot (see channelStalled.ts); without this the
+  // placeholder copy below would show forever.
+  const stalled = $derived(
+    !conversationId &&
+      manageChannelStalled(
+        channelState,
+        realtimeStore.resolved && !realtimeStore.has(tagmaId),
+      ),
+  );
   let backendReady = $state(false);
   let error = $state<string | null>(null);
 
@@ -91,7 +105,25 @@
   });
 </script>
 
-{#if !backendReady}
+{#if stalled}
+  <!-- No conversation and none can come without a retry: absent to a
+       presence-confirmed-offline peer, or an open-budget failure (mirror of
+       the chat page's unavailable row). -->
+  <div class="h-full grid place-items-center p-6">
+    <div class="text-center flex flex-col gap-3 max-w-sm">
+      <p class="text-sm text-error-500 dark:text-error-400">
+        {chat_channel_unavailable()}
+      </p>
+      <button
+        type="button"
+        class="btn preset-tonal-surface self-center"
+        onclick={() => channelsStore.retryTagma(tagmaId)}
+      >
+        {common_retry()}
+      </button>
+    </div>
+  </div>
+{:else if !backendReady}
   <div class="h-full grid place-items-center p-6">
     <div class="text-center flex flex-col gap-3 max-w-sm">
       {#if error}

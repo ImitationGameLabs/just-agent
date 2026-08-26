@@ -412,7 +412,8 @@ export class ChannelsStore {
     return this.openBudgets.has(tagmaId);
   }
 
-  /** User-initiated retry from the chat page's terminal row: look the tagma
+  /** User-initiated retry from a terminal row (the chat page's, or the
+   *  manage page's): look the tagma
    *  up in the registry (it may have been revoked since) and open it
    *  explicitly, ignoring the failure budget. */
   retryTagma(tagmaId: string): void {
