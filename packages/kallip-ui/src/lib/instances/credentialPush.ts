@@ -64,9 +64,9 @@ export function isLocked(
 
 /**
  * The PUT response echoes every endpoint with its api_key masked. Asserting
- * OUR key arrived means finding the mask shape (last-4 tail, per the tagma's
- * mask_key) rather than a null keep -- a null would mean our endpoint was
- * dropped, not stored.
+ * OUR key arrived means finding a mask shape rather than a null keep -- null
+ * means our endpoint was dropped, not stored. mask_key masks short keys as
+ * eight bare stars (no tail), so both shapes count as stored.
  */
 export function putEchoedOurKey(
   returned: ProfileConfig,
@@ -75,6 +75,7 @@ export function putEchoedOurKey(
 ): boolean {
   const echoed = returned.endpoints[endpointKey]?.api_key;
   if (typeof echoed !== "string" || echoed.length === 0) return false;
+  if (echoed === "********") return true;
   const tail = apiKey.slice(-4);
   return echoed.endsWith(tail) && echoed.includes("*");
 }
@@ -137,8 +138,12 @@ export function buildPushConfig(
     model: add.model,
     max_context_window: add.maxContextWindow ?? 128_000,
   };
+  // A re-push replaces its prior binding instead of appending a duplicate
+  // (the registry rejects duplicate profile ids wholesale).
   const tiers = live.tiers.map((t) => ({
-    profiles: t.profiles.map((p) => ({ ...p })),
+    profiles: t.profiles
+      .filter((p) => p.endpoint !== add.endpointKey)
+      .map((p) => ({ ...p })),
   }));
   if (tiers.length === 0) {
     // Fresh instance: live store is empty; ours becomes the active slot.

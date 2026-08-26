@@ -155,6 +155,11 @@ Deno.test("re-pushing the same instance overwrites its entry in place", () => {
   const twice = buildPushConfig(once, { ...target, apiKey: "sk-rotated" });
   assertEquals(twice.endpoints[target.endpointKey].api_key, "sk-rotated");
   assertEquals(Object.keys(twice.endpoints).length, 2);
+  // The re-push replaces the prior binding too (no duplicate profile id).
+  const bindings = twice.tiers[0].profiles.filter(
+    (p) => p.endpoint === target.endpointKey,
+  );
+  assertEquals(bindings.length, 1);
 });
 
 Deno.test(
@@ -223,6 +228,24 @@ Deno.test("mask echo: our key's tail + stars reads as stored", () => {
   assertEquals(
     putEchoedOurKey(other, target.endpointKey, target.apiKey),
     false,
+  );
+  // A short key (<=8 chars) masks as eight bare stars: still stored.
+  assertEquals(
+    putEchoedOurKey(
+      {
+        ...masked,
+        endpoints: {
+          ...masked.endpoints,
+          [target.endpointKey]: {
+            ...masked.endpoints[target.endpointKey],
+            api_key: "********",
+          },
+        },
+      },
+      target.endpointKey,
+      "shortkey",
+    ),
+    true,
   );
 });
 
