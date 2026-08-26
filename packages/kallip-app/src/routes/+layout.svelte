@@ -18,7 +18,6 @@
     House,
     LayoutGrid,
     MessageSquare,
-    Server,
     Settings,
     Users,
     Wallet,
@@ -35,7 +34,9 @@
   initAgora(import.meta.env.VITE_AGORA_URL ?? "http://localhost:7100");
   initLesche(import.meta.env.VITE_LESCHE_URL ?? "http://localhost:7200");
   initConfigStorage(localStorageConfigStorage);
-  initInstances(import.meta.env.VITE_INSTANCES_URL ?? "http://localhost:7300/api/instances");
+  initInstances(
+    import.meta.env.VITE_INSTANCES_URL ?? "http://localhost:7300/api/instances",
+  );
 
   const icons: NavIcons = {
     chat: MessageSquare,
@@ -48,7 +49,6 @@
     manageAgents: Users,
     manageProfiles: Settings,
     manageSchedules: Calendar,
-    manageInstances: Server,
   };
 
   let { children } = $props();

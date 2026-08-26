@@ -223,29 +223,6 @@ Deno.test("navFor offline -> Chat + Manage sections", () => {
   ]);
 });
 
-Deno.test(
-  "navFor offline omits the instances entry until the capability probe answers",
-  () => {
-    const icons = {} as NavIcons;
-    const [_, manage] = navFor({
-      mode: "offline",
-      icons,
-      instancesAvailable: true,
-    });
-    assertEquals(
-      manage.items.map((i) => i.href),
-      [
-        "/local/manage/overview",
-        "/local/manage/budget",
-        "/local/manage/agents",
-        "/local/manage/profiles",
-        "/local/manage/schedules",
-        "/tagmata",
-      ],
-    );
-  },
-);
-
 Deno.test("pathMatches uses segment boundaries (no prefix cross-match)", () => {
   // Exact + beneath.
   assertEquals(pathMatches("/rooms", "/rooms"), true);

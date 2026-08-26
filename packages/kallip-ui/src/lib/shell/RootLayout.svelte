@@ -156,8 +156,8 @@
         void agoraSession.whoami();
       }
     });
-    // One capability probe at boot (both modes): the nav's instances
-    // entry is driven by it -- hidden while the service is unreachable.
+    // One capability probe at boot (both modes): the tagmata page's
+    // create card reads it -- hidden while the service is unreachable.
     void instancesStore.fetchCapabilities();
   });
 
@@ -273,7 +273,6 @@
         roomId: r.room_id,
         label: r.name || `room ${r.room_id.slice(0, 8)}`,
       })),
-      instancesAvailable: instancesStore.capabilities !== null,
     }),
   );
 

@@ -70,7 +70,6 @@ export interface NavIcons {
   manageAgents: Component;
   manageProfiles: Component;
   manageSchedules: Component;
-  manageInstances: Component;
 }
 
 /** One enrolled tagma as a sidebar chat entry. `indicator` is the channel
@@ -122,13 +121,8 @@ export function navFor(args: {
   icons: NavIcons;
   tagmata?: NavTagma[];
   rooms?: NavRoom[];
-  /** Whether the instances service answered its capability probe: while
-   * false the nav omits the instances entry entirely (graceful
-   * degradation); true with an empty capability set keeps the entry and
-   * the page hides only the create card. */
-  instancesAvailable?: boolean;
 }): NavSection[] {
-  const { mode, icons, tagmata, rooms, instancesAvailable } = args;
+  const { mode, icons, tagmata, rooms } = args;
   if (mode === "offline") {
     return [
       {
@@ -170,18 +164,6 @@ export function navFor(args: {
             label: nav_schedules(),
             icon: icons.manageSchedules,
           },
-          // The tagmata entry is capability-driven: hidden while the
-          // local process host is unreachable, present (with the create
-          // card hidden) when it answers with an empty set.
-          ...(instancesAvailable
-            ? [
-                {
-                  href: "/tagmata",
-                  label: nav_tagmata(),
-                  icon: icons.manageInstances,
-                },
-              ]
-            : []),
         ],
       },
     ];
