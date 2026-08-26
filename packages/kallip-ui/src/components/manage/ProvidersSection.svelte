@@ -4,13 +4,11 @@
   // events; the report chips read the shared per-provider probe map.
   import type { SvelteMap } from "svelte/reactivity";
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
-  import {
-    FlaskConical,
-    MoreVertical,
-    Pencil,
-    Plus,
-  } from "@lucide/svelte";
-  import type { ProfileProvider, ProfileProviderProbeReport } from "@kallipai/kallip-client";
+  import { FlaskConical, MoreVertical, Pencil, Plus } from "@lucide/svelte";
+  import type {
+    ProfileProvider,
+    ProfileProviderProbeReport,
+  } from "@kallipai/kallip-client";
   import { TONAL_ICON_SURF } from "../../lib/classes.ts";
   import {
     modelsCountLabel,
@@ -54,8 +52,7 @@
       {@const report = reports.get(ep.id)}
       <div class="card preset-tonal-surface p-4 space-y-2 min-w-0">
         <div class="flex items-center justify-between gap-2">
-          <span
-            class="font-mono text-sm font-semibold truncate min-w-0 flex-1"
+          <span class="font-mono text-sm font-semibold truncate min-w-0 flex-1"
             >{ep.id}</span
           >
           <Menu
