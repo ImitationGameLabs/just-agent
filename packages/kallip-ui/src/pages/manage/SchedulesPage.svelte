@@ -20,6 +20,8 @@
     windowStatus,
   } from "../../lib/manage/workSchedule.ts";
   import SchedulePeriodEditor from "../../components/manage/SchedulePeriodEditor.svelte";
+  import ScheduleWarnCard from "../../components/manage/ScheduleWarnCard.svelte";
+  import type { WarnField } from "../../components/manage/ScheduleWarnCard.svelte";
   import {
     applyFrame,
     canSave as canSaveImpl,
@@ -38,13 +40,9 @@
     manage_schedules_clock_local,
     manage_schedules_clock_utc,
     manage_schedules_dst_note,
-    manage_schedules_final_warn,
-    manage_schedules_final_warn_hint,
-    manage_schedules_final_warn_prompt,
     manage_schedules_heading,
     manage_schedules_monthly_utc_note,
     manage_schedules_next_start,
-    manage_schedules_pre_warn,
     manage_schedules_status_active,
     manage_schedules_status_always,
     manage_schedules_status_inside,
@@ -55,12 +53,8 @@
     manage_schedules_title,
     manage_schedules_unsaved,
     manage_schedules_unrepresentable,
-    manage_schedules_wake_hint,
     manage_schedules_wake_now,
-    manage_schedules_wake_prompt,
     manage_schedules_warn_invalid,
-    manage_schedules_warn_order,
-    manage_schedules_warnings,
   } from "../../paraglide/messages.js";
 
   let { basePath = "/local/manage" }: { basePath?: string } = $props();
@@ -202,6 +196,20 @@
     } catch {
       // surfaced via store error
     }
+  }
+
+  // One exit for the warn card's field edits: the card reports the
+  // field key and raw string, the page owns the draft.
+  function onWarnField(f: WarnField, v: string): void {
+    if (!draft) return;
+    if (f === "pre" || f === "fin") {
+      const n = Number(v);
+      if (Number.isInteger(n)) {
+        if (f === "pre") draft.pre_warn_minutes = n;
+        else draft.final_warn_minutes = n;
+      }
+    } else if (f === "wake") draft.wake_prompt = v;
+    else draft.final_warn_prompt = v;
   }
 
   // --- status line: client-side preview (same evaluator as backend) ---
@@ -361,66 +369,15 @@
       <!-- always has no shift boundaries, so the warn/wake config below
            would be dead settings; hide the whole group in that mode -->
       {#if draft.spec.mode !== "always"}
-        <section class="card preset-tonal-surface p-4 space-y-4">
-          <div class="grid grid-cols-2 gap-4">
-            <label class="text-sm space-y-1">
-              <span class="opacity-70">{manage_schedules_pre_warn()}</span>
-              <input
-                class="input preset-tonal-surface w-full"
-                type="number"
-                min="1"
-                bind:value={draft.pre_warn_minutes}
-              />
-            </label>
-            <label class="text-sm space-y-1">
-              <span class="opacity-70">{manage_schedules_final_warn()}</span>
-              <input
-                class="input preset-tonal-surface w-full"
-                type="number"
-                min="1"
-                bind:value={draft.final_warn_minutes}
-              />
-            </label>
-          </div>
-          {#if !warnMinutesValid}
-            <p class="text-xs text-error-500 dark:text-error-400">
-              {manage_schedules_warn_order()}
-            </p>
-          {:else if snapshot}
-            <p class="text-xs opacity-50">
-              {manage_schedules_warnings({
-                pre: draft.pre_warn_minutes,
-                final: draft.final_warn_minutes,
-              })}
-            </p>
-          {/if}
-
-          <div class="space-y-1">
-            <label class="text-sm opacity-70" for="wake-prompt">
-              {manage_schedules_wake_prompt()}
-            </label>
-            <textarea
-              id="wake-prompt"
-              class="textarea preset-tonal-surface w-full"
-              rows="3"
-              bind:value={draft.wake_prompt}></textarea>
-            <p class="text-xs opacity-60">{manage_schedules_wake_hint()}</p>
-          </div>
-
-          <div class="space-y-1">
-            <label class="text-sm opacity-70" for="final-warn-prompt">
-              {manage_schedules_final_warn_prompt()}
-            </label>
-            <textarea
-              id="final-warn-prompt"
-              class="textarea preset-tonal-surface w-full"
-              rows="3"
-              bind:value={draft.final_warn_prompt}></textarea>
-            <p class="text-xs opacity-60">
-              {manage_schedules_final_warn_hint({ N: "{N}" })}
-            </p>
-          </div>
-        </section>
+        <ScheduleWarnCard
+          pre={draft.pre_warn_minutes}
+          fin={draft.final_warn_minutes}
+          wakePrompt={draft.wake_prompt}
+          finalPrompt={draft.final_warn_prompt}
+          warnValid={warnMinutesValid}
+          hasSnapshot={snapshot !== null}
+          onField={onWarnField}
+        />
       {/if}
 
       <!-- save bar -->
