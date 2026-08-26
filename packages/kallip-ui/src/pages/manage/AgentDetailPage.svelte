@@ -7,8 +7,12 @@
   import { CalendarClock, Clock } from "@lucide/svelte";
   import { MoreVertical, Pencil, Trash } from "@lucide/svelte";
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
-  import type { RetryErrorKind } from "../../lib/manage/retry.ts";
-  import { classifyRetryError, relativeTime } from "../../lib/manage/retry.ts";
+  import {
+    fmtAbsoluteRetry,
+    fmtRelativeRetry,
+    retryOutcome,
+    type RetryEntry,
+  } from "../../lib/manage/retryFormat.ts";
   import { managementBackend } from "../../lib/manage/client.ts";
   import { KallipError } from "@kallipai/kallip-common";
   import { agentsStore } from "../../lib/manage/agents.svelte.ts";
@@ -143,59 +147,6 @@
     }
     return null;
   });
-
-  interface RetryEntry {
-    timestamp: number;
-    attempt: number;
-    max_attempts: number;
-    error: string;
-  }
-
-  function retryOutcome(r: RetryEntry): string {
-    return r.attempt < r.max_attempts
-      ? manage_agent_retry_retried()
-      : manage_agent_retry_exhausted();
-  }
-
-  function fmtAbsoluteRetry(r: RetryEntry): string {
-    return manage_agent_retry_line({
-      date: new Date(r.timestamp * 1000).toLocaleString(getLocale()),
-      error: r.error,
-      outcome: retryOutcome(r),
-    });
-  }
-
-  // Display labels for the classified error kinds (retry.ts owns the
-  // string->kind mapping; this maps kind->message).
-  const errorLabels: Record<RetryErrorKind, () => string> = {
-    network: manage_agent_retry_error_network,
-    timeout: manage_agent_retry_error_timeout,
-    rate_limit: manage_agent_retry_error_rate_limit,
-    auth: manage_agent_retry_error_auth,
-    unknown: manage_agent_retry_error_unknown,
-  };
-
-  function fmtRelativeRetry(r: RetryEntry): string {
-    // Date.now() is read per render: the 5s status poll re-renders the
-    // card, so the relative bucket refreshes on the data's own cadence.
-    const { kind, n } = relativeTime(
-      Math.floor(Date.now() / 1000),
-      r.timestamp,
-    );
-    const date =
-      kind === "just"
-        ? manage_agent_retry_just_now()
-        : kind === "min"
-          ? manage_agent_retry_minutes_ago({ n })
-          : kind === "hour"
-            ? manage_agent_retry_hours_ago({ n })
-            : manage_agent_retry_days_ago({ n });
-    return manage_agent_retry_line({
-      date,
-      error: errorLabels[classifyRetryError(r.error)](),
-      outcome: retryOutcome(r),
-    });
-  }
 
   async function onSaveIdentity(role: string, description: string) {
     await agentsStore.updateMetadata(id, { role, description }).catch(() => {});
@@ -442,7 +393,7 @@
           {#each showAllRetries ? status.recent_retries : status.recent_retries.slice(0, 3) as r}
             <div class="text-xs opacity-70">
               {retryMode === "relative"
-                ? fmtRelativeRetry(r)
+                ? fmtRelativeRetry(r, Math.floor(Date.now() / 1000))
                 : fmtAbsoluteRetry(r)}
             </div>
           {/each}
