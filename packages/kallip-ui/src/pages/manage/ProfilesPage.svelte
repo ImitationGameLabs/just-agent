@@ -14,15 +14,9 @@
   import { SvelteMap } from "svelte/reactivity";
   import ProfilesToolbar from "../../components/manage/ProfilesToolbar.svelte";
   import ProvidersSection from "../../components/manage/ProvidersSection.svelte";
+  import TiersSection from "../../components/manage/TiersSection.svelte";
+  import ParkingSection from "../../components/manage/ParkingSection.svelte";
   import ConfirmDialog from "../../components/ConfirmDialog.svelte";
-  import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
-  import {
-    FlaskConical,
-    MoreVertical,
-    Pencil,
-    Plus,
-    Trash,
-  } from "@lucide/svelte";
   import ProviderDialog from "../../components/manage/ProviderDialog.svelte";
   import TierDialog from "../../components/manage/TierDialog.svelte";
   import ParkingDialog from "../../components/manage/ParkingDialog.svelte";
@@ -36,16 +30,12 @@
     singleParkingProfileProbeRequest,
     upsertProvider,
   } from "../../lib/manage/compute.ts";
-  import { TONAL_ICON_SURF } from "../../lib/classes.ts";
   import {
     clearProfileResult,
     mergeProfileScope,
     mergeProfileScopeAll,
     mergeProviderScope,
     occupiedIdsOf,
-    profileKey,
-    probeStatusColor,
-    probeStatusLabel,
     providerIdsOf,
   } from "../../lib/manage/profiles-view.ts";
   import type {
@@ -54,36 +44,14 @@
     ProfileModelProbeReport,
   } from "@kallipai/kallip-client";
   import {
-    common_edit,
     common_remove,
-    manage_profiles_add_tier,
     manage_profiles_apply,
     manage_profiles_apply_desc,
     manage_profiles_apply_desc_parked,
     manage_profiles_apply_title,
     manage_profiles_applied_result,
-    manage_profiles_max_context_label,
-    manage_profiles_parking,
-    manage_profiles_parking_add,
-    manage_profiles_parking_desc_l1,
-    manage_profiles_parking_desc_l2,
-    manage_profiles_probe_tier_ok,
-    manage_profiles_probe_tier_fail,
-    manage_profiles_profile_provider_label,
-    manage_profiles_profile_actions_aria,
-    manage_profiles_profile_model_label,
     manage_profiles_remove_tier_confirm_desc,
     manage_profiles_remove_tier_confirm_title,
-    manage_profiles_test,
-    manage_profiles_test_all,
-    manage_profiles_tier,
-    manage_profiles_tier_drop_here,
-    manage_profiles_tier_actions_aria,
-    manage_profiles_tiers,
-    manage_profiles_tiers_desc_l1,
-    manage_profiles_tiers_desc_l2,
-    manage_profiles_tiers_desc_l3,
-    manage_profiles_tiers_desc_l4,
     manage_profiles_title,
   } from "../../paraglide/messages.js";
 
@@ -175,6 +143,14 @@
   let drag = $state<DragPayload | null>(null);
   let dragOverTier = $state(-1);
   let dragOverParking = $state(false);
+
+  // Shared drag-end reset for both drop targets (card sections own the
+  // markup, the page owns the drag state).
+  function clearDrag(): void {
+    drag = null;
+    dragOverTier = -1;
+    dragOverParking = false;
+  }
 
   function onDropTier(toTier: number): void {
     const d = drag;
@@ -434,378 +410,49 @@
 
     <!-- Providers: global pool of provider cards -->
     {#if profilesStore.draft}
-    <ProvidersSection
-      providers={Object.values(profilesStore.draft.endpoints)}
-      reports={providerReports}
-      isProbing={profilesStore.isProbing}
-      onTest={onTestProvider}
-      onEdit={openProviderEdit}
-      onAdd={openProviderNew}
-    />
+      <ProvidersSection
+        providers={Object.values(profilesStore.draft.endpoints)}
+        reports={providerReports}
+        isProbing={profilesStore.isProbing}
+        onTest={onTestProvider}
+        onEdit={openProviderEdit}
+        onAdd={openProviderNew}
+      />
 
-      <!-- Tiers: one container per tier holding draggable profile cards -->
-      <section class="space-y-3">
-        <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
-          {manage_profiles_tiers()}
-        </h2>
-        <div class="text-xs opacity-60 mt-1 space-y-0.5">
-          <p>{manage_profiles_tiers_desc_l1()}</p>
-          <p>{manage_profiles_tiers_desc_l2()}</p>
-          <p>{manage_profiles_tiers_desc_l3()}</p>
-          <p>{manage_profiles_tiers_desc_l4()}</p>
-        </div>
+      <TiersSection
+        tiers={profilesStore.draft.tiers}
+        reports={profileReports}
+        isProbing={profilesStore.isProbing}
+        {dragOverTier}
+        onCardDragStart={(fromTier, fromIdx) =>
+          (drag = { area: "tier", fromTier, fromIdx })}
+        onCardDragEnd={clearDrag}
+        onTierDragOver={(tierIdx) => (dragOverTier = tierIdx)}
+        onTierDragLeave={(tierIdx) =>
+          (dragOverTier = tierIdx === dragOverTier ? -1 : dragOverTier)}
+        onTierDrop={onDropTier}
+        {onTestTier}
+        {onTestProfile}
+        onEditTier={(tierIdx) => (tierDialog = { open: true, tierIdx })}
+        onRemoveTier={(tierIdx) => (removeTierIdx = tierIdx)}
+        onAddTier={() => profilesStore.addTier()}
+      />
 
-        {#each profilesStore.draft.tiers as tier, tierIdx (tierIdx)}
-          {@const tierReport = [...profileReports.entries()]
-            .filter(([k]) => k.startsWith(`${tierIdx}:`))
-            .map(([, v]) => v)}
-          <div
-            role="list"
-            class="card preset-tonal-surface p-4 space-y-3 {dragOverTier ===
-            tierIdx
-              ? 'outline-2 outline-dashed outline-primary-500'
-              : ''}"
-            ondragover={(e) => {
-              e.preventDefault();
-              dragOverTier = tierIdx;
-            }}
-            ondragleave={() =>
-              (dragOverTier = tierIdx === dragOverTier ? -1 : dragOverTier)}
-            ondrop={(e) => {
-              e.preventDefault();
-              onDropTier(tierIdx);
-            }}
-          >
-            <div class="flex items-center justify-between gap-2">
-              <div class="text-sm font-medium">
-                {manage_profiles_tier()}
-                <span class="font-mono opacity-80">#{tierIdx}</span>
-              </div>
-              <Menu
-                positioning={{ placement: "bottom-end" }}
-                onSelect={(e) => {
-                  if (e.value === "test") onTestTier(tierIdx);
-                  else if (e.value === "edit")
-                    tierDialog = { open: true, tierIdx };
-                  else if (e.value === "remove") removeTierIdx = tierIdx;
-                }}
-              >
-                <Menu.Trigger
-                  class="size-10 {TONAL_ICON_SURF} shrink-0"
-                  aria-label={manage_profiles_tier_actions_aria()}
-                  disabled={profilesStore.isProbing}
-                >
-                  <MoreVertical class="size-4" />
-                </Menu.Trigger>
-                <Portal>
-                  <Menu.Positioner>
-                    <Menu.Content
-                      class="card preset-tonal-surface p-1 min-w-[8rem]"
-                    >
-                      <Menu.Item
-                        value="test"
-                        class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-                      >
-                        <FlaskConical class="size-4" />
-                        {manage_profiles_test_all()}
-                      </Menu.Item>
-                      <Menu.Item
-                        value="edit"
-                        class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-                      >
-                        <Pencil class="size-4" />
-                        {common_edit()}
-                      </Menu.Item>
-                      <Menu.Item
-                        value="remove"
-                        class="flex items-center gap-2 px-3 py-2 rounded-base text-sm text-error-500 dark:text-error-400 cursor-pointer hover:preset-filled-error-500"
-                      >
-                        <Trash class="size-4" />
-                        {common_remove()}
-                      </Menu.Item>
-                    </Menu.Content>
-                  </Menu.Positioner>
-                </Portal>
-              </Menu>
-            </div>
-
-            {#each tier.profiles as profile, profileIdx (profileIdx)}
-              {@const report = profileReports.get(
-                profileKey(tierIdx, profile.id),
-              )}
-              <div
-                role="listitem"
-                class="card preset-filled-surface-100-900 p-3 space-y-1 cursor-grab"
-                draggable="true"
-                ondragstart={(e) => {
-                  drag = {
-                    area: "tier",
-                    fromTier: tierIdx,
-                    fromIdx: profileIdx,
-                  };
-                  // Firefox only starts a drag session if dataTransfer gets data.
-                  if (e.dataTransfer) {
-                    e.dataTransfer.setData("text/plain", profile.id);
-                    e.dataTransfer.effectAllowed = "move";
-                  }
-                }}
-                ondragend={() => {
-                  drag = null;
-                  dragOverTier = -1;
-                  dragOverParking = false;
-                }}
-              >
-                <div class="flex items-center justify-between gap-2">
-                  <span class="font-mono text-sm">{profile.id}</span>
-                  <Menu
-                    positioning={{ placement: "bottom-end" }}
-                    onSelect={(e) => {
-                      if (e.value === "test")
-                        onTestProfile(tierIdx, profileIdx);
-                      else if (e.value === "edit")
-                        tierDialog = { open: true, tierIdx };
-                    }}
-                  >
-                    <Menu.Trigger
-                      class="size-10 {TONAL_ICON_SURF} shrink-0"
-                      aria-label={manage_profiles_profile_actions_aria()}
-                      disabled={profilesStore.isProbing}
-                    >
-                      <MoreVertical class="size-4" />
-                    </Menu.Trigger>
-                    <Portal>
-                      <Menu.Positioner>
-                        <Menu.Content
-                          class="card preset-tonal-surface p-1 min-w-[8rem]"
-                        >
-                          <Menu.Item
-                            value="test"
-                            class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-                          >
-                            <FlaskConical class="size-4" />
-                            {manage_profiles_test()}
-                          </Menu.Item>
-                          <Menu.Item
-                            value="edit"
-                            class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-                          >
-                            <Pencil class="size-4" />
-                            {common_edit()}
-                          </Menu.Item>
-                        </Menu.Content>
-                      </Menu.Positioner>
-                    </Portal>
-                  </Menu>
-                </div>
-                <dl class="text-xs space-y-0.5">
-                  <div class="flex gap-2">
-                    <dt class="opacity-60">
-                      {manage_profiles_profile_provider_label()}:
-                    </dt>
-                    <dd class="font-mono">{profile.endpoint}</dd>
-                  </div>
-                  <div class="flex gap-2">
-                    <dt class="opacity-60">
-                      {manage_profiles_profile_model_label()}:
-                    </dt>
-                    <dd class="font-mono">{profile.model}</dd>
-                  </div>
-                  <div class="flex gap-2">
-                    <dt class="opacity-60">
-                      {manage_profiles_max_context_label()}:
-                    </dt>
-                    <dd class="font-mono">{profile.max_context_window}</dd>
-                  </div>
-                </dl>
-                {#if report}
-                  <div class="text-xs">
-                    <span class={probeStatusColor[report.status]}>
-                      {probeStatusLabel(report.status)}
-                    </span>
-                    {#if report.detail}
-                      <span class="opacity-60 ml-2 font-mono break-all">
-                        {report.detail}
-                      </span>
-                    {/if}
-                  </div>
-                {/if}
-              </div>
-            {/each}
-            {#if tier.profiles.length === 0}
-              <p class="text-xs opacity-50">
-                {manage_profiles_tier_drop_here()}
-              </p>
-            {/if}
-
-            <!-- Card footer: the tier probe summary (a result lands beside
-                 the kebab menu that produced it). -->
-            {#if tierReport.length > 0}
-              <div class="flex items-center gap-2 flex-wrap text-xs">
-                {#if tierReport.every((r) => r.status === "ok")}
-                  <span class={probeStatusColor.ok}>
-                    {manage_profiles_probe_tier_ok()}
-                  </span>
-                {:else}
-                  <span class={probeStatusColor.invalid_config}>
-                    {manage_profiles_probe_tier_fail()}
-                    {tierReport
-                      .filter((r) => r.status !== "ok")
-                      .map((r) => r.profile_id)
-                      .join(", ")}
-                  </span>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {/each}
-
-        <!-- Add-tier card: same level as the tier containers; appends an
-             empty tier directly (no dialog) — drag profiles in or use a
-             tier's Edit. An empty tier cannot be saved (PUT rejects), by
-             design: fill it before saving. -->
-        <button
-          type="button"
-          class="card preset-tonal-surface border-2 border-dashed border-surface-400 p-4 flex items-center justify-center gap-2 min-h-24 w-full hover:preset-filled-surface-100-900 transition cursor-pointer"
-          onclick={() => profilesStore.addTier()}
-        >
-          <Plus class="size-6 opacity-70" />
-          <span class="text-sm opacity-70">
-            {manage_profiles_add_tier()}
-          </span>
-        </button>
-      </section>
-
-      <!-- Parking: profiles held out of rotation. Same card language as the
-           tiers above, but the container stays dashed (not a rotation slot)
-           and its add button opens the single-profile ParkingDialog. -->
-      <section class="space-y-3">
-        <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
-          {manage_profiles_parking()}
-        </h2>
-        <div class="text-xs opacity-60 mt-1 space-y-0.5">
-          <p>{manage_profiles_parking_desc_l1()}</p>
-          <p>{manage_profiles_parking_desc_l2()}</p>
-        </div>
-        <div
-          role="list"
-          class="card preset-tonal-surface border-2 border-dashed border-surface-400 p-4 space-y-3 {dragOverParking
-            ? 'outline-2 outline-dashed outline-primary-500'
-            : ''}"
-          ondragover={(e) => {
-            e.preventDefault();
-            dragOverParking = true;
-          }}
-          ondragleave={() => (dragOverParking = false)}
-          ondrop={(e) => {
-            e.preventDefault();
-            onDropParking();
-          }}
-        >
-          {#each profilesStore.draft.parking ?? [] as profile, idx (idx)}
-            {@const report = profileReports.get(`p:${profile.id}`)}
-            <div
-              role="listitem"
-              class="card preset-filled-surface-100-900 p-3 space-y-1 cursor-grab"
-              draggable="true"
-              ondragstart={(e) => {
-                drag = { area: "parking", fromTier: -1, fromIdx: idx };
-                if (e.dataTransfer) {
-                  e.dataTransfer.setData("text/plain", profile.id);
-                  e.dataTransfer.effectAllowed = "move";
-                }
-              }}
-              ondragend={() => {
-                drag = null;
-                dragOverTier = -1;
-                dragOverParking = false;
-              }}
-            >
-              <div class="flex items-center justify-between gap-2">
-                <span class="font-mono text-sm">{profile.id}</span>
-                <Menu
-                  positioning={{ placement: "bottom-end" }}
-                  onSelect={(e) => {
-                    if (e.value === "test") onTestParking(idx);
-                    else if (e.value === "edit") openParkingEdit(idx);
-                  }}
-                >
-                  <Menu.Trigger
-                    class="size-10 {TONAL_ICON_SURF} shrink-0"
-                    aria-label={manage_profiles_profile_actions_aria()}
-                    disabled={profilesStore.isProbing}
-                  >
-                    <MoreVertical class="size-4" />
-                  </Menu.Trigger>
-                  <Portal>
-                    <Menu.Positioner>
-                      <Menu.Content
-                        class="card preset-tonal-surface p-1 min-w-[8rem]"
-                      >
-                        <Menu.Item
-                          value="test"
-                          class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-                        >
-                          <FlaskConical class="size-4" />
-                          {manage_profiles_test()}
-                        </Menu.Item>
-                        <Menu.Item
-                          value="edit"
-                          class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-                        >
-                          <Pencil class="size-4" />
-                          {common_edit()}
-                        </Menu.Item>
-                      </Menu.Content>
-                    </Menu.Positioner>
-                  </Portal>
-                </Menu>
-              </div>
-              <dl class="text-xs space-y-0.5">
-                <div class="flex gap-2">
-                  <dt class="opacity-60">
-                    {manage_profiles_profile_provider_label()}:
-                  </dt>
-                  <dd class="font-mono">{profile.endpoint}</dd>
-                </div>
-                <div class="flex gap-2">
-                  <dt class="opacity-60">
-                    {manage_profiles_profile_model_label()}:
-                  </dt>
-                  <dd class="font-mono">{profile.model}</dd>
-                </div>
-                <div class="flex gap-2">
-                  <dt class="opacity-60">
-                    {manage_profiles_max_context_label()}:
-                  </dt>
-                  <dd class="font-mono">{profile.max_context_window}</dd>
-                </div>
-              </dl>
-              {#if report}
-                <div class="text-xs">
-                  <span class={probeStatusColor[report.status]}>
-                    {probeStatusLabel(report.status)}
-                  </span>
-                  {#if report.detail}
-                    <span class="opacity-60 ml-2 font-mono break-all">
-                      {report.detail}
-                    </span>
-                  {/if}
-                </div>
-              {/if}
-            </div>
-          {/each}
-          <button
-            type="button"
-            class="card preset-tonal-surface border-2 border-dashed border-surface-400 p-4 flex items-center justify-center gap-2 min-h-24 w-full hover:preset-filled-surface-100-900 transition cursor-pointer"
-            onclick={openParkingNew}
-          >
-            <Plus class="size-6 opacity-70" />
-            <span class="text-sm opacity-70">
-              {manage_profiles_parking_add()}
-            </span>
-          </button>
-        </div>
-      </section>
+      <ParkingSection
+        parking={profilesStore.draft.parking ?? []}
+        reports={profileReports}
+        isProbing={profilesStore.isProbing}
+        {dragOverParking}
+        onCardDragStart={(fromIdx) =>
+          (drag = { area: "parking", fromTier: -1, fromIdx })}
+        onCardDragEnd={clearDrag}
+        onParkingDragOver={() => (dragOverParking = true)}
+        onParkingDragLeave={() => (dragOverParking = false)}
+        onParkingDrop={onDropParking}
+        onTest={onTestParking}
+        onEdit={openParkingEdit}
+        onAdd={openParkingNew}
+      />
     {/if}
   </div>
 </div>
