@@ -89,24 +89,36 @@ export interface NavRoom {
   label: string;
 }
 
-/** Derive a sidebar NavIndicator from OUR channel transport state. Channel-
- *  transport-only (not peer presence): when the realtime SSE is broken, peer
- *  presence is unknown, so a presence-driven dot would mislabel every tagma
- *  "offline". This mapping stays honest about what we know:
+/** Derive a sidebar NavIndicator from OUR channel transport state.
+ *  Channel-transport-first: when the realtime SSE is broken, presence is
+ *  unknown, so a presence-driven dot would mislabel every tagma "offline".
+ *  Presence feeds exactly one branch: `absent` + `knownOffline` reads down
+ *  (resolved-without-peer, the same source and safe-default policy as the
+ *  /tagmata dashboard). The mapping stays honest about what we know:
  *    open      -> live (green)
  *    pending   -> pending (spinner; in-flight open or KEX)
- *    absent    -> pending (spinner; no channel yet -- click to connect)
+ *    absent    -> pending (spinner) while presence is unresolved; down
+ *    (grey) once presence resolves without the peer -- no channel exists
+ *    and auto-open only fires for online tagmas
  *    unavailable -> down (grey; the auto-open budget holds a failure --
  *    nothing in flight; the chat page shows its unavailable + retry row)
  *    offline   -> down (grey; we had a channel and the peer went away)
  *    error     -> error (red; click to retry) */
-export function tagmaNavIndicator(channel: TagmaChannelState): NavIndicator {
+export function tagmaNavIndicator(
+  channel: TagmaChannelState,
+  knownOffline = false,
+): NavIndicator {
   switch (channel.kind) {
     case "open":
       return "live";
     case "pending":
-    case "absent":
       return "pending";
+    case "absent":
+      // No channel and none in flight: auto-open only fires for online
+      // tagmas, so an absent channel to a presence-confirmed-offline peer
+      // would otherwise spin forever; unresolved presence keeps the spinner
+      // (bounded by the realtime resolve deadline).
+      return knownOffline ? "down" : "pending";
     case "unavailable":
       return "down";
     case "offline":
