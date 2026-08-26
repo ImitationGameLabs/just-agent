@@ -181,7 +181,7 @@ fn explicit_or_data_dir_path() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os(PROFILES_FILE_ENV) {
         return Some(PathBuf::from(p));
     }
-    std::env::var_os("KALLIP_DATA_DIR").map(|d| PathBuf::from(d).join("profiles.toml"))
+    std::env::var_os("KALLIP_DATA_DIR").map(|d| PathBuf::from(d).join("profiles").join("profiles.toml"))
 }
 
 /// Serialize a [`ProfileConfig`] to TOML and write it to `path` atomically
@@ -224,10 +224,19 @@ fn config_dir() -> Option<PathBuf> {
 /// the default `<config_dir>/kallip`. Returns `None` only when neither
 /// `XDG_CONFIG_HOME` nor `HOME` is set.
 pub fn profiles_config_dir() -> Option<PathBuf> {
+    // Same single source as the loader (`explicit_or_data_dir_path`): the
+    // hide-hole must follow the resolver, or a relocated profiles.toml
+    // (the data-dir tier) leaks past the Guest sandbox. The data-dir tier
+    // returns the dedicated `profiles/` subdir (a directory, as the tmpfs
+    // overlay contract requires) rather than the data root itself — hiding
+    // the root would also hide agents/skills and break Guest agents.
     if let Some(p) = std::env::var_os(PROFILES_FILE_ENV) {
         // Hide the directory containing the explicit file (covers custom locations
         // a Guest could otherwise `cat`).
         return PathBuf::from(p).parent().map(Path::to_path_buf);
+    }
+    if std::env::var_os("KALLIP_DATA_DIR").is_some() {
+        return explicit_or_data_dir_path().and_then(|p| p.parent().map(Path::to_path_buf));
     }
     config_dir().map(|d| d.join("kallip"))
 }
@@ -603,7 +612,8 @@ max_context_window = 1000
     #[test]
     fn data_dir_takes_priority_over_home_level_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let data_profiles = tmp.path().join("profiles.toml");
+        let data_profiles = tmp.path().join("profiles").join("profiles.toml");
+        std::fs::create_dir_all(data_profiles.parent().unwrap()).unwrap();
         std::fs::write(&data_profiles, "\n").unwrap();
         temp_env::with_vars(
             [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
@@ -641,7 +651,26 @@ max_context_window = 1000
                 // the dev box — when the data dir owns the tier, the path is
                 // the (missing) data-dir file, so the read yields None.
                 let resolved = resolve_config_path().unwrap();
-                assert!(resolved.is_none() || resolved == Some(tmp.path().join("profiles.toml")));
+                assert!(resolved.is_none()
+                    || resolved == Some(tmp.path().join("profiles").join("profiles.toml")));
+            },
+        );
+    }
+
+    #[test]
+    fn profiles_config_dir_follows_the_data_dir_tier() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("profiles")).unwrap();
+        temp_env::with_vars(
+            [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
+            || {
+                // The hide-hole source must track the resolver: the data-dir
+                // tier hides the dedicated profiles/ subdir (a directory),
+                // not the data root (agents/skills stay Guest-visible).
+                assert_eq!(
+                    profiles_config_dir().as_deref(),
+                    Some(tmp.path().join("profiles").as_path())
+                );
             },
         );
     }
