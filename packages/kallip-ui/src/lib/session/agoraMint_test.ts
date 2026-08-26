@@ -28,8 +28,8 @@ Deno.test(
     // Failure: the agora endpoint is dead (fetch rejects).
     initAgora("http://127.0.0.1:1");
     const originalFetch = globalThis.fetch;
-    globalThis.fetch =
-      (() => Promise.reject(new Error("net down"))) as typeof fetch;
+    globalThis.fetch = (() =>
+      Promise.reject(new Error("net down"))) as typeof fetch;
     try {
       const first = await agoraSession.mintTagma();
       assertEquals(first, null);

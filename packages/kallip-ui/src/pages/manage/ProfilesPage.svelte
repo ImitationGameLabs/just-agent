@@ -13,6 +13,7 @@
   import { refreshParkedLive as fetchParkedLive } from "../../lib/manage/parkedLive.ts";
   import { SvelteMap } from "svelte/reactivity";
   import ProfilesToolbar from "../../components/manage/ProfilesToolbar.svelte";
+  import ProvidersSection from "../../components/manage/ProvidersSection.svelte";
   import ConfirmDialog from "../../components/ConfirmDialog.svelte";
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
   import {
@@ -41,7 +42,6 @@
     mergeProfileScope,
     mergeProfileScopeAll,
     mergeProviderScope,
-    modelsCountLabel,
     occupiedIdsOf,
     profileKey,
     probeStatusColor,
@@ -56,17 +56,12 @@
   import {
     common_edit,
     common_remove,
-    manage_profiles_add_provider,
     manage_profiles_add_tier,
     manage_profiles_apply,
     manage_profiles_apply_desc,
     manage_profiles_apply_desc_parked,
     manage_profiles_apply_title,
     manage_profiles_applied_result,
-    manage_profiles_provider_base_url_default,
-    manage_profiles_provider_card_base_url_label,
-    manage_profiles_provider_actions_aria,
-    manage_profiles_providers,
     manage_profiles_max_context_label,
     manage_profiles_parking,
     manage_profiles_parking_add,
@@ -439,111 +434,14 @@
 
     <!-- Providers: global pool of provider cards -->
     {#if profilesStore.draft}
-      <section class="space-y-3">
-        <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
-          {manage_profiles_providers()}
-        </h2>
-        <div class="grid gap-3 sm:grid-cols-2">
-          {#each Object.values(profilesStore.draft.endpoints) as ep (ep.id)}
-            {@const report = providerReports.get(ep.id)}
-            <div class="card preset-tonal-surface p-4 space-y-2 min-w-0">
-              <div class="flex items-center justify-between gap-2">
-                <span
-                  class="font-mono text-sm font-semibold truncate min-w-0 flex-1"
-                  >{ep.id}</span
-                >
-                <Menu
-                  positioning={{ placement: "bottom-end" }}
-                  onSelect={(e) => {
-                    if (e.value === "test") onTestProvider(ep.id);
-                    else if (e.value === "edit") openProviderEdit(ep);
-                  }}
-                >
-                  <Menu.Trigger
-                    class="size-10 {TONAL_ICON_SURF} shrink-0"
-                    aria-label={manage_profiles_provider_actions_aria()}
-                    disabled={profilesStore.isProbing}
-                  >
-                    <MoreVertical class="size-4" />
-                  </Menu.Trigger>
-                  <Portal>
-                    <Menu.Positioner>
-                      <Menu.Content
-                        class="card preset-tonal-surface p-1 min-w-[8rem]"
-                      >
-                        <Menu.Item
-                          value="test"
-                          class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-                        >
-                          <FlaskConical class="size-4" />
-                          {manage_profiles_test()}
-                        </Menu.Item>
-                        <Menu.Item
-                          value="edit"
-                          class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-                        >
-                          <Pencil class="size-4" />
-                          {common_edit()}
-                        </Menu.Item>
-                      </Menu.Content>
-                    </Menu.Positioner>
-                  </Portal>
-                </Menu>
-              </div>
-              <dl class="text-xs space-y-1">
-                <div class="flex gap-2">
-                  <dt class="opacity-60 shrink-0">
-                    {manage_profiles_profile_provider_label()}:
-                  </dt>
-                  <dd class="font-mono min-w-0">{ep.family}</dd>
-                </div>
-                <div class="flex gap-2">
-                  <dt class="opacity-60 shrink-0">
-                    {manage_profiles_provider_card_base_url_label()}:
-                  </dt>
-                  <dd class="font-mono truncate min-w-0">
-                    {ep.base_url ?? manage_profiles_provider_base_url_default()}
-                  </dd>
-                </div>
-                <div class="flex gap-2">
-                  <dt class="opacity-60 shrink-0">API key:</dt>
-                  <dd class="font-mono min-w-0 break-all">{ep.api_key}</dd>
-                </div>
-              </dl>
-              {#if report}
-                <div class="border-t border-surface-300 pt-2 text-xs space-y-1">
-                  <span class={probeStatusColor[report.status]}>
-                    {probeStatusLabel(report.status)}
-                  </span>
-                  {#if report.latency_ms != null}
-                    <span class="opacity-60 ml-2">{report.latency_ms}ms</span>
-                  {/if}
-                  {#if report.catalog_count != null}
-                    <span class="opacity-60 ml-2">
-                      {modelsCountLabel(report.catalog_count)}
-                    </span>
-                  {/if}
-                  {#if report.detail}
-                    <p class="opacity-60 font-mono break-all">
-                      {report.detail}
-                    </p>
-                  {/if}
-                </div>
-              {/if}
-            </div>
-          {/each}
-          <button
-            type="button"
-            class="card preset-tonal-surface border-2 border-dashed border-surface-400 p-4 flex items-center justify-center gap-2 min-h-24 hover:preset-filled-surface-100-900 transition cursor-pointer"
-            onclick={openProviderNew}
-          >
-            <Plus class="size-6 opacity-70" />
-            <span class="text-sm opacity-70">
-              {manage_profiles_add_provider()}
-            </span>
-          </button>
-        </div>
-      </section>
+    <ProvidersSection
+      providers={Object.values(profilesStore.draft.endpoints)}
+      reports={providerReports}
+      isProbing={profilesStore.isProbing}
+      onTest={onTestProvider}
+      onEdit={openProviderEdit}
+      onAdd={openProviderNew}
+    />
 
       <!-- Tiers: one container per tier holding draggable profile cards -->
       <section class="space-y-3">
