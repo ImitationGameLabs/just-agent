@@ -143,7 +143,7 @@ fn load_file(path: &Path) -> Result<ProfileConfig> {
 }
 
 /// Resolve the config file path. Priority: an explicit `KALLIP_PROFILES_FILE`,
-/// then `<$KALLIP_DATA_DIR>/profiles.toml` when the data dir is set (the same
+/// then `<$KALLIP_DATA_DIR>/profiles/profiles.toml` when the data dir is set (the same
 /// per-instance root `agents/` and `skills/` live under — `data_dir_root`), then
 /// the HOME-level `<config_dir>/kallip/profiles.toml`. The data-dir tier keeps
 /// daemon-spawned instances from sharing one HOME-level file (the operator's
@@ -174,7 +174,7 @@ pub fn config_path() -> Result<PathBuf> {
 }
 
 /// The first two tiers of the priority chain, shared by both resolve fns:
-/// an explicit `KALLIP_PROFILES_FILE`, else `<data root>/profiles.toml` when
+/// an explicit `KALLIP_PROFILES_FILE`, else `<data dir>/profiles/profiles.toml` when
 /// `$KALLIP_DATA_DIR` is set (the same root `persistence::data_dir_root`
 /// names, so profiles stay inside the instance's own data tree).
 fn explicit_or_data_dir_path() -> Option<PathBuf> {
