@@ -469,6 +469,7 @@ const SYNONYMS: string[][] = [
     "manage_agent_provider",
     "manage_profiles_tier_dialog_provider_label",
     "manage_profiles_parking_dialog_endpoint_label",
+    "settings_provider_family_label",
   ],
   ["manage_agent_retry_error_unknown", "shell_error"],
   ["manage_agent_tier", "manage_profiles_tier"],
@@ -486,6 +487,11 @@ const SYNONYMS: string[][] = [
     "manage_profiles_tier_dialog_max_context_label",
   ],
   ["manage_instances_dialog_title", "manage_instances_new"],
+  ["rooms_name_label", "settings_provider_name_label"],
+  [
+    "manage_profiles_provider_base_url_label",
+    "settings_provider_base_url_label",
+  ],
 ];
 
 Deno.test("catalog: same-value keys are all deliberate synonyms", () => {

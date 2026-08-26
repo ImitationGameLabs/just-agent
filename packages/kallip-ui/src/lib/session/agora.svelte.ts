@@ -656,8 +656,11 @@ class AgoraSessionStore {
     return created;
   }
 
-  /** Replace a vault entry in place (rename / key rotation / mode flip);
-   *  THROWS on error like every other mutation. */
+  /** Replace a vault entry in place (rename / key rotation / mode flip).
+   *  key_material is stored exactly as sent: unlike create there is no
+   *  built-in sealing here, so an encrypted row must pass its existing blob
+   *  back or a fresh seal() output, never a raw key. THROWS on error like
+   *  every other mutation. */
   async replaceProvider(id: string, body: ProviderRequest): Promise<void> {
     const updated = await client().replaceProvider(id, body);
     this.providers = this.providers.map((p) => (p.id === id ? updated : p));

@@ -6,6 +6,7 @@
   import type {
     AddPasskeyResult,
     PasskeySummary,
+    ProviderRequest,
   } from "@kallipai/kallip-agora-client";
   import type {
     PasskeyAddHint,
@@ -15,6 +16,7 @@
   import PasskeyManager from "../components/settings/PasskeyManager.svelte";
   import LinkedAccounts from "../components/settings/LinkedAccounts.svelte";
   import EmailManager from "../components/settings/EmailManager.svelte";
+  import ProviderVault from "../components/settings/ProviderVault.svelte";
   import LightSwitch from "../components/LightSwitch.svelte";
   import LanguageSwitch from "../components/LanguageSwitch.svelte";
   import {
@@ -61,6 +63,18 @@
       !agoraSession.passkeysLoaded
     ) {
       agoraSession.refreshPasskeys();
+    }
+  });
+
+  // The provider vault loads the same way (mirrors the passkeys discipline:
+  //   a list failure lands in `providersError` without blanking `user`).
+  $effect(() => {
+    if (
+      mode === "online" &&
+      agoraSession.user &&
+      !agoraSession.providersLoaded
+    ) {
+      agoraSession.refreshProviders();
     }
   });
 
@@ -151,6 +165,16 @@
     };
     return { tone: "err", text: map[r.reason] ?? settings_error_unknown() };
   }
+
+  // -- provider vault (online only) ---------------------------------------
+  // Thin forwarders: the store owns every ceremony and mutation (create
+  // seals encrypted keys; rename re-sends the row unchanged except the
+  // name; flip/reveal open with THIS device's vault key). The components
+  // render and surface errors; this page only wires store calls in.
+  async function onCreateProvider(req: ProviderRequest): Promise<boolean> {
+    await agoraSession.createProvider(req);
+    return true;
+  }
 </script>
 
 <svelte:head><title>{settings_title()}</title></svelte:head>
@@ -220,6 +244,22 @@
           {minting}
           {onMint}
           onClear={() => (agoraSession.pairingCode = null)}
+        />
+
+        <ProviderVault
+          entries={agoraSession.providers}
+          phase={agoraSession.providersError
+            ? "error"
+            : agoraSession.providersLoaded
+              ? "loaded"
+              : "loading"}
+          error={agoraSession.providersError}
+          canFlip={agoraSession.canFlipKeys()}
+          onRename={(id, name) => agoraSession.renameProvider(id, name)}
+          onFlip={(entry) => agoraSession.flipProviderEncryption(entry)}
+          onDelete={(id) => agoraSession.deleteProvider(id)}
+          onCreate={onCreateProvider}
+          onCopyKey={(entry) => agoraSession.revealProviderKey(entry)}
         />
       {/if}
     {:else}
