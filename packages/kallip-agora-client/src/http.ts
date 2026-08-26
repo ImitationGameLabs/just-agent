@@ -27,6 +27,8 @@ import type {
   PairBeginRequest,
   PairFinishRequest,
   PasskeySummary,
+  ProviderRequest,
+  ProviderSummary,
   ProviderInfo,
   PublicTagmaProfile,
   PublicUserProfile,
@@ -270,6 +272,30 @@ export class AgoraClient extends BaseClient {
    * removed). */
   removeEmail(id: string): Promise<EmailSummary[]> {
     return this.json(`/v1/me/emails/${encodeURIComponent(id)}`, "DELETE");
+  }
+
+  // -- providers (self-service API-key vault) -------------------------------
+
+  /** `GET /v1/me/providers` — the caller's stored providers (oldest first). */
+  listProviders(): Promise<ProviderSummary[]> {
+    return this.json("/v1/me/providers", "GET");
+  }
+
+  /** `POST /v1/me/providers` — store one entry; a duplicate name is 409. */
+  createProvider(body: ProviderRequest): Promise<ProviderSummary> {
+    return this.json("/v1/me/providers", "POST", body);
+  }
+
+  /** `PUT /v1/me/providers/{id}` — full replacement (rename, key rotation,
+   * or mode flip); renaming onto a sibling's name is 409 like create. */
+  replaceProvider(id: string, body: ProviderRequest): Promise<ProviderSummary> {
+    return this.json(`/v1/me/providers/${encodeURIComponent(id)}`, "PUT", body);
+  }
+
+  /** `DELETE /v1/me/providers/{id}` — forget one entry; returns the remaining
+   * providers (mirrors removeEmail). */
+  deleteProvider(id: string): Promise<ProviderSummary[]> {
+    return this.json(`/v1/me/providers/${encodeURIComponent(id)}`, "DELETE");
   }
 
   // -- passkeys (self-service management of the caller's own devices) -------
