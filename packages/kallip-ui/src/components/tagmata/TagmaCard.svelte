@@ -354,6 +354,22 @@
                   {nav_chat()}
                 </Menu.Item>
               {/if}
+
+              {#if tagma && onRename}
+                <Menu.Item
+                  value="rename"
+                  class="px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
+                >
+                  {common_rename()}
+                </Menu.Item>
+              {/if}
+              <!-- Danger zone: destructive actions cluster at the tail,
+                   past a separator (the AccountMenu pattern), so a
+                   misaimed click never lands on Stop/Revoke from the
+                   safe-zone scroll. -->
+              {#if (process?.running && onStop) || (tagma && onRevoke)}
+                <Menu.Separator class="my-1 border-surface-200-800" />
+              {/if}
               {#if process?.running && onStop}
                 <Menu.Item
                   value="stop"
@@ -361,14 +377,6 @@
                 >
                   <Square class="size-4" />
                   {manage_instances_stop()}
-                </Menu.Item>
-              {/if}
-              {#if tagma && onRename}
-                <Menu.Item
-                  value="rename"
-                  class="px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-                >
-                  {common_rename()}
                 </Menu.Item>
               {/if}
               {#if tagma && onRevoke}

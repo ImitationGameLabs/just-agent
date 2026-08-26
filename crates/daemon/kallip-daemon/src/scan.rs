@@ -17,6 +17,10 @@ pub struct ScannedInstance {
     pub workspace: Option<String>,
     /// The instance's `runtime.json` pid when present and parse-able.
     pub pid: Option<u32>,
+    /// The instance's `runtime.json` listen port. Surfaced so panel
+    /// process actions (open) survive a page reload — the session-held
+    /// spawn memory is the fallback, not the source.
+    pub port: Option<u16>,
     /// The spawn-time uid of the requesting peer, from `meta.json`.
     pub owner: Option<u32>,
     /// The enrolled tagma identity (agora-issued id) if the instance's own
@@ -44,6 +48,7 @@ impl ScannedInstance {
             workspace: self.workspace.clone().unwrap_or_default(),
             running: state == InstanceState::Running,
             state,
+            port: self.port,
             owner: self.owner,
             tagma_id: self.tagma_id.clone(),
         }
@@ -130,11 +135,13 @@ pub fn scan_instances(data_root: &Path) -> Vec<ScannedInstance> {
         let Some(meta) = read_meta(&dir) else {
             continue;
         };
+        let runtime = read_runtime(&dir);
         out.push(ScannedInstance {
             slug,
             instance_id: meta.instance_id,
             workspace: meta.workspace.filter(|w| !w.is_empty()),
-            pid: read_runtime(&dir).map(|runtime| runtime.pid),
+            pid: runtime.as_ref().map(|r| r.pid),
+            port: runtime.map(|r| r.port),
             owner: Some(meta.owner_uid),
             tagma_id: read_tagma_id(&dir),
         });
@@ -160,6 +167,9 @@ pub fn read_runtime(dir: &Path) -> Option<RuntimeFile> {
 /// have exactly one entry, so this IS the tagma's primary. Discipline lock:
 /// this reads `tagma.id` ONLY; `tagma.token` (0o600 secret) is never opened,
 /// and the scan test asserts the token never reaches the wire.
+/// The tagma's config order (relays.toml) is deliberately NOT read: that
+/// file is the tagma process's own domain, while the instance tree is the
+/// daemon's — the approximation stays within daemon-owned ground.
 fn read_tagma_id(dir: &Path) -> Option<String> {
     let creds = dir.join("credentials");
     let Ok(entries) = std::fs::read_dir(&creds) else {
@@ -300,6 +310,48 @@ mod tests {
         for scanned in scan_instances(&root) {
             assert_eq!(scanned.tagma_id, None);
         }
+    }
+
+    #[test]
+    fn tagma_id_degrades_to_none_on_unreadable_credentials() {
+        let root = tempfile_dir("tagma-id-unreadable");
+        write(
+            &root.join("u1/meta.json"),
+            r#"{"instance_id":"id-4","owner_uid":1000}"#,
+        );
+        // `tagma.id` as a directory: the read fails and the entry is skipped.
+        std::fs::create_dir_all(root.join("u1/credentials/default/tagma.id"))
+            .expect("fixture dir-as-file");
+        write(
+            &root.join("u2/meta.json"),
+            r#"{"instance_id":"id-5","owner_uid":1000}"#,
+        );
+        // `credentials` itself not a directory: the listing fails outright.
+        write(&root.join("u2/credentials"), "not a dir");
+        for scanned in scan_instances(&root) {
+            assert_eq!(scanned.tagma_id, None);
+        }
+    }
+
+    #[test]
+    fn scan_surfaces_runtime_port() {
+        let root = tempfile_dir("runtime-port");
+        write(
+            &root.join("a/meta.json"),
+            r#"{"instance_id":"id-1","owner_uid":1000}"#,
+        );
+        write(
+            &root.join("a/runtime.json"),
+            r#"{"pid":1,"port":7301}"#,
+        );
+        write(
+            &root.join("b/meta.json"),
+            r#"{"instance_id":"id-2","owner_uid":1000}"#,
+        );
+        let scanned = scan_instances(&root);
+        assert_eq!(scanned[0].port, Some(7301));
+        // No runtime file (clean stop): no port, matching the wire contract.
+        assert_eq!(scanned[1].port, None);
     }
 
     fn tempfile_dir(name: &str) -> PathBuf {

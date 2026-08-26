@@ -93,6 +93,8 @@ export interface TagmaProcessLike {
   readonly slug: string;
   readonly workspace: string;
   readonly running: boolean;
+  /** The daemon-scan-read listen port, when the instance is running. */
+  readonly port?: number | null;
   /** The daemon-scan-read enrolled tagma identity, when present. */
   readonly tagma_id?: string | null;
 }
@@ -138,7 +140,7 @@ export function joinDeviceRows(
     slug: inst.slug,
     workspace: inst.workspace,
     running: inst.running,
-    port: spawnedPorts[inst.slug],
+    port: inst.port ?? spawnedPorts[inst.slug],
   });
   const rows: TagmaDeviceRow[] = [];
   for (const c of enrolled) {

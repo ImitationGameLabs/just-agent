@@ -37,8 +37,10 @@ class InstancesStore {
    * create capability (the entry stays, the create entry hides).
    */
   capabilities = $state<string[] | null>(null);
-  /** The listen port of each instance spawned in this session, by slug:
-   * the list wire has no port, so the Chat CTA needs this memory.
+  /** The listen port of each instance spawned in this session, by slug.
+   * The list wire carries the port while running; this memory is the
+   * fallback for the spawn-response-to-refresh gap (and legacy daemons
+   * without the wire field).
    */
   spawnedPorts = $state<Record<string, number>>({});
 
