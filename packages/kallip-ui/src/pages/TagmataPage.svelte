@@ -22,7 +22,7 @@
     InstancesError,
     instanceSlugFor,
   } from "../lib/instances/client.ts";
-  import type { TagmaCardProps } from "../lib/tagmata.svelte.ts";
+  import { joinDeviceRows } from "../lib/tagmata.svelte.ts";
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
   import CreateInstanceDialog, {
     type AdvancedSpawnFields,
@@ -252,64 +252,24 @@
   } as const;
 
   // --- the card list -------------------------------------------------------
-  // Join identities (enrolled tagmas) with processes by the one-click slug
-  // prefix convention; unmatched entries keep their own card shape (the
-  // identity half or the process half alone). Identity cards re-derive
-  // presence here ("checking" until realtime's snapshot resolves).
-  const devices = $derived.by(() => {
-    const bySlug = new Map(
-      instancesStore.instances.map((i) => [i.slug, i] as const),
-    );
-    const matched = new Set<string>();
-    const rows: {
-      key: string;
-      tagma?: TagmaCardProps;
-      process?: {
-        slug: string;
-        workspace: string;
-        running: boolean;
-        port?: number;
-      };
-    }[] = [];
-    for (const c of agoraSession.enrolledCards) {
-      const slug = instanceSlugFor(c.tagmaId);
-      const inst = bySlug.get(slug);
-      if (inst) matched.add(slug);
-      rows.push({
-        key: c.tagmaId,
-        tagma: {
-          ...c,
-          presence: realtimeStore.resolved
-            ? realtimeStore.has(c.tagmaId)
-              ? "online"
-              : "offline"
-            : "checking",
-          status: realtimeStore.statusFor(c.tagmaId),
-        },
-        process: inst
-          ? {
-              slug: inst.slug,
-              workspace: inst.workspace,
-              running: inst.running,
-              port: instancesStore.spawnedPorts[inst.slug],
-            }
-          : undefined,
-      });
-    }
-    for (const inst of instancesStore.instances) {
-      if (matched.has(inst.slug)) continue;
-      rows.push({
-        key: inst.slug,
-        process: {
-          slug: inst.slug,
-          workspace: inst.workspace,
-          running: inst.running,
-          port: instancesStore.spawnedPorts[inst.slug],
-        },
-      });
-    }
-    return rows;
-  });
+  // Join identities with hosted processes: the process-reported tagma_id
+  // first (the daemon scan reads the tagma's own persisted id), the one-click
+  // slug convention as fallback (see joinDeviceRows for the key order).
+  const devices = $derived(
+    joinDeviceRows(
+      agoraSession.enrolledCards,
+      instancesStore.instances,
+      instancesStore.spawnedPorts,
+      instanceSlugFor,
+      (id) =>
+        realtimeStore.resolved
+          ? realtimeStore.has(id)
+            ? "online"
+            : "offline"
+          : "checking",
+      (id) => realtimeStore.statusFor(id),
+    ),
+  );
 
   const pending = $derived(agoraSession.pending);
 

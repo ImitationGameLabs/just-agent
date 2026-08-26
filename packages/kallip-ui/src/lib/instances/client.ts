@@ -23,6 +23,11 @@ export interface InstanceInfo {
   running: boolean;
   state: "running" | "stopped" | "dead";
   owner: number | null;
+  /** The enrolled tagma identity (agora-issued), read by the daemon scan
+   * from the instance's own `credentials/<entry>/tagma.id`. Absent when the
+   * instance never enrolled, the read failed, or the daemon predates the
+   * field — the panel join then falls back to the slug convention. */
+  tagma_id?: string | null;
 }
 
 /** Liveness report: the daemon itself, or one instance by slug.

@@ -117,6 +117,14 @@ pub struct InstanceInfo {
     /// Owning uid recorded at spawn (SO_PEERCRED of the requesting
     /// peer); None when an adopted directory predates the field.
     pub owner: Option<u32>,
+    /// The enrolled tagma identity, read by the scan from the instance's own
+    /// `credentials/<entry>/tagma.id`. None when the instance never enrolled
+    /// (local-only) or the read failed — the panel join then degrades to the
+    /// slug convention. `#[serde(default)]` keeps pre-field wire JSON parsing.
+    /// Discipline: `tagma.id` is the ONLY credentials file ever read;
+    /// `tagma.token` (0o600 secret) is never opened.
+    #[serde(default)]
+    pub tagma_id: Option<String>,
 }
 
 /// Liveness detail for one instance (or the daemon).

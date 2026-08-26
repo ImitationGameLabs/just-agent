@@ -86,6 +86,82 @@ export interface EnrollmentCodeCardProps {
   readonly copyable: boolean;
 }
 
+/** The hosted-process half the panel joins onto identity cards. Structural:
+ * the instances `InstanceInfo` satisfies it, so this pure view-model file
+ * needs no transport-module import. */
+export interface TagmaProcessLike {
+  readonly slug: string;
+  readonly workspace: string;
+  readonly running: boolean;
+  /** The daemon-scan-read enrolled tagma identity, when present. */
+  readonly tagma_id?: string | null;
+}
+
+/** One row of the tagmata panel: an enrolled identity half, a hosted process
+ * half, or both merged onto one card. */
+export interface TagmaDeviceRow {
+  readonly key: string;
+  readonly tagma?: TagmaCardProps;
+  readonly process?: {
+    readonly slug: string;
+    readonly workspace: string;
+    readonly running: boolean;
+    readonly port?: number;
+  };
+}
+
+/** Join enrolled identities (agora `/v1/tagmata`) with hosted processes
+ * (instances list) into panel rows. Key preference: the process-reported
+ * `tagma_id` (the daemon scan reads the tagma's own persisted id — manual
+ * slugs and enroll-after-spawn join here), falling back to the one-click
+ * slug convention via `slugFor` so legacy one-click instances keep merging.
+ * Unmatched halves keep their own card; a process claimed once cannot be
+ * claimed again (a colliding identity renders identity-only). Pure:
+ * presence/status/slug lookups come in as callbacks. */
+export function joinDeviceRows(
+  enrolled: readonly Omit<TagmaCardProps, "presence">[],
+  processes: readonly TagmaProcessLike[],
+  spawnedPorts: Readonly<Record<string, number>>,
+  slugFor: (tagmaId: string) => string,
+  presenceFor: (tagmaId: string) => TagmaPresence,
+  statusFor: (tagmaId: string) => TagmaStatusSummary | undefined,
+): TagmaDeviceRow[] {
+  const byTagmaId = new Map<string, TagmaProcessLike>();
+  const bySlug = new Map<string, TagmaProcessLike>();
+  for (const inst of processes) {
+    bySlug.set(inst.slug, inst);
+    const id = inst.tagma_id?.trim();
+    if (id) byTagmaId.set(id, inst);
+  }
+  const claimed = new Set<string>();
+  const processOf = (inst: TagmaProcessLike) => ({
+    slug: inst.slug,
+    workspace: inst.workspace,
+    running: inst.running,
+    port: spawnedPorts[inst.slug],
+  });
+  const rows: TagmaDeviceRow[] = [];
+  for (const c of enrolled) {
+    const inst = byTagmaId.get(c.tagmaId) ?? bySlug.get(slugFor(c.tagmaId));
+    const tagma: TagmaCardProps = {
+      ...c,
+      presence: presenceFor(c.tagmaId),
+      status: statusFor(c.tagmaId),
+    };
+    if (inst && !claimed.has(inst.slug)) {
+      claimed.add(inst.slug);
+      rows.push({ key: c.tagmaId, tagma, process: processOf(inst) });
+    } else {
+      rows.push({ key: c.tagmaId, tagma });
+    }
+  }
+  for (const inst of processes) {
+    if (claimed.has(inst.slug)) continue;
+    rows.push({ key: inst.slug, process: processOf(inst) });
+  }
+  return rows;
+}
+
 /** Per-section load state for the dashboard (drives auto-hide + skeleton/error).
  * Re-exported from the shared `phase.ts` home so cross-feature dashboards (rooms,
  * ...) import from there, not from this tagma module. */

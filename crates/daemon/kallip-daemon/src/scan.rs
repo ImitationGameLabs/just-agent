@@ -19,6 +19,9 @@ pub struct ScannedInstance {
     pub pid: Option<u32>,
     /// The spawn-time uid of the requesting peer, from `meta.json`.
     pub owner: Option<u32>,
+    /// The enrolled tagma identity (agora-issued id) if the instance's own
+    /// credentials tree carries one; see `read_tagma_id`.
+    pub tagma_id: Option<String>,
 }
 
 impl ScannedInstance {
@@ -42,6 +45,7 @@ impl ScannedInstance {
             running: state == InstanceState::Running,
             state,
             owner: self.owner,
+            tagma_id: self.tagma_id.clone(),
         }
     }
 
@@ -132,6 +136,7 @@ pub fn scan_instances(data_root: &Path) -> Vec<ScannedInstance> {
             workspace: meta.workspace.filter(|w| !w.is_empty()),
             pid: read_runtime(&dir).map(|runtime| runtime.pid),
             owner: Some(meta.owner_uid),
+            tagma_id: read_tagma_id(&dir),
         });
     }
     out.sort_by(|a, b| a.slug.cmp(&b.slug));
@@ -146,6 +151,37 @@ fn read_meta(dir: &Path) -> Option<InstanceMeta> {
 pub fn read_runtime(dir: &Path) -> Option<RuntimeFile> {
     let text = std::fs::read_to_string(dir.join("runtime.json")).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+/// The enrolled tagma identity under `<instance>/credentials/`, read from
+/// the tagma's own persisted `tagma.id`. Mirrors the tagma's primary-identity
+/// rule as a conservative approximation: the first credentials entry
+/// (alphabetical) carrying a non-empty `tagma.id` — single-agora deployments
+/// have exactly one entry, so this IS the tagma's primary. Discipline lock:
+/// this reads `tagma.id` ONLY; `tagma.token` (0o600 secret) is never opened,
+/// and the scan test asserts the token never reaches the wire.
+fn read_tagma_id(dir: &Path) -> Option<String> {
+    let creds = dir.join("credentials");
+    let Ok(entries) = std::fs::read_dir(&creds) else {
+        return None;
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| {
+            let is_dir = e.file_type().ok()?.is_dir();
+            is_dir.then(|| e.file_name().into_string().ok()).flatten()
+        })
+        .collect();
+    names.sort();
+    for name in names {
+        if let Ok(text) = std::fs::read_to_string(creds.join(name).join("tagma.id")) {
+            let id = text.trim();
+            if !id.is_empty() {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -229,6 +265,41 @@ mod tests {
         // This test binary is not kallip-tagma, so our own pid must NOT
         // count even though it is alive: the comm check is load-bearing.
         assert!(!pid_is_tagma(std::process::id()));
+    }
+
+    #[test]
+    fn tagma_id_reads_first_entry_and_never_the_token() {
+        let root = tempfile_dir("tagma-id");
+        write(
+            &root.join("team/meta.json"),
+            r#"{"instance_id":"id-1","owner_uid":1000}"#,
+        );
+        // Two entries: alphabetical-first wins as the conservative primary.
+        write(&root.join("team/credentials/b/tagma.id"), "tid-b\n");
+        write(&root.join("team/credentials/a/tagma.id"), "tid-a\n");
+        // The 0o600 secret sits next to the id; it must never surface.
+        write(&root.join("team/credentials/a/tagma.token"), "sk-secret-token");
+        let info = scan_instances(&root)[0].info();
+        assert_eq!(info.tagma_id.as_deref(), Some("tid-a"));
+        let wire = serde_json::to_string(&info).expect("serialize InstanceInfo");
+        assert!(!wire.contains("sk-secret-token"));
+    }
+
+    #[test]
+    fn tagma_id_none_when_unenrolled_or_blank() {
+        let root = tempfile_dir("tagma-id-none");
+        write(
+            &root.join("local/meta.json"),
+            r#"{"instance_id":"id-2","owner_uid":1000}"#,
+        ); // never enrolled: no credentials tree at all
+        write(
+            &root.join("blank/meta.json"),
+            r#"{"instance_id":"id-3","owner_uid":1000}"#,
+        );
+        write(&root.join("blank/credentials/default/tagma.id"), "  \n");
+        for scanned in scan_instances(&root) {
+            assert_eq!(scanned.tagma_id, None);
+        }
     }
 
     fn tempfile_dir(name: &str) -> PathBuf {
