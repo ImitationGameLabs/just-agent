@@ -48,7 +48,10 @@ impl ScannedInstance {
             workspace: self.workspace.clone().unwrap_or_default(),
             running: state == InstanceState::Running,
             state,
-            port: self.port,
+            // The runtime file survives a stop (adoption semantics),
+            // so its port is only a live listen port while Running;
+            // anything else would leak a stale, dead endpoint.
+            port: (state == InstanceState::Running).then_some(self.port).flatten(),
             owner: self.owner,
             tagma_id: self.tagma_id.clone(),
         }
@@ -349,8 +352,14 @@ mod tests {
             r#"{"instance_id":"id-2","owner_uid":1000}"#,
         );
         let scanned = scan_instances(&root);
+        // The raw scan keeps the runtime file's port (pid 1 is not a
+        // live tagma, so this instance is NOT Running)...
         assert_eq!(scanned[0].port, Some(7301));
-        // No runtime file (clean stop): no port, matching the wire contract.
+        assert_eq!(scanned[0].state(), InstanceState::Dead);
+        // ...but the wire only surfaces a port for a live Running instance:
+        // the dead runtime.json's stale port must never reach the wire.
+        assert_eq!(scanned[0].info().port, None);
+        // No runtime file at all: no port anywhere.
         assert_eq!(scanned[1].port, None);
     }
 

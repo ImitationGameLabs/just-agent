@@ -125,9 +125,10 @@ pub struct InstanceInfo {
     /// `tagma.token` (0o600 secret) is never opened.
     #[serde(default)]
     pub tagma_id: Option<String>,
-    /// The instance's current listen port from `runtime.json`; None when
-    /// not running (no runtime file) or the field predates the wire entry.
-    /// Surfaced so clients no longer rely on session-only spawn memory.
+    /// The instance's live listen port; None unless the instance is
+    /// currently Running (a surviving runtime.json from a stopped or dead
+    /// instance never surfaces its stale port). Surfaced so clients no
+    /// longer rely on session-only spawn memory.
     #[serde(default)]
     pub port: Option<u16>,
 }

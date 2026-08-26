@@ -23,7 +23,7 @@ export interface InstanceInfo {
   running: boolean;
   state: "running" | "stopped" | "dead";
   /** The instance's current listen port (from runtime.json via the wire)
-   * when running; null/absent when stopped or the daemon predates it.
+   * when running; null/absent when stopped or the daemon predates it. */
   port?: number | null;
   owner: number | null;
   /** The enrolled tagma identity (agora-issued), read by the daemon scan
