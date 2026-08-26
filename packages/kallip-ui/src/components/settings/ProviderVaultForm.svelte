@@ -21,6 +21,7 @@
     settings_provider_key_label,
     settings_provider_encrypt_label,
     settings_provider_encrypt_lock_hint,
+    settings_provider_plaintext_hint,
     settings_provider_intro,
     settings_provider_name_duplicate,
     settings_error_unknown,
@@ -201,6 +202,11 @@
               <InfoBadge text={settings_provider_encrypt_lock_hint()} />
             {/if}
           </label>
+          {#if !encrypt}
+            <p class="text-xs opacity-60">
+              {settings_provider_plaintext_hint()}
+            </p>
+          {/if}
 
           {#if error}
             <div class="text-xs text-error-600 dark:text-error-500">

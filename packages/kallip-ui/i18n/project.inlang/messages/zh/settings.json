@@ -71,6 +71,7 @@
   "settings_provider_key_label": "API 密钥",
   "settings_provider_encrypt_label": "API Key 加密",
   "settings_provider_encrypt_lock_hint": "加密 API Key 的选项只能在用 WebAuthn passkey 登录的设备上启用。",
+  "settings_provider_plaintext_hint": "不勾选时，密钥将以明文保存，服务端可读取。",
   "settings_provider_name_duplicate": "同名密钥已存在。",
   "settings_provider_flip_to_encrypted": "加密",
   "settings_provider_flip_to_plaintext": "存为明文"
