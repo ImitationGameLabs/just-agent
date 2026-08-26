@@ -182,7 +182,6 @@ Deno.test(
   },
 );
 
-
 Deno.test(
   "/account renders in both modes (the account hub is mode-agnostic)",
   () => {

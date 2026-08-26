@@ -10,6 +10,9 @@
   "tagmata_pending_badge": "pending",
   "tagmata_secret_title": "Secret shown only at mint time",
   "tagmata_expires_in": "expires in {duration}",
-  "tagmata_badge_hosted": "Hosted here",
-  "tagmata_badge_connected": "Self-run"
+  "tagmata_badge_hosted": "Managed",
+  "tagmata_badge_connected": "Enrolled",
+  "tagmata_badge_hosted_title": "Run by this platform: start, stop, or connect from here",
+  "tagmata_badge_connected_title": "Enrolled by code: this page can only revoke its enrollment",
+  "tagmata_identity_pending": "Tagma not enrolled yet"
 }

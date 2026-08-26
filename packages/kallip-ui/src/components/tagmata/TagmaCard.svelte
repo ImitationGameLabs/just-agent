@@ -42,6 +42,9 @@
     nav_chat,
     tagmata_badge_connected,
     tagmata_badge_hosted,
+    tagmata_badge_connected_title,
+    tagmata_badge_hosted_title,
+    tagmata_identity_pending,
     tagma_revoke,
     tagma_enrolled_at,
     tagma_rename_failed,
@@ -232,6 +235,9 @@
         <span class="truncate">{name}</span>
         <span
           class="badge preset-filled-surface-500 text-xs shrink-0 align-middle"
+          title={hosted
+            ? tagmata_badge_hosted_title()
+            : tagmata_badge_connected_title()}
           >{hosted ? tagmata_badge_hosted() : tagmata_badge_connected()}</span
         >
       </h3>
@@ -266,6 +272,11 @@
       {/if}
     {/if}
     {#if process}
+      {#if process && !tagma}
+        <!-- A process with no enrolled identity: name the absence so the
+           missing id/enrolled-at rows read as a state, not an error. -->
+        <p class="text-xs opacity-70">{tagmata_identity_pending()}</p>
+      {/if}
       <p class="font-mono text-xs opacity-70 break-all">{process.workspace}</p>
       <p
         class="text-xs {process.running
@@ -301,9 +312,10 @@
             onStop(process.slug);
           } else if (e.value === "manage" && tagma) {
             navigate(`/chat/t/${tagma.tagmaId}/manage/overview`);
-          } else if (e.value === "rooms") roomsOpen = true;
-          else if (e.value === "rename" && onRename) startRename();
-          else if (e.value === "revoke" && onRevoke) confirmingRevoke = true;
+          } else if (e.value === "rooms" && tagma) roomsOpen = true;
+          else if (e.value === "rename" && tagma && onRename) startRename();
+          else if (e.value === "revoke" && tagma && onRevoke)
+            confirmingRevoke = true;
         }}
       >
         <Menu.Trigger
@@ -315,20 +327,24 @@
         <Portal>
           <Menu.Positioner>
             <Menu.Content class="card preset-tonal-surface p-1 min-w-[8rem]">
-              <Menu.Item
-                value="manage"
-                class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-              >
-                <Settings class="size-4" />
-                {tagma_menu_manage()}
-              </Menu.Item>
-              <Menu.Item
-                value="rooms"
-                class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
-              >
-                <DoorOpen class="size-4" />
-                {tagma_menu_manage_rooms()}
-              </Menu.Item>
+              {#if tagma}
+                <Menu.Item
+                  value="manage"
+                  class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
+                >
+                  <Settings class="size-4" />
+                  {tagma_menu_manage()}
+                </Menu.Item>
+              {/if}
+              {#if tagma}
+                <Menu.Item
+                  value="rooms"
+                  class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
+                >
+                  <DoorOpen class="size-4" />
+                  {tagma_menu_manage_rooms()}
+                </Menu.Item>
+              {/if}
               {#if process?.port}
                 <Menu.Item
                   value="open"
@@ -347,7 +363,7 @@
                   {manage_instances_stop()}
                 </Menu.Item>
               {/if}
-              {#if onRename}
+              {#if tagma && onRename}
                 <Menu.Item
                   value="rename"
                   class="px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
@@ -355,7 +371,7 @@
                   {common_rename()}
                 </Menu.Item>
               {/if}
-              {#if onRevoke}
+              {#if tagma && onRevoke}
                 <Menu.Item
                   value="revoke"
                   class="flex items-center gap-2 px-3 py-2 rounded-base text-sm text-error-500 dark:text-error-400 cursor-pointer hover:preset-filled-error-500"

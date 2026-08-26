@@ -10,6 +10,9 @@
   "tagmata_pending_badge": "待注册",
   "tagmata_secret_title": "密钥仅在生成时显示",
   "tagmata_expires_in": "{duration} 后过期",
-  "tagmata_badge_hosted": "本机托管",
-  "tagmata_badge_connected": "自托管"
+  "tagmata_badge_hosted": "托管",
+  "tagmata_badge_connected": "注册接入",
+  "tagmata_badge_hosted_title": "由本平台托管，可启动/停止/连接",
+  "tagmata_badge_connected_title": "由注册码接入，本页仅能撤销其接入码",
+  "tagmata_identity_pending": "tagma 尚未注册"
 }
