@@ -9,7 +9,7 @@
   // is the always variant).
   import { schedulesStore } from "../../lib/manage/schedules.svelte.ts";
   import { agentsStore } from "../../lib/manage/agents.svelte.ts";
-  import type { WorkSchedule, WorkScheduleSpec } from "@kallipai/kallip-client";
+  import type { WorkScheduleSpec } from "@kallipai/kallip-client";
   import { TriangleAlert } from "@lucide/svelte";
   import {
     formatClock,
@@ -20,10 +20,20 @@
     MAX_WINDOWS,
     minuteToHHMM,
     offsetLabel,
-    toFrame,
     validateSpec,
     windowStatus,
   } from "../../lib/manage/workSchedule.ts";
+  import {
+    applyFrame,
+    canSave as canSaveImpl,
+    defaultDraft,
+    draftFrom,
+    isDirty,
+    reframe,
+    reaches,
+    warnMinutesValid as warnMinutesValidImpl,
+  } from "../../lib/manage/scheduleDraft.ts";
+  import type { Draft, MutableWindow } from "../../lib/manage/scheduleDraft.ts";
   import { untrack } from "svelte";
   import {
     common_save,
@@ -117,9 +127,11 @@
     // In-place reframe: the draft must survive the frame change
     // exactly, or the switch is refused (the guard renders why).
     if (draft !== null) {
-      const wire = fromFrame(draft.spec, utc ? 0 : utcOffset);
-      if (wire === null) return;
-      const reframed = toFrame(wire, next ? 0 : utcOffset);
+      const reframed = reframe(
+        draft.spec,
+        utc ? 0 : utcOffset,
+        next ? 0 : utcOffset,
+      );
       if (reframed === null) return;
       draft.spec = reframed;
     }
@@ -140,44 +152,6 @@
     }
   }
 
-  // The draft is fully mutable (deep Writable) — it is the editing state,
-  type MutableWindow = { start_minute: number; end_minute: number };
-  type MutableSpec =
-    | { mode: "weekly"; days: number; windows: readonly MutableWindow[] }
-    | {
-        mode: "monthly";
-        days: number;
-        windows: readonly MutableWindow[];
-      }
-    | {
-        mode: "interval";
-        every_hours: number;
-        length_min: number;
-        anchor: string;
-      }
-    | { mode: "always" };
-  // (structurally identical to the wire WorkScheduleSpec, minus readonly,
-  // so the draft can be edited; assigning into PutWorkScheduleRequest is
-  // still sound because the shapes are the same)
-  type Draft = {
-    spec: MutableSpec;
-    pre_warn_minutes: number;
-    final_warn_minutes: number;
-    wake_prompt: string;
-    // "" means the built-in default (wire null).
-    final_warn_prompt: string;
-    status: "active" | "paused";
-  };
-
-  const defaultDraft = (): Draft => ({
-    spec: { mode: "always" },
-    pre_warn_minutes: 10,
-    final_warn_minutes: 5,
-    wake_prompt: "",
-    final_warn_prompt: "",
-    status: "active",
-  });
-
   let draft = $state<Draft | null>(null);
 
   // The display frame: monthly keeps UTC (month-day masks cannot cross
@@ -187,73 +161,26 @@
   );
   const effOff = $derived(effUtc ? 0 : utcOffset);
 
-  // Frame a wire spec for the draft. Null means no exact equivalent in
-  // the current frame (a partial-week full-day weekly outside UTC): fall
-  // back to the UTC frame for this visit — the stored preference is left
-  // alone and the clock-switch guard explains the lock.
-  function applyFrame(spec: WorkScheduleSpec, off: number): MutableSpec {
-    // $state.snapshot: the deep copy sanctioned at reactive boundaries
-    // — structuredClone throws on $state proxies, and the passthrough
-    // arms of toFrame return their input unchanged.
-    const plain = $state.snapshot(spec);
-    const framed = toFrame(plain, off);
-    if (framed === null) {
-      utc = true;
-      return plain;
-    }
-    return framed;
-  }
-
-  function draftFrom(s: WorkSchedule): Draft {
-    return {
-      spec: applyFrame(s.spec, effOff),
-      pre_warn_minutes: s.pre_warn_minutes,
-      final_warn_minutes: s.final_warn_minutes,
-      wake_prompt: s.wake_prompt,
-      final_warn_prompt: s.final_warn_prompt ?? "",
-      status: s.status,
-    };
-  }
   $effect(() => {
     if (schedulesStore.hasLoaded && untrack(() => draft) === null) {
       const s = schedulesStore.schedule;
-      draft = s ? draftFrom(s) : defaultDraft();
+      const r = s
+        ? draftFrom(s, effOff)
+        : { draft: defaultDraft(), fellBack: false };
+      if (r.fellBack) utc = true;
+      draft = r.draft;
     }
   });
 
   // --- dirty tracking: field-level diff against the server snapshot ---
 
-  const specEq = (a: WorkScheduleSpec, b: WorkScheduleSpec): boolean =>
-    JSON.stringify(a) === JSON.stringify(b);
   const snapshot = $derived(schedulesStore.schedule);
-  const dirty = $derived.by(() => {
-    if (!draft || !schedulesStore.hasLoaded) return false;
-    if (!snapshot) return true; // unsaved first draft
-    const framedSnap = toFrame(snapshot.spec, effOff);
-    return (
-      framedSnap === null ||
-      !specEq(draft.spec, framedSnap) ||
-      draft.pre_warn_minutes !== snapshot.pre_warn_minutes ||
-      draft.final_warn_minutes !== snapshot.final_warn_minutes ||
-      draft.wake_prompt !== snapshot.wake_prompt ||
-      draft.final_warn_prompt !== (snapshot.final_warn_prompt ?? "") ||
-      draft.status !== snapshot.status
-    );
-  });
+  const dirty = $derived(
+    isDirty(draft, snapshot, schedulesStore.hasLoaded, effOff),
+  );
 
   const specError = $derived(draft ? validateSpec(draft.spec) : null);
-  const warnMinutesValid = $derived.by(() => {
-    if (!draft) return false;
-    const pre = draft.pre_warn_minutes;
-    const fin = draft.final_warn_minutes;
-    return (
-      Number.isInteger(pre) &&
-      Number.isInteger(fin) &&
-      pre > 0 &&
-      fin > 0 &&
-      pre >= fin
-    );
-  });
+  const warnMinutesValid = $derived(warnMinutesValidImpl(draft));
   // The UTC spec the draft converts to; null while it has no exact
   // equivalent (a full-day window on selected days outside the UTC
   // clock) — saving and leaving the frame are both blocked then.
@@ -262,26 +189,28 @@
   );
 
   const canSave = $derived(
-    dirty &&
-      !specError &&
-      warnMinutesValid &&
-      !schedulesStore.isSaving &&
-      wireSpec !== null,
+    canSaveImpl({
+      dirty,
+      specError,
+      warnValid: warnMinutesValid,
+      isSaving: schedulesStore.isSaving,
+      wire: wireSpec,
+    }),
   );
 
   // Clock-switch reachability: the draft must survive the frame change.
-  function reaches(targetOff: number): boolean {
-    const spec = draft?.spec;
-    if (!spec) return true;
-    const wire = fromFrame(spec, effOff);
-    return wire !== null && toFrame(wire, targetOff) !== null;
-  }
-  const canShowUtc = $derived(reaches(0));
-  const canShowLocal = $derived(reaches(utcOffset));
+  const canShowUtc = $derived(reaches(draft?.spec ?? null, effOff, 0));
+  const canShowLocal = $derived(
+    reaches(draft?.spec ?? null, effOff, utcOffset),
+  );
 
   function discard(): void {
     const s = schedulesStore.schedule;
-    draft = s ? draftFrom(s) : defaultDraft();
+    const r = s
+      ? draftFrom(s, effOff)
+      : { draft: defaultDraft(), fellBack: false };
+    if (r.fellBack) utc = true;
+    draft = r.draft;
   }
 
   // A fresh anchor timestamp, seconds zeroed so the minute stays the
@@ -312,7 +241,9 @@
         final_warn_prompt: draft.final_warn_prompt,
         status: draft.status,
       });
-      draft.spec = applyFrame(saved.spec, effOff);
+      const framedSave = applyFrame($state.snapshot(saved.spec), effOff);
+      if (framedSave.fellBack) utc = true;
+      draft.spec = framedSave.spec;
       // The server trims and normalizes both custom prompts; mirror
       // them back or dirty stays stuck on whitespace-only differences.
       draft.final_warn_prompt = saved.final_warn_prompt ?? "";
