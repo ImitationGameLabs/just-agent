@@ -16,6 +16,7 @@ mod passkeys;
 mod public_profiles;
 mod session;
 mod tagmata;
+mod user_providers;
 
 use axum::Router;
 use axum::extract::State;
@@ -86,6 +87,7 @@ pub fn router(
         .merge(session::router())
         .merge(oauth::session_router())
         .merge(device_pairing::session_router())
+        .merge(user_providers::session_router())
         .merge(email_write)
         .merge(email_verify)
         .nest("/admin", admin::router())
