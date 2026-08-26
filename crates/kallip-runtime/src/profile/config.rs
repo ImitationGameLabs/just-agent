@@ -15,9 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use super::model::{Profile, Provider, Tier};
 
-/// Env override for the profiles config file path.
-pub(crate) const PROFILES_FILE_ENV: &str = "KALLIP_PROFILES_FILE";
-
 /// Parsed + validated profile configuration: the data the tagma assembles into a
 /// [`super::registry::ProfileRegistry`] after building backends. Pure data — no reqwest, no
 /// backends. The tagma owns construction (see `kallip_runtime::profile`).
@@ -35,8 +32,8 @@ pub struct ProfileConfig {
     pub parking: Vec<Profile>,
 }
 
-/// Load profile configuration: from `KALLIP_PROFILES_FILE` (or a default path) if present,
-/// else an implicit single profile built from `KALLIP_LLM_*` env.
+/// Load profile configuration: from `<data_dir>/profiles/profiles.toml` when
+/// present, else an implicit single profile built from `KALLIP_LLM_*` env.
 pub fn load() -> Result<ProfileConfig> {
     match resolve_config_path()? {
         Some(path) => load_file(&path),
@@ -142,46 +139,36 @@ fn load_file(path: &Path) -> Result<ProfileConfig> {
     })
 }
 
-/// Resolve the config file path. Priority: an explicit `KALLIP_PROFILES_FILE`,
-/// then `<$KALLIP_DATA_DIR>/profiles/profiles.toml` when the data dir is set (the same
-/// per-instance root `agents/` and `skills/` live under — `data_dir_root`), then
-/// the HOME-level `<config_dir>/kallip/profiles.toml`. The data-dir tier keeps
-/// daemon-spawned instances from sharing one HOME-level file (the operator's
-/// manual stack keeps that path; a standalone CLI without `KALLIP_DATA_DIR`
-/// is unchanged). Returns `None` when the resolved file does not exist.
+/// Resolve the config file path: `<$KALLIP_DATA_DIR>/profiles/profiles.toml` --
+/// the same per-instance root `agents/` and `skills/` live under
+/// (`data_dir_root`). The data dir is REQUIRED: a bare run without one is a
+/// configuration error, not a silent fall-back to a HOME-level file (the old
+/// HOME tier shared one file across daemon-spawned instances). Returns `None`
+/// when the resolved file does not exist.
 fn resolve_config_path() -> Result<Option<PathBuf>> {
-    if let Some(path) = explicit_or_data_dir_path() {
-        return Ok(if path.exists() { Some(path) } else { None });
-    }
-    let Some(dir) = config_dir() else {
-        return Ok(None);
+    let Some(path) = data_dir_profile_path() else {
+        bail!("KALLIP_DATA_DIR is not set; cannot resolve profiles config path");
     };
-    let path = dir.join("kallip").join("profiles.toml");
-    Ok(if path.exists() { Some(path) } else { None })
+    Ok(path.exists().then_some(path))
 }
 
-/// Resolve the config file path for writing, on the same priority chain as
-/// [`resolve_config_path`] (explicit env > data dir > HOME-level config dir).
-/// Unlike the read side (which returns `None` when the file does not exist),
-/// this always returns a path — `save()` needs a target even on first write.
+/// Resolve the config file path for writing, same single location as the read
+/// side. Unlike the read side (which returns `None` when the file does not
+/// exist), this always returns a path — `save()` needs a target even on first
+/// write. Errors when `KALLIP_DATA_DIR` is unset.
 pub fn config_path() -> Result<PathBuf> {
-    if let Some(path) = explicit_or_data_dir_path() {
-        return Ok(path);
-    }
-    let dir = config_dir()
-        .context("neither KALLIP_PROFILES_FILE, KALLIP_DATA_DIR, XDG_CONFIG_HOME nor HOME is set; cannot resolve profiles config path")?;
-    Ok(dir.join("kallip").join("profiles.toml"))
+    let Some(path) = data_dir_profile_path() else {
+        bail!("KALLIP_DATA_DIR is not set; cannot resolve profiles config path");
+    };
+    Ok(path)
 }
-
-/// The first two tiers of the priority chain, shared by both resolve fns:
-/// an explicit `KALLIP_PROFILES_FILE`, else `<data dir>/profiles/profiles.toml` when
-/// `$KALLIP_DATA_DIR` is set (the same root `persistence::data_dir_root`
-/// names, so profiles stay inside the instance's own data tree).
-fn explicit_or_data_dir_path() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os(PROFILES_FILE_ENV) {
-        return Some(PathBuf::from(p));
-    }
-    std::env::var_os("KALLIP_DATA_DIR").map(|d| PathBuf::from(d).join("profiles").join("profiles.toml"))
+/// The single profiles location shared by both resolve fns:
+/// `<data dir>/profiles/profiles.toml` (the same root
+/// `persistence::data_dir_root` names, so profiles stay inside the instance's
+/// own data tree). `None` when `KALLIP_DATA_DIR` is unset.
+fn data_dir_profile_path() -> Option<PathBuf> {
+    std::env::var_os("KALLIP_DATA_DIR")
+        .map(|d| PathBuf::from(d).join("profiles").join("profiles.toml"))
 }
 
 /// Serialize a [`ProfileConfig`] to TOML and write it to `path` atomically
@@ -211,34 +198,18 @@ pub fn save(config: &ProfileConfig, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn config_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-}
-
 /// The directory holding `profiles.toml` (and thus potentially API keys) — the
 /// path a sandbox hide-hole should overlay so a broad-read agent cannot read
-/// credentials. Mirrors the loader's path resolution: honors
-/// `KALLIP_PROFILES_FILE` (hides its parent, covering custom locations) else
-/// the default `<config_dir>/kallip`. Returns `None` only when neither
-/// `XDG_CONFIG_HOME` nor `HOME` is set.
+/// credentials. Mirrors the loader's single location: the dedicated
+/// `<data dir>/profiles/` subdir when `KALLIP_DATA_DIR` is set; `None`
+/// otherwise (no data dir means no profiles file to hide).
 pub fn profiles_config_dir() -> Option<PathBuf> {
-    // Same single source as the loader (`explicit_or_data_dir_path`): the
-    // hide-hole must follow the resolver, or a relocated profiles.toml
-    // (the data-dir tier) leaks past the Guest sandbox. The data-dir tier
-    // returns the dedicated `profiles/` subdir (a directory, as the tmpfs
-    // overlay contract requires) rather than the data root itself — hiding
-    // the root would also hide agents/skills and break Guest agents.
-    if let Some(p) = std::env::var_os(PROFILES_FILE_ENV) {
-        // Hide the directory containing the explicit file (covers custom locations
-        // a Guest could otherwise `cat`).
-        return PathBuf::from(p).parent().map(Path::to_path_buf);
-    }
-    if std::env::var_os("KALLIP_DATA_DIR").is_some() {
-        return explicit_or_data_dir_path().and_then(|p| p.parent().map(Path::to_path_buf));
-    }
-    config_dir().map(|d| d.join("kallip"))
+    // Same single source as the loader (`data_dir_profile_path`): the
+    // hide-hole must follow the resolver, or a relocated profiles.toml leaks
+    // past the Guest sandbox. The subdir (a directory, as the tmpfs overlay
+    // contract requires) rather than the data root — hiding the root would
+    // also hide agents/skills and break Guest agents.
+    data_dir_profile_path().and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
 /// Warn (non-fatal) if the config file is readable by group/other — it holds API keys.
@@ -610,7 +581,7 @@ max_context_window = 1000
     }
 
     #[test]
-    fn data_dir_takes_priority_over_home_level_config() {
+    fn data_dir_is_the_only_profiles_location() {
         let tmp = tempfile::tempdir().unwrap();
         let data_profiles = tmp.path().join("profiles").join("profiles.toml");
         std::fs::create_dir_all(data_profiles.parent().unwrap()).unwrap();
@@ -618,55 +589,50 @@ max_context_window = 1000
         temp_env::with_vars(
             [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
             || {
-                assert_eq!(resolve_config_path().unwrap().as_deref(), Some(data_profiles.as_path()));
+                assert_eq!(
+                    resolve_config_path().unwrap().as_deref(),
+                    Some(data_profiles.as_path())
+                );
                 assert_eq!(config_path().unwrap(), data_profiles);
             },
         );
     }
 
     #[test]
-    fn explicit_profiles_file_wins_over_data_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let explicit = tmp.path().join("explicit.toml");
-        std::fs::write(&explicit, "\n").unwrap();
-        temp_env::with_vars(
-            [
-                ("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap())),
-                ("KALLIP_PROFILES_FILE", Some(explicit.to_str().unwrap())),
-            ],
-            || {
-                assert_eq!(config_path().unwrap(), explicit);
-            },
-        );
+    fn missing_data_dir_is_an_error_not_a_home_fall_back() {
+        temp_env::with_vars_unset(["KALLIP_DATA_DIR"], || {
+            // The old HOME tier silently shared one file across instances;
+            // a bare run without a data dir must fail loud instead.
+            assert!(resolve_config_path().is_err());
+            assert!(config_path().is_err());
+            assert!(profiles_config_dir().is_none());
+        });
     }
 
     #[test]
-    fn data_dir_tier_reads_only_when_file_exists() {
+    fn data_dir_reads_only_when_file_exists() {
         let tmp = tempfile::tempdir().unwrap();
         temp_env::with_vars(
             [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
             || {
-                // No profiles.toml in the data dir: the read side must not
-                // fall through to a HOME-level file that happens to exist on
-                // the dev box — when the data dir owns the tier, the path is
-                // the (missing) data-dir file, so the read yields None.
+                // No profiles.toml in the data dir: the read side must yield
+                // None, not fall through to any other location.
                 let resolved = resolve_config_path().unwrap();
-                assert!(resolved.is_none()
-                    || resolved == Some(tmp.path().join("profiles").join("profiles.toml")));
+                assert!(resolved.is_none());
             },
         );
     }
 
     #[test]
-    fn profiles_config_dir_follows_the_data_dir_tier() {
+    fn profiles_config_dir_follows_the_data_dir() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("profiles")).unwrap();
         temp_env::with_vars(
             [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
             || {
-                // The hide-hole source must track the resolver: the data-dir
-                // tier hides the dedicated profiles/ subdir (a directory),
-                // not the data root (agents/skills stay Guest-visible).
+                // The hide-hole source must track the resolver: it hides
+                // the dedicated profiles/ subdir (a directory), not the data
+                // root (agents/skills stay Guest-visible).
                 assert_eq!(
                     profiles_config_dir().as_deref(),
                     Some(tmp.path().join("profiles").as_path())

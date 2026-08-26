@@ -19,7 +19,7 @@ async fn scenario1_guest() {
         Reply::Tool(format!("echo x > {}/probe.txt", ws.display())), // 1: workspace RO
         Reply::Tool(format!("echo x >> {agent_data}/meta.json")), // 2: data tree RO
         Reply::Tool("mkdir -p $HOME/elsewhere && echo x > $HOME/elsewhere/x".into()), // 3: home RO
-        Reply::Tool("cat $HOME/.config/kallip/profiles.toml".into()), // 4: profiles hide-hole
+        Reply::Tool("cat $KALLIP_DATA_DIR/profiles/profiles.toml".into()), // 4: profiles hide-hole
         Reply::End("done"),
     ];
 

@@ -33,7 +33,7 @@ async fn scenario2_normal() {
         Reply::Tool(format!("cat {agent_data}/meta.json")),       // 6: read ok
         Reply::Tool("ls -A $HOME/.ssh".into()),                   // 7: Normal reads .ssh
         Reply::Tool("cat $HOME/.ssh/id_testkey".into()),          // 8: contents readable
-        Reply::Tool("cat $HOME/.config/kallip/profiles.toml".into()), // 9: Normal reads profiles
+        Reply::Tool("cat $KALLIP_DATA_DIR/profiles/profiles.toml".into()), // 9: Normal reads profiles
     ];
     if have_shm {
         script.push(Reply::Tool("echo s > /dev/shm/scenario2_shm".into())); // 10: /dev/shm writable

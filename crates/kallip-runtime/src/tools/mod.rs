@@ -232,8 +232,8 @@ fn guest_hide_holes() -> Vec<PathBuf> {
             push_if_dir(home.join(sub), &mut out);
         }
     }
-    // The tagma profiles dir (holds API keys). Reuse profile::config's resolution
-    // so a custom KALLIP_PROFILES_FILE location is covered, not just the default.
+    // The tagma profiles dir (holds API keys). Reuse profile::config's
+    // resolution so the data-dir location is covered, not just a default.
     if let Some(dir) = crate::profile::config::profiles_config_dir() {
         push_if_dir(dir, &mut out);
     }

@@ -19,10 +19,7 @@ These variables select and configure the LLM backend. They are **required** when
 
 A profile binds a model to an endpoint and its declared capabilities (`max_context_window`), grouped into capability tiers. With a profiles config file, the tagma loads multiple provider/model combinations, each profile declaring its own `max_context_window`.
 
-| Variable               | Required | Default                                 | Description                                                                                                                           |
-| ---------------------- | -------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `KALLIP_PROFILES_FILE` | no       | `$XDG_CONFIG_HOME/kallip/profiles.toml` | Path to a TOML profiles config. Absent (and the default path missing) → the implicit single profile is built from `KALLIP_LLM_*` env. |
-
+The profiles config file lives at `<KALLIP_DATA_DIR>/profiles/profiles.toml` — the data dir is required whenever a tagma runs, so no extra variable is needed.
 Without a config file (the default for benchmark/scripting via Harbor and `kallip-run`), a single implicit profile is derived from `KALLIP_LLM_*` env, and its `max_context_window` is derived from `KALLIP_CONTEXT_WINDOW_TOKENS` (default `128000`).
 
 Example `profiles.toml`:

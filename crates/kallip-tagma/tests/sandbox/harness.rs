@@ -97,7 +97,7 @@ impl World {
         self.data.path().to_path_buf()
     }
     fn profiles_file(&self) -> PathBuf {
-        self.config_dir.join("kallip").join("profiles.toml")
+        self.data.path().join("profiles").join("profiles.toml")
     }
 
     /// Pre-create the fixtures the scenarios reference: a real `~/.ssh` key
@@ -166,6 +166,7 @@ base_url = "{child_url}"
 "#
     );
     let file = world.profiles_file();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(&file, toml).unwrap();
     #[cfg(unix)]
     {
@@ -406,7 +407,7 @@ async fn spawn_tagma(world: &World, permission_class: Option<&str>) -> TagmaProc
     let url = format!("http://127.0.0.1:{port}");
 
     // profiles.toml (pointing at the wiremock endpoints) is written by the
-    // caller before this; the tagma resolves it via KALLIP_PROFILES_FILE.
+    // caller before this; the tagma resolves it under KALLIP_DATA_DIR.
     let mut env: Vec<(&str, String)> = vec![
         ("KALLIP_OPERATOR_TOKEN", OPERATOR_TOKEN.into()),
         ("KALLIP_DATA_DIR", world.data.path().display().to_string()),
@@ -422,10 +423,6 @@ async fn spawn_tagma(world: &World, permission_class: Option<&str>) -> TagmaProc
         ("KALLIP_MAX_TOOL_ROUNDS", "50".into()),
         ("HOME", world.home_path().display().to_string()),
         ("XDG_CONFIG_HOME", world.config_dir.display().to_string()),
-        (
-            "KALLIP_PROFILES_FILE",
-            world.profiles_file().display().to_string(),
-        ),
         ("KALLIP_POLICY_PRESET", "allow-all".into()),
         ("KALLIP_TAGMA_ADDR", format!("127.0.0.1:{port}")),
         ("KALLIP_ADVERTISE_URL", url.clone()),
