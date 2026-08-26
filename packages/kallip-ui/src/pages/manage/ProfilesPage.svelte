@@ -10,6 +10,7 @@
   // store's single `probe` field is replaced wholesale on every call.
   import { profilesStore } from "../../lib/manage/profiles.svelte.ts";
   import { managementBackend } from "../../lib/manage/client.ts";
+  import { refreshParkedLive as fetchParkedLive } from "../../lib/manage/parkedLive.ts";
   import { SvelteMap } from "svelte/reactivity";
   import ConfirmDialog from "../../components/ConfirmDialog.svelte";
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
@@ -41,7 +42,6 @@
     mergeProviderScope,
     modelsCountLabel,
     occupiedIdsOf,
-    parkedLiveSnapshot,
     profileKey,
     probeStatusColor,
     probeStatusLabel,
@@ -241,25 +241,15 @@
     null,
   );
 
+  // parkedLive.ts owns the roster fetch and the allSettled fan-out; the
+  // wrapper keeps the previous snapshot when the roster itself fails
+  // (advisory only).
   async function refreshParkedLive(): Promise<void> {
-    const draft = profilesStore.draft;
-    const parked = draft?.parking ?? [];
-    if (parked.length === 0) {
-      parkedLive = null;
-      return;
-    }
-    const parkedIds = parked.map((p) => p.id);
-    try {
-      const { agents } = await managementBackend().listAgents();
-      // Per-agent catch (allSettled): one 409/404 must not void the whole
-      // snapshot — the advisory layer reports what it could see.
-      const statuses = await Promise.allSettled(
-        agents.map((a) => managementBackend().getAgentStatus(a.id)),
-      );
-      parkedLive = parkedLiveSnapshot(parkedIds, statuses);
-    } catch {
-      // Roster failure: leave the previous snapshot (advisory only).
-    }
+    const res = await fetchParkedLive(
+      managementBackend(),
+      profilesStore.draft?.parking ?? [],
+    );
+    if (res.refreshed) parkedLive = res.snapshot;
   }
 
   // --- dialogs ---
