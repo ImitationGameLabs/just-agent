@@ -36,7 +36,7 @@ async fn create_stores_both_modes_verbatim() {
     assert_eq!(sum.mode, "plaintext");
     assert_eq!(sum.key_material, "sk-ant-plain");
 
-    // Sealed row: the blob round-trips verbatim -- the server never
+    // Encrypted row: the blob round-trips verbatim -- the server never
     // interprets key_material in either mode.
     let Json(sum) = create_provider(
         State(state.clone()),
@@ -94,6 +94,47 @@ async fn replace_rotates_key_and_flips_mode() {
     .expect("flip ok");
     assert_eq!(flipped.mode, "encrypted");
     assert_eq!(flipped.key_material, "blob:v1:cafebabe");
+}
+
+#[tokio::test]
+async fn rename_onto_sibling_name_conflicts() {
+    let state = make_state().await;
+    let user = seed_user(&state, "alice").await;
+
+    let Json(a) = create_provider(
+        State(state.clone()),
+        AuthPrincipal(Principal::User(user.clone())),
+        req("work", "anthropic", "sk-1", "plaintext"),
+    )
+    .await
+    .expect("create a");
+    let Json(b) = create_provider(
+        State(state.clone()),
+        AuthPrincipal(Principal::User(user.clone())),
+        req("main", "anthropic", "sk-2", "plaintext"),
+    )
+    .await
+    .expect("create b");
+
+    // Renaming b onto a's name trips the UNIQUE (user_id, name) index
+    // through the UPDATE path (insert has its own test above).
+    let err = replace_provider(
+        State(state.clone()),
+        AuthPrincipal(Principal::User(user.clone())),
+        axum::extract::Path(b.id),
+        req("work", "openai", "sk-3", "plaintext"),
+    )
+    .await
+    .expect_err("rename conflict 409");
+    assert_eq!(err.status, 409);
+
+    // The conflicted write left both rows untouched.
+    let Json(list) = list_providers(State(state), AuthPrincipal(Principal::User(user)))
+        .await
+        .expect("list ok");
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0].key_material, "sk-1");
+    assert_eq!(list[1].key_material, "sk-2");
 }
 
 #[tokio::test]
