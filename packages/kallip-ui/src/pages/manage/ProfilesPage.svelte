@@ -12,6 +12,7 @@
   import { managementBackend } from "../../lib/manage/client.ts";
   import { refreshParkedLive as fetchParkedLive } from "../../lib/manage/parkedLive.ts";
   import { SvelteMap } from "svelte/reactivity";
+  import ProfilesToolbar from "../../components/manage/ProfilesToolbar.svelte";
   import ConfirmDialog from "../../components/ConfirmDialog.svelte";
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
   import {
@@ -55,25 +56,17 @@
   import {
     common_edit,
     common_remove,
-    common_loading,
     manage_profiles_add_provider,
     manage_profiles_add_tier,
     manage_profiles_apply,
-    manage_profiles_apply_all,
     manage_profiles_apply_desc,
     manage_profiles_apply_desc_parked,
-    manage_profiles_parking_warn,
     manage_profiles_apply_title,
     manage_profiles_applied_result,
-    manage_profiles_discard,
     manage_profiles_provider_base_url_default,
     manage_profiles_provider_card_base_url_label,
     manage_profiles_provider_actions_aria,
     manage_profiles_providers,
-    manage_profiles_heading,
-    manage_profiles_heading_desc_l1,
-    manage_profiles_heading_desc_l2,
-    manage_profiles_heading_desc_l3,
     manage_profiles_max_context_label,
     manage_profiles_parking,
     manage_profiles_parking_add,
@@ -86,7 +79,6 @@
     manage_profiles_profile_model_label,
     manage_profiles_remove_tier_confirm_desc,
     manage_profiles_remove_tier_confirm_title,
-    manage_profiles_save_changes,
     manage_profiles_test,
     manage_profiles_test_all,
     manage_profiles_tier,
@@ -97,7 +89,6 @@
     manage_profiles_tiers_desc_l2,
     manage_profiles_tiers_desc_l3,
     manage_profiles_tiers_desc_l4,
-    manage_profiles_tiers_hazard,
     manage_profiles_title,
   } from "../../paraglide/messages.js";
 
@@ -436,90 +427,18 @@
 
 <div class="h-full overflow-y-auto">
   <div class="p-6 max-w-3xl space-y-6">
-    <div class="flex items-center justify-between">
-      <div>
-        <!-- md+ keeps this h1; below md the shell top row carries the title (AppShell `title`). -->
-        <h1 class="text-xl font-semibold hidden md:block">
-          {manage_profiles_heading()}
-        </h1>
-        <div class="text-xs opacity-60 mt-1 space-y-0.5">
-          <p>{manage_profiles_heading_desc_l1()}</p>
-          <p>{manage_profiles_heading_desc_l2()}</p>
-          <p>{manage_profiles_heading_desc_l3()}</p>
-        </div>
-      </div>
-      <div class="flex flex-wrap gap-2">
-        <button
-          class="btn btn-sm preset-outlined-surface-500 hover:preset-filled-surface-500"
-          onclick={() => profilesStore.refresh()}>⟳</button
-        >
-        <button
-          class="btn btn-sm preset-outlined-surface-500 hover:preset-filled-surface-500"
-          disabled={profilesStore.isProbing}
-          onclick={onTestAll}
-          >{profilesStore.isProbing ? "…" : manage_profiles_test_all()}</button
-        >
-        <button
-          class="btn btn-sm preset-filled-primary-500"
-          disabled={!profilesStore.isDirty || profilesStore.isSaving}
-          onclick={onSave}
-          >{profilesStore.isSaving
-            ? "…"
-            : manage_profiles_save_changes()}</button
-        >
-        <button
-          class="btn btn-sm preset-filled-secondary-500"
-          disabled={profilesStore.isDirty || profilesStore.isSaving}
-          onclick={() => (showApplyDialog = true)}
-          >{manage_profiles_apply_all()}</button
-        >
-      </div>
-    </div>
+    <ProfilesToolbar
+      store={profilesStore}
+      {applyResult}
+      {parkedLive}
+      {onTestAll}
+      {onSave}
+      {onDiscard}
+      onRequestApply={() => (showApplyDialog = true)}
+    />
 
-    {#if profilesStore.error}
-      <p class="text-error-500 dark:text-error-400 text-sm">
-        {profilesStore.error}
-      </p>
-    {/if}
-    {#if applyResult}
-      <p class="text-success-500 dark:text-success-400 text-sm">
-        {applyResult}
-      </p>
-    {/if}
-    {#if profilesStore.probeError}
-      <p class="text-error-500 dark:text-error-400 text-sm font-mono break-all">
-        {profilesStore.probeError}
-      </p>
-    {/if}
-    {#if profilesStore.isDirty}
-      <button class="text-xs opacity-60 hover:opacity-100" onclick={onDiscard}>
-        {manage_profiles_discard()}
-      </button>
-    {/if}
-
-    {#if profilesStore.isLoading}
-      <p class="opacity-60 text-sm">{common_loading()}</p>
-    {/if}
-
+    <!-- Providers: global pool of provider cards -->
     {#if profilesStore.draft}
-      <div
-        class="card preset-tonal-surface p-3 text-xs opacity-70 border-l-4 border-l-warning-500"
-      >
-        ⚠ {manage_profiles_tiers_hazard()}
-      </div>
-
-      {#if parkedLive}
-        <div
-          class="card preset-tonal-surface p-3 text-xs opacity-70 border-l-4 border-l-warning-500"
-        >
-          ⚠ {manage_profiles_parking_warn({
-            count: parkedLive.agentCount,
-            ids: parkedLive.profileIds.join(", "),
-          })}
-        </div>
-      {/if}
-
-      <!-- Providers: global pool of provider cards -->
       <section class="space-y-3">
         <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
           {manage_profiles_providers()}

@@ -27,7 +27,7 @@ import {
   manage_profiles_save_failed,
 } from "../../paraglide/messages.js";
 
-class ProfilesStore {
+export class ProfilesStore {
   private _backend: ManagementBackend | null = null;
 
   private get backend(): ManagementBackend {
