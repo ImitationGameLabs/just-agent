@@ -264,7 +264,6 @@ Deno.test(
   "replaceLineId promotes a pending line and refines createdAt from the ack",
   () => {
     let t = withUserLine(EMPTY_TRANSCRIPT, "hi", -1, userS);
-    const optimistic = t.lines[0]!.createdAt;
     // The ack carries the authoritative created_at; it overwrites the
     // optimistic client-side stamp. The sender survives the promotion.
     t = replaceLineId(t, -1, 42, "2026-07-26T12:00:00Z");
@@ -279,7 +278,11 @@ Deno.test(
       },
     ]);
     // No createdAt arg -> the optimistic stamp survives the promotion.
+    // Compare against t2's own stamp: two withUserLine calls stamp
+    // independently, and equating them across calls flakes on ms
+    // boundaries under load.
     let t2 = withUserLine(EMPTY_TRANSCRIPT, "hi", -3, userS);
+    const optimistic = t2.lines[0]!.createdAt;
     t2 = replaceLineId(t2, -3, 50);
     assertEquals(t2.lines[0]!.createdAt, optimistic);
     // No-op when the pending local id is absent.

@@ -62,9 +62,10 @@ export function applyFrame(
   return { spec: framed, fellBack: false };
 }
 
-// Build a fresh editable draft from the server's schedule. Callers must
-// pass a plain spec (snapshot at the reactive boundary) so applyFrame can
-// hand ownership of it to the draft on the fellBack path.
+// Build a fresh editable draft from the server's schedule. The spec may
+// be a $state proxy: non-weekly modes pass it through, so the draft can
+// alias the store's object — sound because every edit replaces the
+// whole spec instead of mutating it.
 export function draftFrom(
   s: WorkSchedule,
   off: number,

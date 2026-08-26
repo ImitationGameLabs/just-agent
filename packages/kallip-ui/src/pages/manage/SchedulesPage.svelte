@@ -41,7 +41,6 @@
     manage_schedules_dst_note,
     manage_schedules_heading,
     manage_schedules_monthly_utc_note,
-    manage_schedules_next_start,
     manage_schedules_status_active,
     manage_schedules_status_always,
     manage_schedules_status_inside,
@@ -51,7 +50,6 @@
     manage_schedules_team_desc,
     manage_schedules_title,
     manage_schedules_wake_now,
-    manage_schedules_warn_invalid,
   } from "../../paraglide/messages.js";
 
   let { basePath = "/local/manage" }: { basePath?: string } = $props();
