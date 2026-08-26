@@ -142,10 +142,15 @@ fn load_file(path: &Path) -> Result<ProfileConfig> {
     })
 }
 
-/// Resolve the config file path: explicit env, else a default under `$XDG_CONFIG_HOME`.
+/// Resolve the config file path. Priority: an explicit `KALLIP_PROFILES_FILE`,
+/// then `<$KALLIP_DATA_DIR>/profiles.toml` when the data dir is set (the same
+/// per-instance root `agents/` and `skills/` live under — `data_dir_root`), then
+/// the HOME-level `<config_dir>/kallip/profiles.toml`. The data-dir tier keeps
+/// daemon-spawned instances from sharing one HOME-level file (the operator's
+/// manual stack keeps that path; a standalone CLI without `KALLIP_DATA_DIR`
+/// is unchanged). Returns `None` when the resolved file does not exist.
 fn resolve_config_path() -> Result<Option<PathBuf>> {
-    if let Some(p) = std::env::var_os(PROFILES_FILE_ENV) {
-        let path = PathBuf::from(p);
+    if let Some(path) = explicit_or_data_dir_path() {
         return Ok(if path.exists() { Some(path) } else { None });
     }
     let Some(dir) = config_dir() else {
@@ -155,18 +160,28 @@ fn resolve_config_path() -> Result<Option<PathBuf>> {
     Ok(if path.exists() { Some(path) } else { None })
 }
 
-/// Resolve the config file path for writing: explicit env override, else the
-/// default `<config_dir>/kallip/profiles.toml`. Unlike [`resolve_config_path`]
-/// (which returns `None` when the file does not exist), this always returns a
-/// path — `save()` needs a target even on first write. Returns `Err` only when
-/// neither `XDG_CONFIG_HOME` nor `HOME` is set.
+/// Resolve the config file path for writing, on the same priority chain as
+/// [`resolve_config_path`] (explicit env > data dir > HOME-level config dir).
+/// Unlike the read side (which returns `None` when the file does not exist),
+/// this always returns a path — `save()` needs a target even on first write.
 pub fn config_path() -> Result<PathBuf> {
-    if let Some(p) = std::env::var_os(PROFILES_FILE_ENV) {
-        return Ok(PathBuf::from(p));
+    if let Some(path) = explicit_or_data_dir_path() {
+        return Ok(path);
     }
     let dir = config_dir()
-        .context("neither XDG_CONFIG_HOME nor HOME is set; cannot resolve profiles config path")?;
+        .context("neither KALLIP_PROFILES_FILE, KALLIP_DATA_DIR, XDG_CONFIG_HOME nor HOME is set; cannot resolve profiles config path")?;
     Ok(dir.join("kallip").join("profiles.toml"))
+}
+
+/// The first two tiers of the priority chain, shared by both resolve fns:
+/// an explicit `KALLIP_PROFILES_FILE`, else `<data root>/profiles.toml` when
+/// `$KALLIP_DATA_DIR` is set (the same root `persistence::data_dir_root`
+/// names, so profiles stay inside the instance's own data tree).
+fn explicit_or_data_dir_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os(PROFILES_FILE_ENV) {
+        return Some(PathBuf::from(p));
+    }
+    std::env::var_os("KALLIP_DATA_DIR").map(|d| PathBuf::from(d).join("profiles.toml"))
 }
 
 /// Serialize a [`ProfileConfig`] to TOML and write it to `path` atomically
@@ -583,5 +598,51 @@ max_context_window = 1000
 "#;
         let file: ConfigFile = toml::from_str(toml).unwrap();
         assert!(validate(&file).is_err());
+    }
+
+    #[test]
+    fn data_dir_takes_priority_over_home_level_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_profiles = tmp.path().join("profiles.toml");
+        std::fs::write(&data_profiles, "\n").unwrap();
+        temp_env::with_vars(
+            [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
+            || {
+                assert_eq!(resolve_config_path().unwrap().as_deref(), Some(data_profiles.as_path()));
+                assert_eq!(config_path().unwrap(), data_profiles);
+            },
+        );
+    }
+
+    #[test]
+    fn explicit_profiles_file_wins_over_data_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let explicit = tmp.path().join("explicit.toml");
+        std::fs::write(&explicit, "\n").unwrap();
+        temp_env::with_vars(
+            [
+                ("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap())),
+                ("KALLIP_PROFILES_FILE", Some(explicit.to_str().unwrap())),
+            ],
+            || {
+                assert_eq!(config_path().unwrap(), explicit);
+            },
+        );
+    }
+
+    #[test]
+    fn data_dir_tier_reads_only_when_file_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        temp_env::with_vars(
+            [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
+            || {
+                // No profiles.toml in the data dir: the read side must not
+                // fall through to a HOME-level file that happens to exist on
+                // the dev box — when the data dir owns the tier, the path is
+                // the (missing) data-dir file, so the read yields None.
+                let resolved = resolve_config_path().unwrap();
+                assert!(resolved.is_none() || resolved == Some(tmp.path().join("profiles.toml")));
+            },
+        );
     }
 }
