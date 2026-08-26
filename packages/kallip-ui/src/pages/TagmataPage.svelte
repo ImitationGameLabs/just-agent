@@ -10,10 +10,22 @@
   // the page root to scroll itself (h-full overflow-y-auto).
   import {
     agoraBaseUrlOrFail,
+    agoraClientOrFail,
     agoraSession,
     lescheBaseUrlOrFail,
+    lescheClientOrFail,
   } from "../lib/session/agora.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
+  import { openRelayChannel } from "@kallipai/kallip-lesche-client";
+  import { type ProviderSummary } from "@kallipai/kallip-agora-client";
+  import { OnlineBackend } from "../lib/manage/backend.ts";
+  import {
+    isLocked,
+    providerEndpointKey,
+    pushCredentials,
+    type PushOutcome,
+    type PushPorts,
+  } from "../lib/instances/credentialPush.ts";
   import { realtimeStore } from "../lib/session/realtime.svelte.ts";
   import { instancesStore } from "../lib/instances/instances.svelte.ts";
   import {
@@ -32,6 +44,7 @@
   import {
     manage_instances_create_failed,
     manage_instances_create_mint_failed,
+    manage_instances_create_provider_locked_hint,
     manage_instances_empty,
     manage_instances_error_bad_request,
     manage_instances_error_internal,
@@ -47,6 +60,11 @@
     manage_instances_load_failed,
     manage_instances_loading,
     manage_instances_new,
+    manage_instances_push_failed,
+    manage_instances_push_pending,
+    manage_instances_push_unreachable,
+    manage_instances_push_unverified,
+    manage_instances_push_verified,
     manage_instances_spawn_success,
     manage_instances_stop,
     manage_instances_stop_description,
@@ -75,8 +93,15 @@
   let createBusy = $state(false);
   let createError = $state<string | null>(null);
   // The just-spawned success line lives here (not in the dialog): it must
-  // outlive the dialog, which closes on success.
+  // outlive the dialog, which closes on success. The credential push runs
+  // after spawn returns (D4 window), so its own status rides alongside.
   let spawnResult = $state<{ slug: string; port: number } | null>(null);
+  let pushStatus = $state<{
+    slug: string;
+    kind: "pending" | PushOutcome["state"];
+    probeOk?: boolean;
+    message?: string;
+  } | null>(null);
 
   const canSpawn = $derived(
     instancesStore.capabilities?.includes("designated-user") ?? false,
@@ -111,9 +136,13 @@
   // One-click (dialog path A): mint, then spawn with the relay env
   // pointing at this deployment so the tagma enrolls itself on first
   // start. On success close the dialog and surface the port line.
-  async function onOneClick(opts: { workspace: string }): Promise<void> {
+  async function onOneClick(opts: {
+    workspace: string;
+    providerId?: string | null;
+  }): Promise<void> {
     createBusy = true;
     spawnResult = null;
+    pushStatus = null;
     createError = null;
     try {
       const minted = await agoraSession.mintTagma();
@@ -135,6 +164,9 @@
         });
         spawnResult = { slug: result.slug, port: result.port };
         createOpen = false;
+        if (opts.providerId) {
+          void kickCredentialPush(minted.id, result.slug, opts.providerId);
+        }
       } catch (cause) {
         // The minted code stays valid (the pending card shows its masked
         // form); the advanced path can redeem it by hand.
@@ -143,6 +175,93 @@
       }
     } finally {
       createBusy = false;
+    }
+  }
+
+  /** Resolve the vault row the dialog picked into usable key material and
+   *  hand it to the push loop over a dedicated relay channel (closed when
+   *  the outcome lands). Belt-and-braces on the dialog's fail-closed gate:
+   *  a locked or unresolvable entry surfaces an error instead of pushing.
+   *  Fire-and-forget by design -- spawn already succeeded; credential
+   *  delivery reports through pushStatus, never blocks this handler. */
+  async function kickCredentialPush(
+    tagmaId: string,
+    slug: string,
+    providerId: string,
+  ): Promise<void> {
+    pushStatus = { slug, kind: "pending" };
+    const entry = agoraSession.providers.find((p) => p.id === providerId);
+    const viaPasskey = agoraSession.canFlipKeys();
+    if (!entry || isLocked(entry, viaPasskey)) {
+      pushStatus = {
+        slug,
+        kind: "failed",
+        message: manage_instances_create_provider_locked_hint(),
+      };
+      return;
+    }
+    let apiKey: string | null;
+    if (entry.mode === "plaintext") {
+      apiKey = entry.key_material;
+    } else {
+      apiKey = await agoraSession.revealProviderKey(entry);
+      if (!apiKey) {
+        // Sealed on another device: not deliverable from THIS session.
+        pushStatus = {
+          slug,
+          kind: "failed",
+          message: manage_instances_create_provider_locked_hint(),
+        };
+        return;
+      }
+    }
+    const target = {
+      endpointKey: providerEndpointKey(slug),
+      family: entry.provider,
+      apiKey,
+      baseUrl: entry.base_url,
+    };
+    try {
+      const user = agoraSession.user;
+      if (!user) throw new Error("not signed in");
+      const info = await agoraClientOrFail().getTagma(tagmaId);
+      const channel = await openRelayChannel(
+        lescheClientOrFail(),
+        tagmaId,
+        user.user_id,
+        user.display_name ?? user.username ?? user.user_id,
+        info.pinned_public_key,
+      );
+      const backend = new OnlineBackend(channel);
+      const ports: PushPorts = {
+        fetchLive: () => backend.getProfiles(),
+        put: (body) => backend.updateProfiles(body),
+        probe: (body) => backend.probeProfiles(body),
+        now: () => Date.now(),
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        close: () => channel.close(),
+      };
+      const outcome = await pushCredentials(target, ports);
+      applyPushOutcome(slug, outcome);
+    } catch (cause) {
+      // Channel/KEX setup never got the loop started: fold to unreachable
+      // (the tagma may simply not be enrolled yet).
+      console.error("[tagmata] credential push channel failed:", cause);
+      pushStatus = { slug, kind: "unreachable" };
+    }
+  }
+
+  function applyPushOutcome(slug: string, outcome: PushOutcome): void {
+    switch (outcome.state) {
+      case "pushed":
+        pushStatus = { slug, kind: "pushed", probeOk: outcome.probeOk };
+        break;
+      case "unreachable":
+        pushStatus = { slug, kind: "unreachable" };
+        break;
+      case "failed":
+        pushStatus = { slug, kind: "failed", message: outcome.message };
+        break;
     }
   }
 
@@ -326,6 +445,34 @@
           >{nav_chat()}</a
         >
       </p>
+      {#if pushStatus && pushStatus.slug === spawnResult.slug}
+        {#if pushStatus.kind === "pending"}
+          <p class="text-sm opacity-70">
+            {manage_instances_push_pending()}
+          </p>
+        {:else if pushStatus.kind === "pushed"}
+          <p
+            class="text-sm {pushStatus.probeOk
+              ? 'text-success-500 dark:text-success-400'
+              : 'text-warning-500 dark:text-warning-400'}"
+          >
+            {pushStatus.probeOk
+              ? manage_instances_push_verified({ slug: spawnResult.slug })
+              : manage_instances_push_unverified({ slug: spawnResult.slug })}
+          </p>
+        {:else if pushStatus.kind === "unreachable"}
+          <p class="text-sm text-warning-500 dark:text-warning-400">
+            {manage_instances_push_unreachable({ slug: spawnResult.slug })}
+          </p>
+        {:else}
+          <p class="text-sm text-error-500 dark:text-error-400">
+            {manage_instances_push_failed({
+              slug: spawnResult.slug,
+              message: pushStatus.message ?? "",
+            })}
+          </p>
+        {/if}
+      {/if}
     {/if}
 
     <!-- The process-host banner is non-blocking: the registry cards do not
@@ -461,6 +608,14 @@
       busy={createBusy}
       error={createError}
       {canSpawn}
+      providers={agoraSession.providers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        family: p.provider,
+        baseUrl: p.base_url,
+        mode: p.mode,
+      }))}
+      sessionViaPasskey={agoraSession.canFlipKeys()}
       {onOneClick}
       {onSpawn}
       {onMint}

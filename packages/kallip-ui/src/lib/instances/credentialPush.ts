@@ -1,0 +1,219 @@
+// One-click provider-credential push: after a successful cloud spawn, send
+// the vault-selected API key to the new tagma over a management session and
+// verify it connects. The pure decision logic lives here so the polling
+// window and wire assembly stay unit-testable; the page owns the transport
+// (channel construction) and passes it in as ports.
+//
+// Failure contract (three terminal states, nothing silent):
+//  - "pushed":      PUT succeeded; probeOk reports the connect check.
+//  - "unreachable": the tagma never became manageable within the window --
+//                   nothing was pushed; the user configures the profiles page.
+//  - "failed":      the tagma rejected the credential (4xx class) -- no point
+//                   retrying; the raw message is carried for the banner.
+
+import { KallipError, TransportError } from "@kallipai/kallip-common";
+import type {
+  ProfileConfig,
+  ProfileProbeRequest,
+  ProfileProbeResponse,
+} from "@kallipai/kallip-client";
+
+/** How long we keep trying after spawn returns. A fresh instance must boot,
+ * enroll via its minted code, and appear at lesche before any manage request
+ * can connect; the default is deliberately generous (the operator-recorded
+ * enroll-time distribution lives in the batch-3 e2e notes) and only bounds
+ * this background push, not the UI. */
+export const ENROLL_PUSH_WINDOW_MS = 120_000;
+
+/** Fixed retry cadence while waiting for enrollment. */
+export const ENROLL_PUSH_INTERVAL_MS = 2_000;
+
+/**
+ * The profiles-endpoint key a one-click instance's credentials are stored
+ * under. The slug is our own "tagma-<8hex>" form, so the composite stays
+ * within [a-z0-9:-] -- safe for the TOML round trip and never colliding with
+ * the reserved "unconfigured" sentinel id.
+ */
+export function providerEndpointKey(instanceSlug: string): string {
+  return `provider:${instanceSlug}`;
+}
+
+/** The subset of an agora ProviderSummary the selection and push need. */
+export interface PushCandidate {
+  readonly id: string;
+  readonly name: string;
+  /** Vault family ("deepseek", "openai-compatible", ...). */
+  readonly family: string;
+  readonly baseUrl: string | null;
+  readonly mode: "plaintext" | "encrypted";
+}
+
+/**
+ * An encrypted vault row is selectable only in a passkey-arrived session:
+ * on another device's passkey the blob is undecryptable here anyway, and on
+ * an OAuth-only session we fail closed rather than dragging device-key
+ * material into the spawn path (mirrors the vault's canFlipKeys gate).
+ */
+export function isLocked(
+  entry: Pick<PushCandidate, "mode">,
+  sessionViaPasskey: boolean,
+): boolean {
+  return entry.mode === "encrypted" && !sessionViaPasskey;
+}
+
+export type PushOutcome =
+  | { state: "pushed"; endpointKey: string; probeOk: boolean }
+  | { state: "unreachable"; endpointKey: string }
+  | { state: "failed"; endpointKey: string; message: string };
+
+export interface PushPorts {
+  fetchLive(): Promise<ProfileConfig>;
+  put(body: ProfileConfig): Promise<unknown>;
+  probe(body: ProfileProbeRequest): Promise<ProfileProbeResponse>;
+  now(): number;
+  sleep(ms: number): Promise<void>;
+  /** Release transport resources once the outcome is decided. */
+  close?(): void | Promise<void>;
+}
+
+/** The fields handed to {@link pushCredentials}; the key has already been
+ * decrypted by the caller and lives only for this call. */
+export interface PushTarget {
+  readonly endpointKey: string;
+  readonly family: string;
+  readonly apiKey: string;
+  readonly baseUrl: string | null;
+}
+
+/**
+ * Assemble the additive PUT body: every live tier/parking row round-trips
+ * unchanged, existing endpoints come back with tri-state nulls (keep), and
+ * exactly one endpoint carries the real credential. Re-pushing the same
+ * instance overwrites its prior entry in place, which keeps the flow
+ * idempotent. No apply call here -- running agents keep their backends
+ * until someone applies from the profiles page.
+ */
+export function buildPushConfig(
+  live: ProfileConfig,
+  add: PushTarget,
+): ProfileConfig {
+  return {
+    tiers: live.tiers.map((t) => ({
+      profiles: t.profiles.map((p) => ({ ...p })),
+    })),
+    endpoints: Object.fromEntries([
+      ...Object.entries(live.endpoints).map(([key, ep]) => [
+        key,
+        // null/null = "keep" per the wire tri-state; masked round-tripping
+        // would also work but forces us to echo secrets-shaped strings.
+        { ...ep, api_key: null, base_url: null },
+      ]),
+      [
+        add.endpointKey,
+        {
+          id: add.endpointKey,
+          family: add.family,
+          api_key: add.apiKey,
+          base_url: add.baseUrl,
+        },
+      ],
+    ]),
+    parking: [...(live.parking ?? [])],
+  };
+}
+
+/**
+ * The D5 verification request: probe just our endpoint inline (api_key null
+ * resolves to the definition we just PUT). Tier refs stay empty -- probe
+ * validates counts only, so an endpoint without referencing profiles is fine.
+ */
+export function probeRequestFor(add: PushTarget): ProfileProbeRequest {
+  return {
+    endpoints: [
+      {
+        id: add.endpointKey,
+        family: add.family,
+        api_key: null,
+        base_url: add.baseUrl,
+      },
+    ],
+    tiers: [],
+  };
+}
+
+/** True when the probe report marks our endpoint ok. */
+export function probeVerdict(
+  response: ProfileProbeResponse,
+  endpointKey: string,
+): boolean {
+  return (
+    response.results.find((r) => r.endpoint_id === endpointKey)?.status === "ok"
+  );
+}
+
+/**
+ * Classify a push failure: transport-class noise and server-side trouble
+ * are worth re-attempting inside the window (enrollment may simply not be
+ * done yet); a structured 4xx means the credential or request itself was
+ * rejected and retrying verbatim cannot succeed.
+ */
+export function pushErrorKind(e: unknown): "retry" | "terminal" {
+  if (e instanceof TransportError) return "retry";
+  if (e instanceof KallipError) {
+    const s = e.api.status;
+    return s >= 500 || s === 409 || s === 429 ? "retry" : "terminal";
+  }
+  // Unknown throw shape (crypto, channel teardown): treat as transient.
+  return "retry";
+}
+
+function failureMessage(e: unknown): string {
+  if (e instanceof KallipError && e.api.message) return e.api.message;
+  if (e instanceof Error && e.message) return e.message;
+  return String(e);
+}
+
+/**
+ * Run the push loop to a terminal state. Attempt one fires immediately
+ * (a fast enroll beats polling); retries wait out the fixed interval and
+ * the whole loop folds at the deadline into "unreachable". The single
+ * post-push probe never fails the push (plan D5: no rollback).
+ */
+export async function pushCredentials(
+  target: PushTarget,
+  ports: PushPorts,
+): Promise<PushOutcome> {
+  const deadline = ports.now() + ENROLL_PUSH_WINDOW_MS;
+  try {
+    for (;;) {
+      try {
+        const live = await ports.fetchLive();
+        await ports.put(buildPushConfig(live, target));
+        let probeOk = false;
+        try {
+          const response = await ports.probe(probeRequestFor(target));
+          probeOk = probeVerdict(response, target.endpointKey);
+        } catch {
+          // Connect check failed after a good push: surface probeOk=false,
+          // keep the credential in place (rollback could strand the tagma
+          // profile-less over what might be a provider-side blip).
+        }
+        return { state: "pushed", endpointKey: target.endpointKey, probeOk };
+      } catch (e) {
+        if (pushErrorKind(e) === "terminal") {
+          return {
+            state: "failed",
+            endpointKey: target.endpointKey,
+            message: failureMessage(e),
+          };
+        }
+      }
+      if (ports.now() + ENROLL_PUSH_INTERVAL_MS >= deadline) {
+        return { state: "unreachable", endpointKey: target.endpointKey };
+      }
+      await ports.sleep(ENROLL_PUSH_INTERVAL_MS);
+    }
+  } finally {
+    await ports.close?.();
+  }
+}
