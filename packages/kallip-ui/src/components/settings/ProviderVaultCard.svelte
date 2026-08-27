@@ -9,12 +9,14 @@
   // blob (a key sealed on another device).
   import type { ProviderSummary } from "@kallipai/kallip-agora-client";
   import { AgoraApiError } from "@kallipai/kallip-agora-client";
-  import { Check, Copy } from "@lucide/svelte";
+  import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
+  import { Check, Copy, MoreVertical, Trash } from "@lucide/svelte";
   import { copyText } from "../../lib/clipboard.ts";
   import { getLocale } from "../../paraglide/runtime.js";
   import {
     settings_added_date,
     settings_confirm_remove,
+    settings_provider_actions_aria,
     settings_error_unknown,
     settings_provider_badge_encrypted,
     settings_provider_badge_plaintext,
@@ -206,24 +208,8 @@
           {settings_added_date({ date: formatDate(entry.created_at) })}
         </div>
       </div>
-      <div class="flex flex-wrap justify-end gap-2">
-        {#if canFlip}
-          <button
-            class="btn btn-sm preset-tonal-surface"
-            disabled={flipping}
-            onclick={flip}
-          >
-            {flipping
-              ? "…"
-              : entry.mode === "plaintext"
-                ? settings_provider_flip_to_encrypted()
-                : settings_provider_flip_to_plaintext()}
-          </button>
-        {/if}
-        <button class="btn btn-sm preset-tonal-surface" onclick={beginRename}
-          >{common_rename()}</button
-        >
-        {#if confirming}
+      {#if confirming}
+        <div class="flex justify-end gap-2">
           <button
             class="btn btn-sm preset-filled-error-500"
             onclick={confirmDelete}>{settings_confirm_remove()}</button
@@ -232,16 +218,62 @@
             class="btn btn-sm preset-tonal-surface"
             onclick={() => (confirming = false)}>{common_cancel()}</button
           >
-        {:else}
-          <button
-            class="btn btn-sm preset-tonal-surface"
-            onclick={() => {
-              deleteError = null;
-              confirming = true;
-            }}>{common_remove()}</button
+        </div>
+      {:else}
+        <!-- Kebab actions menu (EnrollmentCodeCard pattern): keeps the card
+             to identity + status, with the destructive step still two-step. -->
+        <div class="flex justify-end">
+          <Menu
+            positioning={{ placement: "top-end" }}
+            onSelect={(e) => {
+              if (e.value === "rename" && onRename) beginRename();
+              else if (e.value === "flip" && onFlip) void flip();
+              else if (e.value === "remove") {
+                deleteError = null;
+                confirming = true;
+              }
+            }}
           >
-        {/if}
-      </div>
+            <Menu.Trigger
+              class="inline-flex size-8 items-center justify-center rounded-base text-surface-500 transition hover:bg-surface-200-800 dark:text-surface-400"
+              aria-label={settings_provider_actions_aria()}
+            >
+              <MoreVertical class="size-4" />
+            </Menu.Trigger>
+            <Portal>
+              <Menu.Positioner>
+                <Menu.Content
+                  class="card preset-tonal-surface p-1 min-w-[8rem]"
+                >
+                  {#if canFlip}
+                    <Menu.Item
+                      value="flip"
+                      class="px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
+                    >
+                      {flipping ? "… " : ""}{entry.mode === "plaintext"
+                        ? settings_provider_flip_to_encrypted()
+                        : settings_provider_flip_to_plaintext()}
+                    </Menu.Item>
+                  {/if}
+                  <Menu.Item
+                    value="rename"
+                    class="px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
+                  >
+                    {common_rename()}
+                  </Menu.Item>
+                  <Menu.Item
+                    value="remove"
+                    class="flex items-center gap-2 px-3 py-2 rounded-base text-sm text-error-500 dark:text-error-400 cursor-pointer hover:preset-filled-error-500"
+                  >
+                    <Trash class="size-4" />
+                    {common_remove()}
+                  </Menu.Item>
+                </Menu.Content>
+              </Menu.Positioner>
+            </Portal>
+          </Menu>
+        </div>
+      {/if}
     </div>
     {#if copyState === "fail"}
       <div class="text-xs text-error-600 dark:text-error-500">
