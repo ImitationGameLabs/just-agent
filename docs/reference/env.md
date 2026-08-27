@@ -1,10 +1,13 @@
 # Environment variable reference
 
-All configuration is done through environment variables. Copy `.env.example` to `.env` and fill in the required values. If you use `direnv`, it loads `.env` automatically via `.envrc`.
+All configuration is done through environment variables. Copy `.env.example` to
+`.env` and fill in the required values. If you use `direnv`, it loads `.env`
+automatically via `.envrc`.
 
 ## LLM Provider
 
-These variables select and configure the LLM backend. They are **required** when no [model profiles](#model-profiles) config file is present.
+These variables select and configure the LLM backend. They are **required** when
+no [model profiles](#model-profiles) config file is present.
 
 | Variable                            | Required    | Default          | Description                                                                                                 |
 | ----------------------------------- | ----------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -17,10 +20,17 @@ These variables select and configure the LLM backend. They are **required** when
 
 ## Model Profiles
 
-A profile binds a model to an endpoint and its declared capabilities (`max_context_window`), grouped into capability tiers. With a profiles config file, the tagma loads multiple provider/model combinations, each profile declaring its own `max_context_window`.
+A profile binds a model to an endpoint and its declared capabilities
+(`max_context_window`), grouped into capability tiers. With a profiles config
+file, the tagma loads multiple provider/model combinations, each profile
+declaring its own `max_context_window`.
 
-The profiles config file lives at `<KALLIP_DATA_DIR>/profiles/profiles.toml` — the data dir is required whenever a tagma runs, so no extra variable is needed.
-Without a config file (the default for benchmark/scripting via Harbor and `kallip-run`), a single implicit profile is derived from `KALLIP_LLM_*` env, and its `max_context_window` is derived from `KALLIP_CONTEXT_WINDOW_TOKENS` (default `128000`).
+The profiles config file lives at `<KALLIP_DATA_DIR>/profiles/profiles.toml` —
+the data dir is required whenever a tagma runs, so no extra variable is needed.
+Without a config file (the default for benchmark/scripting via Harbor and
+`kallip-run`), a single implicit profile is derived from `KALLIP_LLM_*` env, and
+its `max_context_window` is derived from `KALLIP_CONTEXT_WINDOW_TOKENS` (default
+`128000`).
 
 Example `profiles.toml`:
 
@@ -51,50 +61,60 @@ base_url = "https://openrouter.ai/api/v1"
 
 - `family` must be one of `deepseek`, `openai-compatible`.
 - `${VAR}` in `api_key` / `base_url` is expanded from the process environment.
-- The config file should be `chmod 600` (the tagma warns if group/other-readable, since it may hold API keys).
+- The config file should be `chmod 600` (the tagma warns if
+  group/other-readable, since it may hold API keys).
 
 ### Tier selection
 
-Tiers are purely positional — each agent resolves `tiers[depth]`, where `depth` derives from
-delegation level: root agents (depth 0) resolve to `tiers[0]` (conventionally the
-highest-capability tier — order your tiers by capability), and each level of subagent
-delegation moves one tier down, clamped to the last tier. There is no name and no explicit
-override; treat the tier list as append-only / truncate-tail (reordering or removing a middle
-tier rebinds agents silently).
+Tiers are purely positional — each agent resolves `tiers[depth]`, where `depth`
+derives from delegation level: root agents (depth 0) resolve to `tiers[0]`
+(conventionally the highest-capability tier — order your tiers by capability),
+and each level of subagent delegation moves one tier down, clamped to the last
+tier. There is no name and no explicit override; treat the tier list as
+append-only / truncate-tail (reordering or removing a middle tier rebinds agents
+silently).
 
-The selected tier's first profile is the active model; the remaining profiles form a
-within-tier failover chain. When the active profile fails terminally (HTTP 401/403/404, or
-transient retries exhausted), the runner advances to the next profile in the tier and retries
-the same turn; a request-level failure (400/422) errors the round instead. The active profile
-index sticks for the agent's lifetime and resets to 0 on restore. No tier binding is persisted
-— it is re-derived from depth on every spawn/restore.
+The selected tier's first profile is the active model; the remaining profiles
+form a within-tier failover chain. When the active profile fails terminally
+(HTTP 401/403/404, or transient retries exhausted), the runner advances to the
+next profile in the tier and retries the same turn; a request-level failure
+(400/422) errors the round instead. The active profile index sticks for the
+agent's lifetime and resets to 0 on restore. No tier binding is persisted — it
+is re-derived from depth on every spawn/restore.
 
-On advance, the context window tracks the new profile's declared `max_context_window` (within-tier
-windows may differ — placing models with different windows in one tier is supported). If the
-carried context now exceeds the new (possibly smaller) window, the runner compacts it before
-retrying, so the turn survives the switch. A candidate whose window would violate a budget
-invariant is skipped _before_ the advance (so the agent never sends an oversized request to a
-smaller-window model); if no feasible candidate remains, the chain is reported
-`allCandidatesInfeasible` (tune `SUMMARY_MAX_TOKENS` / `PINNED_BUDGET_RATIO` or raise the window). The _active_ profile's window (not a failover candidate) is validated at spawn — a window that violates a budget invariant rejects the spawn outright (fail-fast) rather than silently falling back.
+On advance, the context window tracks the new profile's declared
+`max_context_window` (within-tier windows may differ — placing models with
+different windows in one tier is supported). If the carried context now exceeds
+the new (possibly smaller) window, the runner compacts it before retrying, so
+the turn survives the switch. A candidate whose window would violate a budget
+invariant is skipped _before_ the advance (so the agent never sends an oversized
+request to a smaller-window model); if no feasible candidate remains, the chain
+is reported `allCandidatesInfeasible` (tune `SUMMARY_MAX_TOKENS` /
+`PINNED_BUDGET_RATIO` or raise the window). The _active_ profile's window (not a
+failover candidate) is validated at spawn — a window that violates a budget
+invariant rejects the spawn outright (fail-fast) rather than silently falling
+back.
 
-The retry budget is **per-endpoint**, not per-profile: rate limits are endpoint-scoped, so two
-profiles sharing one endpoint share one budget. A profile's transient retries accumulate within
-`retry_timeout` **across rounds** — this is intentional rate-limit backpressure (a persistently
-failing endpoint gets fewer retries, forcing failover or a round error), and it matches the
-pre-failover agent-wide behavior for the active profile. The index only advances forward, so a
-failed-over-from endpoint's accumulated budget never re-bites.
+The retry budget is **per-endpoint**, not per-profile: rate limits are
+endpoint-scoped, so two profiles sharing one endpoint share one budget. A
+profile's transient retries accumulate within `retry_timeout` **across rounds**
+— this is intentional rate-limit backpressure (a persistently failing endpoint
+gets fewer retries, forcing failover or a round error), and it matches the
+pre-failover agent-wide behavior for the active profile. The index only advances
+forward, so a failed-over-from endpoint's accumulated budget never re-bites.
 
 Edge cases: an agent whose depth exceeds the tier count is clamped to the last
-(lowest-capability) tier with a warning. With a two-tier config, every subagent level maps
-onto `tiers[1]`.
+(lowest-capability) tier with a warning. With a two-tier config, every subagent
+level maps onto `tiers[1]`.
 
-Source: [`crates/kallip-runtime/src/profile/`](../../crates/kallip-runtime/src/profile).
+Source:
+[`crates/kallip-runtime/src/profile/`](../../crates/kallip-runtime/src/profile).
 
 ## Agent Core
 
 Runtime tuning parameters. All are optional with sensible defaults. (The
-identity vars `KALLIP_ID` / `KALLIP_SUPERVISOR_AGENT_ID` / `KALLIP_ROOT_AGENT_ID`
-are tagma-injected, not tuned here — see
+identity vars `KALLIP_ID` / `KALLIP_SUPERVISOR_AGENT_ID` /
+`KALLIP_ROOT_AGENT_ID` are tagma-injected, not tuned here — see
 [Variables injected into agent shell sessions](#variables-injected-into-agent-shell-sessions).)
 
 > **Tagma root agent:** the tagma owns a single root agent, eagerly created at
@@ -105,10 +125,10 @@ are tagma-injected, not tuned here — see
 
 | Variable                                       | Default                               | Constraints                                            | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ---------------------------------------------- | ------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `KALLIP_SYSTEM_PROMPT`                         | Built-in prompt                       | —                                                      | Overrides the **static base** of the system prompt (the posture + tool/round-model section; see `DEFAULT_SYSTEM_PROMPT` in `config.rs`). The per-agent `# Your identity` section is always tagma-injected at the head of this base and is not env-configurable. Must remain constant across the tagma's lifetime — root and all subagents resolve this env var identically, and the byte-identical static tail is what keeps prompt-prefix caching effective across agents.                                                                                                                                                                                                                                                                                                                                                  |
+| `KALLIP_SYSTEM_PROMPT`                         | Built-in prompt                       | —                                                      | Overrides the **static base** of the system prompt (the posture + tool/round-model section; see `DEFAULT_SYSTEM_PROMPT` in `config.rs`). The per-agent `# Your identity` section is always tagma-injected at the head of this base and is not env-configurable. Must remain constant across the tagma's lifetime — root and all subagents resolve this env var identically, and the byte-identical static tail is what keeps prompt-prefix caching effective across agents.                                                                                                                                                                                                                                                                                                                                              |
 | `KALLIP_MAX_TOOL_ROUNDS`                       | _(unlimited)_                         | > 0                                                    | Maximum tool-call rounds per agent. Defaults to unlimited — the tagma-wide token budget is the primary safety net. Set this to enforce a hard round limit independent of token consumption (e.g. for testing or cost control). Note: this does NOT bound heartbeat rounds (a bare-assistant response re-loops without counting here); see `KALLIP_MAX_HEARTBEAT_ROUNDS`.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `KALLIP_MAX_HEARTBEAT_ROUNDS`                  | `3`                                   | > 0                                                    | Max consecutive heartbeat rounds (bare-assistant re-loops) before the harness force-idles the agent. The agent only parks by calling `break`; a bare response with no tool call does not end the run — the harness injects a heartbeat prompt and continues. This guardrail bounds "self-monologue" token burn.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `KALLIP_MAX_TRANSIENT_RETRIES`                 | `3`                                   | > 0                                                    | Max consecutive transient (failover-chain-exhausted) parks that earn a timed retry before the agent hard-parks and surfaces to the operator. Bounded additionally by the retry policy's `retry_timeout` wall clock (300s default, `KALLIP_RETRY_TIMEOUT_SECS`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `KALLIP_MAX_TRANSIENT_RETRIES`                 | `3`                                   | > 0                                                    | Max consecutive transient (failover-chain-exhausted) parks that earn a timed retry before the agent hard-parks and surfaces to the operator. Bounded additionally by the retry policy's `retry_timeout` wall clock (300s default, `KALLIP_RETRY_TIMEOUT_SECS`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `KALLIP_TAGMA_RELAY_AGORA_URL`                 | _(unset)_                             | HTTPS URL                                              | The public URL of the agora the tagma's in-process relay connector reaches for enrollment (first run only; the stored tagma token is reused thereafter). Setting this activates the relay. If enrollment fails (missing code, unreachable agora), the tagma degrades to local-only: it logs an error, keeps serving local agents, and the lesche message route returns 503. Unset = pure-local, no relay.                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `KALLIP_TAGMA_RELAY_LESCHE_URL`                | `KALLIP_TAGMA_RELAY_AGORA_URL` origin | HTTPS URL                                              | The public URL of the lesche data-plane relay the tagma holds its tunnel against and posts envelopes / key-exchange responses to. Defaults to the `KALLIP_TAGMA_RELAY_AGORA_URL` origin when unset (same-origin topologies only); set explicitly for the per-service subdomain topology (e.g. `https://lesche.kallipai.com`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE`           | _(unset)_                             | `sk-enroll-...`                                        | A single-use enrollment code minted via the agora dashboard (after a user signs up). Required on the tagma's first boot when `KALLIP_TAGMA_RELAY_AGORA_URL` is set; persisted under `KALLIP_DATA_DIR/credentials/` thereafter, so it can be removed once the tagma token is stored.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -123,15 +143,16 @@ are tagma-injected, not tuned here — see
 | `KALLIP_TOOL_TIMEOUT_SECS`                     | `120`                                 | —                                                      | Timeout in seconds for individual tool executions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `KALLIP_PINNED_BUDGET_RATIO`                   | `0.25`                                | 0.0–1.0 (exclusive)                                    | Fraction of effective budget allocated to pinned context items.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `KALLIP_CONTEXT_THRESHOLDS`                    | `50,60,70,80`                         | Comma-separated `1`–`99`, sorted ascending, ≥ 2 values | Context usage thresholds (percentage). The last value triggers auto-compact; preceding values are warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `KALLIP_MAX_RETRIES`                           | `10`                                  | ≤ 1000                                                 | Maximum retries for LLM API calls. Upper bound guards the attempt-budget arithmetic (`u32::MAX` would wrap to zero attempts).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `KALLIP_MAX_RETRIES`                           | `10`                                  | ≤ 1000                                                 | Maximum retries for LLM API calls. Upper bound guards the attempt-budget arithmetic (`u32::MAX` would wrap to zero attempts).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `KALLIP_RETRY_BASE_DELAY_SECS`                 | `1`                                   | > 0, ≤ 3600                                            | Base delay in seconds for exponential retry backoff.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `KALLIP_RETRY_MAX_DELAY_SECS`                 | `60`                                  | > 0, ≤ 3600                                            | Cap in seconds for a single retry backoff.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `KALLIP_RETRY_TIMEOUT_SECS`                    | `300`                                 | > 0, ≤ 86400                                           | Overall deadline in seconds for one retry sequence. Upper bound avoids `Instant + Duration` overflow on the deadline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `KALLIP_RETRY_MAX_DELAY_SECS`                  | `60`                                  | > 0, ≤ 3600                                            | Cap in seconds for a single retry backoff.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `KALLIP_RETRY_TIMEOUT_SECS`                    | `300`                                 | > 0, ≤ 86400                                           | Overall deadline in seconds for one retry sequence. Upper bound avoids `Instant + Duration` overflow on the deadline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `KALLIP_POLICY_PRESET`                         | _(unset — `default`)_                 | `default`, `auto`, or `allow-all`                      | Tagma-global `bash_exec` classify preset, read once at startup and immutable for the tagma's lifetime. Every agent (root and subagent) runs under this preset. `default` (also when unset): catalog commands allow, unclassified commands ask, the builtin command denylist (`sed`, `awk`, `ed`, `ex`) and structural rejects (e.g. `curl \| sh`) deny. `auto` is the practical permissive mode: unclassified commands allow too, while the denylist and structural rejects still deny. `allow-all` is a **debug preset, not for production**: the classifier short-circuits to allow every parseable command, so the denylist and structural rejects do not apply. Per-command overrides are configured separately via `ExecPolicy` (`PUT /agents/{id}/exec-policy`). See _Classify presets_ in `docs/architecture.md`. |
 | `KALLIP_ROOT_AGENT_PERMISSION_CLASS`           | `normal`                              | `normal` or `guest`                                    | Debug override: sandbox permission class for root agents. `normal` = home broad-write + workspace write; `guest` = readonly workspace, no home write. Only affects root agents at creation time; subagents derive their class from their model tier (or an explicit `permission_class` downgrade on `POST /agents` / `kallip subagent spawn --permission-class`), and restored agents use their persisted `meta.json`. The env form is lowercase; `meta.json` stores the PascalCase serde form (`Normal`/`Guest`).                                                                                                                                                                                                                                                                                                       |
 | `KALLIP_TOKEN_BUDGET_WARNINGS`                 | `80,95`                               | Comma-separated `1`–`99`, sorted ascending, ≥ 1 value  | Token budget usage thresholds (percentage) at which the agent receives a warning message.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
-Source: [`crates/kallip-runtime/src/config.rs`](../../crates/kallip-runtime/src/config.rs).
+Source:
+[`crates/kallip-runtime/src/config.rs`](../../crates/kallip-runtime/src/config.rs).
 
 > **Client-side cache (not env-configurable).** The app keeps a per-device
 > IndexedDB cache (`kallip-relay` DB) of already-rendered chat lines so a
@@ -142,15 +163,23 @@ Source: [`crates/kallip-runtime/src/config.rs`](../../crates/kallip-runtime/src/
 
 ### Inter-variable constraints
 
-Some variables have cross-validation rules enforced at startup for the implicit-profile window (a config-file profile's window is checked per-profile at spawn, not at tagma startup):
+Some variables have cross-validation rules enforced at startup for the
+implicit-profile window (a config-file profile's window is checked per-profile
+at spawn, not at tagma startup):
 
 - `OUTPUT_RESERVE_TOKENS` must be strictly less than the active context window.
-- `SUMMARY_MAX_TOKENS` must not exceed the pinned budget, calculated as `(context_window − OUTPUT_RESERVE_TOKENS) × PINNED_BUDGET_RATIO`.
+- `SUMMARY_MAX_TOKENS` must not exceed the pinned budget, calculated as
+  `(context_window − OUTPUT_RESERVE_TOKENS) × PINNED_BUDGET_RATIO`.
 
-These are checked at startup against the implicit-profile window (`CONTEXT_WINDOW_TOKENS`); a config-file profile's window is checked per-profile at spawn (and again, lazily, on within-tier failover) — config-file profile windows were never validated at tagma startup.
+These are checked at startup against the implicit-profile window
+(`CONTEXT_WINDOW_TOKENS`); a config-file profile's window is checked per-profile
+at spawn (and again, lazily, on within-tier failover) — config-file profile
+windows were never validated at tagma startup.
 
-- `CONTEXT_THRESHOLDS` must have at least 2 values, sorted ascending, each in `1`–`99`.
-- `TOKEN_BUDGET_WARNINGS` must have at least 1 value, sorted ascending, each in `1`–`99`.
+- `CONTEXT_THRESHOLDS` must have at least 2 values, sorted ascending, each in
+  `1`–`99`.
+- `TOKEN_BUDGET_WARNINGS` must have at least 1 value, sorted ascending, each in
+  `1`–`99`.
 
 ## Tagma
 
@@ -167,28 +196,36 @@ These variables control the tagma server.
 | `KALLIP_OPERATOR_TOKEN`     | no       | _(random `sk-operator-…`)_ | Pre-set the tagma operator token. When unset, a random 256-bit `sk-operator-…` token is generated and printed to stdout. The tagma retains only its SHA-256. Set this for automation where the token must be known in advance; must not be empty. |
 | `KALLIP_LLM_API_USER_AGENT` | no       | `kallip/<tagma-version>`   | User-Agent header sent on outbound LLM chat completion requests. Override verbatim (leading/trailing whitespace preserved); illegal header chars (e.g. newlines) fail fast (at startup for the active set, lazily on first failover).             |
 
-Source: [`crates/kallip-tagma/src/args.rs`](../../crates/kallip-tagma/src/args.rs).
+Source:
+[`crates/kallip-tagma/src/args.rs`](../../crates/kallip-tagma/src/args.rs).
 
 ### Variables injected into agent shell sessions
 
-The tagma injects these into each agent's shell environment so that CLI commands run inside an agent's shell can communicate with the tagma. They are not set by the operator — the tagma provides them automatically.
+The tagma injects these into each agent's shell environment so that CLI commands
+run inside an agent's shell can communicate with the tagma. They are not set by
+the operator — the tagma provides them automatically.
 
-| Variable                 | Injection point                     | Description                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------ | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `KALLIP_TAGMA_URL`       | Tagma process (`main.rs`)           | Copied from `KALLIP_ADVERTISE_URL` at startup via `set_var`. Inherited by child processes. Read by CLI and TUI clients to connect.                                                                                                                                                                                                                                      |
-| `KALLIP_AUTH_TOKEN`      | Per-agent shell (`routes/agent.rs`) | Generated 256-bit `sk-agent-…` authentication token. Injected into shell sessions so the agent can call back to the tagma; the tagma stores and compares only its SHA-256. The CLI requires it; the TUI prompts interactively if unset.                                                                                                                                 |
-| `KALLIP_ID`              | Per-agent shell (`routes/agent.rs`) | UUID of the current agent. Available inside agent shells. Read by the CLI for the `skill` and `subagent` subcommands (where it identifies the acting supervisor), and as the self-target for `activity` and `lesche send`.                                                                                                                                             |
+| Variable                     | Injection point                     | Description                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KALLIP_TAGMA_URL`           | Tagma process (`main.rs`)           | Copied from `KALLIP_ADVERTISE_URL` at startup via `set_var`. Inherited by child processes. Read by CLI and TUI clients to connect.                                                                                                                                                                                                                   |
+| `KALLIP_AUTH_TOKEN`          | Per-agent shell (`routes/agent.rs`) | Generated 256-bit `sk-agent-…` authentication token. Injected into shell sessions so the agent can call back to the tagma; the tagma stores and compares only its SHA-256. The CLI requires it; the TUI prompts interactively if unset.                                                                                                              |
+| `KALLIP_ID`                  | Per-agent shell (`routes/agent.rs`) | UUID of the current agent. Available inside agent shells. Read by the CLI for the `skill` and `subagent` subcommands (where it identifies the acting supervisor), and as the self-target for `activity` and `lesche send`.                                                                                                                           |
 | `KALLIP_SUPERVISOR_AGENT_ID` | Per-agent shell (`routes/agent.rs`) | The agent's supervisor id (the direct `created_by` delegator). Injected for subagents only — **unset for the root agent** (absent, not empty), so root-ness is detectable by env absence. Surfaces the id so the agent can address its supervisor (e.g. `kallip message <id>`); the CLI takes the id as a positional arg and does not read this var. |
-| `KALLIP_ROOT_AGENT_ID`   | Per-agent shell (`routes/agent.rs`) | The tagma root agent id (the agent itself for the root). Injected into every agent's shell. Surfaces the id so the agent can escalate to the root (e.g. `kallip message <id>`); the CLI takes the id as a positional arg and does not read this var.                                                                                                                                                                                                                    |
+| `KALLIP_ROOT_AGENT_ID`       | Per-agent shell (`routes/agent.rs`) | The tagma root agent id (the agent itself for the root). Injected into every agent's shell. Surfaces the id so the agent can escalate to the root (e.g. `kallip message <id>`); the CLI takes the id as a positional arg and does not read this var.                                                                                                 |
 
 ### `ADVERTISE_URL` vs `TAGMA_URL`
 
 These serve related but distinct purposes:
 
-- **`KALLIP_ADVERTISE_URL`** — configured by the operator. Tells the tagma "this is the URL others should use to reach you." The tagma injects this value into child processes.
-- **`KALLIP_TAGMA_URL`** — consumed by clients (CLI, TUI). Tells them "where is the tagma." Automatically set from `ADVERTISE_URL` by the tagma at startup.
+- **`KALLIP_ADVERTISE_URL`** — configured by the operator. Tells the tagma "this
+  is the URL others should use to reach you." The tagma injects this value into
+  child processes.
+- **`KALLIP_TAGMA_URL`** — consumed by clients (CLI, TUI). Tells them "where is
+  the tagma." Automatically set from `ADVERTISE_URL` by the tagma at startup.
 
-In the common case (everything on localhost) they have the same value. They diverge in container or reverse-proxy setups where the internal listen address differs from the externally reachable URL.
+In the common case (everything on localhost) they have the same value. They
+diverge in container or reverse-proxy setups where the internal listen address
+differs from the externally reachable URL.
 
 ## Data and Skills
 
@@ -198,7 +235,9 @@ In the common case (everything on localhost) they have the same value. They dive
 | `KALLIP_SKILLS_ROOT` | no       | `DATA_DIR/skills/`                   | Direct path to the shared skill directory. Used as-is (no suffix appended). Checked before `KALLIP_DATA_DIR` and the platform default.                                                                                                                                                                                                                                             |
 | `KALLIP_SKILLS_SEED` | no       | _(unset)_                            | Read-only tree of bundled skill defaults (a nix store path). On the tagma's first boot, when the shared skill directory is empty, its contents are copied into it. The target is `KALLIP_SKILLS_ROOT` if set, else `DATA_DIR/skills/` — `KALLIP_SKILLS_ROOT` only relocates the target, it does not disable seeding. Skipped when the target is already non-empty (never clobber). |
 
-Source: [`crates/kallip-runtime/src/persistence.rs`](../../crates/kallip-runtime/src/persistence.rs), [`crates/kallip-runtime/src/tools/skill/mod.rs`](../../crates/kallip-runtime/src/tools/skill/mod.rs).
+Source:
+[`crates/kallip-runtime/src/persistence.rs`](../../crates/kallip-runtime/src/persistence.rs),
+[`crates/kallip-runtime/src/tools/skill/mod.rs`](../../crates/kallip-runtime/src/tools/skill/mod.rs).
 
 ## Logging
 
@@ -208,28 +247,48 @@ Source: [`crates/kallip-runtime/src/persistence.rs`](../../crates/kallip-runtime
 
 ## Cron
 
-The timer/notification daemon (`kallip-cron-daemon`) and its management CLI (`kallip-cron`). The daemon fires schedules and injects them into agent conversations via the tagma HTTP API. The management API is self-scoped: the `kallip-cron` CLI runs inside an agent shell and reuses the shell's `KALLIP_ID` + `KALLIP_AUTH_TOKEN` (both auto-injected by the tagma); the daemon verifies the pair against the tagma and scopes every operation to that agent's own schedules.
+The timer/notification daemon (`kallip-cron-daemon`) and its management CLI
+(`kallip-cron`). The daemon fires schedules and injects them into agent
+conversations via the tagma HTTP API. The management API is self-scoped: the
+`kallip-cron` CLI runs inside an agent shell and reuses the shell's
+`KALLIP_ID` + `KALLIP_AUTH_TOKEN` (both auto-injected by the tagma); the daemon
+verifies the pair against the tagma and scopes every operation to that agent's
+own schedules.
 
-| Variable                | Required | Default                     | Description                                                                                                                                                                                                               |
-| ----------------------- | -------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `KALLIP_CRON_ADDR`      | no       | `127.0.0.1:3010`            | Address the daemon's management API listens on. **Loopback only** — cron is an internal tagma-side service; the daemon refuses a non-loopback bind.                                                                       |
-| `KALLIP_CRON_DATA_DIR`  | no       | Platform data dir `kallip-cron/` | Directory holding `cron.sqlite`.                                                                                                                                                                                    |
-| `KALLIP_CRON_TICK_MS`   | no       | `1000`                      | Scheduler tick interval (ms). Must be `>= 1000` (second-precision scheduler).                                                                                                                                             |
-| `KALLIP_CRON_DELIVER_MS`| no       | `500`                       | Deliverer poll interval (ms): how often triggered schedules are pushed to tagma.                                                                                                                                          |
-| `KALLIP_CRON_URL`       | no       | `http://127.0.0.1:3010`     | Daemon URL used by the `kallip-cron` CLI client.                                                                                                                                                                          |
-| `KALLIP_ID`             | yes (CLI)| _(unset)_                   | The calling agent's id (auto-injected into agent shells by the tagma); the CLI passes it as the self-scope, and the daemon verifies it against the bearer via the tagma.                                                  |
-| `KALLIP_TAGMA_URL`      | yes      | `http://127.0.0.1:3000`     | Tagma URL for delivery + per-request verify (read by `TagmaClient::from_env`). Reused from the tagma client; not `KALLIP_CRON_*`-prefixed.                                                                                 |
-| `KALLIP_AUTH_TOKEN`     | yes      | _(unset)_                   | The daemon's operator secret for delivery (fired reminders render `[From: operator]`); the CLI's agent bearer for management requests. Reused from the tagma client.                                                      |
+| Variable                 | Required  | Default                          | Description                                                                                                                                                              |
+| ------------------------ | --------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `KALLIP_CRON_ADDR`       | no        | `127.0.0.1:3010`                 | Address the daemon's management API listens on. **Loopback only** — cron is an internal tagma-side service; the daemon refuses a non-loopback bind.                      |
+| `KALLIP_CRON_DATA_DIR`   | no        | Platform data dir `kallip-cron/` | Directory holding `cron.sqlite`.                                                                                                                                         |
+| `KALLIP_CRON_TICK_MS`    | no        | `1000`                           | Scheduler tick interval (ms). Must be `>= 1000` (second-precision scheduler).                                                                                            |
+| `KALLIP_CRON_DELIVER_MS` | no        | `500`                            | Deliverer poll interval (ms): how often triggered schedules are pushed to tagma.                                                                                         |
+| `KALLIP_CRON_URL`        | no        | `http://127.0.0.1:3010`          | Daemon URL used by the `kallip-cron` CLI client.                                                                                                                         |
+| `KALLIP_ID`              | yes (CLI) | _(unset)_                        | The calling agent's id (auto-injected into agent shells by the tagma); the CLI passes it as the self-scope, and the daemon verifies it against the bearer via the tagma. |
+| `KALLIP_TAGMA_URL`       | yes       | `http://127.0.0.1:3000`          | Tagma URL for delivery + per-request verify (read by `TagmaClient::from_env`). Reused from the tagma client; not `KALLIP_CRON_*`-prefixed.                               |
+| `KALLIP_AUTH_TOKEN`      | yes       | _(unset)_                        | The daemon's operator secret for delivery (fired reminders render `[From: operator]`); the CLI's agent bearer for management requests. Reused from the tagma client.     |
 
-Source: [`crates/time/kallip-cron-daemon/src/args.rs`](../../crates/time/kallip-cron-daemon/src/args.rs), [`crates/time/kallip-cron-client/src/client.rs`](../../crates/time/kallip-cron-client/src/client.rs).
+Source:
+[`crates/time/kallip-cron-daemon/src/args.rs`](../../crates/time/kallip-cron-daemon/src/args.rs),
+[`crates/time/kallip-cron-client/src/client.rs`](../../crates/time/kallip-cron-client/src/client.rs).
 
 ## System environment variables
 
-The shell backend reads these from the process environment and passes them into every spawned `bash`:
+The shell backend reads these from the process environment and passes them into
+every spawned `bash`:
 
 | Variable | Fallback     | Purpose              |
 | -------- | ------------ | -------------------- |
 | `HOME`   | _(required)_ | User home directory. |
 | `PATH`   | _(required)_ | System PATH.         |
 
-The backend also hardcodes `TERM=dumb`, `NO_COLOR=1`, `LS_COLORS=""`, `CLICOLOR="0"` into every spawned `bash` to suppress color output.
+The backend also hardcodes `TERM=dumb`, `NO_COLOR=1`, `LS_COLORS=""`,
+`CLICOLOR="0"` into every spawned `bash` to suppress color output.
+
+## Dev stack shape
+
+Two variables drive the dev compose (`compose/dev/agora.nix`) and the web dev
+server together (both flow from the root `.env` via direnv):
+
+| Variable        | Default                                     | Purpose                                                                                                                         |
+| --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `KALLIP_TLS`    | `on`                                        | Stack shape: `on` = Caddy-fronted https+domain topology; `off` = plain http (no Caddy/cert/DNS; see docs/development.md).       |
+| `KALLIP_DOMAIN` | `kallipai.com` (`on`) / `localhost` (`off`) | The domain (https shape) or plain host (http shape) everything derives from. Formerly `KALLIP_DEV_DOMAIN` (renamed 2026-08-27). |
