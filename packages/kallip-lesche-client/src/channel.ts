@@ -25,6 +25,7 @@ import {
   decodeB64,
   encodeB64,
   participantIdForUser,
+  uuidV4,
 } from "@kallipai/kallip-common";
 import type {
   Envelope,
@@ -295,7 +296,7 @@ export class RelayChannel {
       channel_id: this.conversationId,
       sender,
       sequence_n,
-      trace_id: crypto.randomUUID(),
+      trace_id: uuidV4(),
       timestamp: new Date().toISOString(),
       ciphertext: encodeB64(ciphertext),
     };

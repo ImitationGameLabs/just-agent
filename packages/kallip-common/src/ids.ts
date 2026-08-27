@@ -65,6 +65,22 @@ export async function sha1(
   return hash.getHash("UINT8ARRAY");
 }
 
+/** RFC 4122 v4 uuid. Prefers `crypto.randomUUID` (secure contexts only
+ * per spec); falls back to getRandomValues -- available in every
+ * context -- when the property is absent. The `randomUUID` parameter is
+ * injectable so the fallback-path test can execute it directly. */
+export function uuidV4(
+  randomUUID: (() => string) | undefined = crypto.randomUUID?.bind(crypto),
+): string {
+  if (randomUUID) {
+    return randomUUID();
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  return bytesToUuid(bytes);
+}
+
 /** RFC 4122 v5 (SHA-1) uuid over `name` under `namespace`. */
 async function uuidV5(namespace: string, name: string): Promise<string> {
   const data = new Uint8Array(16 + name.length);

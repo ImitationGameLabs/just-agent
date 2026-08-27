@@ -6,7 +6,12 @@
 // values are RFC 4122 v5 over the namespace + the UTF-8 of the id string.
 
 import { assert, assertEquals } from "@std/assert";
-import { participantIdForTagma, participantIdForUser, sha1 } from "./ids.ts";
+import {
+  participantIdForTagma,
+  participantIdForUser,
+  sha1,
+  uuidV4,
+} from "./ids.ts";
 
 Deno.test("participantIdForUser matches the Rust v5 derivation", async () => {
   assertEquals(
@@ -61,4 +66,23 @@ Deno.test("sha1 subtle and jssha paths agree bit-for-bit", async () => {
   for (const data of inputs) {
     assertEquals(await sha1(data, undefined), await sha1(data, crypto.subtle));
   }
+});
+
+// crypto.randomUUID is secure-context-only; the fallback assembles a v4
+// from getRandomValues, which every context exposes.
+Deno.test("uuidV4 falls back to a v4-shaped unique id", () => {
+  const fallback = uuidV4(undefined);
+  assert(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      fallback,
+    ),
+  );
+  assert(fallback !== uuidV4(undefined));
+});
+
+Deno.test("uuidV4 uses the native randomUUID when present", () => {
+  assertEquals(
+    uuidV4(() => "native-uuid"),
+    "native-uuid",
+  );
 });

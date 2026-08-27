@@ -17,7 +17,7 @@ import {
   type RoomRosterView,
   type Visibility,
 } from "@kallipai/kallip-lesche-client";
-import { decodeB64, encodeB64 } from "@kallipai/kallip-common";
+import { decodeB64, encodeB64, uuidV4 } from "@kallipai/kallip-common";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { agoraSession, lescheClientOrFail } from "./agora.svelte.ts";
 import { roomsStore } from "./rooms.svelte.ts";
@@ -187,7 +187,7 @@ function visibilityOf(roomId: string): Visibility {
  * window on the room surface -- but the Envelope shape requires a non-empty
  * string). */
 function randomTraceId(): string {
-  return crypto.randomUUID();
+  return uuidV4();
 }
 
 /** The optimistic own-sender handle: the stable `@username` when resolved, else
