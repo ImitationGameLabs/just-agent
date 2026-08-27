@@ -196,9 +196,7 @@ fn spawn_health_stop_round_trip() {
 
     // Start: relaunch from the surviving tree. The fresh pid proves a new
     // process (not the old one lingering); the health gate re-opens.
-    let started = tokio_block_on(client.call(RequestBody::Start {
-        slug: "e2e".into(),
-    }));
+    let started = tokio_block_on(client.call(RequestBody::Start { slug: "e2e".into() }));
     let OkPayload::Spawn {
         slug: started_slug,
         pid: started_pid,
@@ -221,14 +219,15 @@ fn spawn_health_stop_round_trip() {
         meta_after["env"][0],
         serde_json::json!("KALLIP_OPERATOR_TOKEN=test-op-token")
     );
-    assert!(instance_dir.join("credentials").exists(), "credentials survive");
+    assert!(
+        instance_dir.join("credentials").exists(),
+        "credentials survive"
+    );
 
     // Starting the now-running instance again is the conflict case.
-    let code = match tokio_block_on(client.call(RequestBody::Start {
-        slug: "e2e".into(),
-    }))
-    .expect("double start response")
-    .body
+    let code = match tokio_block_on(client.call(RequestBody::Start { slug: "e2e".into() }))
+        .expect("double start response")
+        .body
     {
         ResponseBody::Err { code, .. } => code,
         other => panic!("expected slug_taken conflict, got {other:?}"),
@@ -236,10 +235,10 @@ fn spawn_health_stop_round_trip() {
     assert_eq!(code, ErrorCode::SlugTaken);
 
     // Cleanup so the test does not leave a live tagma behind.
-    let stopped_again = tokio_block_on(client.call(RequestBody::Stop {
-        slug: "e2e".into(),
-    }));
-    let OkPayload::Stop { slug: stopped_again_slug } = expect_ok(stopped_again)
+    let stopped_again = tokio_block_on(client.call(RequestBody::Stop { slug: "e2e".into() }));
+    let OkPayload::Stop {
+        slug: stopped_again_slug,
+    } = expect_ok(stopped_again)
     else {
         panic!("expected stop payload");
     };

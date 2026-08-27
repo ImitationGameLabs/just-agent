@@ -11,7 +11,7 @@ use std::time::Duration;
 use kallip_daemon_common::wire::ErrorCode;
 
 use crate::scan;
-use crate::spawn::{launch, validate_user_env, SpawnError};
+use crate::spawn::{SpawnError, launch, validate_user_env};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StartError {
@@ -22,9 +22,7 @@ pub enum StartError {
     #[error("instance {0} is already running")]
     AlreadyRunning(String),
     #[error("instance did not publish pid/port within {timeout_secs}s")]
-    Timeout {
-        timeout_secs: u64,
-    },
+    Timeout { timeout_secs: u64 },
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }

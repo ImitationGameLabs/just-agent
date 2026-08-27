@@ -51,7 +51,9 @@ impl ScannedInstance {
             // The runtime file survives a stop (adoption semantics),
             // so its port is only a live listen port while Running;
             // anything else would leak a stale, dead endpoint.
-            port: (state == InstanceState::Running).then_some(self.port).flatten(),
+            port: (state == InstanceState::Running)
+                .then_some(self.port)
+                .flatten(),
             owner: self.owner,
             tagma_id: self.tagma_id.clone(),
         }
@@ -298,7 +300,10 @@ mod tests {
         write(&root.join("team/credentials/b/tagma.id"), "tid-b\n");
         write(&root.join("team/credentials/a/tagma.id"), "tid-a\n");
         // The 0o600 secret sits next to the id; it must never surface.
-        write(&root.join("team/credentials/a/tagma.token"), "sk-secret-token");
+        write(
+            &root.join("team/credentials/a/tagma.token"),
+            "sk-secret-token",
+        );
         let info = scan_instances(&root)[0].info();
         assert_eq!(info.tagma_id.as_deref(), Some("tid-a"));
         let wire = serde_json::to_string(&info).expect("serialize InstanceInfo");
@@ -350,10 +355,7 @@ mod tests {
             &root.join("a/meta.json"),
             r#"{"instance_id":"id-1","owner_uid":1000}"#,
         );
-        write(
-            &root.join("a/runtime.json"),
-            r#"{"pid":1,"port":7301}"#,
-        );
+        write(&root.join("a/runtime.json"), r#"{"pid":1,"port":7301}"#);
         write(
             &root.join("b/meta.json"),
             r#"{"instance_id":"id-2","owner_uid":1000}"#,

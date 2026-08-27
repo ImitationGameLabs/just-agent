@@ -116,7 +116,7 @@ pub fn spawn(
         .map_err(|e| rolled_back(anyhow::anyhow!("writing meta.json: {e}")))?;
 
     // --- detach-exec + adopt ---------------------------------------------
-    launch(&instance_dir, &workspace_canon, user_env, timeout).map_err(|e| {
+    launch(&instance_dir, &workspace_canon, user_env, timeout).inspect_err(|_| {
         // Rollback: this fresh allocation goes away on any failure — kill
         // whatever the helper left first (a failed exec leaves nothing;
         // a half-boot leaves a running tagma). start() shares launch but
@@ -126,7 +126,6 @@ pub fn spawn(
             unsafe { libc::kill(pid as i32, libc::SIGKILL) };
         }
         let _ = std::fs::remove_dir_all(&instance_dir);
-        e
     })
 }
 

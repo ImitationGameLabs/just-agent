@@ -152,7 +152,9 @@ impl Daemon {
                 let timeout = std::time::Duration::from_secs(30);
                 match tokio::task::spawn_blocking({
                     let data_root = self.data_root.clone();
-                    move || crate::start::start(&data_root, &slug, timeout, &crate::scan::pid_is_tagma)
+                    move || {
+                        crate::start::start(&data_root, &slug, timeout, &crate::scan::pid_is_tagma)
+                    }
                 })
                 .await
                 {
@@ -165,7 +167,9 @@ impl Daemon {
                         let code = kallip_daemon_common::wire::ErrorCode::from(&error);
                         err(code, error.to_string())
                     }
-                    Err(join_error) => err(ErrorCode::Internal, format!("start task: {join_error}")),
+                    Err(join_error) => {
+                        err(ErrorCode::Internal, format!("start task: {join_error}"))
+                    }
                 }
             }
         }
