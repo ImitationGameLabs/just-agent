@@ -312,7 +312,9 @@ writes nothing). Env
 pairs must start with `KALLIP_` or be `RUST_LOG`; the three reserved
 keys (`KALLIP_DATA_DIR`,
 `KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`) are daemon-owned.
-
+A daemon-managed instance also mirrors its tracing output into a
+`logs/` subdirectory of the instance dir: daily-rolling files, the
+last 7 kept. Manual (unmarked) runs log to stdout only.
 The web management face lives in `crates/platform/kallip-instances`: a
 pure JSON API under `/api/instances/*`, proxying the daemon over its
 UDS socket. Platform mode: the agora's internal face
