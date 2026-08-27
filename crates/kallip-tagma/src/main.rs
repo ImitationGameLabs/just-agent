@@ -352,17 +352,24 @@ fn ensure_credentials_root() -> Result<std::path::PathBuf> {
     Ok(credentials_dir)
 }
 
-/// Logging shape: stdout always (a foreground `cargo run` stays visible);
-/// a daemon-managed instance additionally mirrors every event into
-/// `<data_root>/logs/` as daily-rolling files (tracing-appender, 7 files
-/// kept -- older days fall off). Management is detected exactly like the
-/// runtime.json publish below: the daemon marks the data root with its
-/// meta.json before launching us, so an unmarked dir is a manual run and
-/// gets no log dir at all. Installs the panic hook after the subscriber so
-/// a crash lands both on the operator's terminal and in the day's file.
+/// Logging shape: a daemon-managed instance logs into `<data_root>/logs/`
+/// only (daily-rolling files, tracing-appender, 7 files kept -- older days
+/// fall off); the daemon owns the lifecycle, so a stdout mirror would
+/// double the feed. A manual run (unmarked data root) logs to stdout only
+/// and gets no log dir. If the file layer cannot be built, a managed
+/// instance falls back to stdout-only rather than going silent. The
+/// panic hook chains the default stderr banner exactly when stdout is
+/// the writer -- manual runs and the build-failure fallback -- and
+/// suppresses it while the file layer is live: the daemon's reconcile
+/// reports the death, and the details live in the log file.
 fn init_logging(filter: &tracing_subscriber::EnvFilter) {
     use tracing_subscriber::prelude::*;
 
+    let stdout_layer = || {
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stdout)
+            .with_filter(filter.clone())
+    };
     let instance_dir = daemon_managed_dir();
     let file_layer = instance_dir.and_then(|dir| {
         let appender = tracing_appender::rolling::Builder::new()
@@ -383,25 +390,36 @@ fn init_logging(filter: &tracing_subscriber::EnvFilter) {
                 .with_filter(filter.clone()),
         )
     });
-    let subscriber = tracing_subscriber::registry().with(
-        tracing_subscriber::fmt::layer()
-            .with_writer(std::io::stdout)
-            .with_filter(filter.clone()),
-    );
+    // Captured before the match moves the layer: the hook chains the
+    // default hook whenever stdout is the writer.
+    let file_layer_live = file_layer.is_some();
     match file_layer {
-        Some(file) => tracing::subscriber::set_global_default(subscriber.with(file)).ok(),
-        None => tracing::subscriber::set_global_default(subscriber).ok(),
+        // Managed: the file layer alone carries the events.
+        Some(file) => {
+            tracing::subscriber::set_global_default(tracing_subscriber::registry().with(file)).ok()
+        }
+        // Manual run, or a managed run whose file layer failed to build.
+        None => tracing::subscriber::set_global_default(
+            tracing_subscriber::registry().with(stdout_layer()),
+        )
+        .ok(),
     };
 
     // Forward panics into the subscriber: the default hook's stderr write
-    // bypasses tracing entirely, so a crash in a managed instance would
-    // miss the log file it exists for. The forwarding half lives in
+    // bypasses tracing entirely, so a crash would miss the subscriber's
+    // writer. Any stdout-writer state -- a manual run, or the fallback --
+    // still chains the default hook: the foreground operator expects the
+    // stderr banner. With the file layer live it is suppressed instead:
+    // the daemon's reconcile reports the death, and the details live in
+    // the log file. The forwarding half lives in
     // `forward_panic_to_tracing` so tests can exercise it against an in-
     // memory writer without touching the process-global default.
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         forward_panic_to_tracing(info);
-        hook(info);
+        if !file_layer_live {
+            hook(info);
+        }
     }));
 }
 
