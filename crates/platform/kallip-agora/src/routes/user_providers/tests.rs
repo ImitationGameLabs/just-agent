@@ -9,6 +9,7 @@ use crate::auth::{AuthPrincipal, Principal};
 use crate::test_helpers::{make_state, seed_user};
 use axum::Json;
 use axum::extract::State;
+use time::OffsetDateTime;
 
 fn req(name: &str, provider: &str, key: &str, mode: &str) -> Json<ProviderRequest> {
     Json(ProviderRequest {
@@ -296,4 +297,31 @@ async fn unknown_mode_is_rejected() {
     .await
     .expect_err("bad mode 400");
     assert_eq!(err.status, 400);
+}
+
+// Wire-format guard: the summary must serialize its timestamps as RFC3339.
+// time's default serde for OffsetDateTime is the space-separated Display
+// form ("2026-08-26 23:50:00.123 +00:00:00"), which JS Date cannot parse --
+// seen live as "Added Invalid Date" in the vault UI before the fix.
+#[tokio::test]
+async fn summary_timestamps_serialize_as_rfc3339() {
+    let state = make_state().await;
+    let user = seed_user(&state, "carol").await;
+    let Json(sum) = create_provider(
+        State(state.clone()),
+        AuthPrincipal(Principal::User(user)),
+        req("ts key", "anthropic", "sk-ant-ts", "plaintext"),
+    )
+    .await
+    .expect("create ok");
+
+    let json = serde_json::to_value(&sum).expect("serialize summary");
+    for field in ["created_at", "updated_at"] {
+        let raw = json[field]
+            .as_str()
+            .unwrap_or_else(|| panic!("{field} not a string"));
+        let parsed = OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|e| panic!("{field} is not RFC3339 ({raw}): {e}"));
+        assert_eq!(parsed.unix_timestamp(), sum.created_at.unix_timestamp());
+    }
 }

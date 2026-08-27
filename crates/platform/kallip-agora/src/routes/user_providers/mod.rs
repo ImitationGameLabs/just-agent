@@ -84,7 +84,9 @@ struct ProviderSummary {
     base_url: Option<String>,
     key_material: String,
     mode: String,
+    #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     updated_at: OffsetDateTime,
 }
 
