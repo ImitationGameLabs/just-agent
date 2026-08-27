@@ -159,7 +159,12 @@
     // the user navigated away (Create account / Add device / Offline) does not
     // rip them back to /tagmata from whatever page they are now on.
     let mounted = true;
-    const pk = PublicKeyCredential;
+    // typeof on the bare identifier is the safe probe: referencing
+    // PublicKeyCredential directly throws off secure context.
+    const pk =
+      typeof PublicKeyCredential === "undefined"
+        ? undefined
+        : PublicKeyCredential;
     if (
       typeof pk === "undefined" ||
       !pk.isConditionalMediationAvailable ||
