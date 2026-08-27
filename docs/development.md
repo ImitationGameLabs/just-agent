@@ -21,7 +21,17 @@ images, the production split, and the integration-test mode, see
 - Copy `.env.example` to `.env` and fill in the LLM provider credentials. Arion
   reads `.env` via `service.env_file`.
 
-### TLS + DNS setup (one-time)
+### Plain-http quick start (KALLIP_TLS=off)
+
+Set `KALLIP_TLS=off` in `.env` for a plain-http stack with no Caddy, no
+mkcert, and no DNS setup: `arion up -d` + `deno task dev`, then open
+`http://localhost:5173`. Login surface: admin key + GitHub oauth; passkeys
+work on localhost (a browser secure-context exemption) when the WebAuthn
+trio is set explicitly (see .env.example). For multi-machine access set
+`KALLIP_DOMAIN` to the LAN host (passkey/Google then stay browser-blocked;
+the instances port opens to the LAN -- treat it as a trusted surface).
+
+### TLS + DNS setup (opt-in, one-time)
 
 The dev stack is fronted by Caddy, which terminates TLS for `*.<devDomain>` so
 the stack is reachable cross-machine on the LAN (browsers only allow WebAuthn

@@ -12,7 +12,9 @@ const here = import.meta.dirname;
 // the agora/lesche env and the Caddyfile, so the whole stack agrees on one
 // name; override it in `.env`. Default must match compose/dev/agora.nix
 // and +layout.svelte.
-const devDomain = process.env.KALLIP_DOMAIN ?? "kallipai.com";
+const tlsOff = process.env.KALLIP_TLS === "off";
+const devDomain = process.env.KALLIP_DOMAIN ??
+  (tlsOff ? "localhost" : "kallipai.com");
 const webHost = `web.${devDomain}`;
 
 export default defineConfig({
@@ -64,6 +66,7 @@ export default defineConfig({
   // (VITE_AGORA_URL / VITE_LESCHE_URL still win if set explicitly).
   define: {
     "import.meta.env.KALLIP_DOMAIN": JSON.stringify(devDomain),
+    "import.meta.env.KALLIP_TLS": JSON.stringify(tlsOff ? "off" : "on"),
   },
   server: {
     // The dev stack is fronted by Caddy, which terminates TLS for *.devDomain
@@ -82,15 +85,13 @@ export default defineConfig({
     // Caddy forwards the incoming Host header unchanged, and vite is plain HTTP
     // here (so the HTTPS host-check exemption does NOT apply). Without an
     // explicit allow entry for the proxied hostname, vite rejects the request.
-    allowedHosts: [webHost],
-    // HMR rides the same https origin: the browser reconnects over wss on 443
-    // (Caddy's face, which proxies the upgrade), while vite's own websocket
-    // stays on 5173. clientPort is the browser-side override (using `port`
-    // would instead make vite's WS server try to listen on 443).
-    ws: {
-      protocol: "wss",
-      host: webHost,
-      clientPort: 443,
-    },
+    allowedHosts: tlsOff ? [devDomain] : [webHost],
+    // HMR rides the https origin in the Caddy shape: the browser reconnects
+    // over wss on 443 (Caddy's face, which proxies the upgrade), while
+    // vite's own websocket stays on 5173. The http shape serves the browser
+    // directly, so the default same-origin ws applies.
+    ...(tlsOff
+      ? {}
+      : { ws: { protocol: "wss" as const, host: webHost, clientPort: 443 } }),
   },
 });

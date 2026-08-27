@@ -28,17 +28,26 @@
   // $app/* or import.meta.env from inside the library package). Idempotent
   // setters; the root layout has a single instance so this runs once at boot.
   initShell(goto);
-  // The dev stack is fronted by Caddy, so the browser reaches the agora/lesche
-  // at their *.<devDomain> subdomains. devDomain is injected by vite.config.ts
-  // from the same KALLIP_DOMAIN env var the backend stack uses; explicit
-  // VITE_AGORA_URL / VITE_LESCHE_URL still win (e.g. for a prod build or a
+  // The https shape is fronted by Caddy: the browser reaches agora/lesche at
+  // their *.<devDomain> subdomains. KALLIP_TLS=off (injected alongside the
+  // domain by vite.config.ts) selects the plain-http shape: direct ports on
+  // the host. Explicit VITE_*_URL values still win in either shape.
   // non-default topology).
+  const tlsOff = import.meta.env.KALLIP_TLS === "off";
   const devDomain = import.meta.env.KALLIP_DOMAIN ?? "kallipai.com";
-  initAgora(import.meta.env.VITE_AGORA_URL ?? `https://agora.${devDomain}`);
-  initLesche(import.meta.env.VITE_LESCHE_URL ?? `https://lesche.${devDomain}`);
+  initAgora(
+    import.meta.env.VITE_AGORA_URL ??
+      (tlsOff ? `http://${devDomain}:7100` : `https://agora.${devDomain}`),
+  );
+  initLesche(
+    import.meta.env.VITE_LESCHE_URL ??
+      (tlsOff ? `http://${devDomain}:7200` : `https://lesche.${devDomain}`),
+  );
   initInstances(
     import.meta.env.VITE_INSTANCES_URL ??
-      `https://instances.${devDomain}/api/instances`,
+      (tlsOff
+        ? `http://${devDomain}:7300/api/instances`
+        : `https://instances.${devDomain}/api/instances`),
   );
   initConfigStorage(localStorageConfigStorage);
 

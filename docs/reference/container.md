@@ -308,6 +308,9 @@ in `.env` via `.env.example`; the code default is the prod `kallipai.com`):
 | `KALLIP_LESCHE_AGORA_TOKEN`       | **yes** (prod-agora)          | Shared secret the lesche presents to the agora's `/internal/*` surface; must equal the agora's `KALLIP_AGORA_INTERNAL_TOKEN`.          |
 | `KALLIP_LESCHE_CORS_ORIGINS`      | **yes** (prod-agora)          | The app origin(s) for the lesche; never a wildcard on a public deploy.                                                                 |
 
+Note: unset WebAuthn RP values fall back to the kallipai.com prod pair
+(passkeys simply stay unusable until configured) instead of failing boot.
+
 Do not override `KALLIP_ADVERTISE_URL`; its default `http://127.0.0.1:3000` is
 correct because the tagma and agent shells share the container's network
 namespace.

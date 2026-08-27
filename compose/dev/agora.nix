@@ -43,17 +43,26 @@ let
   # curl) AND for the dev tagma (compose/dev/tagma.nix, host network), which
   # reaches them at 127.0.0.1:7100 / :7200 rather than via compose DNS.
 
-  # The dev domain (registrable domain + subdomain parent). The code default is
-  # the prod domain (kallipai.com); dev overrides it to kallipai.lan via .env
-  # (see .env.example) -- direnv's dotenv puts .env in the shell, so this
-  # builtins.getEnv sees it at eval time. Everything below (WebAuthn RP
-  # id/origin, CORS, cookie domain, Caddyfile, the web app's API URLs) derives
-  # from it.
+  # The stack shape switch: KALLIP_TLS=on (default) keeps the Caddy-fronted
+  # https+domain topology below; KALLIP_TLS=off is the plain-http direct
+  # shape -- no Caddy, host defaults to localhost (set KALLIP_DOMAIN to a
+  # LAN host for multi-machine access; see docs/development.md).
+  tlsOff = envOrDefault "KALLIP_TLS" "on" == "off";
+  # The dev domain (registrable domain + subdomain parent, or the plain
+  # host when TLS is off). The code default is the prod domain
+  # (kallipai.com) with TLS on, localhost with TLS off; .env overrides
+  # (kallipai.lan for the https dev shape) -- direnv's dotenv puts .env in
+  # the shell, so this builtins.getEnv sees it at eval time. Everything
+  # below (WebAuthn RP id/origin, CORS, cookie domain, Caddyfile, the web
+  # app's API URLs) derives from these bindings.
   devDomain =
     let
       v = builtins.getEnv "KALLIP_DOMAIN";
     in
-    if v == "" then "kallipai.com" else v;
+    if v == "" then (if tlsOff then "localhost" else "kallipai.com") else v;
+  # The browser-facing web origin: the Caddy subdomain face when TLS is
+  # on, the plain vite origin (:5173) when off.
+  webOrigin = if tlsOff then "http://${devDomain}:5173" else "https://web.${devDomain}";
 
   # Path to the mkcert leaf cert dir (cert.pem + key.pem). Defaults to
   # <repo>/compose/dev/.certs -- where the mkcert command in docs/development.md
@@ -176,7 +185,7 @@ in
     # and no extra_hosts. The Caddyfile (mounted below) uses
     # {$KALLIP_DOMAIN} substitution; see it for the routing + the
     # streaming flush on lesche.
-    services.caddy = {
+    services.caddy = lib.mkIf (!tlsOff) {
       service.image = "caddy:2.8";
       service.depends_on = [
         "agora"
@@ -223,21 +232,22 @@ in
         PATH = "${workspace}/bin";
         KALLIP_AGORA_ADDR = "0.0.0.0:7100";
         KALLIP_AGORA_DATABASE_URL = "postgres://kallip:kallip@agora-postgres:5432/kallip";
-        # The browser loads the SPA at https://web.<devDomain> (Caddy
-        # terminates TLS), so the WebAuthn RP id is the registrable domain
-        # <devDomain> and the RP origin is the web subdomain. Standard 443
-        # port -> ALLOW_ANY_PORT stays false.
+        # WebAuthn RP: the id is the registrable domain <devDomain> (the
+        # plain host in the http shape); the origin is the browser-facing
+        # webOrigin (https://web.<d> via Caddy, or http://<host>:5173 in
+        # the http shape, whose non-standard port needs ALLOW_ANY_PORT).
         KALLIP_AGORA_WEBAUTHN_RP_ID = devDomain;
-        KALLIP_AGORA_WEBAUTHN_RP_ORIGIN = "https://web.${devDomain}";
+        KALLIP_AGORA_WEBAUTHN_RP_ORIGIN = webOrigin;
         KALLIP_AGORA_WEBAUTHN_RP_NAME = "kallipai";
-        KALLIP_AGORA_WEBAUTHN_ALLOW_ANY_PORT = "false";
-        # Behind Caddy's TLS -> the session cookie is Secure.
-        KALLIP_AGORA_COOKIE_SECURE = "true";
-        KALLIP_AGORA_CORS_ORIGINS = "https://web.${devDomain}";
+        KALLIP_AGORA_WEBAUTHN_ALLOW_ANY_PORT = if tlsOff then "true" else "false";
+        # Behind Caddy's TLS the session cookie is Secure; the plain-http
+        # shape needs it off.
+        KALLIP_AGORA_COOKIE_SECURE = if tlsOff then "false" else "true";
+        KALLIP_AGORA_CORS_ORIGINS = webOrigin;
         # Share the session cookie across agora.<devDomain> and
         # lesche.<devDomain> (the per-subdomain topology). Single-origin
-        # deploys leave this unset (host-only cookie).
-        KALLIP_AGORA_SESSION_COOKIE_DOMAIN = devDomain;
+        # deploys -- and the http shape's host-only vite origin -- leave
+        # this unset (host-only cookie); the httpShape merge below does.
         # Caddy runs on the host network and proxies to agora at 127.0.0.1,
         # so trust loopback for X-Forwarded-For. agora binds 0.0.0.0:7100
         # (non-loopback), so the boot guard would otherwise clear the trusted
@@ -259,7 +269,7 @@ in
         # fixture, paired with the compliant token above; prod leaves it off.
         KALLIP_AGORA_ADMIN_USER_LOGIN = "true";
         RUST_LOG = "info";
-      };
+      } // lib.optionalAttrs (!tlsOff) { KALLIP_AGORA_SESSION_COOKIE_DOMAIN = devDomain; } // lib.optionalAttrs tlsOff { KALLIP_AGORA_OAUTH_REDIRECT_BASE = webOrigin; };
     };
 
     # Lesche: the data-plane relay. Owns the chat domain in its own Postgres
@@ -297,7 +307,7 @@ in
         KALLIP_LESCHE_AGORA_TOKEN = "dev-internal-secret";
         # Allow the web app origin (https://web.<devDomain> via Caddy) to
         # make credentialed cross-origin calls to lesche.<devDomain>.
-        KALLIP_LESCHE_CORS_ORIGINS = "https://web.${devDomain}";
+        KALLIP_LESCHE_CORS_ORIGINS = webOrigin;
         RUST_LOG = "info";
       };
     };
@@ -317,9 +327,11 @@ in
     services.instances = {
       service.useHostStore = true;
       service.command = [ "${workspace}/bin/kallip-instances" ];
-      # Loopback-tight publish: only host-side tooling (curl, the
-      # dev flow) needs the direct port; the browser path is Caddy.
-      service.ports = [ "127.0.0.1:${instancesHostPort}:7300" ];
+      # Loopback-tight publish in the https shape (the browser path is
+      # Caddy); the http shape opens 7300 to the LAN so browsers on other
+      # machines reach the instances API directly (token-gated +
+      # host-allowlisted; treat the LAN as a trusted surface).
+      service.ports = [ (if tlsOff then "${instancesHostPort}:7300" else "127.0.0.1:${instancesHostPort}:7300") ];
       service.env_file = [ ".env" ];
       service.volumes = [
         instancesStateBind
@@ -341,8 +353,8 @@ in
         # KALLIP_AGORA_INTERNAL_TOKEN (dev fixture, same discipline).
         KALLIP_INSTANCES_AGORA_URL = "http://agora:7100";
         KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN = "dev-internal-secret";
-        KALLIP_INSTANCES_ALLOWED_HOSTS = "instances.${devDomain}";
-        KALLIP_INSTANCES_CORS_ORIGINS = "https://web.${devDomain}";
+        KALLIP_INSTANCES_ALLOWED_HOSTS = if tlsOff then devDomain else "instances.${devDomain}";
+        KALLIP_INSTANCES_CORS_ORIGINS = webOrigin;
         RUST_LOG = "info";
       };
     };
