@@ -12,6 +12,7 @@
 //! The control socket is 0600: filesystem permission is the only auth.
 
 mod bins;
+mod reconcile;
 mod scan;
 mod server;
 mod spawn;
@@ -67,6 +68,9 @@ fn main() -> Result<()> {
             socket = %socket_path_for_bind.display(),
             "kallip-daemon listening"
         );
+        // The reconcile sweep keeps its snapshot inside its own task; see
+        // the module doc for why the daemon proper stays stateless.
+        tokio::spawn(reconcile::run(data_root_for_serve.clone()));
         let daemon = server::Daemon::new(data_root_for_serve);
         daemon.serve(listener).await
     })
