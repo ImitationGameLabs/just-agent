@@ -309,6 +309,13 @@ fn manual_boot_in_unmarked_dir_writes_nothing() {
         .env("KALLIP_LLM_PROVIDER", "deepseek")
         .env("KALLIP_LLM_MODEL", "test-model")
         .env("KALLIP_LLM_DEEPSEEK_API_KEY", "test-key")
+        // Test-env isolation: a machine running inside the kallipai
+        // stack (e.g. an agent) carries ambient KALLIP_TAGMA_RELAY_*
+        // vars; leaked into the child they trip the tagma relay
+        // fail-fast and this local-only boot never listens.
+        .env_remove("KALLIP_TAGMA_RELAY_AGORA_URL")
+        .env_remove("KALLIP_TAGMA_RELAY_LESCHE_URL")
+        .env_remove("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
