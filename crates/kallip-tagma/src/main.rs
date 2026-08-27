@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    init_logging(&filter);
 
     // Expose tagma URL so agent shells can discover it via $KALLIP_TAGMA_URL.
     // Safe: called once at startup, single-threaded, before any concurrent operations.
@@ -339,6 +339,60 @@ fn ensure_credentials_root() -> Result<std::path::PathBuf> {
     std::fs::create_dir_all(&credentials_dir).context("create credentials dir")?;
     credentials::set_owner_only(&credentials_dir)?;
     Ok(credentials_dir)
+}
+
+/// Logging shape: stdout always (a foreground `cargo run` stays visible);
+/// a daemon-managed instance additionally mirrors every event into
+/// `<data_root>/logs/` as daily-rolling files (tracing-appender, 7 files
+/// kept -- older days fall off). Management is detected exactly like the
+/// runtime.json publish below: the daemon marks the data root with its
+/// meta.json before launching us, so an unmarked dir is a manual run and
+/// gets no log dir at all. Installs the panic hook after the subscriber so
+/// a crash lands both on the operator's terminal and in the day's file.
+fn init_logging(filter: &tracing_subscriber::EnvFilter) {
+    use tracing_subscriber::prelude::*;
+
+    let instance_dir = data_root()
+        .ok()
+        .filter(|dir| dir.join("meta.json").is_file());
+    let file_layer = instance_dir.and_then(|dir| {
+        let appender = tracing_appender::rolling::Builder::new()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("instance")
+            .filename_suffix("log")
+            .max_log_files(7)
+            .build(&dir.join("logs"))
+            .ok()?;
+        Some(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::sync::Mutex::new(appender))
+                .with_ansi(false)
+                .with_filter(filter.clone()),
+        )
+    });
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stdout)
+            .with_filter(filter.clone()),
+    );
+    match file_layer {
+        Some(file) => tracing::subscriber::set_global_default(subscriber.with(file)).ok(),
+        None => tracing::subscriber::set_global_default(subscriber).ok(),
+    };
+
+    // Forward panics into the subscriber: the default hook's stderr write
+    // bypasses tracing entirely, so a crash in a managed instance would
+    // miss the log file it exists for.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info.to_string();
+        let loc = info
+            .location()
+            .map(|l| l.to_string())
+            .unwrap_or_else(|| "unknown location".to_string());
+        tracing::error!(%loc, %msg, "panic");
+        hook(info);
+    }));
 }
 
 /// `runtime.json` payload — the tagma-written half of the instance-dir
@@ -766,6 +820,17 @@ mod tests {
         )
         .expect("stored entry resolves");
         assert_eq!(entry, EnrollEntry::Stored);
+    }
+
+    /// The panic hook forwards into tracing: a caught panic shows up as a
+    /// `panic` error event (the log-file mirror is what this exists for).
+    #[test]
+    fn panic_hook_routes_through_tracing() {
+        init_logging(&tracing_subscriber::EnvFilter::new("error"));
+        let result = std::panic::catch_unwind(|| {
+            panic!("hook probe");
+        });
+        assert!(result.is_err());
     }
 
     /// No stored credentials and a code: first-run enrollment.

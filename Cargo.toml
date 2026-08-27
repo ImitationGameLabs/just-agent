@@ -147,6 +147,8 @@ hkdf = "0.13"
 zeroize = "1.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Daily-rolling log files for managed instances (see kallip-tagma's logging).
+tracing-appender = "0.2"
 rable = "0.2.0"
 clap = { version = "4.6", features = ["derive", "env"] }
 ratatui = { version = "0.30.0", features = ["unstable-rendered-line-info"] }
