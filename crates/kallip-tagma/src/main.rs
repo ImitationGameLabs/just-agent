@@ -447,6 +447,7 @@ fn derive_advertise_url(listen_addr: &str, port: u16) -> Result<String> {
     let host = host.trim_start_matches('[').trim_end_matches(']');
     let ip: Option<IpAddr> = host.parse().ok();
     let bracketed_host = match ip {
+        Some(IpAddr::V6(v6)) if v6.is_unspecified() => "127.0.0.1".to_string(),
         Some(IpAddr::V6(_)) => format!("[{host}]"),
         Some(IpAddr::V4(v4)) if v4.is_unspecified() => "127.0.0.1".to_string(),
         _ => host.to_string(),
@@ -921,7 +922,7 @@ mod tests {
     }
 
     /// Derive covers the documented shapes: loopback passes through,
-    /// an unspecified v4 host becomes 127.0.0.1, IPv6 gets bracketed.
+    /// an unspecified v4/v6 host becomes 127.0.0.1, other IPv6 keeps brackets.
     #[test]
     fn derive_advertise_url_shapes() {
         assert_eq!(
@@ -935,6 +936,10 @@ mod tests {
         assert_eq!(
             derive_advertise_url("[::1]:5555", 5555).unwrap(),
             "http://[::1]:5555"
+        );
+        assert_eq!(
+            derive_advertise_url("[::]:5555", 5555).unwrap(),
+            "http://127.0.0.1:5555"
         );
     }
     /// No stored credentials and a code: first-run enrollment.
