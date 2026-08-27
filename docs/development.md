@@ -31,6 +31,16 @@ the compose already derives the localhost RP pair). For multi-machine access set
 `KALLIP_DOMAIN` to the LAN host (passkey/Google then stay browser-blocked;
 the instances port opens to the LAN -- treat it as a trusted surface).
 
+Gotchas on this shape:
+
+- A browser that has visited the same hostname over https keeps the old
+  `Secure`-flagged `kallip_session` cookie and then refuses to store the
+  new non-`Secure` one: delete the old cookie first.
+- After editing `.env`, restart `deno task dev`: vite reads the env at
+  startup, not per request.
+- The host you browse must match `KALLIP_DOMAIN` (`localhost` by default
+  here); any other host is rejected.
+
 ### TLS + DNS setup (opt-in, one-time)
 
 The dev stack is fronted by Caddy, which terminates TLS for `*.<devDomain>` so
