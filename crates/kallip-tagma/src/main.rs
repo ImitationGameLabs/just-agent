@@ -304,21 +304,18 @@ async fn main() -> Result<()> {
     // derive it from the bound socket so an ephemeral port advertises its
     // real value instead of the historical 3000 default. Safe to publish
     // here: agents spawn only via API handlers once the server is serving.
+    let bound_addr = listener
+        .local_addr()
+        .context("reading the bound local address")?;
     let advertise_url = match args.advertise_url.clone() {
         Some(url) => url,
-        None => derive_advertise_url(
-            &args.listen_addr,
-            listener
-                .local_addr()
-                .context("reading the bound local address")?
-                .port(),
-        )?,
+        None => derive_advertise_url(&args.listen_addr, bound_addr.port())?,
     };
     unsafe {
         std::env::set_var("KALLIP_TAGMA_URL", &advertise_url);
     }
     info!(
-        addr = %args.listen_addr,
+        addr = %bound_addr,
         advertise = %advertise_url,
         "tagma listening"
     );
@@ -831,7 +828,13 @@ async fn activate_relay(
         root_agent,
         Arc::downgrade(state),
     );
-    info!(relay = %entry.name, tagma = %handle.tagma_id(), "relay connector active");
+    info!(
+        relay = %entry.name,
+        tagma = %handle.tagma_id(),
+        agora_url = %entry.agora_url,
+        lesche_url = %lesche_url,
+        "relay connector active"
+    );
 
     let join = tokio::spawn(handle.clone().run(state.shutdown.clone()));
     state.set_relay(&entry.name, handle, join);
