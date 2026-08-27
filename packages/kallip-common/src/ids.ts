@@ -1,6 +1,7 @@
 // Opaque identifier types. On the wire these are bare JSON strings: UUID v4 for
 // AgentId and the agora ids. Modelled as plain string aliases; the wire adapters
 // in @kallipai/kallip-client and @kallipai/kallip-agora-client produce them.
+import jsSHA from "jssha";
 
 export type AgentId = string;
 export type TagmaId = string;
@@ -46,14 +47,30 @@ function bytesToUuid(bytes: Uint8Array): string {
   )}-${hex.slice(20)}`;
 }
 
+/** SHA-1 over `data` for the v5 derivation. Prefers `crypto.subtle`
+ * (present only in secure contexts); falls back to jssha where subtle
+ * is undefined -- the plain-http LAN shape (http://kallipai.lan) has
+ * no subtle, and without the fallback whoami / channel auto-open
+ * break there. The `subtle` parameter is injectable so the dual-path
+ * consistency test can execute the fallback branch directly. */
+export async function sha1(
+  data: Uint8Array<ArrayBuffer>,
+  subtle: SubtleCrypto | undefined = crypto.subtle,
+): Promise<Uint8Array> {
+  if (subtle) {
+    return new Uint8Array(await subtle.digest("SHA-1", data));
+  }
+  const hash = new jsSHA("SHA-1", "UINT8ARRAY");
+  hash.update(data);
+  return hash.getHash("UINT8ARRAY");
+}
+
 /** RFC 4122 v5 (SHA-1) uuid over `name` under `namespace`. */
 async function uuidV5(namespace: string, name: string): Promise<string> {
   const data = new Uint8Array(16 + name.length);
   data.set(uuidToBytes(namespace), 0);
   data.set(new TextEncoder().encode(name), 16);
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-1", data),
-  ).slice(0, 16);
+  const digest = (await sha1(data)).slice(0, 16);
   // Version 5 + variant bits (RFC 4122). `digest` is 16 bytes (sliced above),
   // so index 6 + 8 are in range; the `!` asserts that under noUncheckedIndexedAccess.
   digest[6] = (digest[6]! & 0x0f) | 0x50;

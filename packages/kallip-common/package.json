@@ -6,6 +6,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "dependencies": {
+    "jssha": "npm:jssha@3.3.2"
+  },
   "scripts": {
     "check": "deno check src",
     "test": "deno test src"
