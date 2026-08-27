@@ -229,7 +229,7 @@ in
         # port -> ALLOW_ANY_PORT stays false.
         KALLIP_AGORA_WEBAUTHN_RP_ID = devDomain;
         KALLIP_AGORA_WEBAUTHN_RP_ORIGIN = "https://web.${devDomain}";
-        KALLIP_AGORA_WEBAUTHN_RP_NAME = "kallip";
+        KALLIP_AGORA_WEBAUTHN_RP_NAME = "kallipai";
         KALLIP_AGORA_WEBAUTHN_ALLOW_ANY_PORT = "false";
         # Behind Caddy's TLS -> the session cookie is Secure.
         KALLIP_AGORA_COOKIE_SECURE = "true";

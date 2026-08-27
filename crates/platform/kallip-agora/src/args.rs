@@ -26,17 +26,30 @@ pub struct Args {
     pub database_url: String,
     /// WebAuthn relying-party id: the registrable domain passkeys are bound to
     /// (e.g. `agora.example.com`). CANNOT change without invalidating every
-    /// bound passkey. For local dev use `localhost`.
-    #[arg(long, env = "KALLIP_AGORA_WEBAUTHN_RP_ID")]
+    /// bound passkey. Defaults to the prod domain; for local passkey dev use
+    /// `localhost` explicitly.
+    #[arg(
+        long,
+        env = "KALLIP_AGORA_WEBAUTHN_RP_ID",
+        default_value = "kallipai.com"
+    )]
     pub webauthn_rp_id: String,
     /// WebAuthn relying-party origin: the exact origin the web app is served
     /// from (e.g. `https://agora.example.com`). Must have `rp_id` as its
-    /// effective domain.
-    #[arg(long, env = "KALLIP_AGORA_WEBAUTHN_RP_ORIGIN")]
+    /// effective domain. Defaults to the prod web origin.
+    #[arg(
+        long,
+        env = "KALLIP_AGORA_WEBAUTHN_RP_ORIGIN",
+        default_value = "https://web.kallipai.com"
+    )]
     pub webauthn_rp_origin: String,
     /// Human-readable relying-party name shown in the browser's WebAuthn prompt
     /// (e.g. on Touch ID / Windows Hello).
-    #[arg(long, env = "KALLIP_AGORA_WEBAUTHN_RP_NAME", default_value = "kallip")]
+    #[arg(
+        long,
+        env = "KALLIP_AGORA_WEBAUTHN_RP_NAME",
+        default_value = "kallipai"
+    )]
     pub webauthn_rp_name: String,
     /// Whether to allow mismatched/non-standard ports on the WebAuthn origin.
     /// Enable for local HTTP dev (`http://localhost:5173`); leave disabled in
@@ -160,4 +173,24 @@ pub struct Args {
     /// (normalized + validated at boot, same rules as signup handles).
     #[arg(long, env = "KALLIP_AGORA_ADMIN_USER_NAME", default_value = "admin")]
     pub admin_user_name: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Args;
+    use clap::Parser;
+
+    /// The default RP pair must satisfy the boot invariant (rp_id is an
+    /// effective domain of rp_origin) so an unconfigured agora still boots.
+    #[test]
+    fn default_webauthn_rp_pair_passes_effective_domain() {
+        let args = Args::parse_from(["kallip-agora", "--database-url", "postgres://x"]);
+        assert_eq!(args.webauthn_rp_id, "kallipai.com");
+        let origin = url::Url::parse(&args.webauthn_rp_origin).unwrap();
+        let host = origin.host_str().expect("rp origin has a host");
+        assert!(
+            host == args.webauthn_rp_id || host.ends_with(&format!(".{}", args.webauthn_rp_id))
+        );
+        assert_eq!(args.webauthn_rp_name, "kallipai");
+    }
 }
