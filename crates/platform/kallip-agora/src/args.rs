@@ -187,10 +187,16 @@ mod tests {
         let args = Args::parse_from(["kallip-agora", "--database-url", "postgres://x"]);
         assert_eq!(args.webauthn_rp_id, "kallipai.com");
         let origin = url::Url::parse(&args.webauthn_rp_origin).unwrap();
-        let host = origin.host_str().expect("rp origin has a host");
-        assert!(
-            host == args.webauthn_rp_id || host.ends_with(&format!(".{}", args.webauthn_rp_id))
-        );
+        // Assert via the real boot path: the builder checks rp_id is an
+        // effective domain of rp_origin (host_str() alone diverges on IPs).
+        crate::state::build_webauthn_pair(
+            &args.webauthn_rp_name,
+            &args.webauthn_rp_id,
+            &origin,
+            false,
+            false,
+        )
+        .expect("default RP pair must satisfy the boot invariant");
         assert_eq!(args.webauthn_rp_name, "kallipai");
     }
 }

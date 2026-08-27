@@ -32,7 +32,6 @@
   // their *.<devDomain> subdomains. KALLIP_TLS=off (injected alongside the
   // domain by vite.config.ts) selects the plain-http shape: direct ports on
   // the host. Explicit VITE_*_URL values still win in either shape.
-  // non-default topology).
   const tlsOff = import.meta.env.KALLIP_TLS === "off";
   const devDomain = import.meta.env.KALLIP_DOMAIN ?? "kallipai.com";
   initAgora(

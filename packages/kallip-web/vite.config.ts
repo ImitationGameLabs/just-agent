@@ -13,8 +13,8 @@ const here = import.meta.dirname;
 // name; override it in `.env`. Default must match compose/dev/agora.nix
 // and +layout.svelte.
 const tlsOff = process.env.KALLIP_TLS === "off";
-const devDomain = process.env.KALLIP_DOMAIN ??
-  (tlsOff ? "localhost" : "kallipai.com");
+const devDomain =
+  process.env.KALLIP_DOMAIN ?? (tlsOff ? "localhost" : "kallipai.com");
 const webHost = `web.${devDomain}`;
 
 export default defineConfig({

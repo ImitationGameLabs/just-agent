@@ -63,6 +63,11 @@ let
   # The browser-facing web origin: the Caddy subdomain face when TLS is
   # on, the plain vite origin (:5173) when off.
   webOrigin = if tlsOff then "http://${devDomain}:5173" else "https://web.${devDomain}";
+  # An IPv4 literal host cannot back a WebAuthn RP id (the builder needs
+  # a registrable domain), and passkeys are browser-blocked on plain-http
+  # LAN anyway -- so the RP trio degrades to the code defaults there
+  # (honest: passkeys simply stay unusable, see .env.example).
+  isIpHost = builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" devDomain != null;
 
   # Path to the mkcert leaf cert dir (cert.pem + key.pem). Defaults to
   # <repo>/compose/dev/.certs -- where the mkcert command in docs/development.md
@@ -233,13 +238,15 @@ in
         KALLIP_AGORA_ADDR = "0.0.0.0:7100";
         KALLIP_AGORA_DATABASE_URL = "postgres://kallip:kallip@agora-postgres:5432/kallip";
         # WebAuthn RP: the id is the registrable domain <devDomain> (the
-        # plain host in the http shape); the origin is the browser-facing
-        # webOrigin (https://web.<d> via Caddy, or http://<host>:5173 in
-        # the http shape, whose non-standard port needs ALLOW_ANY_PORT).
-        KALLIP_AGORA_WEBAUTHN_RP_ID = devDomain;
-        KALLIP_AGORA_WEBAUTHN_RP_ORIGIN = webOrigin;
+        # plain host in the http shape; an IPv4 literal host degrades to
+        # the code-default prod pair -- the builder rejects IP RP ids and
+        # passkeys are browser-blocked on plain-http LAN regardless). The
+        # origin is webOrigin (its explicit :5173 port matches exactly;
+        # ALLOW_ANY_PORT stays false in both shapes).
+        KALLIP_AGORA_WEBAUTHN_RP_ID = if tlsOff && isIpHost then "kallipai.com" else devDomain;
+        KALLIP_AGORA_WEBAUTHN_RP_ORIGIN = if tlsOff && isIpHost then "https://web.kallipai.com" else webOrigin;
         KALLIP_AGORA_WEBAUTHN_RP_NAME = "kallipai";
-        KALLIP_AGORA_WEBAUTHN_ALLOW_ANY_PORT = if tlsOff then "true" else "false";
+        KALLIP_AGORA_WEBAUTHN_ALLOW_ANY_PORT = "false";
         # Behind Caddy's TLS the session cookie is Secure; the plain-http
         # shape needs it off.
         KALLIP_AGORA_COOKIE_SECURE = if tlsOff then "false" else "true";
@@ -247,7 +254,7 @@ in
         # Share the session cookie across agora.<devDomain> and
         # lesche.<devDomain> (the per-subdomain topology). Single-origin
         # deploys -- and the http shape's host-only vite origin -- leave
-        # this unset (host-only cookie); the httpShape merge below does.
+        # this unset (host-only cookie); the merge below does.
         # Caddy runs on the host network and proxies to agora at 127.0.0.1,
         # so trust loopback for X-Forwarded-For. agora binds 0.0.0.0:7100
         # (non-loopback), so the boot guard would otherwise clear the trusted

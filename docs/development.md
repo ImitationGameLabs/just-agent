@@ -26,8 +26,8 @@ images, the production split, and the integration-test mode, see
 Set `KALLIP_TLS=off` in `.env` for a plain-http stack with no Caddy, no
 mkcert, and no DNS setup: `arion up -d` + `deno task dev`, then open
 `http://localhost:5173`. Login surface: admin key + GitHub oauth; passkeys
-work on localhost (a browser secure-context exemption) when the WebAuthn
-trio is set explicitly (see .env.example). For multi-machine access set
+work on localhost out of the box (a browser secure-context exemption --
+the compose already derives the localhost RP pair). For multi-machine access set
 `KALLIP_DOMAIN` to the LAN host (passkey/Google then stay browser-blocked;
 the instances port opens to the LAN -- treat it as a trusted surface).
 
