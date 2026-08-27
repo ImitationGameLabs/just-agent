@@ -326,8 +326,7 @@ async fn main() -> Result<()> {
     // at the instance dir and marks it with its meta.json; publish
     // runtime.json there right after the bind. An unmarked DATA_DIR keeps
     // the single-instance behavior exactly: no file is written.
-    let instance_dir = data_root()?;
-    if instance_dir.join("meta.json").is_file() {
+    if let Some(instance_dir) = daemon_managed_dir() {
         write_instance_state(&instance_dir, &listener)?;
     }
     let shutdown_token = state.shutdown.clone();
@@ -367,9 +366,7 @@ fn ensure_credentials_root() -> Result<std::path::PathBuf> {
 fn init_logging(filter: &tracing_subscriber::EnvFilter) {
     use tracing_subscriber::prelude::*;
 
-    let instance_dir = data_root()
-        .ok()
-        .filter(|dir| dir.join("meta.json").is_file());
+    let instance_dir = daemon_managed_dir();
     let file_layer = instance_dir.and_then(|dir| {
         let appender = tracing_appender::rolling::Builder::new()
             .rotation(tracing_appender::rolling::Rotation::DAILY)
@@ -646,6 +643,14 @@ fn resolve_relay_plan(args: &args::Args) -> Result<Vec<(RelayEntry, EnrollEntry)
     Ok(plan)
 }
 
+/// The instance dir iff the daemon marks the data root with its
+/// `meta.json` -- the single "am I daemon-managed?" predicate, shared by
+/// the runtime.json publish and the log mirror. `data_root()` errors mean
+/// un-managed, not fatal: both callers degrade to plain manual mode.
+fn daemon_managed_dir() -> Option<std::path::PathBuf> {
+    let dir = data_root().ok()?;
+    dir.join("meta.json").is_file().then_some(dir)
+}
 fn data_root() -> Result<std::path::PathBuf> {
     use kallip_runtime::persistence::data_dir_root;
     data_dir_root()

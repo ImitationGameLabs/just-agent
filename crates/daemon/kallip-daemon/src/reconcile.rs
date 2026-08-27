@@ -21,7 +21,7 @@ use crate::scan;
 /// How often the reconcile loop re-scans the tree. The panel polls `list`
 /// every few seconds anyway; this cadence bounds only how long an unwatched
 /// death goes unannounced in the daemon log.
-pub const RECONCILE_INTERVAL: Duration = Duration::from_secs(30);
+const RECONCILE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Run the reconciliation sweep until the process exits: scan, diff against
 /// the previous tick, log the dead edges, sleep, repeat. The snapshot lives
@@ -47,11 +47,12 @@ pub async fn run(data_root: PathBuf) {
     }
 }
 
-/// Diff the current tick's `(slug, state, pid)` tuples against `seen` (the
-/// `(slug, pid)` report for each instance whose recorded pid just died, and
-/// leaving `seen` holding this tick's states for the next call. Slugs whose
-/// directory vanished between ticks are forgotten, so a re-created directory
-/// starts fresh instead of inheriting a ghost history.
+/// Diff the current tick's `(slug, state, pid)` tuples against `seen`,
+/// returning a `(slug, pid)` pair for each instance whose recorded pid
+/// just died; `seen` is left holding this tick's states for the next
+/// call. Slugs whose directory vanished between ticks are forgotten, so
+/// a re-created directory starts fresh instead of inheriting a ghost
+/// history.
 fn edge_reports(
     seen: &mut HashMap<String, InstanceState>,
     now: Vec<(String, InstanceState, Option<u32>)>,
