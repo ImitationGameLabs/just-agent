@@ -67,6 +67,7 @@
     manage_instances_push_unverified,
     manage_instances_push_verified,
     manage_instances_spawn_success,
+    manage_instances_start,
     manage_instances_stop,
     manage_instances_stop_description,
     manage_instances_stop_title,
@@ -343,6 +344,25 @@
   let stopBusy = $state(false);
   let stopError = $state<string | null>(null);
 
+  // --- start action (the hosted card's Start menu item) -------------------
+  // One relaunch at a time (a start blocks for seconds); failures surface
+  // through the same code mapping as spawn/stop.
+  let startBusySlug = $state<string | null>(null);
+  let startError = $state<string | null>(null);
+
+  async function onStartClick(slug: string): Promise<void> {
+    if (startBusySlug !== null || !slug) return;
+    startBusySlug = slug;
+    startError = null;
+    try {
+      await instancesStore.start(slug);
+    } catch (cause) {
+      startError = faultLine(cause);
+    } finally {
+      startBusySlug = null;
+    }
+  }
+
   async function onStopConfirmed() {
     if (!stopTarget || stopBusy) return;
     stopBusy = true;
@@ -539,6 +559,11 @@
       </p>
     {/if}
 
+    {#if startError}
+      <p class="text-error-500 dark:text-error-400 text-sm">
+        {startError}
+      </p>
+    {/if}
     {#if instancesStore.errorKind === null && !instancesStore.loaded}
       <p class="text-sm opacity-70">{manage_instances_loading()}</p>
     {:else if agoraSession.user != null && !agoraSession.tagmataLoaded && !agoraSession.tagmataError}
@@ -591,6 +616,7 @@
             process={d.process}
             onRename={(id, label) => agoraSession.renameTagma(id, label)}
             {onRevoke}
+            onStart={onStartClick}
             onStop={(slug) => {
               stopTarget = slug;
               stopError = null;

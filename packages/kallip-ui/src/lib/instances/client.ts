@@ -119,6 +119,14 @@ export class InstancesClient {
     return this.post<{ slug: string }>("/stop", { slug });
   }
 
+  /** Relaunch a stopped or dead instance from its persisted tree.
+   */
+  start(slug: string): Promise<{ slug: string; pid: number; port: number }> {
+    return this.post<{ slug: string; pid: number; port: number }>("/start", {
+      slug,
+    });
+  }
+
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     // The session cookie is the browser-channel credential (the admin
     // login carries instances rights); a stored bearer token still rides

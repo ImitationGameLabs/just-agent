@@ -12,6 +12,7 @@
     Check,
     ExternalLink,
     MoreVertical,
+    Play,
     Square,
     Trash,
     X,
@@ -38,6 +39,7 @@
     tagma_menu_manage_rooms,
     manage_instances_running,
     manage_instances_stopped,
+    manage_instances_start,
     manage_instances_stop,
     nav_chat,
     tagmata_badge_connected,
@@ -57,6 +59,7 @@
     process = undefined,
     onRename,
     onStop,
+    onStart,
     onRevoke,
   }: {
     // Present when an enrolled identity backs this card; absent for a
@@ -75,6 +78,9 @@
     // Opens the page-level stop confirmation (the card never stops
     // directly -- destructive actions get the dialog treatment).
     onStop?: (slug: string) => void;
+    // Relaunches a stopped or dead instance from its persisted tree;
+    // absent for self-run cards (nothing host-side to restart).
+    onStart?: (slug: string) => Promise<void> | void;
     // Awaitable: the dialog stays open through the round-trip and surfaces a
     // failure inline rather than closing + dropping the error.
     onRevoke?: (id: string) => Promise<void> | void;
@@ -310,6 +316,13 @@
             navigate(`/connect?tagmaUrl=http://127.0.0.1:${process.port}`);
           } else if (e.value === "stop" && process && onStop) {
             onStop(process.slug);
+          } else if (
+            e.value === "start" &&
+            process &&
+            !process.running &&
+            onStart
+          ) {
+            void onStart?.(process.slug);
           } else if (e.value === "manage" && tagma) {
             navigate(`/chat/t/${tagma.tagmaId}/manage/overview`);
           } else if (e.value === "rooms" && tagma) roomsOpen = true;
@@ -352,6 +365,15 @@
                 >
                   <ExternalLink class="size-4" />
                   {nav_chat()}
+                </Menu.Item>
+              {/if}
+              {#if process && !process.running && onStart}
+                <Menu.Item
+                  value="start"
+                  class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer hover:preset-filled-surface-500"
+                >
+                  <Play class="size-4" />
+                  {manage_instances_start()}
                 </Menu.Item>
               {/if}
 

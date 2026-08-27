@@ -100,6 +100,16 @@ class InstancesStore {
     await this.refresh();
   }
 
+  /** Relaunch a stopped or dead instance; success records the fresh port
+   * (same session-gap fallback as spawn) and refreshes. Errors rethrow
+   * classified for the calling card to render.
+   */
+  async start(slug: string): Promise<void> {
+    const result = await this.client.start(slug);
+    this.spawnedPorts[slug] = result.port;
+    await this.refresh();
+  }
+
   startPolling(intervalMs = 5000): void {
     this.stopPolling();
     this.refresh();

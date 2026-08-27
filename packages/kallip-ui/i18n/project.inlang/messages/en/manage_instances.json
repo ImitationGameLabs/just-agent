@@ -28,6 +28,7 @@
   "manage_instances_spawn_llm_api_key_label": "LLM API key (optional)",
   "manage_instances_spawn_submit": "Launch",
   "manage_instances_spawn_success": "Tagma \"{slug}\" is up on port {port}.",
+  "manage_instances_start": "Start",
   "manage_instances_stop": "Stop",
   "manage_instances_stop_title": "Stop tagma",
   "manage_instances_stop_description": "Stop the tagma process \"{slug}\"? Its state is kept on disk.",

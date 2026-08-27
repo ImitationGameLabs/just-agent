@@ -28,6 +28,7 @@
   "manage_instances_spawn_llm_api_key_label": "LLM API 密钥（可选）",
   "manage_instances_spawn_submit": "启动",
   "manage_instances_spawn_success": "tagma「{slug}」已在端口 {port} 上运行。",
+  "manage_instances_start": "启动",
   "manage_instances_stop": "停止",
   "manage_instances_stop_title": "停止 tagma",
   "manage_instances_stop_description": "停止 tagma 进程「{slug}」？其状态会保留在磁盘上。",
