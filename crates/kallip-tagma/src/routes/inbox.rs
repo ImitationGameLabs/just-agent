@@ -148,7 +148,7 @@ pub struct ClearResponse {
 mod tests {
     use super::*;
     use crate::auth::{AuthIdentity, Identity};
-    use crate::inbox::{BufferedEvent, InboxStore};
+    use crate::inbox::BufferedEvent;
     use crate::test_helpers::*;
     use axum::extract::Path;
     use kallip_common::agentid::AgentId;

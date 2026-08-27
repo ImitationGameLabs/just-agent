@@ -323,7 +323,6 @@ fn from_unix(secs: i64) -> OffsetDateTime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use time::macros::datetime;
 
     fn event(source: &str, body: &str) -> BufferedEvent {
         BufferedEvent {

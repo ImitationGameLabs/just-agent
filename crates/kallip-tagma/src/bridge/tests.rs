@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
+use super::BridgeCells;
 use kallip_common::agentid::AgentId;
 use kallip_common::policy::{ExecPolicy, PolicyPreset};
 use kallip_common::protocol::{AgentState, FailoverChainExhaustion, SseEvent, TransientRetryInfo};
@@ -11,15 +12,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::state::RegistryEntry;
 use crate::test_helpers::*;
-
-/// Helper: receive a notification from the prompt channel within a timeout.
-async fn recv_notification(rx: &mut tokio::sync::mpsc::Receiver<String>) -> String {
-    match tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
-        Ok(Some(text)) => text,
-        Ok(None) => panic!("prompt channel closed unexpectedly"),
-        Err(_) => panic!("timed out waiting for notification"),
-    }
-}
 
 /// Spawn `bridge_task` with fresh parked/retrying cells — the standard C3
 /// call shape. Returns the cells so tests can assert terminal payloads.
@@ -31,26 +23,23 @@ fn spawn_bridge(
     state: Arc<AtomicU8>,
     activity: Arc<std::sync::Mutex<String>>,
     shared: crate::state::SharedState,
-) -> (
-    tokio::task::JoinHandle<()>,
-    Arc<std::sync::Mutex<Option<crate::state::ParkedSnapshot>>>,
-    Arc<std::sync::Mutex<Option<TransientRetryInfo>>>,
-) {
-    let parked = Arc::new(std::sync::Mutex::new(None));
-    let retrying = Arc::new(std::sync::Mutex::new(None));
+) -> (tokio::task::JoinHandle<()>, BridgeCells) {
+    let cells = BridgeCells {
+        state,
+        state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        activity,
+        parked: Arc::new(std::sync::Mutex::new(None)),
+        retrying: Arc::new(std::sync::Mutex::new(None)),
+    };
     let handle = tokio::spawn(super::bridge_task(
         agent_id,
         agent_rx,
         events_tx,
         cancel,
-        state,
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        activity,
-        parked.clone(),
-        retrying.clone(),
+        cells.clone(),
         shared,
     ));
-    (handle, parked, retrying)
+    (handle, cells)
 }
 
 // -- Lifecycle: exit on channel close (primary) and on cancel (forced) --
@@ -75,11 +64,13 @@ async fn bridge_exits_when_agent_channel_closes() {
         agent_rx,
         events_tx,
         cancel,
-        state.clone(),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        Arc::new(std::sync::Mutex::new(String::new())),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: state.clone(),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         make_state(),
     ));
 
@@ -111,11 +102,13 @@ async fn bridge_clears_activity_on_terminal_event() {
         agent_rx,
         events_tx,
         cancel,
-        state.clone(),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        activity.clone(),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: state.clone(),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: activity.clone(),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         make_state(),
     ));
 
@@ -149,11 +142,13 @@ async fn bridge_exits_on_cancel() {
         agent_rx,
         events_tx,
         cancel.clone(),
-        state.clone(),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        Arc::new(std::sync::Mutex::new(String::new())),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: state.clone(),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         make_state(),
     ));
 
@@ -184,11 +179,13 @@ async fn bridge_delivers_terminal_cancelled_before_exit() {
         agent_rx,
         events_tx,
         cancel,
-        state.clone(),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        Arc::new(std::sync::Mutex::new(String::new())),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: state.clone(),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         make_state(),
     ));
 
@@ -225,11 +222,13 @@ async fn bridge_interrupted_keeps_looping() {
         agent_rx,
         events_tx,
         cancel,
-        state.clone(),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        Arc::new(std::sync::Mutex::new(String::new())),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: state.clone(),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         make_state(),
     ));
 
@@ -601,11 +600,13 @@ async fn bridge_dispatches_idle_to_superior() {
         agent_rx,
         events_tx,
         cancel,
-        atomic_state.clone(),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        activity.clone(),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: atomic_state.clone(),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: activity.clone(),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         state.clone(),
     ));
 
@@ -682,11 +683,13 @@ async fn bridge_idle_dispatch_off_duty_superior_not_woken() {
         agent_rx,
         events_tx,
         cancel,
-        Arc::new(AtomicU8::new(AgentState::BUSY)),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        Arc::new(std::sync::Mutex::new(String::new())),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: Arc::new(AtomicU8::new(AgentState::BUSY)),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         state.clone(),
     ));
 
@@ -748,11 +751,13 @@ async fn bridge_dispatches_error_to_superior() {
         agent_rx,
         events_tx,
         cancel,
-        Arc::new(AtomicU8::new(AgentState::BUSY)),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        Arc::new(std::sync::Mutex::new(String::new())),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: Arc::new(AtomicU8::new(AgentState::BUSY)),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         state.clone(),
     ));
 
@@ -816,11 +821,13 @@ async fn bridge_dispatches_failover_exhausted_to_superior() {
         agent_rx,
         events_tx,
         cancel,
-        Arc::new(AtomicU8::new(AgentState::BUSY)),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        Arc::new(std::sync::Mutex::new(String::new())),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: Arc::new(AtomicU8::new(AgentState::BUSY)),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         state.clone(),
     ));
 
@@ -887,11 +894,13 @@ async fn bridge_dispatches_max_rounds_to_superior() {
         agent_rx,
         events_tx,
         cancel,
-        Arc::new(AtomicU8::new(AgentState::BUSY)),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        Arc::new(std::sync::Mutex::new(String::new())),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: Arc::new(AtomicU8::new(AgentState::BUSY)),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         state.clone(),
     ));
 
@@ -949,11 +958,13 @@ async fn bridge_interrupted_does_not_notify_superior() {
         agent_rx,
         events_tx,
         cancel,
-        atomic_state.clone(),
-        Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        Arc::new(std::sync::Mutex::new(String::new())),
-        Arc::new(std::sync::Mutex::new(None)),
-        Arc::new(std::sync::Mutex::new(None)),
+        BridgeCells {
+            state: atomic_state.clone(),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         state.clone(),
     ));
 
@@ -1021,11 +1032,13 @@ async fn last_idle_annotation_on_final_sibling() {
     let n2 = super::mark_and_snapshot(
         &state,
         &c2,
-        &c2_atomic,
-        &std::sync::atomic::AtomicU64::new(0),
-        &std::sync::Mutex::new(String::new()),
-        &std::sync::Mutex::new(None),
-        &std::sync::Mutex::new(None),
+        &BridgeCells {
+            state: c2_atomic.clone(),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         AgentState::IDLE,
         None,
         None,
@@ -1073,11 +1086,13 @@ async fn faulted_sibling_excluded_from_wait_set() {
     let n = super::mark_and_snapshot(
         &state,
         &c1,
-        &c1_atomic,
-        &std::sync::atomic::AtomicU64::new(0),
-        &std::sync::Mutex::new(String::new()),
-        &std::sync::Mutex::new(None),
-        &std::sync::Mutex::new(None),
+        &BridgeCells {
+            state: c1_atomic.clone(),
+            state_since: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            activity: Arc::new(std::sync::Mutex::new(String::new())),
+            parked: Arc::new(std::sync::Mutex::new(None)),
+            retrying: Arc::new(std::sync::Mutex::new(None)),
+        },
         AgentState::IDLE,
         None,
         None,
@@ -1225,7 +1240,7 @@ async fn bridge_waiting_marks_waiting_and_notifies() {
     let (events_tx, _events_rx) = broadcast::channel::<SseEvent>(16);
     let atomic_state = Arc::new(AtomicU8::new(AgentState::BUSY));
     let activity = Arc::new(std::sync::Mutex::new("round".to_owned()));
-    let (_bridge, parked, retrying) = spawn_bridge(
+    let (_bridge, cells) = spawn_bridge(
         child.clone(),
         agent_rx,
         events_tx,
@@ -1243,8 +1258,8 @@ async fn bridge_waiting_marks_waiting_and_notifies() {
     let mut settled = false;
     for _ in 0..40 {
         if atomic_state.load(Ordering::Relaxed) == AgentState::WAITING
-            && parked.lock().unwrap().is_none()
-            && retrying.lock().unwrap().is_none()
+            && cells.parked.lock().unwrap().is_none()
+            && cells.retrying.lock().unwrap().is_none()
             && state.inboxes.get().unwrap().len_for(&parent).await == 1
         {
             settled = true;
@@ -1279,7 +1294,7 @@ async fn bridge_fce_with_retry_marks_retrying_no_notice() {
     let (events_tx, _events_rx) = broadcast::channel::<SseEvent>(16);
     let state = Arc::new(AtomicU8::new(AgentState::BUSY));
     let activity = Arc::new(std::sync::Mutex::new("round".to_owned()));
-    let (_bridge, parked, retrying) = spawn_bridge(
+    let (_bridge, cells) = spawn_bridge(
         AgentId::random(),
         agent_rx,
         events_tx,
@@ -1304,9 +1319,9 @@ async fn bridge_fce_with_retry_marks_retrying_no_notice() {
 
     let mut settled = false;
     for _ in 0..40 {
-        let cell = retrying.lock().unwrap().clone();
+        let cell = *cells.retrying.lock().unwrap();
         if state.load(Ordering::Relaxed) == AgentState::RETRYING
-            && parked.lock().unwrap().is_none()
+            && cells.parked.lock().unwrap().is_none()
             && matches!(&cell, Some(info) if info.attempt == 1 && info.max_attempts == 3)
         {
             settled = true;
@@ -1329,7 +1344,7 @@ async fn bridge_fce_without_retry_marks_parked() {
     let (events_tx, _events_rx) = broadcast::channel::<SseEvent>(16);
     let state = Arc::new(AtomicU8::new(AgentState::BUSY));
     let activity = Arc::new(std::sync::Mutex::new("round".to_owned()));
-    let (_bridge, parked, retrying) = spawn_bridge(
+    let (_bridge, cells) = spawn_bridge(
         AgentId::random(),
         agent_rx,
         events_tx,
@@ -1350,9 +1365,9 @@ async fn bridge_fce_without_retry_marks_parked() {
 
     let mut settled = false;
     for _ in 0..40 {
-        let cell = parked.lock().unwrap().clone();
+        let cell = cells.parked.lock().unwrap().clone();
         if state.load(Ordering::Relaxed) == AgentState::PARKED
-            && retrying.lock().unwrap().is_none()
+            && cells.retrying.lock().unwrap().is_none()
             && matches!(
                 &cell,
                 Some(crate::state::ParkedSnapshot {
@@ -1380,7 +1395,7 @@ async fn bridge_error_parks_with_fatal_reason() {
     let (events_tx, _events_rx) = broadcast::channel::<SseEvent>(16);
     let state = Arc::new(AtomicU8::new(AgentState::BUSY));
     let activity = Arc::new(std::sync::Mutex::new("round".to_owned()));
-    let (_bridge, parked, retrying) = spawn_bridge(
+    let (_bridge, cells) = spawn_bridge(
         AgentId::random(),
         agent_rx,
         events_tx,
@@ -1397,9 +1412,9 @@ async fn bridge_error_parks_with_fatal_reason() {
 
     let mut settled = false;
     for _ in 0..40 {
-        let cell = parked.lock().unwrap().clone();
+        let cell = cells.parked.lock().unwrap().clone();
         if state.load(Ordering::Relaxed) == AgentState::PARKED
-            && retrying.lock().unwrap().is_none()
+            && cells.retrying.lock().unwrap().is_none()
             && matches!(
                 &cell,
                 Some(crate::state::ParkedSnapshot {
@@ -1425,7 +1440,7 @@ async fn bridge_token_budget_marks_waiting() {
     let (events_tx, _events_rx) = broadcast::channel::<SseEvent>(16);
     let state = Arc::new(AtomicU8::new(AgentState::BUSY));
     let activity = Arc::new(std::sync::Mutex::new("round".to_owned()));
-    let (_bridge, parked, retrying) = spawn_bridge(
+    let (_bridge, cells) = spawn_bridge(
         AgentId::random(),
         agent_rx,
         events_tx,
@@ -1446,8 +1461,8 @@ async fn bridge_token_budget_marks_waiting() {
     let mut settled = false;
     for _ in 0..40 {
         if state.load(Ordering::Relaxed) == AgentState::WAITING
-            && parked.lock().unwrap().is_none()
-            && retrying.lock().unwrap().is_none()
+            && cells.parked.lock().unwrap().is_none()
+            && cells.retrying.lock().unwrap().is_none()
         {
             settled = true;
             break;
@@ -1471,7 +1486,7 @@ async fn bridge_fce_after_spent_budget_parks_retry_exhausted() {
     let (events_tx, _events_rx) = broadcast::channel::<SseEvent>(16);
     let state = Arc::new(AtomicU8::new(AgentState::BUSY));
     let activity = Arc::new(std::sync::Mutex::new(String::new()));
-    let (_bridge, parked, retrying) = spawn_bridge(
+    let (_bridge, cells) = spawn_bridge(
         AgentId::random(),
         agent_rx,
         events_tx,
@@ -1482,7 +1497,7 @@ async fn bridge_fce_after_spent_budget_parks_retry_exhausted() {
     );
 
     // Previous armed retry wrote its plan: attempt 3 of 3.
-    *retrying.lock().unwrap() = Some(TransientRetryInfo {
+    *cells.retrying.lock().unwrap() = Some(TransientRetryInfo {
         attempt: 3,
         max_attempts: 3,
         retry_in_secs: 0.0,
@@ -1498,9 +1513,9 @@ async fn bridge_fce_after_spent_budget_parks_retry_exhausted() {
 
     let mut settled = false;
     for _ in 0..40 {
-        let cell = parked.lock().unwrap().clone();
+        let cell = cells.parked.lock().unwrap().clone();
         if state.load(Ordering::Relaxed) == AgentState::PARKED
-            && retrying.lock().unwrap().is_none()
+            && cells.retrying.lock().unwrap().is_none()
             && matches!(
                 &cell,
                 Some(crate::state::ParkedSnapshot {
@@ -1530,7 +1545,7 @@ async fn bridge_layer1_retrying_overlay_lifecycle() {
     let (events_tx, _events_rx) = broadcast::channel::<SseEvent>(16);
     let state = Arc::new(AtomicU8::new(AgentState::BUSY));
     let activity = Arc::new(std::sync::Mutex::new(String::new()));
-    let (_bridge, parked, retrying) = spawn_bridge(
+    let (_bridge, cells) = spawn_bridge(
         AgentId::random(),
         agent_rx,
         events_tx,
@@ -1552,8 +1567,8 @@ async fn bridge_layer1_retrying_overlay_lifecycle() {
     let mut overlaid = false;
     for _ in 0..40 {
         if state.load(Ordering::Relaxed) == AgentState::RETRYING
-            && parked.lock().unwrap().is_none()
-            && retrying.lock().unwrap().is_none()
+            && cells.parked.lock().unwrap().is_none()
+            && cells.retrying.lock().unwrap().is_none()
         {
             overlaid = true;
             break;

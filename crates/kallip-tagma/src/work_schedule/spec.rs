@@ -421,7 +421,7 @@ mod tests {
             },
             Window {
                 start_minute: 23 * 60,
-                end_minute: 1 * 60,
+                end_minute: 60,
             },
         ]);
         assert!(spec.validate().is_err());

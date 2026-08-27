@@ -282,7 +282,6 @@ pub async fn apply_profiles(
     let registry = bundle.registry.clone();
 
     let mut applied = 0usize;
-    let skipped;
 
     // Collect the reset targets under the read lock, then apply outside it
     // so register/remove writes are not blocked during cell writes + notify.
@@ -316,7 +315,7 @@ pub async fn apply_profiles(
             },
         )
     };
-    skipped = non_live;
+    let skipped = non_live;
 
     for (reset, cell_lock, notify) in targets {
         let mut cell = cell_lock.lock().unwrap_or_else(|e| e.into_inner());

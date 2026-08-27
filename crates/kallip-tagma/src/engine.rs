@@ -211,10 +211,10 @@ fn compute_transition(cs: &CycleState, now: OffsetDateTime) -> Option<Transition
 }
 
 /// The End-boundary decision: the evaluator is authoritative there.
-/// Merged or overlapping windows (adjacent daily windows, interval length
-/// >= period) still cover `now`, so the nominal end of one window is not a
-/// real end — returns the covering window's end so the shift continues
-/// instead of flipping the agent off and back on.
+/// Merged or overlapping windows (adjacent daily windows, interval
+/// length >= period) still cover `now`, so the nominal end of one
+/// window is not a real end — returns the covering window's end so
+/// the shift continues instead of flipping the agent off and back on.
 fn end_covered_by_next(
     spec: &crate::work_schedule::spec::Spec,
     now: OffsetDateTime,
@@ -248,12 +248,11 @@ async fn interrupt_round(state: &SharedState, id: &AgentId) {
             .get(id)
             .and_then(|e| e.as_live().map(|l| l.agent.round_cancel.clone()))
     };
-    if let Some(slot) = round_cancel {
-        if let Ok(guard) = slot.lock() {
-            if let Some(rc) = guard.clone() {
-                rc.cancel();
-            }
-        }
+    if let Some(slot) = round_cancel
+        && let Ok(guard) = slot.lock()
+        && let Some(rc) = guard.clone()
+    {
+        rc.cancel();
     }
 }
 

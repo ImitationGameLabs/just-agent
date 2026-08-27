@@ -316,7 +316,7 @@ mod route_tests {
     #[tokio::test]
     async fn second_put_replaces_not_appends() {
         let state = make_ws_state().await;
-        put_work_schedule(
+        let _ = put_work_schedule(
             ExtractState(state.clone()),
             crate::auth::AuthIdentity::test_new(crate::auth::Identity::Operator),
             axum::Json(put_req()),
@@ -325,7 +325,7 @@ mod route_tests {
         .unwrap();
         let mut req = put_req();
         req.status = WorkScheduleStatus::Paused;
-        put_work_schedule(
+        let _ = put_work_schedule(
             ExtractState(state.clone()),
             crate::auth::AuthIdentity::test_new(crate::auth::Identity::Operator),
             axum::Json(req),
@@ -418,7 +418,7 @@ mod route_tests {
             length_min: 90,
             anchor: time::macros::datetime!(2020-01-01 0:00 UTC),
         };
-        put_work_schedule(
+        let _ = put_work_schedule(
             ExtractState(state.clone()),
             crate::auth::AuthIdentity::test_new(crate::auth::Identity::Operator),
             axum::Json(req),
@@ -466,7 +466,7 @@ mod route_tests {
             length_min: 90,
             anchor: time::macros::datetime!(2020-01-01 0:00 UTC),
         };
-        put_work_schedule(
+        let _ = put_work_schedule(
             ExtractState(state.clone()),
             crate::auth::AuthIdentity::test_new(crate::auth::Identity::Operator),
             axum::Json(req),

@@ -370,7 +370,7 @@ fn init_logging(filter: &tracing_subscriber::EnvFilter) {
             .filename_prefix("instance")
             .filename_suffix("log")
             .max_log_files(7)
-            .build(&dir.join("logs"))
+            .build(dir.join("logs"))
             .map_err(|e| {
                 eprintln!("kallip-tagma: file log init failed, keeping stdout-only: {e}");
                 e
@@ -423,13 +423,6 @@ struct InstanceRuntime {
     pid: u32,
     port: u16,
 }
-/// Publish the runtime identity of this instance (pid + actually bound
-/// port) into `dir` as a single `runtime.json`, for the local instance
-/// daemon's spawn pipeline. The key set is a cross-crate contract with
-/// the daemon's reader, kept in lockstep by hand — tagma does not
-/// depend on the daemon crates. Owner-only via tmp+rename; the port is
-/// read back from the listener so a `:0` bind is discoverable.
-
 /// Build the advertise URL for an unset `--advertise-url` from the bound
 /// socket: scheme http, the listen address's host (an unspecified host
 /// such as 0.0.0.0 or :: becomes 127.0.0.1 -- loopback is the only host a
@@ -451,6 +444,13 @@ fn derive_advertise_url(listen_addr: &str, port: u16) -> Result<String> {
     };
     Ok(format!("http://{bracketed_host}:{port}"))
 }
+
+/// Publish the runtime identity of this instance (pid + actually bound
+/// port) into `dir` as a single `runtime.json`, for the local instance
+/// daemon's spawn pipeline. The key set is a cross-crate contract with
+/// the daemon's reader, kept in lockstep by hand — tagma does not
+/// depend on the daemon crates. Owner-only via tmp+rename; the port is
+/// read back from the listener so a `:0` bind is discoverable.
 fn write_instance_state(dir: &std::path::Path, listener: &tokio::net::TcpListener) -> Result<()> {
     let port = listener
         .local_addr()
@@ -912,7 +912,7 @@ mod tests {
         );
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        std::panic::set_hook(Box::new(|info| forward_panic_to_tracing(info)));
+        std::panic::set_hook(Box::new(forward_panic_to_tracing));
         let _ = std::panic::catch_unwind(|| panic!("hook probe"));
 
         let captured =

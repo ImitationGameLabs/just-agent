@@ -25,7 +25,7 @@ use tracing::info;
 
 use super::identity::{compose_system_prompt, inject_identity_env};
 use super::workspace::{establish_lock_api_error, establish_workspace_lock, exec_gate_failure};
-use crate::bridge::bridge_task;
+use crate::bridge::{BridgeCells, bridge_task};
 use crate::state::{
     Agent, AgentEntry, AgentIdentity, AgentState, FaultedEntry, RegistryEntry, SharedState,
 };
@@ -272,11 +272,13 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
         agent_rx,
         args.events_tx.clone(),
         args.shutdown_cancel.clone(),
-        state.clone(),
-        state_since.clone(),
-        activity.clone(),
-        parked.clone(),
-        retrying.clone(),
+        BridgeCells {
+            state: state.clone(),
+            state_since: state_since.clone(),
+            activity: activity.clone(),
+            parked: parked.clone(),
+            retrying: retrying.clone(),
+        },
         args.shared_state.clone(),
     ));
 

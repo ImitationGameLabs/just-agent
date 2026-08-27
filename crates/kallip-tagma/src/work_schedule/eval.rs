@@ -147,10 +147,10 @@ fn eval_calendar(
                     _ => we,
                 });
             } else if ws > now {
-                if next_start.map_or(true, |s| ws < s) {
+                if next_start.is_none_or(|s| ws < s) {
                     next_start = Some(ws);
                 }
-                if next_end.map_or(true, |e| we < e) {
+                if next_end.is_none_or(|e| we < e) {
                     next_end = Some(we);
                 }
             }

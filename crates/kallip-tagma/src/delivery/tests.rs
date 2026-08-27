@@ -11,7 +11,6 @@
 use std::sync::{Arc, Mutex};
 
 use kallip_common::agentid::AgentId;
-use tokio::sync::mpsc;
 
 use crate::lifecycle::SpawnArgs;
 use crate::state::{AgentEntry, RegistryEntry, SharedState};
