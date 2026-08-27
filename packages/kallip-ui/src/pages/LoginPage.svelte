@@ -8,6 +8,7 @@
   import FormError from "../components/FormError.svelte";
   import Banner from "../components/Banner.svelte";
   import OAuthProviderButtons from "../components/OAuthProviderButtons.svelte";
+  import SecretInput from "../components/SecretInput.svelte";
   import {
     auth_couldnt_reach,
     auth_passkey_cancelled,
@@ -222,13 +223,11 @@
           {login_offline_key_label()}
           <span class="text-error-500 dark:text-error-400">*</span>
         </span>
-        <input
-          class="input"
-          type="password"
-          autocomplete="off"
-          placeholder={login_offline_key_placeholder()}
+        <!-- The admin key is a secret, not a password: SecretInput keeps
+             it out of the browser credential heuristics. -->
+        <SecretInput
           bind:value={adminKey}
-          required
+          placeholder={login_offline_key_placeholder()}
           disabled={offlineDisabled}
         />
       </label>
