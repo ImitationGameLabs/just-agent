@@ -101,7 +101,7 @@ pub fn pid_is_tagma(pid: u32) -> bool {
 /// `meta.json`: the adopt marker for an instance directory. The
 /// daemon's spawn pipeline is the single writer; a directory without
 /// a parseable one is not managed. It carries the static identity
-/// (instance id, owning uid, canonical workspace); the volatile
+/// (instance id, owning uid, canonical workspace, spawn-time user env); the volatile
 /// runtime facts live in `runtime.json`.
 /// `workspace` is the one optional key: a minimal hand-written marker
 /// still adopts — it just stops participating in overlap checks.
@@ -111,6 +111,13 @@ pub struct InstanceMeta {
     pub owner_uid: u32,
     #[serde(default)]
     pub workspace: Option<String>,
+    /// The KEY=VALUE user env pairs the instance was spawned with,
+    /// persisted so a stopped instance relaunches (via wire Start) with
+    /// its original configuration. Daemon-owned keys are never stored
+    /// here (they are re-derived per launch); #[serde(default)] keeps
+    /// pre-field meta.json files parseable.
+    #[serde(default)]
+    pub env: Vec<String>,
 }
 
 /// `runtime.json`: the instance's runtime identity, written by the
@@ -153,7 +160,7 @@ pub fn scan_instances(data_root: &Path) -> Vec<ScannedInstance> {
     out
 }
 
-fn read_meta(dir: &Path) -> Option<InstanceMeta> {
+pub(crate) fn read_meta(dir: &Path) -> Option<InstanceMeta> {
     let text = std::fs::read_to_string(dir.join("meta.json")).ok()?;
     serde_json::from_str(&text).ok()
 }

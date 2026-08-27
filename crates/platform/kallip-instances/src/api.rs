@@ -1,4 +1,4 @@
-//! The four management routes. Each is a thin translation: HTTP request →
+//! The five management routes. Each is a thin translation: HTTP request →
 //! one UDS exchange via `DaemonClient` → the unwrapped payload as plain
 //! JSON (the wire's `v`/`kind`/`status` tags stay behind the proxy).
 
@@ -29,6 +29,11 @@ pub struct SpawnRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct StopRequest {
+    pub slug: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StartRequest {
     pub slug: String,
 }
 
@@ -88,6 +93,7 @@ pub fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/spawn", post(spawn))
         .route("/stop", post(stop))
+        .route("/start", post(start))
         .route("/list", get(list))
         .route("/health", get(health))
         .route("/capabilities", get(capabilities))
@@ -132,6 +138,18 @@ async fn stop(
         Err(rejection) => return bad_body(rejection),
     };
     let outcome = state.backend.stop(slug).await;
+    respond(outcome)
+}
+
+async fn start(
+    State(state): State<AppState>,
+    payload: Result<Json<StartRequest>, JsonRejection>,
+) -> Response {
+    let Json(StartRequest { slug }) = match payload {
+        Ok(Json(body)) => Json(body),
+        Err(rejection) => return bad_body(rejection),
+    };
+    let outcome = state.backend.start(slug).await;
     respond(outcome)
 }
 

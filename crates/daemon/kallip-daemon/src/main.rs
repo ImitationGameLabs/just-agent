@@ -15,6 +15,7 @@ mod bins;
 mod scan;
 mod server;
 mod spawn;
+mod start;
 mod stop;
 
 use std::path::PathBuf;

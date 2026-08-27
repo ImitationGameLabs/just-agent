@@ -145,6 +145,29 @@ impl Daemon {
                     Err(join_error) => err(ErrorCode::Internal, format!("stop task: {join_error}")),
                 }
             }
+            RequestBody::Start { slug } => {
+                let slug_out = slug.clone();
+                // Same blocking profile as spawn: start waits up to 30s for
+                // the relaunched tagma's runtime.json.
+                let timeout = std::time::Duration::from_secs(30);
+                match tokio::task::spawn_blocking({
+                    let data_root = self.data_root.clone();
+                    move || crate::start::start(&data_root, &slug, timeout, &crate::scan::pid_is_tagma)
+                })
+                .await
+                {
+                    Ok(Ok((pid, port))) => ok(OkPayload::Spawn {
+                        slug: slug_out,
+                        pid,
+                        port,
+                    }),
+                    Ok(Err(error)) => {
+                        let code = kallip_daemon_common::wire::ErrorCode::from(&error);
+                        err(code, error.to_string())
+                    }
+                    Err(join_error) => err(ErrorCode::Internal, format!("start task: {join_error}")),
+                }
+            }
         }
     }
 }

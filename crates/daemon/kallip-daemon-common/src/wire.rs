@@ -31,7 +31,7 @@ pub struct Request {
     pub body: RequestBody,
 }
 
-/// The four management verbs.
+/// The five management verbs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RequestBody {
@@ -45,6 +45,10 @@ pub enum RequestBody {
     },
     /// Terminate an instance: SIGTERM, grace period, SIGKILL.
     Stop { slug: String },
+    /// Relaunch an existing stopped or dead instance from its persisted
+    /// tree: workspace and user env reload from meta.json; the surviving
+    /// credentials are adopted by the fresh process.
+    Start { slug: String },
     /// List all managed instances (directory scan).
     List,
     /// One instance's health, or omit `slug` for the daemon itself.

@@ -193,6 +193,57 @@ fn spawn_health_stop_round_trip() {
     assert!(!report.running);
     assert_eq!(report.state, InstanceState::Dead);
     assert!(instance_dir.exists(), "instance dir survives stop");
+
+    // Start: relaunch from the surviving tree. The fresh pid proves a new
+    // process (not the old one lingering); the health gate re-opens.
+    let started = tokio_block_on(client.call(RequestBody::Start {
+        slug: "e2e".into(),
+    }));
+    let OkPayload::Spawn {
+        slug: started_slug,
+        pid: started_pid,
+        port: started_port,
+    } = expect_ok(started)
+    else {
+        panic!("expected start payload");
+    };
+    assert_eq!(started_slug, "e2e");
+    assert_ne!(started_pid, pid, "a fresh incarnation, not the old one");
+    assert!(started_port > 0, "fresh bound port");
+
+    // The survived tree carried the spawn-time env over (relaunch config),
+    // and credentials/ persists so the enrolled identity revives.
+    let meta_after: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta after"),
+    )
+    .expect("parse meta.json after start");
+    assert_eq!(
+        meta_after["env"][0],
+        serde_json::json!("KALLIP_OPERATOR_TOKEN=test-op-token")
+    );
+    assert!(instance_dir.join("credentials").exists(), "credentials survive");
+
+    // Starting the now-running instance again is the conflict case.
+    let code = match tokio_block_on(client.call(RequestBody::Start {
+        slug: "e2e".into(),
+    }))
+    .expect("double start response")
+    .body
+    {
+        ResponseBody::Err { code, .. } => code,
+        other => panic!("expected slug_taken conflict, got {other:?}"),
+    };
+    assert_eq!(code, ErrorCode::SlugTaken);
+
+    // Cleanup so the test does not leave a live tagma behind.
+    let stopped_again = tokio_block_on(client.call(RequestBody::Stop {
+        slug: "e2e".into(),
+    }));
+    let OkPayload::Stop { slug: stopped_again_slug } = expect_ok(stopped_again)
+    else {
+        panic!("expected stop payload");
+    };
+    assert_eq!(stopped_again_slug, "e2e");
 }
 
 #[test]

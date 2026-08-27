@@ -23,7 +23,7 @@ pub enum SpawnError {
     },
     #[error("{0}")]
     Invalid(String),
-    #[error("instance did not publish pid/port within {timeout_secs}s; rolled back")]
+    #[error("instance did not publish pid/port within {timeout_secs}s")]
     Timeout { timeout_secs: u64 },
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
@@ -94,8 +94,54 @@ pub fn spawn(
         }
     }
 
-    // Request env pairs: KEY=VALUE shape, KALLIP_* (or RUST_LOG), none of
-    // the daemon-owned keys.
+    validate_user_env(user_env)?;
+
+    // --- allocate ---------------------------------------------------------
+    std::fs::create_dir(&instance_dir)
+        .map_err(|e| anyhow::anyhow!("creating instance dir: {e}"))?;
+    let instance_id = uuid::Uuid::new_v4().to_string();
+    let rolled_back = |e| {
+        // Best-effort rollback: the allocation this call created goes away.
+        let _ = std::fs::remove_dir_all(&instance_dir);
+        SpawnError::Internal(e)
+    };
+    let meta_bytes = serde_json::to_vec(&scan::InstanceMeta {
+        instance_id,
+        owner_uid,
+        workspace: Some(workspace_canon.display().to_string()),
+        env: user_env.to_vec(),
+    })
+    .map_err(|e| rolled_back(anyhow::anyhow!("serializing meta.json: {e}")))?;
+    std::fs::write(instance_dir.join("meta.json"), &meta_bytes)
+        .map_err(|e| rolled_back(anyhow::anyhow!("writing meta.json: {e}")))?;
+
+    // --- detach-exec + adopt ---------------------------------------------
+    launch(&instance_dir, &workspace_canon, user_env, timeout).map_err(|e| {
+        // Rollback: this fresh allocation goes away on any failure — kill
+        // whatever the helper left first (a failed exec leaves nothing;
+        // a half-boot leaves a running tagma). start() shares launch but
+        // keeps an existing tree, so identity and credentials survive a
+        // failed relaunch.
+        if let Some(pid) = scan::read_runtime(&instance_dir).map(|r| r.pid) {
+            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+        }
+        let _ = std::fs::remove_dir_all(&instance_dir);
+        e
+    })
+}
+
+/// One path contains the other (ancestor/descendant), including equality.
+/// Non-canonical `b` still compares correctly when it is a prefix/suffix
+/// match of the canonical `a` only in pathological trees; existing
+/// workspaces were canonicalized when written.
+fn overlaps(a: &Path, b: &Path) -> bool {
+    a.starts_with(b) || b.starts_with(a)
+}
+
+/// Request env pairs: KEY=VALUE shape, KALLIP_* (or RUST_LOG), none of
+/// the daemon-owned keys. Shared by spawn (fresh request env) and start
+/// (re-validating the persisted copy against hand-edited meta files).
+pub(crate) fn validate_user_env(user_env: &[String]) -> Result<(), SpawnError> {
     for pair in user_env {
         let Some((key, value)) = pair.split_once('=') else {
             return Err(SpawnError::Invalid(format!(
@@ -118,26 +164,22 @@ pub fn spawn(
             )));
         }
     }
+    Ok(())
+}
 
-    // --- allocate ---------------------------------------------------------
-    std::fs::create_dir(&instance_dir)
-        .map_err(|e| anyhow::anyhow!("creating instance dir: {e}"))?;
-    let instance_id = uuid::Uuid::new_v4().to_string();
-    let rolled_back = |e| {
-        // Best-effort rollback: the allocation this call created goes away.
-        let _ = std::fs::remove_dir_all(&instance_dir);
-        SpawnError::Internal(e)
-    };
-    let meta_bytes = serde_json::to_vec(&scan::InstanceMeta {
-        instance_id,
-        owner_uid,
-        workspace: Some(workspace_canon.display().to_string()),
-    })
-    .map_err(|e| rolled_back(anyhow::anyhow!("serializing meta.json: {e}")))?;
-    std::fs::write(instance_dir.join("meta.json"), &meta_bytes)
-        .map_err(|e| rolled_back(anyhow::anyhow!("writing meta.json: {e}")))?;
-
-    // --- detach-exec ------------------------------------------------------
+/// Detach-exec one instance's tagma via the spawn helper and wait until the
+/// process publishes its own runtime.json. Shared tail of spawn (fresh
+/// tree) and start (adoption of an existing tree); callers re-validate
+/// user env before reaching here. On failure the tree is left standing —
+/// cleanup policy belongs to the caller (spawn removes its own fresh
+/// allocation, start keeps an existing one) — but a half-booted leftover
+/// is SIGKILLed here either way so no orphan outlives the timeout.
+pub(crate) fn launch(
+    instance_dir: &Path,
+    workspace_canon: &Path,
+    user_env: &[String],
+    timeout: Duration,
+) -> Result<(u32, u16), SpawnError> {
     let helper = bins::resolve("kallip-daemon-spawn");
     let tagma = bins::resolve("kallip-tagma");
     let mut env: Vec<String> = vec![
@@ -148,42 +190,32 @@ pub fn spawn(
     ];
     env.extend(user_env.iter().cloned());
     let status = std::process::Command::new(&helper)
-        .arg(&instance_dir)
+        .arg(instance_dir)
         .arg(&tagma)
         .args(&env)
         .status()
-        .map_err(|e| rolled_back(anyhow::anyhow!("running spawn helper: {e}")))?;
+        .map_err(|e| anyhow::anyhow!("running spawn helper: {e}"))?;
     if !status.success() {
-        return Err(rolled_back(anyhow::anyhow!("spawn helper exited {status}")));
+        return Err(anyhow::anyhow!("spawn helper exited {status}").into());
     }
 
     // --- wait for the self-written runtime.json --------------------------
     let deadline = Instant::now() + timeout;
     loop {
-        if let Some(runtime) = scan::read_runtime(&instance_dir)
+        if let Some(runtime) = scan::read_runtime(instance_dir)
             && scan::pid_is_tagma(runtime.pid)
         {
             return Ok((runtime.pid, runtime.port));
         }
         if Instant::now() >= deadline {
-            // Rollback: kill whatever the helper left (a failed exec leaves
-            // nothing; a half-boot leaves a tagma), then remove the dir.
-            if let Some(pid) = scan::read_runtime(&instance_dir).map(|r| r.pid) {
+            // Kill whatever the helper left; keep the tree itself.
+            if let Some(pid) = scan::read_runtime(instance_dir).map(|r| r.pid) {
                 unsafe { libc::kill(pid as i32, libc::SIGKILL) };
             }
-            let _ = std::fs::remove_dir_all(&instance_dir);
             return Err(SpawnError::Timeout {
                 timeout_secs: timeout.as_secs(),
             });
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-}
-
-/// One path contains the other (ancestor/descendant), including equality.
-/// Non-canonical `b` still compares correctly when it is a prefix/suffix
-/// match of the canonical `a` only in pathological trees; existing
-/// workspaces were canonicalized when written.
-fn overlaps(a: &Path, b: &Path) -> bool {
-    a.starts_with(b) || b.starts_with(a)
 }

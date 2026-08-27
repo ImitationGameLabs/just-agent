@@ -29,6 +29,10 @@ pub trait InstanceBackend: Send + Sync + 'static {
     /// Stop one instance by slug.
     async fn stop(&self, slug: String) -> Result<Stopped, BackendError>;
 
+    /// Relaunch a stopped or dead instance from its persisted tree.
+    /// The outcome is spawn-shaped: a fresh process with its listen port.
+    async fn start(&self, slug: String) -> Result<Spawned, BackendError>;
+
     /// Every instance the backend sees.
     async fn list(&self) -> Result<Vec<InstanceInfo>, BackendError>;
 
@@ -74,6 +78,13 @@ impl InstanceBackend for UdsBackend {
     async fn stop(&self, slug: String) -> Result<Stopped, BackendError> {
         let wire = self.client.call(RequestBody::Stop { slug }).await?;
         unwrap_stop(wire)
+    }
+
+    async fn start(&self, slug: String) -> Result<Spawned, BackendError> {
+        // The daemon answers start with the shared spawn-shaped launch
+        // payload, so the unwrap is verbatim.
+        let wire = self.client.call(RequestBody::Start { slug }).await?;
+        unwrap_spawn(wire)
     }
 
     async fn list(&self) -> Result<Vec<InstanceInfo>, BackendError> {
