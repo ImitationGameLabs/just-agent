@@ -12,6 +12,7 @@
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
   import { Check, Copy, MoreVertical, Trash } from "@lucide/svelte";
   import { copyText } from "../../lib/clipboard.ts";
+  import { TONAL_ICON_SURF } from "../../lib/classes.ts";
   import { getLocale } from "../../paraglide/runtime.js";
   import {
     settings_added_date,
@@ -235,7 +236,7 @@
             }}
           >
             <Menu.Trigger
-              class="inline-flex size-8 items-center justify-center rounded-base text-surface-500 transition hover:bg-surface-200-800 dark:text-surface-400"
+              class="size-8 {TONAL_ICON_SURF}"
               aria-label={settings_provider_actions_aria()}
             >
               <MoreVertical class="size-4" />
