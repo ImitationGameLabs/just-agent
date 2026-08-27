@@ -18,6 +18,13 @@
   // the success path navigates away (page unloads), so only the error path
   // needs handling. Mirrors LinkedAccounts' link-error discipline.
   let error = $state<string | null>(null);
+  // Google's OAuth requires https off localhost; a non-secure context
+  // (plain http on a LAN host) hides that entry, GitHub stays.
+  const providers = $derived(
+    window.isSecureContext
+      ? agoraSession.oauthProviders
+      : agoraSession.oauthProviders.filter((p) => p.id !== "google"),
+  );
 
   async function begin(provider: string): Promise<void> {
     error = null;
@@ -32,9 +39,9 @@
   }
 </script>
 
-{#if agoraSession.oauthProviders.length > 0}
+{#if providers.length > 0}
   <div class="space-y-2">
-    {#each agoraSession.oauthProviders as p (p.id)}
+    {#each providers as p (p.id)}
       <button
         type="button"
         class="btn btn-sm preset-tonal-surface w-full"

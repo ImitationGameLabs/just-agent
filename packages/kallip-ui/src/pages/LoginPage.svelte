@@ -20,6 +20,7 @@
     login_offline_submit,
     login_offline_failed,
     login_offline_disabled,
+    login_passkey_insecure,
     login_title,
     login_welcome_back,
     login_username,
@@ -60,6 +61,11 @@
   let offlineError = $state<string | null>(null);
   let offlineDisabled = $state(false);
   const canKeySubmit = $derived(adminKey.trim().length > 0 && !offlineBusy);
+
+  // Passkeys are a browser secure-context feature: on plain http off-
+  // localhost the ceremony cannot run at all, so the form degrades to a
+  // hint and the GitHub/admin-key paths below carry the login surface.
+  const secureContext = window.isSecureContext;
 
   // The reverse guard (already signed in -> /tagmata) and the forward guard
   // (logged out -> /login) live in <RootLayout>; this page is only reached for a
@@ -153,7 +159,11 @@
     // rip them back to /tagmata from whatever page they are now on.
     let mounted = true;
     const pk = PublicKeyCredential;
-    if (typeof pk === "undefined" || !pk.isConditionalMediationAvailable) {
+    if (
+      typeof pk === "undefined" ||
+      !pk.isConditionalMediationAvailable ||
+      !window.isSecureContext
+    ) {
       return () => {
         mounted = false;
       };
@@ -242,6 +252,10 @@
     {:else}
       <OAuthProviderButtons {returnPath} />
 
+      {#if !secureContext}
+        <p class="text-xs opacity-70">{login_passkey_insecure()}</p>
+      {/if}
+
       <label class="block space-y-1">
         <span class="text-sm opacity-70">
           {login_username()}
@@ -251,6 +265,7 @@
           class="input"
           type="text"
           autocomplete="username webauthn"
+          disabled={!secureContext}
           placeholder={login_username_placeholder()}
           bind:value={username}
           required
@@ -270,7 +285,7 @@
       <button
         type="submit"
         class="btn preset-filled-primary-500 w-full"
-        disabled={!canSubmit}
+        disabled={!canSubmit || !secureContext}
       >
         {submitting ? login_signing_in() : login_submit()}
       </button>
