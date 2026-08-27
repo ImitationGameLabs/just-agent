@@ -38,6 +38,23 @@ pub struct Config {
     /// Shared secret matching the agora's KALLIP_AGORA_INTERNAL_TOKEN.
     #[arg(long, env = "KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN")]
     pub agora_internal_token: Option<String>,
+    /// Server-side default relay URLs for spawned tagmata that signal
+    /// relay intent (any KALLIP_TAGMA_RELAY_* env) but omit a URL; local-
+    /// backend scope only (the daemon and its tagmata run on this host,
+    /// so localhost always reaches the local stack).
+    #[arg(
+        long,
+        env = "KALLIP_INSTANCES_RELAY_AGORA_URL",
+        default_value = "http://localhost:7100"
+    )]
+    pub relay_agora_url: String,
+    /// Lesche counterpart of `relay_agora_url` (tunnel + envelopes).
+    #[arg(
+        long,
+        env = "KALLIP_INSTANCES_RELAY_LESCHE_URL",
+        default_value = "http://localhost:7200"
+    )]
+    pub relay_lesche_url: String,
 
     /// Extra Host values allowed through the host guard (comma separated;
     /// a reverse-proxied deployment names its public domain here).
@@ -91,6 +108,8 @@ mod tests {
             daemon_socket: Some(PathBuf::from("/tmp/flag.sock")),
             token: None,
             backend: "daemon".into(),
+            relay_agora_url: String::new(),
+            relay_lesche_url: String::new(),
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: String::new(),
@@ -109,6 +128,8 @@ mod tests {
             daemon_socket: None,
             token: None,
             backend: "daemon".into(),
+            relay_agora_url: String::new(),
+            relay_lesche_url: String::new(),
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: String::new(),
@@ -125,6 +146,8 @@ mod tests {
             daemon_socket: None,
             token: None,
             backend: "daemon".into(),
+            relay_agora_url: String::new(),
+            relay_lesche_url: String::new(),
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: String::new(),
@@ -147,6 +170,8 @@ mod tests {
             daemon_socket: None,
             token: None,
             backend: "daemon".into(),
+            relay_agora_url: String::new(),
+            relay_lesche_url: String::new(),
             agora_internal_url: None,
             agora_internal_token: None,
             allowed_hosts_raw: " platform.internal , localhost ,".into(),

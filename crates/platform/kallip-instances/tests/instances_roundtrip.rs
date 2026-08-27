@@ -21,6 +21,7 @@ use tower::ServiceExt;
 
 struct DaemonProc {
     socket: PathBuf,
+    data_root: PathBuf,
     child: std::process::Child,
     _state: PathBuf,
 }
@@ -66,10 +67,12 @@ fn start_daemon() -> DaemonProc {
         if socket.exists() {
             // The daemon adopts the data dir; keep both tempdirs alive by
             // leaking them (test-scoped, under /tmp).
+            let data_root = data_dir.path().to_path_buf();
             std::mem::forget(data_dir);
             std::mem::forget(state_dir);
             return DaemonProc {
                 socket,
+                data_root,
                 child,
                 _state: PathBuf::new(),
             };
@@ -280,6 +283,120 @@ async fn full_management_round_trip_with_guards() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("\"not_running\""), "{body}");
+}
+
+// The relay-injection wiring through the real daemon: the same ruled
+// states as the backend unit tests, but end to end -- the fill call
+// on the spawn path cannot silently regress, the daemon's env
+// validation (which rejects empty values) sees exactly what ships,
+// and the persisted meta.json carries the filled URLs into the
+// start path.
+#[tokio::test]
+async fn relay_intent_spawn_persists_filled_urls() {
+    let daemon = start_daemon();
+    // Drain the startup backlog so the spawn exchange is not racing it.
+    let _ = DaemonClient::new(&daemon.socket)
+        .call(kallip_daemon_common::wire::RequestBody::List)
+        .await;
+
+    let backend = kallip_instances::backend::UdsBackend::arc_with_relays(
+        DaemonClient::new(&daemon.socket),
+        "http://localhost:7100".into(),
+        "http://localhost:7200".into(),
+    );
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    let spawned = backend
+        .spawn(
+            "relay-e2e".into(),
+            workspace.path().display().to_string(),
+            vec![
+                // Minimal boot env (as the lifecycle tests) plus a
+                // bare enrollment code: relay intent with no URLs.
+                // Activating the relay against the dead defaults
+                // degrades to local-only; the spawn must still
+                // succeed offline.
+                "KALLIP_OPERATOR_TOKEN=test-op-token".into(),
+                "KALLIP_LLM_PROVIDER=deepseek".into(),
+                "KALLIP_LLM_MODEL=test-model".into(),
+                "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
+                "KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-x".into(),
+            ],
+        )
+        .await
+        .expect("relay-intent spawn");
+    assert_eq!(spawned.slug, "relay-e2e");
+
+    let meta_path = daemon.data_root.join("relay-e2e").join("meta.json");
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&meta_path).expect("meta.json"))
+            .expect("parse meta.json");
+    let env = meta["env"].as_array().expect("env array");
+    assert!(env.contains(&serde_json::json!(
+        "KALLIP_TAGMA_RELAY_AGORA_URL=http://localhost:7100"
+    )));
+    assert!(env.contains(&serde_json::json!(
+        "KALLIP_TAGMA_RELAY_LESCHE_URL=http://localhost:7200"
+    )));
+    for key in [
+        "KALLIP_TAGMA_RELAY_AGORA_URL",
+        "KALLIP_TAGMA_RELAY_LESCHE_URL",
+    ] {
+        assert_eq!(
+            env.iter()
+                .filter(|e| e.as_str().is_some_and(|s| s.starts_with(key)))
+                .count(),
+            1,
+            "exactly one {key} entry"
+        );
+    }
+
+    let _ = backend.stop("relay-e2e".into()).await;
+}
+
+// State B at the wiring level: no relay signal in the spawn env means
+// zero injection even with non-empty server defaults wired in.
+#[tokio::test]
+async fn local_spawn_meta_stays_free_of_relay_keys() {
+    let daemon = start_daemon();
+    let _ = DaemonClient::new(&daemon.socket)
+        .call(kallip_daemon_common::wire::RequestBody::List)
+        .await;
+
+    let backend = kallip_instances::backend::UdsBackend::arc_with_relays(
+        DaemonClient::new(&daemon.socket),
+        "http://localhost:7100".into(),
+        "http://localhost:7200".into(),
+    );
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+    let spawned = backend
+        .spawn(
+            "local-e2e".into(),
+            workspace.path().display().to_string(),
+            vec![
+                "KALLIP_OPERATOR_TOKEN=test-op-token".into(),
+                "KALLIP_LLM_PROVIDER=deepseek".into(),
+                "KALLIP_LLM_MODEL=test-model".into(),
+                "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
+            ],
+        )
+        .await
+        .expect("local spawn");
+    assert_eq!(spawned.slug, "local-e2e");
+
+    let meta_path = daemon.data_root.join("local-e2e").join("meta.json");
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&meta_path).expect("meta.json"))
+            .expect("parse meta.json");
+    let env = meta["env"].as_array().expect("env array");
+    assert!(
+        env.iter().all(|e| !e
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("KALLIP_TAGMA_RELAY_")),
+        "no relay keys injected: {env:?}"
+    );
+
+    let _ = backend.stop("local-e2e".into()).await;
 }
 
 /// A scriptable stand-in for the agora verifier: each call consumes the next
@@ -562,6 +679,8 @@ fn refuses_to_start_unauthenticated_on_non_loopback() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
+        relay_agora_url: String::new(),
+        relay_lesche_url: String::new(),
         agora_internal_url: None,
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
@@ -578,6 +697,8 @@ fn open_mode_allowed_on_loopback() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
+        relay_agora_url: String::new(),
+        relay_lesche_url: String::new(),
         agora_internal_url: None,
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
@@ -597,6 +718,8 @@ fn half_configured_agora_url_refuses_to_start() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
+        relay_agora_url: String::new(),
+        relay_lesche_url: String::new(),
         agora_internal_url: Some("http://127.0.0.1:7100".into()),
         agora_internal_token: None,
         allowed_hosts_raw: String::new(),
@@ -618,6 +741,8 @@ fn half_configured_agora_token_refuses_to_start() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
+        relay_agora_url: String::new(),
+        relay_lesche_url: String::new(),
         agora_internal_url: None,
         agora_internal_token: Some("internal-secret".into()),
         allowed_hosts_raw: String::new(),

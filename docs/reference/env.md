@@ -283,6 +283,18 @@ every spawned `bash`:
 The backend also hardcodes `TERM=dumb`, `NO_COLOR=1`, `LS_COLORS=""`,
 `CLICOLOR="0"` into every spawned `bash` to suppress color output.
 
+## Instances service
+
+The web instances service (daemon backend) fills these server-side defaults
+into a spawned tagma's env when the spawn signals relay intent (any
+`KALLIP_TAGMA_RELAY_*` entry) but omits the URL; explicit values in the spawn
+env always win, and a spawn with no relay signal at all gets nothing.
+
+| Variable                           | Default                  | Purpose                                                        |
+| ---------------------------------- | ------------------------ | -------------------------------------------------------------- |
+| `KALLIP_INSTANCES_RELAY_AGORA_URL` | `http://localhost:7100`  | Agora URL filled into relay-intent spawns that omit it.        |
+| `KALLIP_INSTANCES_RELAY_LESCHE_URL`| `http://localhost:7200`  | Lesche counterpart (tunnel + envelopes).                       |
+
 ## Dev stack shape
 
 Two variables drive the dev compose (`compose/dev/agora.nix`) and the web dev

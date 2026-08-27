@@ -47,12 +47,30 @@ pub trait InstanceBackend: Send + Sync + 'static {
 
 /// The local backend: one UDS exchange per call against the host daemon.
 pub struct UdsBackend {
+    /// Server-side relay-URL defaults injected on spawn (see
+    /// `fill_relay_defaults`); the local-backend scope keeps them plain
+    /// strings.
+    relay_agora_url: String,
+    relay_lesche_url: String,
     client: DaemonClient,
 }
 
 impl UdsBackend {
     pub fn arc(client: DaemonClient) -> Arc<dyn InstanceBackend> {
-        Arc::new(Self { client })
+        Self::arc_with_relays(client, String::new(), String::new())
+    }
+
+    /// `arc` with the server-side relay-URL defaults wired in from Config.
+    pub fn arc_with_relays(
+        client: DaemonClient,
+        relay_agora_url: String,
+        relay_lesche_url: String,
+    ) -> Arc<dyn InstanceBackend> {
+        Arc::new(Self {
+            relay_agora_url,
+            relay_lesche_url,
+            client,
+        })
     }
 }
 
@@ -64,6 +82,13 @@ impl InstanceBackend for UdsBackend {
         workspace: String,
         env: Vec<String>,
     ) -> Result<Spawned, BackendError> {
+        // Relay-intent default injection (local backend only): a spawn
+        // env carrying any KALLIP_TAGMA_RELAY_* entry gets the missing
+        // URLs filled from the server-side defaults; explicit values
+        // pass through untouched, and no RELAY_* at all means local-
+        // only -- nothing is injected (the tagma boot fails fast on a
+        // URL without enrollment).
+        let env = fill_relay_defaults(env, &self.relay_agora_url, &self.relay_lesche_url);
         let wire = self
             .client
             .call(RequestBody::Spawn {
@@ -103,3 +128,174 @@ impl InstanceBackend for UdsBackend {
 
 // Re-exported so handler code names one error type regardless of backend.
 pub use crate::wire::BackendError as Error;
+
+/// Fill the relay-URL entries with the server-side defaults.
+///
+/// Fires only when the env signals relay intent (any
+/// `KALLIP_TAGMA_RELAY_*` entry): each URL key survives exactly
+/// once, with its explicit value or -- when empty or absent -- the
+/// default. No relay signal at all returns the env unchanged:
+/// local-only spawns must not carry a URL the tagma boot would
+/// fail on.
+fn fill_relay_defaults(env: Vec<String>, agora: &str, lesche: &str) -> Vec<String> {
+    let mut env = env;
+    if !env.iter().any(|e| e.starts_with("KALLIP_TAGMA_RELAY_")) {
+        return env;
+    }
+    fill_one(&mut env, "KALLIP_TAGMA_RELAY_AGORA_URL=", agora);
+    fill_one(&mut env, "KALLIP_TAGMA_RELAY_LESCHE_URL=", lesche);
+    env
+}
+
+/// One entry per key survives: the first explicit value wins
+/// outright, an empty or absent key is filled with the default,
+/// and every duplicate is dropped. Ordering must stay irrelevant
+/// downstream -- the spawn helper passes duplicate pairs straight
+/// to execve, and the daemon's env validation rejects empty
+/// values -- so collapsing here is the one place that keeps both
+/// properties airtight.
+fn fill_one(env: &mut Vec<String>, prefix: &str, default: &str) {
+    let explicit = env
+        .iter()
+        .any(|e| e.strip_prefix(prefix).is_some_and(|v| !v.is_empty()));
+    let mut kept = false;
+    env.retain(|e| {
+        let Some(v) = e.strip_prefix(prefix) else {
+            return true;
+        };
+        if kept || (explicit && v.is_empty()) {
+            return false;
+        }
+        kept = true;
+        true
+    });
+    if explicit {
+        return;
+    }
+    match env.iter_mut().find(|e| e.starts_with(prefix)) {
+        Some(slot) => *slot = format!("{prefix}{default}"),
+        None => env.push(format!("{prefix}{default}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fill_relay_defaults;
+
+    const AGORA: &str = "http://localhost:7100";
+    const LESCHE: &str = "http://localhost:7200";
+
+    fn has(env: &[String], prefix: &str) -> bool {
+        env.iter().any(|e| e.starts_with(prefix))
+    }
+
+    /// State A: relay intent without URLs -- both defaults are filled in.
+    #[test]
+    fn relay_intent_code_only_fills_both_urls() {
+        let out = fill_relay_defaults(
+            vec!["KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-x".into()],
+            AGORA,
+            LESCHE,
+        );
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_AGORA_URL=http://localhost:7100"
+        ));
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_LESCHE_URL=http://localhost:7200"
+        ));
+    }
+
+    /// State B: no relay signal -- nothing is injected.
+    #[test]
+    fn local_only_env_stays_untouched() {
+        let out = fill_relay_defaults(vec!["KALLIP_LLM_PROVIDER=deepseek".into()], AGORA, LESCHE);
+        assert!(!has(&out, "KALLIP_TAGMA_RELAY_"));
+        assert_eq!(out.len(), 1);
+    }
+
+    /// Explicit values win; empty entries count as missing and are
+    /// replaced in place (no duplicate keys).
+    #[test]
+    fn explicit_values_win_and_empty_is_filled_in_place() {
+        let out = fill_relay_defaults(
+            vec![
+                "KALLIP_TAGMA_RELAY_AGORA_URL=https://agora.example.com".into(),
+                "KALLIP_TAGMA_RELAY_LESCHE_URL=".into(),
+            ],
+            AGORA,
+            LESCHE,
+        );
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_AGORA_URL=https://agora.example.com"
+        ));
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_LESCHE_URL=http://localhost:7200"
+        ));
+        assert_eq!(out.len(), 2);
+    }
+
+    /// Duplicate entries collapse to the single explicit value
+    /// regardless of order: an empty duplicate must neither gain
+    /// the default (an order-sensitive consumer could let it
+    /// win) nor survive (the daemon's env validation rejects
+    /// empty values).
+    #[test]
+    fn duplicate_keys_collapse_to_the_explicit_value() {
+        let out = fill_relay_defaults(
+            vec![
+                "KALLIP_TAGMA_RELAY_AGORA_URL=".into(),
+                "KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-x".into(),
+                "KALLIP_TAGMA_RELAY_AGORA_URL=https://agora.example.com".into(),
+            ],
+            AGORA,
+            LESCHE,
+        );
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_AGORA_URL=https://agora.example.com"
+        ));
+        assert_eq!(
+            out.iter()
+                .filter(|e| e.starts_with("KALLIP_TAGMA_RELAY_AGORA_URL"))
+                .count(),
+            1
+        );
+        // Reversed order: an empty duplicate ahead of the explicit one.
+        let out = fill_relay_defaults(
+            vec![
+                "KALLIP_TAGMA_RELAY_LESCHE_URL=".into(),
+                "KALLIP_TAGMA_RELAY_LESCHE_URL=https://lesche.example.com".into(),
+            ],
+            AGORA,
+            LESCHE,
+        );
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_LESCHE_URL=https://lesche.example.com"
+        ));
+        assert_eq!(
+            out.iter()
+                .filter(|e| e.starts_with("KALLIP_TAGMA_RELAY_LESCHE_URL"))
+                .count(),
+            1
+        );
+        // Two empties fill once, never duplicate.
+        let out = fill_relay_defaults(
+            vec![
+                "KALLIP_TAGMA_RELAY_AGORA_URL=".into(),
+                "KALLIP_TAGMA_RELAY_AGORA_URL=".into(),
+            ],
+            AGORA,
+            LESCHE,
+        );
+        assert_eq!(out.len(), 2, "agora collapsed plus the lesche default");
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_AGORA_URL=http://localhost:7100"
+        ));
+    }
+}

@@ -24,7 +24,11 @@ async fn main() -> Result<()> {
     // (a future cloud orchestration source) fails fast at boot rather
     // than serving a half-configured surface.
     let backend = match config.backend.as_str() {
-        "daemon" => UdsBackend::arc(DaemonClient::new(socket.clone())),
+        "daemon" => UdsBackend::arc_with_relays(
+            DaemonClient::new(socket.clone()),
+            config.relay_agora_url.clone(),
+            config.relay_lesche_url.clone(),
+        ),
         other => anyhow::bail!(
             "KALLIP_INSTANCES_BACKEND={other} is not implemented; only \"daemon\" exists"
         ),
