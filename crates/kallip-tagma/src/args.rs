@@ -16,13 +16,14 @@ pub struct Args {
     /// Address to listen on.
     #[arg(long, env = "KALLIP_TAGMA_ADDR", default_value = "127.0.0.1:3000")]
     pub listen_addr: String,
-    /// URL that agents use to reach this tagma (injected into the agent shell env).
-    #[arg(
-        long,
-        env = "KALLIP_ADVERTISE_URL",
-        default_value = "http://127.0.0.1:3000"
-    )]
-    pub advertise_url: String,
+    /// URL that agents use to reach this tagma (injected into the agent
+    /// shell env). When unset it is derived from the actually-bound listen
+    /// address after the socket is up: scheme http, host from the listen
+    /// address (an unspecified host becomes 127.0.0.1) and the real bound
+    /// port -- so a daemon-spawned instance on an ephemeral port never
+    /// advertises a stale default.
+    #[arg(long, env = "KALLIP_ADVERTISE_URL")]
+    pub advertise_url: Option<String>,
     /// Max queued messages per agent (message channel capacity). Must be >= 1.
     #[arg(long, env = "KALLIP_PROMPT_QUEUE_SIZE", default_value = "5")]
     pub prompt_queue_size: usize,

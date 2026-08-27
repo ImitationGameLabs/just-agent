@@ -44,12 +44,6 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     init_logging(&filter);
 
-    // Expose tagma URL so agent shells can discover it via $KALLIP_TAGMA_URL.
-    // Safe: called once at startup, single-threaded, before any concurrent operations.
-    unsafe {
-        std::env::set_var("KALLIP_TAGMA_URL", &args.advertise_url);
-    }
-
     // Mint the operator token: honor KALLIP_OPERATOR_TOKEN if set (back-compat
     // for automation), otherwise generate a fresh 256-bit `sk-operator-…` token.
     // Only the SHA-256 hash is retained by AppState; the plaintext is printed below
@@ -306,7 +300,28 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&args.listen_addr)
         .await
         .with_context(|| format!("binding listen addr {}", args.listen_addr))?;
-    info!(addr = %args.listen_addr, advertise = %args.advertise_url, "tagma listening");
+    // Resolve the advertised URL: explicit --advertise-url wins; otherwise
+    // derive it from the bound socket so an ephemeral port advertises its
+    // real value instead of the historical 3000 default. Safe to publish
+    // here: agents spawn only via API handlers once the server is serving.
+    let advertise_url = match args.advertise_url.clone() {
+        Some(url) => url,
+        None => derive_advertise_url(
+            &args.listen_addr,
+            listener
+                .local_addr()
+                .context("reading the bound local address")?
+                .port(),
+        )?,
+    };
+    unsafe {
+        std::env::set_var("KALLIP_TAGMA_URL", &advertise_url);
+    }
+    info!(
+        addr = %args.listen_addr,
+        advertise = %advertise_url,
+        "tagma listening"
+    );
     // Local daemon management (opt-in): the daemon points KALLIP_DATA_DIR
     // at the instance dir and marks it with its meta.json; publish
     // runtime.json there right after the bind. An unmarked DATA_DIR keeps
@@ -420,6 +435,27 @@ struct InstanceRuntime {
 /// the daemon's reader, kept in lockstep by hand — tagma does not
 /// depend on the daemon crates. Owner-only via tmp+rename; the port is
 /// read back from the listener so a `:0` bind is discoverable.
+
+/// Build the advertise URL for an unset `--advertise-url` from the bound
+/// socket: scheme http, the listen address's host (an unspecified host
+/// such as 0.0.0.0 or :: becomes 127.0.0.1 -- loopback is the only host a
+/// same-machine agent shell can assume), IPv6 hosts bracketed, and the
+/// actually-bound port. Same truth source as `write_instance_state`: the
+fn derive_advertise_url(listen_addr: &str, port: u16) -> Result<String> {
+    use std::net::IpAddr;
+    let host = match listen_addr.rsplit_once(':') {
+        Some((host, _)) if !host.is_empty() => host.to_string(),
+        _ => "127.0.0.1".to_string(),
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let ip: Option<IpAddr> = host.parse().ok();
+    let bracketed_host = match ip {
+        Some(IpAddr::V6(_)) => format!("[{host}]"),
+        Some(IpAddr::V4(v4)) if v4.is_unspecified() => "127.0.0.1".to_string(),
+        _ => host.to_string(),
+    };
+    Ok(format!("http://{bracketed_host}:{port}"))
+}
 fn write_instance_state(dir: &std::path::Path, listener: &tokio::net::TcpListener) -> Result<()> {
     let port = listener
         .local_addr()
@@ -879,6 +915,23 @@ mod tests {
         assert!(captured.contains("hook probe"), "payload lost: {captured}");
     }
 
+    /// Derive covers the documented shapes: loopback passes through,
+    /// an unspecified v4 host becomes 127.0.0.1, IPv6 gets bracketed.
+    #[test]
+    fn derive_advertise_url_shapes() {
+        assert_eq!(
+            derive_advertise_url("127.0.0.1:7301", 7301).unwrap(),
+            "http://127.0.0.1:7301"
+        );
+        assert_eq!(
+            derive_advertise_url("0.0.0.0:9999", 9999).unwrap(),
+            "http://127.0.0.1:9999"
+        );
+        assert_eq!(
+            derive_advertise_url("[::1]:5555", 5555).unwrap(),
+            "http://[::1]:5555"
+        );
+    }
     /// No stored credentials and a code: first-run enrollment.
     #[test]
     fn fresh_code_enrolls_when_no_credentials_stored() {
