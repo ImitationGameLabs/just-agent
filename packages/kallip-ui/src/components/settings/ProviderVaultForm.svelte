@@ -12,6 +12,7 @@
   import { AgoraApiError } from "@kallipai/kallip-agora-client";
   import { MODEL_PROVIDER_FAMILIES } from "../../lib/providerFamilies.ts";
   import InfoBadge from "../InfoBadge.svelte";
+  import SecretInput from "../SecretInput.svelte";
   import {
     settings_provider_new_title,
     settings_provider_name_label,
@@ -184,13 +185,7 @@
               {settings_provider_key_label()}
               <span class="text-error-500 dark:text-error-400">*</span>
             </span>
-            <input
-              class="input text-sm font-mono"
-              type="password"
-              autocomplete="off"
-              bind:value={key}
-              disabled={busy}
-            />
+            <SecretInput bind:value={key} disabled={busy} />
           </label>
           <label class="flex items-center gap-2 text-sm select-none">
             <input

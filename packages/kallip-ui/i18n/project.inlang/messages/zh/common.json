@@ -35,5 +35,7 @@
   "agent_state_retrying": "重试中",
   "agent_state_parked": "已停滞",
   "common_create": "创建",
-  "common_edit": "编辑"
+  "common_edit": "编辑",
+  "common_show_secret": "显示密钥",
+  "common_hide_secret": "隐藏密钥"
 }
