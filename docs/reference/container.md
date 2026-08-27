@@ -84,7 +84,7 @@ for `*.<devDomain>` with an mkcert certificate. This mirrors the prod
 edge-proxy model and makes the dev stack reachable cross-machine on the LAN —
 browsers only allow WebAuthn in a secure context, so the previous plain-HTTP
 `*.localhost` topology was host-only. The dev domain is `kallipai.lan`: the
-code default for `KALLIP_DEV_DOMAIN` is the prod domain (`kallipai.com`), which
+code default for `KALLIP_DOMAIN` is the prod domain (`kallipai.com`), which
 `.env.example` overrides to `kallipai.lan` for local dev (copied into `.env`,
 loaded into the shell by direnv's `dotenv`) so dev never clashes with
 production. Caddy runs on the host network and proxies the three subdomains to
@@ -289,7 +289,7 @@ Relay connector (dev / the prod-tagma composition) — activate + enroll via `.e
 | `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` | first boot only      | A `sk-enroll-...` minted via the agora dashboard. Remove after the first successful enroll.                                                                  |
 
 Agora + lesche + their two postgres services (the prod-agora composition) —
-`.env` only (dev derives these from `KALLIP_DEV_DOMAIN`, set to `kallipai.lan`
+`.env` only (dev derives these from `KALLIP_DOMAIN`, set to `kallipai.lan`
 in `.env` via `.env.example`; the code default is the prod `kallipai.com`):
 
 | Variable                          | Required                      | Notes                                                                                                                                  |

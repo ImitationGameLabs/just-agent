@@ -30,10 +30,10 @@
   initShell(goto);
   // The dev stack is fronted by Caddy, so the browser reaches the agora/lesche
   // at their *.<devDomain> subdomains. devDomain is injected by vite.config.ts
-  // from the same KALLIP_DEV_DOMAIN env var the backend stack uses; explicit
+  // from the same KALLIP_DOMAIN env var the backend stack uses; explicit
   // VITE_AGORA_URL / VITE_LESCHE_URL still win (e.g. for a prod build or a
   // non-default topology).
-  const devDomain = import.meta.env.KALLIP_DEV_DOMAIN ?? "kallipai.com";
+  const devDomain = import.meta.env.KALLIP_DOMAIN ?? "kallipai.com";
   initAgora(import.meta.env.VITE_AGORA_URL ?? `https://agora.${devDomain}`);
   initLesche(import.meta.env.VITE_LESCHE_URL ?? `https://lesche.${devDomain}`);
   initInstances(

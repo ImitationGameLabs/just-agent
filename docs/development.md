@@ -28,22 +28,22 @@ the stack is reachable cross-machine on the LAN (browsers only allow WebAuthn
 in a secure context, so plain HTTP + a raw LAN IP cannot work). This is a
 one-time setup.
 
-The dev domain is `kallipai.lan`. The code default for `KALLIP_DEV_DOMAIN` is
+The dev domain is `kallipai.lan`. The code default for `KALLIP_DOMAIN` is
 the production domain (`kallipai.com`); `.env.example` sets it to `kallipai.lan`
 for local dev (so dev DNS/certs never clash with production), and you get that
 when you copy `.env.example` to `.env`. direnv's `dotenv` loads `.env` into the
 shell, so arion eval, `mkcert`, and vite all see it. Override further
-by editing `.env` or exporting `KALLIP_DEV_DOMAIN` in your shell. The whole
+by editing `.env` or exporting `KALLIP_DOMAIN` in your shell. The whole
 stack — the agora/lesche env, the Caddyfile, vite, and the web app's API URLs —
 derives from this one variable.
 
 1. Generate the leaf cert with `mkcert` (provided by the nix devShell). Run this
-   from the repo root — `$KALLIP_DEV_DOMAIN` comes from `.env` (`kallipai.lan`):
+   from the repo root — `$KALLIP_DOMAIN` comes from `.env` (`kallipai.lan`):
 
    ```sh
    mkdir -p compose/dev/.certs && \
      mkcert -cert-file compose/dev/.certs/cert.pem -key-file compose/dev/.certs/key.pem \
-       "*.$KALLIP_DEV_DOMAIN" "$KALLIP_DEV_DOMAIN"
+       "*.$KALLIP_DOMAIN" "$KALLIP_DOMAIN"
    ```
 
    This writes `cert.pem` / `key.pem` into `./compose/dev/.certs/` for

@@ -12,7 +12,7 @@ const here = import.meta.dirname;
 // the agora/lesche env and the Caddyfile, so the whole stack agrees on one
 // name; override it in `.env`. Default must match compose/dev/agora.nix
 // and +layout.svelte.
-const devDomain = process.env.KALLIP_DEV_DOMAIN ?? "kallipai.com";
+const devDomain = process.env.KALLIP_DOMAIN ?? "kallipai.com";
 const webHost = `web.${devDomain}`;
 
 export default defineConfig({
@@ -59,11 +59,11 @@ export default defineConfig({
       },
     },
   ],
-  // Re-export the resolved domain to the client as import.meta.env.KALLIP_DEV_DOMAIN
+  // Re-export the resolved domain to the client as import.meta.env.KALLIP_DOMAIN
   // so +layout.svelte can derive the agora/lesche base URLs from the SAME value
   // (VITE_AGORA_URL / VITE_LESCHE_URL still win if set explicitly).
   define: {
-    "import.meta.env.KALLIP_DEV_DOMAIN": JSON.stringify(devDomain),
+    "import.meta.env.KALLIP_DOMAIN": JSON.stringify(devDomain),
   },
   server: {
     // The dev stack is fronted by Caddy, which terminates TLS for *.devDomain

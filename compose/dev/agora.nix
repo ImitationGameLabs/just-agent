@@ -51,7 +51,7 @@ let
   # from it.
   devDomain =
     let
-      v = builtins.getEnv "KALLIP_DEV_DOMAIN";
+      v = builtins.getEnv "KALLIP_DOMAIN";
     in
     if v == "" then "kallipai.com" else v;
 
@@ -174,7 +174,7 @@ in
     # straight on the host (requires net.ipv4.ip_unprivileged_port_start<=80
     # under rootless), so no `ports:` mapping (ignored under host net anyway)
     # and no extra_hosts. The Caddyfile (mounted below) uses
-    # {$KALLIP_DEV_DOMAIN} substitution; see it for the routing + the
+    # {$KALLIP_DOMAIN} substitution; see it for the routing + the
     # streaming flush on lesche.
     services.caddy = {
       service.image = "caddy:2.8";
@@ -187,10 +187,10 @@ in
         "${./Caddyfile.dev}:/etc/caddy/Caddyfile:ro"
         "${certDir}:/certs:ro"
       ];
-      # The domain for Caddyfile {$KALLIP_DEV_DOMAIN} substitution. Sourced
+      # The domain for Caddyfile {$KALLIP_DOMAIN} substitution. Sourced
       # from the same nix `devDomain` as the agora/lesche env below so the
       # whole stack agrees on one name.
-      service.environment.KALLIP_DEV_DOMAIN = devDomain;
+      service.environment.KALLIP_DOMAIN = devDomain;
       service.command = [
         "caddy"
         "run"

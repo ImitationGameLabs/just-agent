@@ -4,7 +4,7 @@
 # `tls` directive disables Caddy's internal CA / ACME: the dev domain is a
 # non-public TLD, so automatic issuance cannot succeed and is not wanted.
 #
-# The domain comes from {$KALLIP_DEV_DOMAIN} (Caddy's native env substitution),
+# The domain comes from {$KALLIP_DOMAIN} (Caddy's native env substitution),
 # set on the caddy service by arion-compose.nix from the same var the agora/
 # lesche env and the web app use (code default kallipai.com; .env sets
 # kallipai.lan for dev). See docs/development.md for the one-time host setup
@@ -22,10 +22,10 @@
 	}
 }
 
-*.{$KALLIP_DEV_DOMAIN} {
+*.{$KALLIP_DOMAIN} {
 	tls /certs/cert.pem /certs/key.pem
 
-	@web host web.{$KALLIP_DEV_DOMAIN}
+	@web host web.{$KALLIP_DOMAIN}
 	handle @web {
 		# the host vite dev server (packages/kallip-web `deno task dev`,
 		# allowedHosts/webHost in its vite.config) serves the SPA with HMR;
@@ -33,13 +33,13 @@
 		reverse_proxy 127.0.0.1:5173
 	}
 
-	@agora host agora.{$KALLIP_DEV_DOMAIN}
+	@agora host agora.{$KALLIP_DOMAIN}
 	handle @agora {
 		# agora is published on the host at :7100
 		reverse_proxy 127.0.0.1:7100
 	}
 
-	@lesche host lesche.{$KALLIP_DEV_DOMAIN}
+	@lesche host lesche.{$KALLIP_DOMAIN}
 	handle @lesche {
 		# lesche is published on the host at :7200
 		reverse_proxy 127.0.0.1:7200 {
@@ -51,13 +51,13 @@
 	}
 
 
-	@agora2 host agora2.{$KALLIP_DEV_DOMAIN}
+	@agora2 host agora2.{$KALLIP_DOMAIN}
 	handle @agora2 {
 		# second dev agora instance (dual-agora tagma acceptance)
 		reverse_proxy 127.0.0.1:7101
 	}
 
-	@lesche2 host lesche2.{$KALLIP_DEV_DOMAIN}
+	@lesche2 host lesche2.{$KALLIP_DOMAIN}
 	handle @lesche2 {
 		# second dev lesche instance, paired with agora2
 		reverse_proxy 127.0.0.1:7201 {
@@ -65,7 +65,7 @@
 		}
 	}
 
-	@instances host instances.{$KALLIP_DEV_DOMAIN}
+	@instances host instances.{$KALLIP_DOMAIN}
 	handle @instances {
 		# local instance management service (published 127.0.0.1:7300)
 		reverse_proxy 127.0.0.1:7300
