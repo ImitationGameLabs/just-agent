@@ -102,7 +102,7 @@ async fn rename_onto_sibling_name_conflicts() {
     let state = make_state().await;
     let user = seed_user(&state, "alice").await;
 
-    let Json(a) = create_provider(
+    let Json(_) = create_provider(
         State(state.clone()),
         AuthPrincipal(Principal::User(user.clone())),
         req("work", "anthropic", "sk-1", "plaintext"),
@@ -185,7 +185,7 @@ async fn duplicate_name_conflicts_within_account() {
     let user = seed_user(&state, "alice").await;
     let principal = AuthPrincipal(Principal::User(user));
 
-    create_provider(
+    let _ = create_provider(
         State(state.clone()),
         principal.clone(),
         req("work", "anthropic", "sk-1", "plaintext"),
@@ -205,7 +205,7 @@ async fn duplicate_name_conflicts_within_account() {
 
     // Another account may use the same name freely.
     let other = seed_user(&state, "bob").await;
-    create_provider(
+    let _ = create_provider(
         State(state.clone()),
         AuthPrincipal(Principal::User(other)),
         req("work", "anthropic", "sk-3", "plaintext"),
@@ -265,7 +265,7 @@ async fn cap_rejects_the_eleventh_entry() {
     let principal = AuthPrincipal(Principal::User(user));
 
     for i in 0..10 {
-        create_provider(
+        let _ = create_provider(
             State(state.clone()),
             principal.clone(),
             req(&format!("p{i}"), "anthropic", "sk", "plaintext"),

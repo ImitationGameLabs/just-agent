@@ -829,7 +829,7 @@ fn load_store(
 
     if manifest_path.exists() || backup_path(&manifest_path).exists() {
         if legacy_path.exists()
-            && let Err(e) = fs::rename(&legacy_path, &legacy_archive_path(dir))
+            && let Err(e) = fs::rename(&legacy_path, legacy_archive_path(dir))
         {
             tracing::warn!("finishing legacy rename failed: {e:#}");
         }

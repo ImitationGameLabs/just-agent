@@ -931,17 +931,15 @@ async fn transient_retry_exhaustion_parks_without_arming() {
     let mut exhausted = false;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while std::time::Instant::now() < deadline && !(armed && exhausted) {
-        match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
-            Ok(Some(AgentEvent::FailoverChainExhausted {
-                transient_retry, ..
-            })) => {
-                if transient_retry.is_some() {
-                    armed = true;
-                } else {
-                    exhausted = true;
-                }
+        if let Ok(Some(AgentEvent::FailoverChainExhausted {
+            transient_retry, ..
+        })) = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+        {
+            if transient_retry.is_some() {
+                armed = true;
+            } else {
+                exhausted = true;
             }
-            _ => {}
         }
     }
     handle.abort();
@@ -967,7 +965,7 @@ async fn transient_retry_reruns_original_prompt_without_injection() {
     // Server: fail once, then stream a plain break(idle) so the recovered
     // round ends the task cleanly.
     let server = MockServer::start().await;
-    let fail = Mock::given(method("POST"))
+    let _fail = Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(ResponseTemplate::new(500))
         .up_to_n_times(1)
@@ -995,9 +993,10 @@ async fn transient_retry_reruns_original_prompt_without_injection() {
     let mut recovered = false;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while std::time::Instant::now() < deadline && !recovered {
-        match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
-            Ok(Some(AgentEvent::Idle)) => recovered = true,
-            _ => {}
+        if let Ok(Some(AgentEvent::Idle)) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+        {
+            recovered = true;
         }
     }
     handle.abort();
@@ -1038,7 +1037,7 @@ async fn budget_probe_rearms_waiting_with_zero_llm_calls() {
 
     let mut map = HashMap::new();
     map.insert("ep1".into(), wiremock_backend(&server.uri()));
-    let mut ctx = ctx_from_source(
+    let ctx = ctx_from_source(
         vec![profile("p1", "ep1", 500_000)],
         wiremock_source(map),
         fast_policy(),
@@ -1064,9 +1063,10 @@ async fn budget_probe_rearms_waiting_with_zero_llm_calls() {
     let mut blocked = 0;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     while std::time::Instant::now() < deadline && blocked < 1 {
-        match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
-            Ok(Some(AgentEvent::TokenBudgetExceeded { .. })) => blocked += 1,
-            _ => {}
+        if let Ok(Some(AgentEvent::TokenBudgetExceeded { .. })) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+        {
+            blocked += 1;
         }
     }
     handle.abort();
@@ -1100,7 +1100,7 @@ async fn budget_probe_fuse_fire_skips_injection() {
 
     let mut map = HashMap::new();
     map.insert("ep1".into(), wiremock_backend(&server.uri()));
-    let mut ctx = ctx_from_source(
+    let ctx = ctx_from_source(
         vec![profile("p1", "ep1", 500_000)],
         wiremock_source(map),
         fast_policy(),
@@ -1120,9 +1120,10 @@ async fn budget_probe_fuse_fire_skips_injection() {
     let mut blocked = 0;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     while std::time::Instant::now() < deadline && blocked < 1 {
-        match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
-            Ok(Some(AgentEvent::TokenBudgetExceeded { .. })) => blocked += 1,
-            _ => {}
+        if let Ok(Some(AgentEvent::TokenBudgetExceeded { .. })) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+        {
+            blocked += 1;
         }
     }
     assert_eq!(blocked, 1, "the initial round must hit the budget gate");
@@ -1135,9 +1136,10 @@ async fn budget_probe_fuse_fire_skips_injection() {
     let mut second_block = false;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     while std::time::Instant::now() < deadline && !second_block {
-        match tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await {
-            Ok(Some(AgentEvent::TokenBudgetExceeded { .. })) => second_block = true,
-            _ => {}
+        if let Ok(Some(AgentEvent::TokenBudgetExceeded { .. })) =
+            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+        {
+            second_block = true;
         }
     }
     handle.abort();

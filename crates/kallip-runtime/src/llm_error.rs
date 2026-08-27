@@ -271,10 +271,7 @@ mod tests {
     #[test]
     fn extract_http_body_reaches_through_boxing() {
         let body = r#"{"error":{"message":"no"}}"#;
-        assert_eq!(
-            extract_http_body(fatal_chain(body).as_ref()).as_deref(),
-            Some(body)
-        );
+        assert_eq!(extract_http_body(fatal_chain(body).as_ref()), Some(body));
     }
 
     #[test]

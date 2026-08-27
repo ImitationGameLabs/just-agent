@@ -83,8 +83,6 @@ impl CancelKind {
     }
 }
 
-/// Shared agent resources passed between modes.
-
 /// Trait for pulling undelivered inbox messages. Implemented by the tagma
 /// (where InboxStore lives) and injected into AgentContext at spawn time.
 /// `None` for test contexts (no inbox).
@@ -96,6 +94,7 @@ pub trait MessagePuller: Send + Sync + 'static {
     async fn pull_undelivered(&self) -> Option<String>;
 }
 
+/// Shared agent resources passed between modes.
 pub struct AgentContext {
     pub client: crate::profile::ChatClient,
     /// Within-tier failover state: the resolved capability tier, the profile registry (for
@@ -322,11 +321,11 @@ pub async fn agent_task(
                 // Pull undelivered inbox messages (after reset so the round
                 // uses the fresh client). Drains ALL undelivered in one atomic
                 // call to survive notify coalescing.
-                if let Some(ref puller) = ctx.message_puller {
-                    if let Some(msg) = puller.pull_undelivered().await {
-                        ctx.record_turn(vec![ChatMessage::user(&msg)]).await;
-                        should_run = true;
-                    }
+                if let Some(ref puller) = ctx.message_puller
+                    && let Some(msg) = puller.pull_undelivered().await
+                {
+                    ctx.record_turn(vec![ChatMessage::user(&msg)]).await;
+                    should_run = true;
                 }
 
                 // Approval notifications.
@@ -368,7 +367,7 @@ pub async fn agent_task(
                     // model — it would only accumulate context noise on
                     // every probe cycle. Real wait wakes inject as usual.
                     if !ctx.token_budget.is_exceeded() {
-                        ctx.record_turn(vec![ChatMessage::user(&wait_elapsed_text(armed_secs))])
+                        ctx.record_turn(vec![ChatMessage::user(wait_elapsed_text(armed_secs))])
                             .await;
                     }
                     if run_and_report(&mut ctx, &agent_tx, &mut prompt_rx).await {
@@ -934,7 +933,7 @@ mod tests {
     /// profile reset: `apply_pending_profile_reset`'s tagma tests.)
     #[tokio::test]
     async fn approval_decision_wakes_agent_and_drives_round() {
-        let mut ctx = crate::test_support::make_ctx(
+        let ctx = crate::test_support::make_ctx(
             vec![crate::test_support::profile("test", "ep1", 4096)],
             &["ep1"],
         )

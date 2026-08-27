@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+#[cfg(all(target_os = "linux", feature = "landlock"))]
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
