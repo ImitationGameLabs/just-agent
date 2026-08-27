@@ -352,66 +352,74 @@ fn ensure_credentials_root() -> Result<std::path::PathBuf> {
     Ok(credentials_dir)
 }
 
-/// Logging shape: a daemon-managed instance logs into `<data_root>/logs/`
-/// only (daily-rolling files, tracing-appender, 7 files kept -- older days
-/// fall off); the daemon owns the lifecycle, so a stdout mirror would
-/// double the feed. A manual run (unmarked data root) logs to stdout only
-/// and gets no log dir. If the file layer cannot be built, a managed
-/// instance falls back to stdout-only rather than going silent. The
-/// panic hook chains the default stderr banner exactly when stdout is
-/// the writer -- manual runs and the build-failure fallback -- and
-/// suppresses it while the file layer is live: the daemon's reconcile
-/// reports the death, and the details live in the log file.
+/// Logging shape: events land in `<data_root>/logs/` (daily-rolling
+/// files, tracing-appender, 7 files kept -- older days fall off) unless
+/// `KALLIP_TAGMA_LOG_TO_STDERR` asks for the terminal; stdout stays
+/// reserved for program output, so the terminal layer writes stderr.
+/// The variable accepts `1`/`true` case-insensitively; unset, empty, or
+/// any other value keeps the file default. A file layer that cannot be
+/// built degrades to stderr-only with a one-line eprintln notice. The
+/// panic hook chains the default stderr banner exactly when stderr is
+/// the writer -- the variable, or that fallback -- and suppresses it
+/// while the file layer is live: the details live in the log file.
 fn init_logging(filter: &tracing_subscriber::EnvFilter) {
     use tracing_subscriber::prelude::*;
 
-    let stdout_layer = || {
+    let stderr_layer = || {
         tracing_subscriber::fmt::layer()
-            .with_writer(std::io::stdout)
+            .with_writer(std::io::stderr)
             .with_filter(filter.clone())
     };
-    let instance_dir = daemon_managed_dir();
-    let file_layer = instance_dir.and_then(|dir| {
-        let appender = tracing_appender::rolling::Builder::new()
-            .rotation(tracing_appender::rolling::Rotation::DAILY)
-            .filename_prefix("instance")
-            .filename_suffix("log")
-            .max_log_files(7)
-            .build(dir.join("logs"))
+    let file_layer = if log_to_stderr_from_env() {
+        None
+    } else {
+        data_root()
             .map_err(|e| {
-                eprintln!("kallip-tagma: file log init failed, keeping stdout-only: {e}");
+                eprintln!("kallip-tagma: resolving the data root for logs failed, keeping stderr-only: {e}");
                 e
             })
-            .ok()?;
-        Some(
-            tracing_subscriber::fmt::layer()
-                .with_writer(std::sync::Mutex::new(appender))
-                .with_ansi(false)
-                .with_filter(filter.clone()),
-        )
-    });
+            .ok()
+            .and_then(|root| {
+                let appender = tracing_appender::rolling::Builder::new()
+                    .rotation(tracing_appender::rolling::Rotation::DAILY)
+                    .filename_prefix("instance")
+                    .filename_suffix("log")
+                    .max_log_files(7)
+                    .build(root.join("logs"))
+                    .map_err(|e| {
+                        eprintln!("kallip-tagma: file log init failed, keeping stderr-only: {e}");
+                        e
+                    })
+                    .ok()?;
+                Some(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(std::sync::Mutex::new(appender))
+                        .with_ansi(false)
+                        .with_filter(filter.clone()),
+                )
+            })
+    };
     // Captured before the match moves the layer: the hook chains the
-    // default hook whenever stdout is the writer.
+    // default hook whenever stderr is the writer.
     let file_layer_live = file_layer.is_some();
     match file_layer {
-        // Managed: the file layer alone carries the events.
+        // The file layer alone carries the events.
         Some(file) => {
             tracing::subscriber::set_global_default(tracing_subscriber::registry().with(file)).ok()
         }
-        // Manual run, or a managed run whose file layer failed to build.
+        // The variable asked for stderr, or the file layer failed to build.
         None => tracing::subscriber::set_global_default(
-            tracing_subscriber::registry().with(stdout_layer()),
+            tracing_subscriber::registry().with(stderr_layer()),
         )
         .ok(),
     };
 
     // Forward panics into the subscriber: the default hook's stderr write
     // bypasses tracing entirely, so a crash would miss the subscriber's
-    // writer. Any stdout-writer state -- a manual run, or the fallback --
+    // writer. Any stderr-writer state -- the variable, or the fallback --
     // still chains the default hook: the foreground operator expects the
     // stderr banner. With the file layer live it is suppressed instead:
-    // the daemon's reconcile reports the death, and the details live in
-    // the log file. The forwarding half lives in
+    // the details live in the log file. The forwarding half lives in
     // `forward_panic_to_tracing` so tests can exercise it against an in-
     // memory writer without touching the process-global default.
     let hook = std::panic::take_hook();
@@ -421,6 +429,20 @@ fn init_logging(filter: &tracing_subscriber::EnvFilter) {
             hook(info);
         }
     }));
+}
+
+/// `KALLIP_TAGMA_LOG_TO_STDERR`: `1`/`true` (case-insensitive) turns on
+/// the terminal (stderr) writer; unset, empty, or any other value keeps
+/// the file default.
+fn parse_log_to_stderr(value: Option<&str>) -> bool {
+    match value {
+        Some(v) => matches!(v.to_ascii_lowercase().as_str(), "1" | "true"),
+        None => false,
+    }
+}
+
+fn log_to_stderr_from_env() -> bool {
+    parse_log_to_stderr(std::env::var("KALLIP_TAGMA_LOG_TO_STDERR").ok().as_deref())
 }
 
 fn forward_panic_to_tracing(info: &std::panic::PanicHookInfo) {
@@ -940,6 +962,21 @@ mod tests {
             "missing panic event: {captured}"
         );
         assert!(captured.contains("hook probe"), "payload lost: {captured}");
+    }
+
+    /// The env switch accepts 1/true case-insensitively and nothing else:
+    /// unset, empty, 0, yes, or padded values all keep the file default.
+    #[test]
+    fn log_to_stderr_accepts_only_1_and_true() {
+        assert!(parse_log_to_stderr(Some("1")));
+        assert!(parse_log_to_stderr(Some("true")));
+        assert!(parse_log_to_stderr(Some("TRUE")));
+        assert!(parse_log_to_stderr(Some("True")));
+        assert!(!parse_log_to_stderr(None));
+        assert!(!parse_log_to_stderr(Some("")));
+        assert!(!parse_log_to_stderr(Some("0")));
+        assert!(!parse_log_to_stderr(Some("yes")));
+        assert!(!parse_log_to_stderr(Some("1 ")));
     }
 
     /// Derive covers the documented shapes: loopback passes through,
