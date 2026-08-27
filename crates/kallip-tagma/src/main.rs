@@ -362,6 +362,10 @@ fn init_logging(filter: &tracing_subscriber::EnvFilter) {
             .filename_suffix("log")
             .max_log_files(7)
             .build(&dir.join("logs"))
+            .map_err(|e| {
+                eprintln!("kallip-tagma: file log init failed, keeping stdout-only: {e}");
+                e
+            })
             .ok()?;
         Some(
             tracing_subscriber::fmt::layer()
@@ -382,17 +386,23 @@ fn init_logging(filter: &tracing_subscriber::EnvFilter) {
 
     // Forward panics into the subscriber: the default hook's stderr write
     // bypasses tracing entirely, so a crash in a managed instance would
-    // miss the log file it exists for.
+    // miss the log file it exists for. The forwarding half lives in
+    // `forward_panic_to_tracing` so tests can exercise it against an in-
+    // memory writer without touching the process-global default.
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let msg = info.to_string();
-        let loc = info
-            .location()
-            .map(|l| l.to_string())
-            .unwrap_or_else(|| "unknown location".to_string());
-        tracing::error!(%loc, %msg, "panic");
+        forward_panic_to_tracing(info);
         hook(info);
     }));
+}
+
+fn forward_panic_to_tracing(info: &std::panic::PanicHookInfo) {
+    let msg = info.to_string();
+    let loc = info
+        .location()
+        .map(|l| l.to_string())
+        .unwrap_or_else(|| "unknown location".to_string());
+    tracing::error!(%loc, %msg, "panic");
 }
 
 /// `runtime.json` payload — the tagma-written half of the instance-dir
@@ -822,15 +832,51 @@ mod tests {
         assert_eq!(entry, EnrollEntry::Stored);
     }
 
-    /// The panic hook forwards into tracing: a caught panic shows up as a
-    /// `panic` error event (the log-file mirror is what this exists for).
+    /// The forwarding hook surfaces a caught panic as a `panic` error
+    /// event. Captured through an in-memory writer so the test has real
+    /// discriminating power: if the forward regresses to the default
+    /// stderr-only path, the buffer stays empty and the assert fires.
     #[test]
-    fn panic_hook_routes_through_tracing() {
-        init_logging(&tracing_subscriber::EnvFilter::new("error"));
-        let result = std::panic::catch_unwind(|| {
-            panic!("hook probe");
-        });
-        assert!(result.is_err());
+    fn panic_forward_writes_error_event() {
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::prelude::*;
+
+        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedBuf {
+            type Writer = MutexGuardWriter<'a>;
+            fn make_writer(&'a self) -> Self::Writer {
+                MutexGuardWriter(self.0.lock().unwrap())
+            }
+        }
+        struct MutexGuardWriter<'a>(std::sync::MutexGuard<'a, Vec<u8>>);
+        impl std::io::Write for MutexGuardWriter<'_> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.0.flush()
+            }
+        }
+
+        let shared = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(SharedBuf(shared.clone()))
+                .with_filter(tracing_subscriber::EnvFilter::new("error")),
+        );
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        std::panic::set_hook(Box::new(|info| forward_panic_to_tracing(info)));
+        let _ = std::panic::catch_unwind(|| panic!("hook probe"));
+
+        let captured =
+            String::from_utf8(shared.lock().unwrap().clone()).expect("log bytes are utf8");
+        assert!(
+            captured.contains("panic"),
+            "missing panic event: {captured}"
+        );
+        assert!(captured.contains("hook probe"), "payload lost: {captured}");
     }
 
     /// No stored credentials and a code: first-run enrollment.
