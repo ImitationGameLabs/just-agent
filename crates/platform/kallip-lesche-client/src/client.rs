@@ -14,7 +14,12 @@
 //! for the request/reply POSTs, and one with **no total timeout** for the tunnel
 //! stream. `reqwest`'s `.timeout()` is a whole-response deadline that also
 //! covers the streaming body, so any finite value would kill the long-lived
-//! tunnel SSE mid-flight. Do not collapse them into one client.
+//! tunnel SSE mid-flight.
+//!
+//! Per-read `read_timeout` + TCP keepalive on the stream client are the
+//! stall detectors: the server sends keepalive comments, so a healthy
+//! stream always has bytes to read -- a silent gap means half-open.
+//! Do not collapse the two clients into one.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -449,7 +454,16 @@ impl LescheClientBuilder {
         };
         let http_stream = match self.http_stream {
             Some(c) => c,
-            None => reqwest::Client::builder().build()?,
+            None => {
+                // Stall detectors for the tunnel SSE: server keepalive
+                // comments arrive every 15 s, so anything quieter than the
+                // read window means half-open. No total timeout -- the stream
+                // is meant to live as long as both ends do.
+                reqwest::Client::builder()
+                    .read_timeout(Duration::from_secs(90))
+                    .tcp_keepalive(Duration::from_secs(15))
+                    .build()?
+            }
         };
         Ok(LescheClient {
             inner: Arc::new(Inner {
@@ -741,5 +755,33 @@ mod tests {
         assert_eq!(collected.len(), 2, "stream drained past the bad frame");
         assert!(collected[0].is_err(), "bad frame surfaces as Err");
         assert!(collected[1].is_ok(), "good frame still arrives");
+    }
+
+    /// Keepalive comment frames (": like this") must be silently skipped:
+    /// no item, no stream end, and the following real event still parses.
+    /// This is the regression guard for the server-side keep_alive added
+    /// alongside these very clients.
+    #[tokio::test]
+    async fn open_tunnel_skips_keepalive_comments() {
+        let server = MockServer::start().await;
+        let good = "data: {\"kind\":\"wake\"}\n\n";
+        // Comment block first, then a real event.
+        let body = format!(": keepalive\n\n{good}");
+        Mock::given(method("GET"))
+            .and(path("/v1/tunnel"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+
+        let device = DeviceKey::generate();
+        let tagma_id = TagmaId::from("tagma-1".to_string());
+        let collected: Vec<_> = client(&server)
+            .open_tunnel(&device, &tagma_id)
+            .await
+            .expect("open")
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(collected.len(), 1, "comment frame yields no item");
+        assert!(matches!(collected[0], Ok(TunnelInbound::Wake)));
     }
 }

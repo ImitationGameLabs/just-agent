@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::extract::State;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -51,7 +51,7 @@ async fn tunnel(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
     headers: axum::http::HeaderMap,
-) -> Result<Sse<OnDrop>, ApiError> {
+) -> Result<Sse<axum::response::sse::KeepAliveStream<OnDrop>>, ApiError> {
     let tagma_id = require_tagma(&principal)?.clone();
     // Capture the runtime handle so the synchronous `OnDrop` cleanup (which may
     // run off-runtime, e.g. during body teardown) can spawn the presence
@@ -205,7 +205,9 @@ async fn tunnel(
             }
         }
     });
-    Ok(Sse::new(cleaned))
+    // Server keepalive (axum default = a comment frame every 15 s) keeps
+    // both ends able to tell a live stream from a half-open one.
+    Ok(Sse::new(cleaned).keep_alive(KeepAlive::default()))
 }
 
 /// A rejected tunnel proof is an auth failure.
