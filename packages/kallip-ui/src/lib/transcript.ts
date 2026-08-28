@@ -388,6 +388,22 @@ export function sendFailed(
   };
 }
 
+/** True when `reply` is the op error answering the in-flight send: the
+ * request's `req_id` (stamped by the channel on accept, echoed back by
+ * `op_err_reply`) matches. Unmatched errors -- no in-flight send, no
+ * stamped req_id (the direct path), or a different request -- return false
+ * and fall through to the wire reducer's durable history record. */
+export function isInFlightError(
+  reply: TagmaReply,
+  inFlight: { reqId?: number } | null,
+): reply is Extract<TagmaReply, { kind: "error" }> {
+  return (
+    reply.kind === "error" &&
+    reply.req_id > 0 &&
+    inFlight?.reqId === reply.req_id
+  );
+}
+
 /** Replace the pending line carrying `localId` with a confirmed `historyId`
  * (the inbound row id from the `MessageAccepted` ack) and flip its status to
  * `"sent"`. `createdAt`, when given, refines the optimistic client-side stamp

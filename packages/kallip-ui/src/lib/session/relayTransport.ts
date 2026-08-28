@@ -57,7 +57,7 @@ export class RelayTransport implements Transport {
     this.signalQueue.push(event);
   }
 
-  send(text: string): Promise<void> {
+  send(text: string): Promise<number> {
     return this.channel.send(text);
   }
 

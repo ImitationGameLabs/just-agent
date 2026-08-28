@@ -16,6 +16,7 @@ import {
   markLineSent,
   replaceLineId,
   sendFailed,
+  isInFlightError,
   withUserLine,
   type ConversationLine,
 } from "./transcript.ts";
@@ -123,6 +124,35 @@ Deno.test("withUserLine clears a stale error from a failed send", () => {
   const next = withUserLine(failed, "retry", -2, userS);
   assertEquals(next.error, undefined);
   assertEquals(next.status, "busy");
+});
+
+// Correlation of an op error to the in-flight send (by req_id): a match
+// closes the optimistic line via sendFailed; every mismatch falls
+// through to the durable wire path. Old code had no correlation at all.
+Deno.test("isInFlightError matches only the in-flight send's error", () => {
+  const err = {
+    kind: "error",
+    req_id: 7,
+    status: 409,
+    message: "parked",
+  } as const;
+  assert(isInFlightError(err, { reqId: 7 }));
+  // Different request, no in-flight send, unstamped: no match.
+  assert(!isInFlightError(err, { reqId: 8 }));
+  assert(!isInFlightError(err, null));
+  assert(!isInFlightError(err, { reqId: undefined }));
+  assert(
+    !isInFlightError(
+      { kind: "error", req_id: 0, status: 500, message: "unstamped" },
+      { reqId: 0 },
+    ),
+  );
+  assert(
+    !isInFlightError(
+      { kind: "message_accepted", req_id: 7, queue_depth: 0 },
+      { reqId: 7 },
+    ),
+  );
 });
 
 Deno.test(

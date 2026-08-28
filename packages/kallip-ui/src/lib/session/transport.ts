@@ -55,9 +55,11 @@ export interface Transport {
    *  has one uniform source regardless of transport. */
   status(): AsyncGenerator<TagmaStatusSummary>;
   /** Send a user message. Resolves when the wire accept lands (direct: 200;
-   *  relay: 202). The tagma's reply (ack/error/authored) flows via
-   *  {@link replies}. */
-  send(text: string): Promise<void>;
+   *  relay: 202), to the request's `req_id` when the transport has one
+   *  (relay channel; direct has none, resolves void) -- the conversation
+   *  correlates the eventual `error` reply on it. The tagma's reply
+   *  (ack/error/authored) flows via {@link replies}. */
+  send(text: string): Promise<number | void>;
   /** Tear down the underlying stream(s) synchronously. */
   close(): void;
 }

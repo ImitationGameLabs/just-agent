@@ -34,6 +34,7 @@ import {
   toSender,
   withUserLine,
   sendFailed,
+  isInFlightError,
 } from "../transcript.ts";
 import type {
   ConversationSender,
@@ -123,7 +124,11 @@ export abstract class ConversationBase {
    *  synthetic id + sent text, or null when the pump is idle. The text lets the
    *  promotion branch correlate the echo to this exact send, so a history-replay
    *  `user_message` arriving mid-flight is not mistaken for the ack. */
-  pendingInFlight = $state<{ localId: number; text: string } | null>(null);
+  pendingInFlight = $state<{
+    localId: number;
+    text: string;
+    reqId?: number;
+  } | null>(null);
   /** The latest aggregate status snapshot (root state, subagent counts, token
    *  budget) for THIS conversation's tagma, surfaced to the chat header. The
    *  single uniform source for the header regardless of transport: drained from
@@ -212,6 +217,19 @@ export abstract class ConversationBase {
     // falls through to the normal dedup/append path below. Residual edge: a
     // catch-up row whose text identically matches the in-flight send still
     // collides -- far rarer than the prior uncorrelated misfire.
+    // An op error answering the in-flight send (correlated by req_id):
+    // the message never landed -- e.g. the peer tagma is parked -- so close
+    // the optimistic line, surface the server copy as the single red
+    // error, and release the pump slot. Unmatched op errors keep the wire
+    // path below: a durable system line + red, the server-error record.
+    if (isInFlightError(reply, this.pendingInFlight)) {
+      const localId = this.pendingInFlight!.localId;
+      this.transcript = sendFailed(this.transcript, localId, reply.message);
+      this.pendingInFlight = null;
+      void this.pumpPending();
+      this.onReply(reply);
+      return;
+    }
     if (
       reply.kind === "user_message" &&
       this.pendingInFlight !== null &&
@@ -300,7 +318,15 @@ export abstract class ConversationBase {
     if (next === undefined) return;
     this.pendingInFlight = { localId: next.localId, text: next.text };
     try {
-      await this.transport!.send(next.text);
+      const reqId = await this.transport!.send(next.text);
+      // The channel stamps this send's req_id on accept; the reply-side
+      // error correlation (applyReplyCore) closes the line on it.
+      if (this.pendingInFlight) {
+        this.pendingInFlight = {
+          ...this.pendingInFlight,
+          reqId: reqId ?? undefined,
+        };
+      }
     } catch (e) {
       // Typed failures (direct KallipError / relay LescheApiError) keep
       // their server copy; transport failures are qualitative.

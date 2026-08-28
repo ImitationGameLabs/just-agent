@@ -193,14 +193,17 @@ export class RelayChannel {
     }
   }
 
-  /** Send a user message. Resolves once the lesche accepts the envelope (202);
-   * the tagma's `message_accepted`/`error` reply flows through `replies`. */
-  send(text: string): Promise<void> {
+  /** Send a user message. Resolves, once the lesche accepts the envelope
+   * (202), to the request's `req_id`: the caller can correlate the eventual
+   * `error` reply to this send (the server echoes the same `req_id`). The
+   * tagma's `message_accepted`/`error` reply flows through `replies`. */
+  send(text: string): Promise<number> {
+    const req_id = this.nextReqId++;
     return this.sendRequest({
       op: "send_message",
-      req_id: this.nextReqId++,
+      req_id,
       text,
-    });
+    }).then(() => req_id);
   }
 
   /** Request a batch of chat history (cursor-based). `after` = incremental
