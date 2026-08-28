@@ -96,34 +96,6 @@ class AgentsStore {
     }
   }
 
-  /** Kick a parked agent awake. The wake 202 enqueues the [system] kick
-   * turn, so the agent enters a round almost immediately — flip
-   * parked → busy optimistically (clearing the parked reason) and
-   * revert on failure. */
-  async wake(id: string): Promise<void> {
-    this.inFlight.add(id);
-    this.optimisticUpdate(id, (a) =>
-      a.state === "parked"
-        ? {
-            ...a,
-            state: "busy" as const,
-            activity: "",
-            parked_reason: null,
-          }
-        : a,
-    );
-    try {
-      await this.backend.wakeAgent(id);
-      this.snapshots.delete(id);
-    } catch (e) {
-      this.revertById(id);
-      this.error = displayError("agents", e, manage_agents_action_failed());
-      throw e;
-    } finally {
-      this.inFlight.delete(id);
-    }
-  }
-
   async toggleDuty(id: string): Promise<void> {
     const agent = this.agents.find((a) => a.id === id);
     if (!agent) return;

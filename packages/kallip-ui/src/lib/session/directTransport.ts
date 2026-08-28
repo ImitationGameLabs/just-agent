@@ -71,10 +71,6 @@ function toSummary(p: DirectStatusPayload): TagmaStatusSummary {
   };
 }
 
-/** Backoff between parked-409 retries: ~7.75s total budget for the kick
- * turn to un-park the agent (normally sub-second). */
-const PARKED_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000] as const;
-
 /** Backoff between SSE reconnect attempts (the transport-level retry loop):
  * four attempts span ~15s of silent retrying before the failure is surfaced
  * as final — the user sees the in-chat reconnecting spinner, never an error.
@@ -90,21 +86,6 @@ const STREAM_WATCHDOG_MS = 45_000;
  * loop is taking over ("reconnecting") and a fresh connection is live
  * ("resumed" — the conversation backfills the gap via catch-up). */
 export type TransportState = "reconnecting" | "resumed";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** The parked rejection: a 409 whose message names the parked state. The
- * wire carries no machine-readable code; the wording is pinned by the
- * tagma's route tests. */
-function isParkedConflict(e: unknown): boolean {
-  return (
-    e instanceof KallipError &&
-    e.api.status === 409 &&
-    e.api.message.includes("is parked")
-  );
-}
 
 /**
  * Wraps a {@link TagmaClient} bound to the root agent and exposes the external
@@ -139,23 +120,18 @@ export class DirectTransport implements Transport {
    * the retry budget. */
   private restartKind: "watchdog" | "foreground" | null = null;
   private readonly streamRetryDelays: readonly number[];
-  private readonly retryDelays: readonly number[];
   private readonly watchdogMs: number;
 
   constructor(
     private readonly client: TagmaClient,
     readonly agentId: string,
     readonly localSender: ConversationSender,
-    /** Backoff table for parked-409 retries (test seam; production uses
-     * the module default). */
-    retryDelays: readonly number[] = PARKED_RETRY_DELAYS_MS,
     /** SSE reconnect backoff table (test seam; production uses the module
      * default). */
     streamRetryDelays: readonly number[] = STREAM_RETRY_DELAYS_MS,
     /** Half-open watchdog interval in ms (test seam). */
     watchdogMs = STREAM_WATCHDOG_MS,
   ) {
-    this.retryDelays = retryDelays;
     this.streamRetryDelays = streamRetryDelays;
     this.watchdogMs = watchdogMs;
   }
@@ -188,37 +164,9 @@ export class DirectTransport implements Transport {
   }
 
   async send(text: string): Promise<void> {
-    await this.postWithWake(text);
+    await this.client.postMessage(this.agentId, text);
   }
 
-  /** Post the message, auto-waking a parked agent. The parked 409
-   * arrives before the tagma pushes to the inbox (the park guard
-   * precedes the push), so the text never landed — waking and
-   * re-sending delivers it exactly once. The wake 202 only enqueues
-   * the kick turn, so the un-park is asynchronous: retry the POST
-   * with backoff, rethrowing the ORIGINAL 409 when the budget runs
-   * out (its message already names the wake endpoint). A failed
-   * wake call is swallowed — if the agent unparked anyway the first
-   * retry still delivers; otherwise the loop exhausts the same
-   * way. */
-  private async postWithWake(text: string): Promise<void> {
-    try {
-      await this.client.postMessage(this.agentId, text);
-    } catch (e) {
-      if (!isParkedConflict(e)) throw e;
-      await this.client.wakeAgent(this.agentId).catch(() => {});
-      for (const delayMs of this.retryDelays) {
-        await sleep(delayMs);
-        try {
-          await this.client.postMessage(this.agentId, text);
-          return;
-        } catch (e2) {
-          if (!isParkedConflict(e2)) throw e2;
-        }
-      }
-      throw e;
-    }
-  }
   /** Pull a cursor-driven history batch DIRECTLY (no queue interleave).
    *
    *  The lazy-window store merges pulled rows via mergeHistoryLines,

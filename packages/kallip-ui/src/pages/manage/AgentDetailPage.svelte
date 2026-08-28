@@ -40,7 +40,6 @@
     manage_agent_description,
     manage_agent_toggle_duty,
     manage_agent_interrupt,
-    manage_agent_wake,
     manage_agent_remove_agent,
     manage_agent_remove_agent_desc_short,
   } from "../../paraglide/messages.js";
@@ -274,14 +273,6 @@
             disabled={agentsStore.isInFlight(agent.id)}
             onclick={() => agentsStore.interrupt(agent.id).catch(() => {})}
             >{manage_agent_interrupt()}</button
-          >
-        {/if}
-        {#if agent.state === "parked"}
-          <button
-            class="btn btn-sm preset-outlined-surface-500 hover:preset-filled-warning-500"
-            disabled={agentsStore.isInFlight(agent.id)}
-            onclick={() => agentsStore.wake(agent.id).catch(() => {})}
-            >{manage_agent_wake()}</button
           >
         {/if}
         <button

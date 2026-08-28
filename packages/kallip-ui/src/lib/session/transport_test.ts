@@ -209,7 +209,6 @@ Deno.test(
       } as unknown as TagmaClient,
       "root",
       localSender,
-      [],
       [1],
     );
     const replyP = drain(t.replies());
@@ -270,7 +269,6 @@ Deno.test(
       } as unknown as TagmaClient,
       "root",
       localSender,
-      [],
       [1],
     );
     await assertRejects(() => drain(t.replies()), "stream closed");
