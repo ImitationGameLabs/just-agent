@@ -32,7 +32,7 @@ use state::AppState;
 use state::ProfileBundle;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use args::Args;
 
@@ -541,8 +541,8 @@ fn resolve_primary_identity(
 )> {
     let root = credentials_dir()?;
     for (entry, _) in plan {
-        if let Some((id, _token)) = credentials::load_tagma(&root.join(&entry.name)) {
-            let tid = kallip_agora_common::ids::TagmaId::from(id);
+        if let Some(stored) = credentials::load_tagma(&root.join(&entry.name)) {
+            let tid = kallip_agora_common::ids::TagmaId::from(stored.id);
             let cid = kallip_agora_common::ids::ConversationId::for_tagma(&tid);
             return Ok((Some(tid), Some(cid)));
         }
@@ -673,9 +673,13 @@ fn resolve_relay_plan(args: &args::Args) -> Result<Vec<(RelayEntry, EnrollEntry)
     let mut plan = Vec::with_capacity(entries.len());
     for entry in entries {
         let dir = root.join(&entry.name);
-        let stored = credentials::load_tagma(&dir)
-            .map(|(id, _)| kallip_agora_common::ids::TagmaId::from(id));
-        let boot = resolve_enroll_entry(stored.as_ref(), entry.enrollment_code.as_deref(), &dir)?;
+        let stored = credentials::load_tagma(&dir);
+        let boot = resolve_enroll_entry(
+            stored.as_ref(),
+            &entry.agora_url,
+            entry.enrollment_code.as_deref(),
+            &dir,
+        )?;
         plan.push((entry, boot));
     }
     Ok(plan)
@@ -740,38 +744,61 @@ async fn init_direct(state: &Arc<AppState>) -> Result<()> {
 enum EnrollEntry {
     /// Reuse the credentials persisted by a prior enrollment.
     Stored,
+    /// Stored credentials plus an enrollment code at the same agora (or
+    /// with the enrollment origin unrecorded): the stale false-alarm
+    /// shape. The code is ignored with a loud warning instead of failing
+    /// the boot — consumed material left in the environment must not
+    /// brick restarts.
+    StoredIgnoringCode { address_recorded: bool },
     /// No stored credentials: redeem `code` for a fresh enrollment.
     Fresh { code: String },
 }
 
 /// Decide the boot-time enrollment entry: reuse stored credentials or run
-/// a first-run enrollment with a code. Two misconfigured states fail fast
+/// a first-run enrollment with a code. Misconfigured states fail fast
 /// instead of degrading to local-only, because the degradation would hide
-/// a configuration error behind a confusing runtime failure later (a code
-/// silently ignored leaves a stale token pointed at a new agora, looping
-/// 401 reconnects forever):
+/// a configuration error behind a confusing runtime failure later (a
+/// silently ignored stale token pointed at a new agora loops 401
+/// reconnects forever):
 ///
-/// - stored credentials + enrollment code: the code would be ignored (the
-///   stored branch never reads it), so name both exits;
+/// - stored credentials + enrollment code at a *different* agora: the code
+///   would mint a second identity while the stored one points at the old
+///   agora, so both exits are named;
 /// - neither credentials nor code: there is nothing to connect with.
+///
+/// Stored credentials + a code at the *same* agora (or with the enrollment
+/// origin unrecorded — credentials that predate origin recording) is the
+/// stale false-alarm shape: the code is ignored with a loud warning
+/// (see `ignored_code_warning`), not an error.
 fn resolve_enroll_entry(
-    stored: Option<&kallip_agora_common::ids::TagmaId>,
+    stored: Option<&credentials::StoredTagma>,
+    configured_agora_url: &str,
     code: Option<&str>,
     credentials_dir: &std::path::Path,
 ) -> Result<EnrollEntry> {
-    match (stored.is_some(), code) {
-        (true, Some(_)) => Err(anyhow::anyhow!(
-            "conflicting relay configuration: stored credentials exist in {} \
-             but KALLIP_TAGMA_RELAY_ENROLLMENT_CODE is also set, so the code \
-             would be ignored; either unset the code to reuse the stored \
-             identity, or delete the credentials directory to re-enroll",
-            credentials_dir.display()
-        )),
-        (true, None) => Ok(EnrollEntry::Stored),
-        (false, Some(code)) => Ok(EnrollEntry::Fresh {
+    match (stored, code) {
+        (Some(stored), Some(_)) => {
+            let compared = origin_comparison(stored.agora_url.as_deref(), configured_agora_url);
+            match compared {
+                None | Some(true) => Ok(EnrollEntry::StoredIgnoringCode {
+                    address_recorded: compared.is_some(),
+                }),
+                Some(false) => Err(anyhow::anyhow!(
+                    "conflicting relay configuration: stored credentials in {} were \
+                     enrolled at {} but KALLIP_TAGMA_RELAY_ENROLLMENT_CODE is set and \
+                     the agora is now {}; delete the credentials directory to \
+                     re-enroll, or unset the code to reuse the stored identity",
+                    credentials_dir.display(),
+                    stored.agora_url.as_deref().unwrap_or("<unrecorded>"),
+                    configured_agora_url
+                )),
+            }
+        }
+        (Some(_), None) => Ok(EnrollEntry::Stored),
+        (None, Some(code)) => Ok(EnrollEntry::Fresh {
             code: code.to_owned(),
         }),
-        (false, None) => Err(anyhow::anyhow!(
+        (None, None) => Err(anyhow::anyhow!(
             "incomplete relay configuration: KALLIP_TAGMA_RELAY_AGORA_URL is \
              set but there are no stored credentials and no \
              KALLIP_TAGMA_RELAY_ENROLLMENT_CODE; either set the code for a \
@@ -779,6 +806,41 @@ fn resolve_enroll_entry(
         )),
     }
 }
+
+/// Parsed origin comparison (scheme + host + port — the same
+/// normalization the lesche default uses): `None` means unknown (an
+/// unrecorded or unparsable origin on either side), `Some(verdict)` a real
+/// comparison. Unknown is treated as same by the caller: origin data is
+/// hygiene, and bricking a boot over it would trade availability for
+/// nothing — the loud warning still names the recovery.
+fn origin_comparison(stored: Option<&str>, configured: &str) -> Option<bool> {
+    let stored = stored?;
+    let (Ok(stored), Ok(configured)) = (url::Url::parse(stored), url::Url::parse(configured))
+    else {
+        return None;
+    };
+    Some(stored.origin() == configured.origin())
+}
+
+/// Warning text for the same-agora stale-code shape. Loud by design: the
+/// silent-ignore alternative is exactly the 401 loop the fail-fast guards
+/// against, so the operator gets the verdict, the reused identity, and
+/// the recovery (deleting the credentials directory re-enrolls) in one
+/// line.
+fn ignored_code_warning(credentials_dir: &std::path::Path, address_recorded: bool) -> String {
+    let origin = if address_recorded {
+        "enrolled at this agora"
+    } else {
+        "enrolled before origin recording (origin now backfilled from config)"
+    };
+    format!(
+        "KALLIP_TAGMA_RELAY_ENROLLMENT_CODE ignored: stored credentials in {} \
+         are {origin}; using the stored identity. To re-enroll, delete the \
+         credentials directory",
+        credentials_dir.display()
+    )
+}
+
 /// Build and install one relay connector. `entry` is the config entry (name,
 /// agora/lesche URLs, first-run code) and `boot` the fail-fast decision from
 /// `resolve_relay_plan` (reuse stored credentials, or first-run enrollment
@@ -794,6 +856,15 @@ async fn activate_relay(
     let entry_dir = root.join(&entry.name);
     std::fs::create_dir_all(&entry_dir).context("create entry credentials dir")?;
     credentials::set_owner_only(&entry_dir)?;
+    // The stale-code verdict lands here rather than in the resolver so it
+    // is emitted after logging is up and next to the entry that hit it.
+    if let EnrollEntry::StoredIgnoringCode { address_recorded } = boot {
+        warn!(
+            relay = %entry.name,
+            "{}",
+            ignored_code_warning(&entry_dir, address_recorded)
+        );
+    }
     // One device, many identities: the Ed25519 device key is shared across
     // agoras (it proves "same physical tagma"), so it lives at the
     // credentials root, while each agora's (tagma.id, tagma.token) pair
@@ -803,18 +874,27 @@ async fn activate_relay(
     // The boot decision (reuse stored credentials vs first-run enroll) was
     // made by the caller via `resolve_enroll_entry`; this only executes it.
     let (tagma_id, tagma_token) = match boot {
-        EnrollEntry::Stored => {
-            let (id, token) = credentials::load_tagma(&entry_dir)
+        EnrollEntry::Stored | EnrollEntry::StoredIgnoringCode { .. } => {
+            let stored = credentials::load_tagma(&entry_dir)
                 .context("stored credentials missing at relay activation (deleted after boot?)")?;
-            info!(relay = %entry.name, tagma = %id, "relay: loaded stored tagma credentials");
-            (kallip_agora_common::ids::TagmaId::from(id), token)
+            // Both stored arms converge here, so the origin backfill runs on
+            // every stored-credential boot: credentials from before origin
+            // recording get the configured origin recorded once (a mislabel
+            // behaves exactly like the unknown path; the next address change
+            // regains the precise verdict).
+            credentials::backfill_agora_url(&entry_dir, &entry.agora_url);
+            info!(relay = %entry.name, tagma = %stored.id, "relay: loaded stored tagma credentials");
+            (
+                kallip_agora_common::ids::TagmaId::from(stored.id),
+                stored.token,
+            )
         }
         EnrollEntry::Fresh { code } => {
             let (tagma_id, token) = kallip_agora_client::AgoraClient::builder(&entry.agora_url)
                 .build()?
                 .enroll(&code, &device)
                 .await?;
-            credentials::save_tagma(&entry_dir, tagma_id.as_ref(), &token);
+            credentials::save_tagma(&entry_dir, tagma_id.as_ref(), &token, &entry.agora_url);
             info!(relay = %entry.name, tagma = %tagma_id, "relay: enrolled with agora");
             // First-run enroll boot: the projector's write-once ids are
             // claimed by the first successful enrollee — the primary-agora
@@ -901,15 +981,20 @@ async fn shutdown_signal(token: CancellationToken) {
 mod tests {
     use super::*;
 
-    fn stored_id() -> kallip_agora_common::ids::TagmaId {
-        kallip_agora_common::ids::TagmaId::from("tagma-test".to_string())
+    fn stored(id: &str, origin: Option<&str>) -> credentials::StoredTagma {
+        credentials::StoredTagma {
+            id: id.to_string(),
+            token: "token".to_string(),
+            agora_url: origin.map(str::to_string),
+        }
     }
 
     /// Stored credentials and no code: the stored identity is reused.
     #[test]
     fn stored_credentials_are_reused_without_a_code() {
         let entry = resolve_enroll_entry(
-            Some(&stored_id()),
+            Some(&stored("tagma-test", Some("https://agora.example.com"))),
+            "https://agora.example.com",
             None,
             std::path::Path::new("/tmp/credentials"),
         )
@@ -1005,6 +1090,7 @@ mod tests {
     fn fresh_code_enrolls_when_no_credentials_stored() {
         let entry = resolve_enroll_entry(
             None,
+            "https://agora.example.com",
             Some("sk-enroll-test"),
             std::path::Path::new("/tmp/credentials"),
         )
@@ -1017,24 +1103,80 @@ mod tests {
         );
     }
 
-    /// Stored credentials + code: the conflict names the env var, the
-    /// credentials location, and both exits.
+    /// Stored credentials + code at the same agora — the stale
+    /// false-alarm shape — ignores the code instead of failing the boot.
+    /// The comparison is normalized origin, so trailing-slash and
+    /// explicit-default-port spellings of the same server still match.
     #[test]
-    fn stored_credentials_conflict_with_code_fails_fast() {
+    fn same_agora_code_is_ignored_with_warning_entry() {
+        for (recorded, configured) in [
+            ("https://agora.example.com", "https://agora.example.com"),
+            ("https://agora.example.com/", "https://agora.example.com"),
+            ("https://agora.example.com:443", "https://agora.example.com"),
+        ] {
+            let entry = resolve_enroll_entry(
+                Some(&stored("tagma-test", Some(recorded))),
+                configured,
+                Some("sk-spent"),
+                std::path::Path::new("/tmp/credentials"),
+            )
+            .expect("same-agora entry resolves");
+            assert_eq!(
+                entry,
+                EnrollEntry::StoredIgnoringCode {
+                    address_recorded: true
+                },
+                "recorded {recorded}, configured {configured}"
+            );
+        }
+    }
+
+    /// An unrecorded origin (credential predates origin recording) or an
+    /// unparsable one on either side counts as unknown and takes the
+    /// same-agora path: origin data is hygiene and must not brick a boot.
+    #[test]
+    fn unknown_origin_takes_the_same_agora_path() {
+        for (recorded, configured) in [
+            (None, "https://agora.example.com"),
+            (Some("not a url"), "https://agora.example.com"),
+            (Some("https://agora.example.com"), "not a url"),
+        ] {
+            let entry = resolve_enroll_entry(
+                Some(&stored("tagma-test", recorded)),
+                configured,
+                Some("sk-spent"),
+                std::path::Path::new("/tmp/credentials"),
+            )
+            .expect("unknown-origin entry resolves");
+            assert_eq!(
+                entry,
+                EnrollEntry::StoredIgnoringCode {
+                    address_recorded: false
+                },
+                "recorded {recorded:?}, configured {configured}"
+            );
+        }
+    }
+
+    /// Stored credentials + code at a different agora: the true conflict
+    /// fails fast, both exits named and both addresses shown.
+    #[test]
+    fn different_agora_code_conflict_fails_fast() {
         let err = resolve_enroll_entry(
-            Some(&stored_id()),
+            Some(&stored("tagma-test", Some("https://old.example.com"))),
+            "https://new.example.com",
             Some("sk-enroll-test"),
             std::path::Path::new("/tmp/credentials"),
         )
         .expect_err("conflict must fail");
         let msg = format!("{err:#}");
         assert!(msg.contains("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE"), "{msg}");
+        assert!(msg.contains("https://old.example.com"), "{msg}");
+        assert!(msg.contains("https://new.example.com"), "{msg}");
         assert!(msg.contains("/tmp/credentials"), "{msg}");
-        assert!(msg.contains("unset"), "{msg}");
         assert!(msg.contains("re-enroll"), "{msg}");
-        // Mutual-exclusion: the conflict message must be distinguishable
-        // from the incomplete one (which names the URL env var and the
-        // first-run/local-only exits), not merely contain its own markers.
+        assert!(msg.contains("unset"), "{msg}");
+        // Mutual exclusion: distinguishable from the incomplete message.
         assert!(!msg.contains("local-only"), "{msg}");
         assert!(!msg.contains("first-run"), "{msg}");
     }
@@ -1043,16 +1185,76 @@ mod tests {
     /// both exits, distinct from the conflict message.
     #[test]
     fn neither_credentials_nor_code_fails_fast() {
-        let err = resolve_enroll_entry(None, None, std::path::Path::new("/tmp/credentials"))
-            .expect_err("incomplete must fail");
+        let err = resolve_enroll_entry(
+            None,
+            "https://agora.example.com",
+            None,
+            std::path::Path::new("/tmp/credentials"),
+        )
+        .expect_err("incomplete must fail");
         let msg = format!("{err:#}");
         assert!(msg.contains("KALLIP_TAGMA_RELAY_AGORA_URL"), "{msg}");
         assert!(msg.contains("first-run enrollment"), "{msg}");
         assert!(msg.contains("local-only"), "{msg}");
-        // Mirror of the conflict test: the incomplete message must not
-        // carry the conflict's distinctive markers.
-        assert!(!msg.contains("would be ignored"), "{msg}");
+        // Mirror of the conflict test: no conflict markers.
+        assert!(!msg.contains("ignored"), "{msg}");
         assert!(!msg.contains("re-enroll"), "{msg}");
+    }
+
+    /// The ignore warning names the env var, the stored identity, and the
+    /// delete-to-re-enroll recovery; the unknown-origin spelling says so.
+    #[test]
+    fn ignored_code_warning_names_the_recovery() {
+        let recorded = ignored_code_warning(std::path::Path::new("/tmp/credentials"), true);
+        assert!(
+            recorded.contains("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE"),
+            "{recorded}"
+        );
+        assert!(recorded.contains("ignored"), "{recorded}");
+        assert!(recorded.contains("stored identity"), "{recorded}");
+        assert!(
+            recorded.contains("delete the credentials directory"),
+            "{recorded}"
+        );
+        assert!(!recorded.contains("before origin recording"), "{recorded}");
+
+        let unknown = ignored_code_warning(std::path::Path::new("/tmp/credentials"), false);
+        assert!(unknown.contains("before origin recording"), "{unknown}");
+        assert!(unknown.contains("backfilled"), "{unknown}");
+    }
+
+    /// save/load roundtrip carries the enrollment origin; a pre-origin
+    /// credential (id + token only) loads with the origin absent; the
+    /// backfill records the configured origin exactly once and never
+    /// overwrites a recorded origin.
+    #[test]
+    fn credential_origin_roundtrip_and_backfill() {
+        let dir = tempfile::tempdir().expect("credentials tempdir");
+        credentials::save_tagma(dir.path(), "tagma-1", "token", "https://agora.example.com");
+        let reloaded = credentials::load_tagma(dir.path()).expect("roundtrip loads");
+        assert_eq!(reloaded.id, "tagma-1");
+        assert_eq!(reloaded.token, "token");
+        assert_eq!(
+            reloaded.agora_url.as_deref(),
+            Some("https://agora.example.com")
+        );
+
+        let legacy = tempfile::tempdir().expect("legacy tempdir");
+        std::fs::write(legacy.path().join("tagma.id"), "tagma-2").expect("write id");
+        std::fs::write(legacy.path().join("tagma.token"), "token").expect("write token");
+        let legacy_stored = credentials::load_tagma(legacy.path()).expect("legacy loads");
+        assert_eq!(legacy_stored.agora_url, None);
+
+        credentials::backfill_agora_url(legacy.path(), "https://agora.example.com");
+        assert_eq!(
+            std::fs::read_to_string(legacy.path().join("agora.url")).expect("backfilled"),
+            "https://agora.example.com"
+        );
+        credentials::backfill_agora_url(legacy.path(), "https://other.example.com");
+        assert_eq!(
+            std::fs::read_to_string(legacy.path().join("agora.url")).expect("unchanged"),
+            "https://agora.example.com"
+        );
     }
 
     /// write_instance_state contract: handed a state dir, it writes

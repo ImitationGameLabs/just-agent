@@ -6,6 +6,12 @@
 //! Secrets live under `KALLIP_DATA_DIR/credentials/` (resolved via
 //! `kallip_runtime::persistence::data_dir_root`), written owner-only (`0o600`);
 //! the leaf dir is `0o700`.
+//! A third file, `agora.url`, records the enrollment origin (non-secret:
+//! it mirrors the configured env var) so a later enrollment code at a
+//! different agora can be told apart from a stale same-agora code. The
+//! kallip-daemon start path mirrors the stored-credentials predicate
+//! (`tagma.id` + `tagma.token`) to decide whether replaying an enrollment
+//! code is safe — keep this layout in sync.
 
 use std::path::Path;
 
@@ -26,21 +32,58 @@ pub(crate) fn load_or_create_device(credentials_dir: &Path) -> Result<DeviceKey>
     Ok(device)
 }
 
-/// Load stored `(tagma_id, token)` credentials, if a prior enrollment persisted them.
-pub(crate) fn load_tagma(credentials_dir: &Path) -> Option<(String, String)> {
-    let id = std::fs::read_to_string(credentials_dir.join("tagma.id")).ok()?;
-    let token = std::fs::read_to_string(credentials_dir.join("tagma.token")).ok()?;
-    Some((id.trim().to_owned(), token.trim().to_owned()))
+/// Stored enrollment material for one relay entry: the agora-issued
+/// (id, token) pair plus the origin the enrollment happened at. The origin
+/// is absent on credentials written before origin recording began — the
+/// next stored boot backfills it.
+pub(crate) struct StoredTagma {
+    pub(crate) id: String,
+    pub(crate) token: String,
+    pub(crate) agora_url: Option<String>,
 }
 
-/// Persist `(tagma_id, token)` for reuse across restarts.
-pub(crate) fn save_tagma(credentials_dir: &Path, tagma_id: &str, tagma_token: &str) {
+/// Load stored credentials, if a prior enrollment persisted them.
+pub(crate) fn load_tagma(credentials_dir: &Path) -> Option<StoredTagma> {
+    let id = std::fs::read_to_string(credentials_dir.join("tagma.id")).ok()?;
+    let token = std::fs::read_to_string(credentials_dir.join("tagma.token")).ok()?;
+    let agora_url = std::fs::read_to_string(credentials_dir.join("agora.url"))
+        .ok()
+        .map(|url| url.trim().to_owned());
+    Some(StoredTagma {
+        id: id.trim().to_owned(),
+        token: token.trim().to_owned(),
+        agora_url,
+    })
+}
+
+/// Persist `(tagma_id, tagma_token)` for reuse across restarts, recording
+/// the enrollment origin alongside (non-secret: it mirrors the configured
+/// env var, and lets a later code-plus-different-agora boot be told apart
+/// from a stale same-agora code).
+pub(crate) fn save_tagma(
+    credentials_dir: &Path,
+    tagma_id: &str,
+    tagma_token: &str,
+    agora_url: &str,
+) {
     let _ = std::fs::write(credentials_dir.join("tagma.id"), tagma_id);
+    let _ = std::fs::write(credentials_dir.join("agora.url"), agora_url);
     if let Err(e) = write_secret(&credentials_dir.join("tagma.token"), tagma_token.as_bytes()) {
         tracing::error!(
             error = %format!("{e:#}"),
             "failed to persist tagma token; next restart will require re-enrollment"
         );
+    }
+}
+
+/// Record the configured origin for credentials enrolled before origin
+/// recording, exactly once — never overwriting a recorded origin. Called
+/// from both stored boot arms so any stored-credential boot closes the
+/// window.
+pub(crate) fn backfill_agora_url(credentials_dir: &Path, agora_url: &str) {
+    let path = credentials_dir.join("agora.url");
+    if !path.exists() {
+        let _ = std::fs::write(&path, agora_url);
     }
 }
 
