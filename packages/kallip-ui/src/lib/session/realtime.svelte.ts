@@ -88,8 +88,9 @@ class RealtimeStore {
   // Set())`): Svelte's `$state` proxy does not wrap Set, so a raw Set's in-place
   // `.add()/.delete()` would be invisible to reactivity. SvelteSet tracks
   // membership natively. Distinct from `ChannelState.status` (OUR channel
-  // transport), shown by the sidebar dot via links.ts `tagmaNavIndicator`
-  // (which reads `channelsStore.getTagmaChannelState`).
+  // transport); the /tagmata dashboard dot shows this set while the sidebar
+  // dot reads both -- links.ts `tagmaNavIndicator` maps the transport and
+  // bridges this presence into the open arm via `knownOffline`.
   private presence = new SvelteSet<string>();
   // Per-tagma aggregate status snapshots, fed by the `tagma_status` SSE event.
   // `SvelteMap` (not `$state(new Map())`): Svelte's `$state` proxy does not

@@ -92,10 +92,12 @@ export interface NavRoom {
 /** Derive a sidebar NavIndicator from OUR channel transport state.
  *  Channel-transport-first: when the realtime SSE is broken, presence is
  *  unknown, so a presence-driven dot would mislabel every tagma "offline".
- *  Presence feeds exactly one branch: `absent` + `knownOffline` reads down
- *  (resolved-without-peer, the same source and safe-default policy as the
- *  /tagmata dashboard). The mapping stays honest about what we know:
- *    open      -> live (green)
+ *  Presence feeds exactly two branches: `open` and `absent` read down
+ *  with `knownOffline`: a stopped peer silently drops our envelopes
+ *  under the session key it forgot, so an open channel alone must not
+ *  read live (the same safe-default policy as the /tagmata dashboard):
+ *    open      -> live (green); down (grey) once presence resolves
+ *    without the peer
  *    pending   -> pending (spinner; in-flight open or KEX)
  *    absent    -> pending (spinner) while presence is unresolved; down
  *    (grey) once presence resolves without the peer -- no channel exists
@@ -110,7 +112,10 @@ export function tagmaNavIndicator(
 ): NavIndicator {
   switch (channel.kind) {
     case "open":
-      return "live";
+      // A live drain is not sendability: a stopped peer silently drops
+      // envelopes under the session key it forgot, so trust presence
+      // over the channel when the two disagree (absent mirrors this).
+      return knownOffline ? "down" : "live";
     case "pending":
       return "pending";
     case "absent":

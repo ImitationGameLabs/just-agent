@@ -175,21 +175,33 @@ Deno.test(
 );
 
 Deno.test("tagmaNavIndicator maps each channel state", () => {
-  // open -> live; pending -> pending; absent -> pending while presence is
-  // unresolved, down once it resolves without the peer (knownOffline);
-  // unavailable/offline -> down; error -> error.
+  // open -> live while the peer reads online (or presence is unresolved);
+  // down once presence resolves without the peer (knownOffline) -- a
+  // stopped peer cannot decrypt under our session key;
   assertEquals(
-    tagmaNavIndicator({ kind: "open", conversationId: "c" }),
+    tagmaNavIndicator({ kind: "open", conversationId: "c" }, false),
     "live",
   );
   assertEquals(
+    tagmaNavIndicator({ kind: "open", conversationId: "c" }, true),
+    "down",
+  );
+  assertEquals(
     tagmaNavIndicator({ kind: "pending", conversationId: "c" }),
+    "pending",
+  );
+  // presence must not bleed beyond open and absent: the in-flight arm
+  // ignores it, so a pending open stays pending even once the peer
+  // reads offline;
+  assertEquals(
+    tagmaNavIndicator({ kind: "pending", conversationId: "c" }, true),
     "pending",
   );
   assertEquals(tagmaNavIndicator({ kind: "absent" }), "pending");
   assertEquals(tagmaNavIndicator({ kind: "absent" }, false), "pending");
   assertEquals(tagmaNavIndicator({ kind: "absent" }, true), "down");
   assertEquals(tagmaNavIndicator({ kind: "unavailable" }), "down");
+  assertEquals(tagmaNavIndicator({ kind: "unavailable" }, true), "down");
   assertEquals(
     tagmaNavIndicator({ kind: "offline", conversationId: "c" }),
     "down",

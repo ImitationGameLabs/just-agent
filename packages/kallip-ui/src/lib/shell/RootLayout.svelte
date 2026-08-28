@@ -251,8 +251,8 @@
   // The online sidebar lists EVERY enrolled tagma (not just open channels):
   // the indicator reflects the channel transport state, and the entry links to
   // the tagma-keyed route /chat/t/{tagmaId} which opens the channel on demand.
-  // Channel transport drives the dot; presence feeds only the absent branch:
-  // once presence resolves without the peer the entry reads down (the same
+  // Channel transport drives the dot; presence feeds its open and absent
+  // arms: once it resolves without the peer the entry reads down (the same
   // safe-default policy as the /tagmata dashboard), so a never-online peer
   // cannot spin forever -- auto-open only fires for online tagmas.
   const tagmaNav = $derived(
