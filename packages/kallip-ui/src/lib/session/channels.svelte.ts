@@ -341,11 +341,25 @@ export class ChannelsStore {
    *  `explicit` marks a user-initiated open (the chat page's mount or its
    *  retry button): it bypasses the failure budget's gates -- a failed
    *  explicit open still counts, so the session terminal silences the
-   *  automatic path without ever locking the user out. */
+   *  automatic path without ever locking the user out.
+   *
+   *  `refresh` (the presence sink's online transition) re-keys an ALREADY
+   *  open channel: the open-status early-return is skipped so the existing
+   *  conversation is torn down WITHOUT purging its cache and re-opened -- a
+   *  restarted peer runs a fresh epoch that cannot read our old session
+   *  key, so sends on the stale channel would be 202-then-silently-dropped.
+   *  An `opening` channel still early-returns: that open settles on a fresh
+   *  epoch anyway. */
   async ensureOpen(
     tagma: TagmaView,
-    opts: { explicit?: boolean } = {},
+    opts: { explicit?: boolean; refresh?: boolean } = {},
   ): Promise<void> {
+    // Guard note (arch review F1): a refresh arriving while an openRelay is
+    // mid-flight is swallowed here, and that open settles on whatever epoch
+    // its KEX caught -- so a peer restart inside that millisecond window
+    // can still land a stale-epoch channel, which survives until the NEXT
+    // online transition re-keys it. Same shape as the P0 this refresh
+    // cures, not a new failure mode; accepted.
     if (this.pendingOpens.has(tagma.tagma_id)) return;
     const budget = this.openBudgets.get(tagma.tagma_id);
     if (opts.explicit) {
@@ -359,9 +373,14 @@ export class ChannelsStore {
       return;
     }
     const existing = this.findByTagma(tagma.tagma_id);
+    // Early-return unless a refresh explicitly re-keys an open channel: an
+    // in-flight `opening` always settles on a fresh epoch, but a settled
+    // `open` may be riding a stale epoch after a peer restart -- the refresh
+    // (presence back online) drops it through to the tearDown + re-KEX below.
     if (
       existing &&
-      (existing.status === "open" || existing.status === "opening")
+      (existing.status === "opening" ||
+        (existing.status === "open" && !opts.refresh))
     ) {
       return;
     }

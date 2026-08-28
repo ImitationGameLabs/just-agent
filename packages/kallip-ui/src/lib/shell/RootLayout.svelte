@@ -107,11 +107,15 @@
       realtimeStore.markOffline(tagmaId),
     );
     // Wire presence transitions to auto-connect: an offline -> online tagma is
-    // opened on demand. Same shell-binding discipline as the envelope sink.
-    // NOTE: this is a pre-warm convenience only -- it is no longer load-bearing
-    // for sidebar visibility, since enrolled tagmas always show (linked to
-    // /chat/t/{tagmaId}, which opens on demand). It just makes the spinner
-    // fleeting by opening channels the SSE already knows are online.
+    // opened on demand, with `refresh: true` so an ALREADY-open channel is
+    // re-keyed too -- a restarted peer's fresh epoch cannot read our old
+    // session key, and without the refresh it would silently drop our sends
+    // (202-then-nothing). Same shell-binding discipline as the envelope sink.
+    // NOTE: for never-opened tagmas this stays a pre-warm convenience (the
+    // sidebar shows enrolled tagmas regardless -- it just makes the spinner
+    // fleeting by opening channels the SSE knows are online); the refresh
+    // leg, though, is load-bearing: it is the only path that heals a
+    // restarted-peer channel.
     realtimeStore.setPresenceSink((tagmaId, online) => {
       if (!online) return;
       const tagma = agoraSession.tagmata.find(
@@ -121,7 +125,7 @@
       // from a flapping one, and resetting on every event would defeat
       // the failure budget (the auto path caps at six attempts per
       // session; the user-driven retry is the re-arm channel).
-      if (tagma) void channelsStore.ensureOpen(tagma);
+      if (tagma) void channelsStore.ensureOpen(tagma, { refresh: true });
     });
     // Wire room-membership-changed nudges into the room roster refresh: a
     // membership change repaints the member count / creator badge without
