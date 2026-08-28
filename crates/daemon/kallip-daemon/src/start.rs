@@ -56,6 +56,58 @@ impl From<SpawnError> for StartError {
     }
 }
 
+/// Env key holding the one-time relay enrollment code. Consumed once the
+/// instance holds stored relay credentials: tagma's Stored boot branch never
+/// reads it, and its boot resolution fail-fasts on stored credentials plus
+/// code — so replaying it after a completed enrollment bricks every restart.
+const CONSUMED_ENROLLMENT_CODE: &str = "KALLIP_TAGMA_RELAY_ENROLLMENT_CODE";
+
+/// Whether the instance already holds stored relay credentials — the exact
+/// predicate of tagma's Stored branch (`credentials::load_tagma`: both
+/// `tagma.id` and `tagma.token` readable under the entry dir; the daemon's
+/// env-sugar relay entry is named "default"). Deliberately read, not
+/// `exists`, so an unreadable file counts as absent on both sides.
+/// Cross-crate layout mirror — keep in sync with
+/// crates/kallip-tagma/src/credentials.rs.
+fn stored_credentials_exist(instance_dir: &Path) -> bool {
+    let entry = instance_dir.join("credentials").join("default");
+    std::fs::read_to_string(entry.join("tagma.id")).is_ok()
+        && std::fs::read_to_string(entry.join("tagma.token")).is_ok()
+}
+
+/// Build the replay env for a restart, dropping the enrollment code once it
+/// is provably spent (stored credentials exist) and scrubbing it from
+/// meta.json in the same stroke — single-use secret material must not sit
+/// on disk forever. Conditional on the probe: an instance whose first
+/// enrollment failed (that boot degrades the entry to local-only, it does
+/// not fail) still needs the code on restart to retry, so an unconditional
+/// strip would make such instances unbootable. A failed scrub write never
+/// blocks the relaunch — the in-memory filter is the functional fix, the
+/// persisted copy is hygiene.
+fn replay_env(meta: &scan::InstanceMeta, instance_dir: &Path) -> Vec<String> {
+    let spent = format!("{CONSUMED_ENROLLMENT_CODE}=");
+    let has_code = meta.env.iter().any(|pair| pair.starts_with(&spent));
+    if !has_code || !stored_credentials_exist(instance_dir) {
+        return meta.env.clone();
+    }
+    let replay: Vec<String> = meta
+        .env
+        .iter()
+        .filter(|pair| !pair.starts_with(&spent))
+        .cloned()
+        .collect();
+    let scrubbed = scan::InstanceMeta {
+        instance_id: meta.instance_id.clone(),
+        owner_uid: meta.owner_uid,
+        workspace: meta.workspace.clone(),
+        env: replay.clone(),
+    };
+    if let Ok(bytes) = serde_json::to_vec(&scrubbed) {
+        let _ = std::fs::write(instance_dir.join("meta.json"), bytes);
+    }
+    replay
+}
+
 /// Blocking relaunch. `pid_is_tagma` is injected so tests can fake the
 /// liveness verdict without a real process (mirroring stop).
 pub fn start(
@@ -73,7 +125,7 @@ pub fn start(
     let Some(meta) = scan::read_meta(&instance_dir) else {
         return Err(StartError::NotFound(slug.to_string()));
     };
-    let Some(workspace) = meta.workspace.filter(|w| !w.is_empty()) else {
+    let Some(workspace) = meta.workspace.as_ref().filter(|w| !w.is_empty()) else {
         return Err(StartError::Invalid(format!(
             "instance {slug} has no recorded workspace"
         )));
@@ -84,14 +136,94 @@ pub fn start(
         return Err(StartError::AlreadyRunning(slug.to_string()));
     }
     // The persisted copy is re-validated so hand-edited meta cannot smuggle
-    // daemon-owned keys into a launch.
+    // daemon-owned keys into a launch; the replay env then drops enrollment
     validate_user_env(&meta.env)?;
-    match launch(&instance_dir, Path::new(&workspace), &meta.env, timeout) {
+    // material that is provably spent (see replay_env).
+    let replay = replay_env(&meta, &instance_dir);
+    match launch(&instance_dir, Path::new(&workspace), &replay, timeout) {
         Ok(started) => Ok(started),
         Err(SpawnError::Timeout { timeout_secs }) => Err(StartError::Timeout { timeout_secs }),
         Err(SpawnError::Internal(e)) => Err(StartError::Internal(e)),
         // Unreachable via launch today; kept total so a future variant
         // surfaces as an internal error instead of failing to map.
         Err(other) => Err(StartError::Internal(anyhow::anyhow!("{other}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(env: &[&str]) -> scan::InstanceMeta {
+        scan::InstanceMeta {
+            instance_id: "instance-1".into(),
+            owner_uid: 1000,
+            workspace: Some("/ws".into()),
+            env: env.iter().map(|pair| pair.to_string()).collect(),
+        }
+    }
+
+    fn write_meta(dir: &std::path::Path, value: &scan::InstanceMeta) {
+        std::fs::write(
+            dir.join("meta.json"),
+            serde_json::to_vec(value).expect("serialize meta"),
+        )
+        .expect("write meta");
+    }
+
+    fn persisted_env(dir: &std::path::Path) -> Vec<String> {
+        let bytes = std::fs::read(dir.join("meta.json")).expect("read meta");
+        let value: scan::InstanceMeta = serde_json::from_slice(&bytes).expect("parse meta");
+        value.env
+    }
+
+    fn write_stored_credentials(dir: &std::path::Path) {
+        let entry = dir.join("credentials").join("default");
+        std::fs::create_dir_all(&entry).expect("create entry dir");
+        std::fs::write(entry.join("tagma.id"), "tagma-1").expect("write id");
+        std::fs::write(entry.join("tagma.token"), "token").expect("write token");
+    }
+
+    #[test]
+    fn replay_drops_spent_code_and_scrubs_meta() {
+        let dir = tempfile::tempdir().expect("instance tempdir");
+        write_stored_credentials(dir.path());
+        let value = meta(&[
+            "KALLIP_OPERATOR_TOKEN=t",
+            "KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-spent",
+        ]);
+        write_meta(dir.path(), &value);
+
+        let replay = replay_env(&value, dir.path());
+
+        assert_eq!(replay, ["KALLIP_OPERATOR_TOKEN=t"]);
+        assert_eq!(persisted_env(dir.path()), ["KALLIP_OPERATOR_TOKEN=t"]);
+    }
+
+    #[test]
+    fn replay_keeps_code_while_enrollment_is_incomplete() {
+        // No stored credentials: a first enrollment that degraded to
+        // local-only still needs the code on restart to retry.
+        let dir = tempfile::tempdir().expect("instance tempdir");
+        let value = meta(&[
+            "KALLIP_OPERATOR_TOKEN=t",
+            "KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-fresh",
+        ]);
+        write_meta(dir.path(), &value);
+
+        let replay = replay_env(&value, dir.path());
+
+        assert_eq!(replay, value.env);
+        assert_eq!(persisted_env(dir.path()), value.env);
+    }
+
+    #[test]
+    fn replay_without_code_is_identity() {
+        let dir = tempfile::tempdir().expect("instance tempdir");
+        write_stored_credentials(dir.path());
+        let value = meta(&["KALLIP_OPERATOR_TOKEN=t"]);
+        write_meta(dir.path(), &value);
+
+        assert_eq!(replay_env(&value, dir.path()), ["KALLIP_OPERATOR_TOKEN=t"]);
     }
 }

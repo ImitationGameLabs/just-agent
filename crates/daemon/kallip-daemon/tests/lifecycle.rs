@@ -246,6 +246,113 @@ fn spawn_health_stop_round_trip() {
 }
 
 #[test]
+fn start_filters_consumed_enrollment_code() {
+    let daemon = start_daemon();
+    let client = DaemonClient::new(&daemon.socket);
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+
+    // Spawn local-only (the real enrolled setup is fabricated below — the
+    // test has no agora).
+    let spawn = tokio_block_on(client.call(RequestBody::Spawn {
+        slug: "stale-code".into(),
+        workspace: workspace.path().display().to_string(),
+        env: vec![
+            "KALLIP_OPERATOR_TOKEN=test-op-token".into(),
+            "KALLIP_LLM_PROVIDER=deepseek".into(),
+            "KALLIP_LLM_MODEL=test-model".into(),
+            "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
+        ],
+    }));
+    let OkPayload::Spawn { pid, .. } = expect_ok(spawn) else {
+        panic!("expected spawn payload");
+    };
+
+    // Stop and wait for the exit, so Start relaunches rather than
+    // conflicting with a live instance.
+    let stop = tokio_block_on(client.call(RequestBody::Stop {
+        slug: "stale-code".into(),
+    }));
+    expect_ok(stop);
+    for _ in 0..100 {
+        if !PathBuf::from(format!("/proc/{pid}")).exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Fabricate the bug's exact state: a spawn-time enrollment code still
+    // persisted in meta.json plus credentials stored by a completed
+    // enrollment. The agora points at a port nothing listens on — after the
+    // fix the real tagma boots through the Stored branch and the entry
+    // merely degrades to local-only; replaying the code instead makes tagma
+    // fail fast on stored-credentials-plus-code and Start times out.
+    let instance_dir = daemon.data_dir.path().join("stale-code");
+    let mut meta: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta.json"),
+    )
+    .expect("parse meta.json");
+    let env = meta["env"].as_array_mut().expect("env array");
+    env.push("KALLIP_TAGMA_RELAY_AGORA_URL=http://127.0.0.1:9".into());
+    env.push("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-spent".into());
+    std::fs::write(
+        instance_dir.join("meta.json"),
+        serde_json::to_string(&meta).expect("serialize meta"),
+    )
+    .expect("rewrite meta.json");
+    let entry = instance_dir.join("credentials").join("default");
+    std::fs::create_dir_all(&entry).expect("create credentials entry");
+    std::fs::write(entry.join("tagma.id"), "tagma-1").expect("write tagma.id");
+    std::fs::write(entry.join("tagma.token"), "token").expect("write tagma.token");
+
+    let started = tokio_block_on(client.call(RequestBody::Start {
+        slug: "stale-code".into(),
+    }));
+    let OkPayload::Spawn {
+        pid: started_pid,
+        port: started_port,
+        ..
+    } = expect_ok(started)
+    else {
+        panic!("expected start payload");
+    };
+    assert!(started_port > 0, "fresh bound port");
+    assert_ne!(started_pid, pid, "a fresh incarnation");
+
+    // The scrub removed the spent code from the persisted copy while the
+    // rest of the env survived (the agora url is not secret material and
+    // stays — the Stored branch needs it).
+    let after: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta after"),
+    )
+    .expect("parse meta.json after");
+    let env = after["env"].as_array().expect("env array after");
+    assert!(env.contains(&serde_json::json!("KALLIP_OPERATOR_TOKEN=test-op-token")));
+    assert!(env.contains(&serde_json::json!(
+        "KALLIP_TAGMA_RELAY_AGORA_URL=http://127.0.0.1:9"
+    )));
+    assert!(!env.iter().any(|pair| {
+        pair.as_str()
+            .is_some_and(|p| p.starts_with("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE="))
+    }));
+
+    // Cleanup so the test does not leave a live tagma behind.
+    let stop = tokio_block_on(client.call(RequestBody::Stop {
+        slug: "stale-code".into(),
+    }));
+    expect_ok(stop);
+    for _ in 0..100 {
+        if !PathBuf::from(format!("/proc/{started_pid}")).exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !PathBuf::from(format!("/proc/{started_pid}")).exists(),
+        "relaunched tagma exited after stop"
+    );
+}
+
+#[test]
 fn spawn_rejects_slug_reuse_and_workspace_overlap() {
     let daemon = start_daemon();
     let client = DaemonClient::new(&daemon.socket);

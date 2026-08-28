@@ -332,6 +332,12 @@ writes nothing). Env
 pairs must start with `KALLIP_` or be `RUST_LOG`; the three reserved
 keys (`KALLIP_DATA_DIR`,
 `KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`) are daemon-owned.
+A `start` relaunch drops `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` from the
+replayed env once the instance holds stored relay credentials
+(`credentials/default/`) and scrubs it from `meta.json` in the same stroke:
+the code is single-use, and replaying it after a completed enrollment trips
+tagma's conflicting-relay-configuration fail-fast. An instance whose
+enrollment never completed still replays the code, so a restart can retry.
 A tagma instance logs into the `logs/` subdirectory of its data root
 by default: daily-rolling files, the last 7 kept. Set
 `KALLIP_TAGMA_LOG_TO_STDERR=1` (or `true`) to log to the terminal's
