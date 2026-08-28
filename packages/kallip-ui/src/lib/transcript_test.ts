@@ -15,6 +15,7 @@ import {
   mergeHistoryLines,
   markLineSent,
   replaceLineId,
+  sendFailed,
   withUserLine,
   type ConversationLine,
 } from "./transcript.ts";
@@ -96,6 +97,32 @@ Deno.test("TagmaReply error sets status error + a system line", () => {
       createdAt: undefined,
     },
   ]);
+});
+
+// A local send failure renders once (red banner), never as a history
+// line -- the wire kind:"error" path above is the one that appends.
+Deno.test(
+  "sendFailed drops the optimistic line and sets only the red error",
+  () => {
+    const sending = withUserLine(EMPTY_TRANSCRIPT, "hello", -1, userS);
+    const t = sendFailed(sending, -1, "post failed");
+    assertEquals(t.lines, []);
+    assertEquals(t.status, "error");
+    assertEquals(t.error, "post failed");
+  },
+);
+
+// The next send after a failure starts a clean turn: the fresh user
+// line clears the stale red error.
+Deno.test("withUserLine clears a stale error from a failed send", () => {
+  const failed = sendFailed(
+    withUserLine(EMPTY_TRANSCRIPT, "hello", -1, userS),
+    -1,
+    "post failed",
+  );
+  const next = withUserLine(failed, "retry", -2, userS);
+  assertEquals(next.error, undefined);
+  assertEquals(next.status, "busy");
 });
 
 Deno.test(

@@ -33,6 +33,7 @@ import {
   mergeHistoryLines,
   toSender,
   withUserLine,
+  sendFailed,
 } from "../transcript.ts";
 import type {
   ConversationSender,
@@ -87,13 +88,6 @@ export type ConversationStatus =
  *  module (avoids a cycle). */
 export interface ConversationStoreLike {
   get(id: string): ConversationBase | undefined;
-}
-
-/** A synthetic error reply for a POST that failed before the tagma could ack,
- *  routed through the same reducer as a tagma-side error. `req_id` and `status`
- *  are sentinels (the failure did not come from a real reply). */
-function syntheticErrorReply(message: string): TagmaReply {
-  return { kind: "error", req_id: 0, status: 0, message };
 }
 
 export abstract class ConversationBase {
@@ -317,17 +311,12 @@ export abstract class ConversationBase {
         console.error("[chat] send failed:", e);
         failureCopy = chat_send_failed();
       }
-      this.transcript = applyTagmaReply(
-        {
-          ...this.transcript,
-          lines: this.transcript.lines.filter(
-            (l) => l.historyId !== next.localId,
-          ),
-        },
-        syntheticErrorReply(failureCopy),
-        undefined,
-        (this.syntheticSeq -= 1),
-      );
+      // Local send failure: red status error only -- no system history
+      // line. A genuine server kind:"error" reply (the wire path)
+      // still enters history via the reducer; that is by-design and
+      // stays. Feeding this failure through the same reducer is what
+      // double-rendered it (system line + red banner).
+      this.transcript = sendFailed(this.transcript, next.localId, failureCopy);
       this.pendingInFlight = null;
       void this.pumpPending();
     }

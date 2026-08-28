@@ -364,6 +364,27 @@ export function withUserLine(
       },
     ],
     status: "busy",
+    // A fresh user line starts a new turn: clear any stale red error
+    // a previous local send failure left (mirrors the busy-signal clear).
+    error: undefined,
+  };
+}
+
+/** Apply a local send failure: drop the optimistic line and set the red
+ * status error -- and append NO history line. A genuine server
+ * kind:"error" reply (the wire path) still enters history via
+ * `applyTagmaReply`; that double render is exactly why this local
+ * failure, which never was a server reply, gets its own entry point. */
+export function sendFailed(
+  state: ConversationTranscript,
+  localId: number,
+  message: string,
+): ConversationTranscript {
+  return {
+    ...state,
+    lines: state.lines.filter((l) => l.historyId !== localId),
+    status: "error",
+    error: message,
   };
 }
 
