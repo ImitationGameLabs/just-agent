@@ -1,4 +1,6 @@
 {
+  pkgs,
+  sharedSkills,
   common,
 }:
 let
@@ -31,8 +33,24 @@ let
 in
 {
   # The full workspace: every kallip binary. This is `packages.default` and the
-  # single source of truth consumed by the tarball + dev compose.
-  workspace = buildCrate "cargo build --release";
+  # single source of truth consumed by the tarball + dev compose. It is also
+  # the only install shape where the daemon resolves the tagma as a
+  # same-directory sibling (kallip-daemon/src/bins.rs), so the skills-seed
+  # wrapper lives here rather than on the per-crate tagma build.
+  workspace = (buildCrate "cargo build --release").overrideAttrs (old: {
+    nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+      pkgs.makeWrapper
+    ];
+    postInstall = (old.postInstall or "") + ''
+      # Seed the shared skills by default on nix installs: the wrapper
+      # exports KALLIP_SKILLS_SEED only when unset, so an explicit env
+      # value (or the container image Env) still wins. Only kallip-tagma
+      # reads the seed -- the agent-side kallip CLI sharing its bin/
+      # directory never does, so it stays unwrapped.
+      wrapProgram $out/bin/kallip-tagma \
+        --set-default KALLIP_SKILLS_SEED ${sharedSkills}/share/kallip/skills
+    '';
+  });
   # The agora control-plane server (pure HTTP/Postgres; no shell-out deps).
   agora = buildCrate "cargo build --release -p kallip-agora";
   # The headless agora admin CLI (HTTP client; runs on the operator host). A
@@ -48,7 +66,9 @@ in
   # The host/"tagma" side: the tagma service (agent host + in-process relay
   # connector) and the `kallip` CLI (whose `lesche send` subcommand the agent
   # invokes to address the user) share most of their closure, so one build
-  # beats many.
+  # beats many. The container image (docker-images/tagma.nix) and the dev
+  # compose inject KALLIP_SKILLS_SEED explicitly, so this build stays bare
+  # -- the seed wrapper lives on `workspace` above.
   # Excludes agora.
   tagma = buildCrate "cargo build --release -p kallip-tagma -p kallip";
   # The timer/notification daemon: fires schedules and injects them into agent

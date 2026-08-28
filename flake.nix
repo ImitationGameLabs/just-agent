@@ -81,11 +81,18 @@
 
           packages =
             let
+              # Curated shared-skill tree (read-only bundled defaults). The
+              # tagma wrapper in workspace.nix carries it as KALLIP_SKILLS_SEED's
+              # nix default (container-shared.nix imports the same file, so
+              # deployments reference a bit-identical store path).
+              sharedSkills = import ./nix/packages/shared-skills.nix {
+                inherit pkgs;
+              };
               # Crane binary builds (full workspace + per-crate subsets for the
               # purpose-built images), all on the shared deps cache. See
               # nix/packages/workspace.nix.
               builds = import ./nix/packages/workspace.nix {
-                inherit common;
+                inherit common pkgs sharedSkills;
               };
               # The full-workspace build, passed to the tarball + integration
               # tests (they take a single `workspace` derivation).
@@ -112,13 +119,10 @@
                   workspace
                   ;
               };
-              # Curated shared-skill tree (read-only bundled defaults). Pure
-              # markdown, cross-platform. The tagma seeds <data_dir>/skills/
-              # from this on first boot; container-shared.nix imports the same
-              # file so deployments reference a bit-identical store path.
-              kallip-shared-skills = import ./nix/packages/shared-skills.nix {
-                inherit pkgs;
-              };
+              # Re-export the let-level sharedSkills derivation (defined next
+              # to the builds import above) as a package so deployments can
+              # reference the bit-identical store path directly.
+              kallip-shared-skills = sharedSkills;
             }
             # Container images: scratch + nix closure via dockerTools. Linux-only
             # (the buildImage closure is Linux-native). See
