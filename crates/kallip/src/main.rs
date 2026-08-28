@@ -146,13 +146,6 @@ async fn main() -> Result<()> {
                     )
                     .await?;
             }
-            AgentCommand::Wake(args) => {
-                // The kick round runs asynchronously in the tagma;
-                // a clean return IS the deliverable (the agent will
-                // speak on its own stream when it wakes).
-                let id = client.resolve_agent_ref(args.id.as_ref()).await?;
-                client.wake_agent(&id).await?;
-            }
         },
         Commands::Dir(cmd) => match cmd {
             AgentDirCommand::List => print_agent_directory(&client).await?,

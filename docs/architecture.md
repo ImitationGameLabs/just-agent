@@ -187,7 +187,7 @@ follows: `FailoverChainExhausted` with a transient retry armed enters a retrying
 backoff (bounded by `max_transient_retries`; the timer re-runs the original
 prompt, and exhausting the budget parks with `TransientRetryExhausted`);
 permanent errors and max-rounds park the agent with a reason surfaced to the
-operator (a parked agent is kickable via the wake endpoint); budget exhaustion
+operator (a parked agent is woken by the next incoming message — the delivery gate buffers it to the inbox and enqueues a kick turn; there is no manual wake route); budget exhaustion
 re-arms the wait timer as a zero-cost recovery probe. Messages to the
 user are decoupled from all of this: the agent addresses the user by running the
 `kallip lesche send` CLI through `bash_exec`, not by ending a turn.

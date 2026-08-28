@@ -127,6 +127,34 @@ pub async fn deliver_inbound_room_message(
     enqueue_prompt(state, id, envelope, "room").await
 }
 
+/// Coarse human-readable duration for the kick turn ("45s", "3m 12s",
+/// "2h 5m") — the agent reads this in its transcript. Migrated from the
+/// deleted wake endpoint; the delivery gate below is its only consumer.
+fn format_parked_duration(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+    }
+}
+
+/// Build the kick `[system]` turn for a parked agent: why and how long ago
+/// it parked, leaving the decision (retry, adjust, report) to the agent.
+/// Same text the deleted wake endpoint sent; the delivery gate's parked
+/// branch (auto-wake) is its only consumer.
+fn format_kick_text(
+    reason: &kallip_common::protocol::ParkedReason,
+    parked_at: std::time::Instant,
+) -> String {
+    let duration = format_parked_duration(parked_at.elapsed());
+    format!(
+        "[system] you were parked {duration} ago: {reason}. Decide whether to retry, adjust, or report."
+    )
+}
+
 /// Enqueue an already-formatted prompt string to an agent: the fast path
 /// (non-blocking send to a live agent's prompt channel) and the slow path
 /// (reactivating a dead agent on a fresh channel). Shared by the bilateral
@@ -139,24 +167,6 @@ pub(crate) async fn enqueue_prompt(
     envelope: String,
     source: &str,
 ) -> Result<MessageResponse, ApiError> {
-    // Parked gate (before the inbox push): a parked agent is in a failed
-    // terminal state and the guard matrix buffers notify wakes, so an
-    // ordinary message would sit undelivered until an unrelated wake — and
-    // rot entirely if the operator removes the agent instead. Refuse with
-    // the way out: the wake endpoint's kick turn is the designed exit
-    // from Parked. Not-found/faulted fall through to their existing
-    // branches below.
-    {
-        let registry = state.registry.read().await;
-        if let Some(entry) = registry.get(id)
-            && let Some(live) = entry.as_live()
-            && live.agent.get_state() == crate::state::AgentState::Parked
-        {
-            return Err(ApiError::conflict(format!(
-                "agent is parked; use POST /agents/{id}/wake to kick it awake"
-            )));
-        }
-    }
     // Push the full message body to the inbox — always. The inbox is the
     // universal message store; the agent pulls undelivered direct messages on
     // wake via the MessagePuller trait.
@@ -181,6 +191,60 @@ pub(crate) async fn enqueue_prompt(
         return Ok(MessageResponse {
             queue_depth: 0,
             warning: Some("agent is off-duty; message buffered to inbox".to_string()),
+        });
+    }
+
+    // Auto-wake gate (parked): the message is durable in the inbox above,
+    // so it carries the wake warrant — enqueue the kick [system] turn and
+    // the prompt arm's post-round drain pulls the message once the kick
+    // round un-parks the agent (the kick text itself carries no message
+    // body). Notify-class events stay buffered: transient signals carry
+    // no warrant (guard matrix). Falls through on a raced un-park (the
+    // state moved under the lock re-check — an ordinary race) so the
+    // liveness path below delivers normally.
+    enum ParkedWake {
+        Kick(String, tokio::sync::mpsc::Sender<String>),
+        ParkedWithoutReason,
+    }
+    let parked_wake: Option<ParkedWake> = {
+        let registry = state.registry.read().await;
+        match registry.get(id).and_then(|entry| entry.as_live()) {
+            Some(live) if live.agent.get_state() == crate::state::AgentState::Parked => {
+                // Re-check under the parked lock (ex-endpoint precedent): the
+                // outer Parked read races the bridge's Busy path (state mark +
+                // payload clear under this same lock). A still-Parked mark
+                // with no payload is the real invariant break — the message
+                // is already safe in the inbox, so surface it as a warning
+                // rather than failing the send.
+                let cell = live.agent.parked.lock().unwrap_or_else(|e| e.into_inner());
+                if live.agent.get_state() != crate::state::AgentState::Parked {
+                    None
+                } else if let Some(snapshot) = cell.as_ref() {
+                    Some(ParkedWake::Kick(
+                        format_kick_text(&snapshot.reason, snapshot.at),
+                        live.agent.prompt_tx.clone(),
+                    ))
+                } else {
+                    Some(ParkedWake::ParkedWithoutReason)
+                }
+            }
+            _ => None,
+        }
+    };
+    if let Some(wake) = parked_wake {
+        let warning = match wake {
+            ParkedWake::Kick(text, prompt_tx) => match prompt_tx.try_send(text) {
+                Ok(()) => "agent was parked; a kick turn was sent to wake it".to_string(),
+                // Queue full: the message is safe in the inbox; the kick is
+                // deferred until the queue drains (a parked agent keeps
+                // consuming prompt turns, so this is a pathological state).
+                Err(_) => "agent is parked and its prompt queue is full; message buffered to inbox, wake deferred".to_string(),
+            },
+            ParkedWake::ParkedWithoutReason => "agent is parked without a parked reason (invariant break); message buffered to inbox".to_string(),
+        };
+        return Ok(MessageResponse {
+            queue_depth: 0,
+            warning: Some(warning),
         });
     }
 

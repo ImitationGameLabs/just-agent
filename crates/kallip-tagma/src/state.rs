@@ -320,7 +320,7 @@ pub struct Agent {
     pub pending_profile_reset: Arc<std::sync::Mutex<Option<kallip_runtime::ProfileReset>>>,
     /// Parked snapshot, written by the bridge at a parking terminal event and
     /// cleared on any non-parked terminal. Shared (same `Arc`) with the bridge
-    /// task; read by the wake route (kick turn text) and the status surfaces.
+    /// task; read by the delivery gate's auto-wake (kick turn text) and the status surfaces.
     pub parked: Arc<std::sync::Mutex<Option<ParkedSnapshot>>>,
     /// Armed chain-transient retry info, written by the bridge at an
     /// FCE-with-retry terminal event; cleared on any other terminal. Shared

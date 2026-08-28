@@ -275,6 +275,21 @@ pub async fn agent_task(
                         if run_and_report(&mut ctx, &agent_tx, &mut prompt_rx).await {
                             break;
                         }
+                        // Post-round inbox drain: a kick round un-parks the
+                        // agent, so messages that arrived while parked (or
+                        // during the round) are pulled now instead of waiting
+                        // for the next notify — the parked guard consumes
+                        // notify permits, so notify alone never delivers them.
+                        // pull_undelivered is an atomic drain; a racing notify
+                        // arm simply finds nothing left to pull.
+                        if let Some(ref puller) = ctx.message_puller
+                            && let Some(msg) = puller.pull_undelivered().await
+                        {
+                            ctx.record_turn(vec![ChatMessage::user(&msg)]).await;
+                            if run_and_report(&mut ctx, &agent_tx, &mut prompt_rx).await {
+                                break;
+                            }
+                        }
                     }
                     None => break,
                 }
@@ -303,10 +318,12 @@ pub async fn agent_task(
                 }
 
                 // Parked guard (design guard matrix: notify events buffer,
-                // they do not wake a parked agent). The wake endpoint's kick
-                // is the sole exit from Parked; an ordinary message must not
-                // run a round the agent never consented to (it would also
-                // bypass the kick turn that tells the agent why it parked).
+                // they do not wake a parked agent). The delivery gate's kick
+                // turn (auto-wake on message arrival) is the sole exit from
+                // Parked; a bare notify must not run a round the agent never
+                // consented to (the kick turn tells the agent why it parked;
+                // the message itself waits in the inbox for the prompt arm's
+                // post-round drain).
                 // The reset cell was applied above — memory-only, no round
                 // runs — so a later kick runs on the fresh client.
                 if matches!(
@@ -986,9 +1003,10 @@ mod tests {
         );
     }
 
-    /// Guard-matrix pin: notify events must NOT wake a parked agent — the
-    /// wake endpoint's kick is the sole exit from Parked. An ordinary
-    /// message arriving while parked stays buffered; no round runs.
+    /// Guard-matrix pin: a bare notify must NOT wake a parked agent — only
+    /// the delivery gate's kick turn (auto-wake on message arrival) exits
+    /// Parked. A notify-class event arriving while parked stays buffered;
+    /// no round runs.
     #[tokio::test]
     async fn notify_does_not_wake_parked_agent() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -1045,6 +1063,89 @@ mod tests {
         assert!(
             !ran,
             "a notify wake must not run a round while parked (the kick is the sole exit)"
+        );
+    }
+
+    /// Delivery-gate twin of the guard pin above: the kick turn (sent by the
+    /// delivery gate's auto-wake) exits Parked via the prompt arm, and the
+    /// post-round drain then pulls the buffered inbox message into its own
+    /// round — the deterministic kick→un-park→drain delivery chain.
+    #[tokio::test]
+    async fn kick_turn_unparks_then_drains_inbox_message() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct StubPuller(Arc<AtomicBool>);
+        #[async_trait::async_trait]
+        impl MessagePuller for StubPuller {
+            async fn pull_undelivered(&self) -> Option<String> {
+                if self.0.swap(false, Ordering::SeqCst) {
+                    Some("message while parked".to_string())
+                } else {
+                    None
+                }
+            }
+        }
+
+        let mut ctx = crate::test_support::make_ctx(
+            vec![crate::test_support::profile("test", "ep1", 4096)],
+            &["ep1"],
+        )
+        .await;
+        *ctx.lifecycle.lock().unwrap_or_else(|e| e.into_inner()) = LifecycleState::Parked {
+            reason: ParkedReason::FatalError {
+                message: "test park".to_string(),
+            },
+            at: std::time::Instant::now(),
+        };
+        let flag = Arc::new(AtomicBool::new(true));
+        ctx.message_puller = Some(Arc::new(StubPuller(flag.clone())));
+
+        let cancel = ctx.cancel.clone();
+        let store = ctx.store.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
+        let (ptx, prompt_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let handle = tokio::spawn(agent_task(ctx, None, prompt_rx, tx));
+
+        // The kick turn, exactly as the delivery gate's auto-wake sends it.
+        ptx.send(
+            "[system] you were parked 1s ago: fatal error: test park. Decide whether to retry, adjust, or report."
+                .to_string(),
+        )
+        .await
+        .expect("kick send");
+
+        let found = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let guard = store.lock().await;
+                let texts: Vec<String> = guard
+                    .turns()
+                    .iter()
+                    .flat_map(|t| &t.messages)
+                    .filter_map(|m| m.content().map(|s| s.to_string()))
+                    .collect();
+                drop(guard);
+                let kick = texts
+                    .iter()
+                    .position(|t| t.starts_with("[system] you were parked"));
+                let msg = texts
+                    .iter()
+                    .position(|t| t.contains("message while parked"));
+                if let (Some(k), Some(m)) = (kick, msg) {
+                    return (k, m);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+
+        cancel.cancel();
+        let _ = rx.recv().await;
+        handle.abort();
+        let (kick_at, msg_at) =
+            found.expect("kick round must run and the drain must deliver the message");
+        assert!(
+            kick_at < msg_at,
+            "the kick round runs first; the drained message is its own later turn"
         );
     }
 }

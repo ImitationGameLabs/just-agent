@@ -159,11 +159,73 @@ async fn send_message_to_faulted_returns_conflict() {
     assert!(err.message.contains("missing workspace"), "{}", err.message);
 }
 
-/// Messaging a parked agent returns 409 naming the wake endpoint — the
-/// silent-unreachable UX gap (a buffered message would never wake a parked
-/// agent; only the kick does).
+/// Messaging a parked agent auto-wakes it: the message lands in the inbox
+/// and the kick `[system]` turn (same text the deleted wake endpoint sent)
+/// is enqueued on the prompt channel — the agent decides, and the runtime's
+/// post-round drain then pulls the message. The old behavior (409 with a
+/// wake-endpoint hint) is gone.
 #[tokio::test]
-async fn send_message_to_parked_returns_conflict_with_wake_hint() {
+async fn send_message_to_parked_agent_auto_wakes_with_kick_turn() {
+    let state = make_state();
+    install_inbox_store(&state).await;
+    let root = AgentId::random();
+    let parked = AgentId::random();
+    {
+        let mut reg = state.registry.write().await;
+        add_root(&mut reg, &root);
+        add_sub(&mut reg, &parked, &root);
+        let live = reg.get(&parked).unwrap().as_live().unwrap();
+        live.agent.state.store(
+            crate::state::AgentState::PARKED,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        *live.agent.parked.lock().unwrap() = Some(crate::state::ParkedSnapshot {
+            reason: kallip_common::protocol::ParkedReason::FatalError {
+                message: "boom".to_string(),
+            },
+            at: std::time::Instant::now(),
+        });
+    }
+    let (prompt_tx, mut prompt_rx) = tokio::sync::mpsc::channel::<String>(4);
+    {
+        let mut reg = state.registry.write().await;
+        let live = reg.get_mut(&parked).unwrap().as_live_mut().unwrap();
+        live.agent.prompt_tx = prompt_tx;
+    }
+    let resp = send_message(
+        State(state.clone()),
+        AuthIdentity::test_new(Identity::Operator),
+        Path(parked.clone()),
+        Json(MessageRequest { text: "hi".into() }),
+    )
+    .await
+    .expect("parked agent accepts the message and auto-wakes");
+    let (status, Json(body)) = resp;
+    assert_eq!(status, axum::http::StatusCode::ACCEPTED);
+    assert!(
+        body.warning.as_deref().unwrap_or("").contains("kick turn"),
+        "the response must note the auto-wake: {:?}",
+        body.warning
+    );
+    let turn = tokio::time::timeout(std::time::Duration::from_millis(500), prompt_rx.recv())
+        .await
+        .expect("kick turn must be enqueued")
+        .expect("prompt channel open");
+    assert!(
+        turn.starts_with("[system] you were parked") && turn.contains("ago: fatal error: boom"),
+        "kick turn must carry the duration and reason: {turn}"
+    );
+    // The message itself is durable in the inbox — the runtime's
+    // post-round drain pulls it once the kick round un-parks the agent.
+    assert_eq!(state.inboxes.get().unwrap().len_for(&parked).await, 1);
+    assert_eq!(state.inboxes.get().unwrap().len_for(&root).await, 0);
+}
+
+/// A parked state without a parked payload is an invariant break: the send
+/// is still accepted (the message is safe in the inbox — never failed on an
+/// invariant), no kick turn is fabricated, and the warning names it.
+#[tokio::test]
+async fn send_message_to_parked_agent_without_reason_buffers_with_warning() {
     let state = make_state();
     install_inbox_store(&state).await;
     let root = AgentId::random();
@@ -178,22 +240,36 @@ async fn send_message_to_parked_returns_conflict_with_wake_hint() {
             std::sync::atomic::Ordering::Relaxed,
         );
     }
-    let err = send_message(
+    let (prompt_tx, mut prompt_rx) = tokio::sync::mpsc::channel::<String>(4);
+    {
+        let mut reg = state.registry.write().await;
+        let live = reg.get_mut(&parked).unwrap().as_live_mut().unwrap();
+        live.agent.prompt_tx = prompt_tx;
+    }
+    let resp = send_message(
         State(state.clone()),
         AuthIdentity::test_new(Identity::Operator),
-        Path(parked),
+        Path(parked.clone()),
         Json(MessageRequest { text: "hi".into() }),
     )
     .await
-    .expect_err("parked agent rejects ordinary messages");
-    assert_eq!(err.status, 409);
+    .expect("invariant break must not fail the send");
+    let (_status, Json(body)) = resp;
     assert!(
-        err.message.contains("parked") && err.message.contains("/wake"),
-        "message must name the parked state and the wake exit: {}",
-        err.message
+        body.warning
+            .as_deref()
+            .unwrap_or("")
+            .contains("invariant break"),
+        "the warning must name the invariant break: {:?}",
+        body.warning
     );
-    // The refusal happens before the inbox push: nothing is buffered.
-    assert_eq!(state.inboxes.get().unwrap().len_for(&root).await, 0);
+    assert_eq!(state.inboxes.get().unwrap().len_for(&parked).await, 1);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), prompt_rx.recv())
+            .await
+            .is_err(),
+        "no kick turn may be fabricated without a parked reason"
+    );
 }
 
 // -- Duty gate: off-duty messages buffer to inbox --
@@ -391,10 +467,11 @@ async fn operator_rows(
         .unwrap()
 }
 
-/// A parked refusal appends nothing: no transcript row, no UserMessage
-/// frame — so a client that wakes and re-sends cannot pile up rows.
+/// A parked send is accepted (auto-wake): exactly one transcript row and
+/// one UserMessage frame — recording follows acceptance, and the kick turn
+/// itself (a system prompt, not an operator message) records nothing.
 #[tokio::test]
-async fn parked_refusal_records_no_history_row() {
+async fn parked_send_records_row_and_frame_exactly_once() {
     let state = make_state();
     install_inbox_store(&state).await;
     let (db, mut rx, _dir) = install_projector(&state).await;
@@ -409,90 +486,94 @@ async fn parked_refusal_records_no_history_row() {
             crate::state::AgentState::PARKED,
             std::sync::atomic::Ordering::Relaxed,
         );
+        *live.agent.parked.lock().unwrap() = Some(crate::state::ParkedSnapshot {
+            reason: kallip_common::protocol::ParkedReason::MaxRoundsExceeded,
+            at: std::time::Instant::now(),
+        });
     }
 
-    let err = send_message(
+    let (status, _body) = send_message(
         State(state.clone()),
         AuthIdentity::test_new(Identity::Operator),
-        Path(root),
+        Path(root.clone()),
         Json(MessageRequest { text: "hi".into() }),
     )
     .await
-    .expect_err("parked root rejects ordinary messages");
-    assert_eq!(err.status, 409);
+    .expect("parked root accepts the message (auto-wake)");
+    assert_eq!(status, StatusCode::ACCEPTED);
 
-    assert!(
-        operator_rows(&db).await.is_empty(),
-        "a refused message must not append a transcript row"
+    assert_eq!(
+        operator_rows(&db).await.len(),
+        1,
+        "an accepted parked send records exactly one transcript row"
     );
-    assert!(
-        rx.try_recv().is_err(),
-        "a refused message must not publish a UserMessage frame"
-    );
-}
-
-/// Refused attempts leave no rows; the accepted re-send records exactly one
-/// — the exactly-once property the frontend's wake-and-retry relies on.
-#[tokio::test]
-async fn resend_after_refusal_records_single_row() {
-    let state = make_state();
-    install_inbox_store(&state).await;
-    let (db, mut rx, _dir) = install_projector(&state).await;
-    let root = AgentId::random();
-    let (entry, _rx) = make_entry_with_rx(None, "root".into());
-    {
-        let mut reg = state.registry.write().await;
-        reg.register_root(root.clone(), RegistryEntry::Live(entry))
-            .unwrap();
-        let live = reg.get(&root).unwrap().as_live().unwrap();
-        live.agent.state.store(
-            crate::state::AgentState::PARKED,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-    }
-
-    for _ in 0..2 {
-        let err = send_message(
-            State(state.clone()),
-            AuthIdentity::test_new(Identity::Operator),
-            Path(root.clone()),
-            Json(MessageRequest { text: "hi".into() }),
-        )
-        .await
-        .expect_err("parked root rejects ordinary messages");
-        assert_eq!(err.status, 409);
-        assert!(operator_rows(&db).await.is_empty());
-    }
-
-    // Un-park (what the wake kick turn does): the next send is accepted.
-    {
-        let reg = state.registry.read().await;
-        let live = reg.get(&root).unwrap().as_live().unwrap();
-        live.agent.state.store(
-            crate::state::AgentState::IDLE,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-    }
-    let resp = send_message(
-        State(state.clone()),
-        AuthIdentity::test_new(Identity::Operator),
-        Path(root),
-        Json(MessageRequest { text: "hi".into() }),
-    )
-    .await
-    .expect("idle root accepts the message");
-    assert_eq!(resp.0, StatusCode::ACCEPTED);
-
-    let rows = operator_rows(&db).await;
-    assert_eq!(rows.len(), 1, "exactly one row across refusals + accept");
     assert!(
         rx.try_recv().is_ok(),
         "the accepted send publishes its UserMessage frame"
     );
     assert!(
         rx.try_recv().is_err(),
-        "no second frame: refusals published nothing"
+        "no second frame: the kick turn records nothing"
     );
+    assert_eq!(state.inboxes.get().unwrap().len_for(&root).await, 1);
+}
+
+/// Repeated parked sends each record exactly one row — there is no client
+/// wake-and-retry dance anymore (the server auto-wakes), so the pile-up
+/// hazard the old refusal test guarded against cannot arise; the pin is
+/// one row per accepted send, no duplicates.
+#[tokio::test]
+async fn repeated_parked_sends_each_record_one_row() {
+    let state = make_state();
+    install_inbox_store(&state).await;
+    let (db, mut rx, _dir) = install_projector(&state).await;
+    let root = AgentId::random();
+    let (entry, _rx) = make_entry_with_rx(None, "root".into());
+    {
+        let mut reg = state.registry.write().await;
+        reg.register_root(root.clone(), RegistryEntry::Live(entry))
+            .unwrap();
+        let live = reg.get(&root).unwrap().as_live().unwrap();
+        live.agent.state.store(
+            crate::state::AgentState::PARKED,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        *live.agent.parked.lock().unwrap() = Some(crate::state::ParkedSnapshot {
+            reason: kallip_common::protocol::ParkedReason::MaxRoundsExceeded,
+            at: std::time::Instant::now(),
+        });
+    }
+
+    for i in 0..2 {
+        let (status, body) = send_message(
+            State(state.clone()),
+            AuthIdentity::test_new(Identity::Operator),
+            Path(root.clone()),
+            Json(MessageRequest {
+                text: format!("hi {i}"),
+            }),
+        )
+        .await
+        .expect("every parked send is accepted (auto-wake)");
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert!(
+            body.warning.as_deref().unwrap_or("").contains("kick turn"),
+            "each send auto-wakes: {:?}",
+            body.warning
+        );
+    }
+
+    assert_eq!(
+        operator_rows(&db).await.len(),
+        2,
+        "two accepted sends record exactly two rows — no duplicates, no gaps"
+    );
+    assert!(rx.try_recv().is_ok() && rx.try_recv().is_ok());
+    assert!(
+        rx.try_recv().is_err(),
+        "no extra frames beyond the two sends"
+    );
+    assert_eq!(state.inboxes.get().unwrap().len_for(&root).await, 2);
 }
 
 /// An off-duty agent accepts-and-buffers; the inbound row must still be

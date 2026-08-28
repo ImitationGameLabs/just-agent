@@ -43,7 +43,6 @@ the full authorization matrix, see [auth.md](auth.md).
 | `GET`    | `/agents/root`                    | Fetch the tagma-managed root agent         | any                          |
 | `DELETE` | `/agents/{id}`                    | Stop and remove an agent (never the root)  | operator / superior          |
 | `POST`   | `/agents/{id}/interrupt`          | Interrupt current agent operation          | operator / superior          |
-| `POST`   | `/agents/{id}/wake`               | Kick a parked agent awake                  | operator / superior          |
 | `POST`   | `/agents/{id}/message`            | Send a user message (inbound)              | any (peer-to-peer)           |
 | `POST`   | `/agents/{id}/lesche/messages`    | Deliver an agent-authored message (root)   | self (root agent)            |
 | `GET`    | `/agents/{id}/events`             | Internal event stream (SSE, rich vocab)    | any                          |
@@ -243,24 +242,6 @@ Status: `202 Accepted`
 | 403  | Not a superior of the target agent |
 | 404  | Agent not found                    |
 
-### `POST /agents/{id}/wake` — Wake parked agent
-
-Kicks a parked agent awake: enqueues a `[system]` turn telling the agent why and
-how long ago it parked — "you were parked 3m 12s ago: fatal error: boom. Decide
-whether to retry, adjust, or report." — and the agent's next round decides what
-to do. Only meaningful while the agent is parked.
-
-Auth: operator or superior. See [auth.md](auth.md).
-
-Status: `202 Accepted`
-
-| Code | Condition                                        |
-| ---- | ------------------------------------------------ |
-| 403  | Not a superior of the target agent               |
-| 404  | Agent not found                                  |
-| 409  | Agent is not parked, or is faulted               |
-| 500  | Parked state without a parked reason (invariant) |
-
 ### `POST /agents/{id}/message` — Send message
 
 Sends a message to the agent's input queue. The tagma accepts the message
@@ -290,6 +271,7 @@ no supervisor relationship is required. See [auth.md](auth.md).
 - `queue_depth == 0`: agent will process the message immediately.
 - `queue_depth > 0`: message is queued behind existing messages; `warning`
   includes a human-readable note.
+- A parked target auto-wakes: the message is buffered to the inbox and a kick `[system]` turn (park reason + elapsed) is enqueued — the agent decides in its kick round, then pulls the message; `warning` notes the kick. There is no manual wake route (removed: messages are the only wake path).
 
 Status: `202 Accepted`
 
@@ -795,14 +777,14 @@ These signal the end of the current assistant turn. Except for `cancelled`, the 
 varies: `idle`/`interrupted` return to idle, `waiting` parks on a wake timer,
 `tokenBudgetExceeded` re-arms the wait timer as a recovery probe, an armed
 `failoverChainExhausted` enters a retrying backoff, and the unarmed/error/max-rounds
-outcomes park the agent (kickable via `POST /agents/{id}/wake`). Only `cancelled`
+outcomes park the agent (the next incoming message auto-wakes it). Only `cancelled`
 (a lifecycle cancel from remove / tagma shutdown) ends the stream.
 
 | `type`                   | Fields                                                                                                                               | Description                                                                                                                                                                                                                                                                                                                                       |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `idle`                   | _(none)_                                                                                                                              | Agent completed the turn and returned to idle (a `finished`-style content event is `assistantContent`)                                                                                              |
 | `maxRoundsExceeded`      | _(none)_                                                                                                                             | Hit the max tool rounds limit for this turn; the agent parks                                                                                                                                              |
-| `error`                  | `message: string`                                                                                                                    | Turn failed with a fatal error; the agent parks (kickable via `POST /agents/{id}/wake`)                                                                                                                   |
+| `error`                  | `message: string` | Turn failed with a fatal error; the agent parks (a message auto-wakes it) |
 | `failoverChainExhausted` | `reason: "noFailoverConfigured" \| "allBackupsExhausted" \| "allCandidatesUnbuildable" \| "allCandidatesInfeasible", detail: string, transient_retry: { attempt, max_attempts, retry_in_secs }` | Within-tier failover chain exhausted — every profile in the tier is unavailable; `reason` distinguishes the cause (`allCandidatesInfeasible` = every candidate's declared window violated the budget shape — tune `SUMMARY_MAX_TOKENS` / `PINNED_BUDGET_RATIO` or raise the window), `detail` is the original trigger. With `transient_retry` present the agent enters a retrying backoff (the timer re-runs the original prompt); absent, it parks |
 | `waiting`                | `timeout_secs: u64`                                                                                                                  | Turn ended on `break(wait)`; the agent parks on a wake timer — the timer expiring or any external event resumes it                                                                                         |
 | `interrupted`            | _(none)_                                                                                                                             | Round aborted via interrupt; agent stays alive and idle                                                                                                                                                                                                                                                                                           |
