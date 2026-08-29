@@ -38,6 +38,7 @@ const root: WireAgentManagementSummary = {
   duty: "onduty",
   faulted_reason: null,
   conversation_id: null,
+  profile_set: null,
 };
 
 const sub: WireAgentManagementSummary = {

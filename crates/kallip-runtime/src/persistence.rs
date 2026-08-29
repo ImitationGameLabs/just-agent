@@ -141,17 +141,23 @@ pub fn create_agent_dir(agent_id: &AgentId, meta: AgentMeta) -> Result<PathBuf> 
     Ok(dir)
 }
 
-/// Read-modify-write `meta.json` to update `role` and/or `description`.
+/// Read-modify-write `meta.json` to update `role`, `description`, and/or the
 ///
-/// Used by `PUT /agents/{id}/metadata`. Reads the current meta, applies the
-/// closures' values, and atomically rewrites — preserving
-/// `None` leaves a field unchanged; `Some(s)` sets it.
+/// Used by `PUT /agents/{id}/metadata` and `PUT /agents/{id}/profile-set`.
+/// Reads the current meta, applies the values, and atomically rewrites —
+/// preserving whatever it did not touch. `None` leaves a field unchanged;
+/// `Some(s)` sets it (for `profile_set`, the exact set name).
 ///
-/// Call this outside the registry lock (file I/O); the caller then updates the
-/// in-memory `AgentConfig` under the lock — persist-first-then-memory, mirroring
-/// `routes::context::update_exec_policy`. `check_meta` is startup-only, so the two
-/// meta writers never run concurrently.
-pub fn rewrite_meta(dir: &Path, role: Option<&str>, description: Option<&str>) -> Result<()> {
+/// Callers hold the registry write-lock across the file I/O and the in-memory
+/// update (persist-first, then `AgentConfig`) so disk and memory commit as
+/// one unit. `check_meta` is startup-only, so the meta writers never run
+/// concurrently.
+pub fn rewrite_meta(
+    dir: &Path,
+    role: Option<&str>,
+    description: Option<&str>,
+    profile_set: Option<&str>,
+) -> Result<()> {
     let path = dir.join("meta.json");
     let json = fs::read_to_string(&path).context("reading meta.json")?;
     let mut meta: AgentMeta = serde_json::from_str(&json).context("parsing meta.json")?;
@@ -160,6 +166,9 @@ pub fn rewrite_meta(dir: &Path, role: Option<&str>, description: Option<&str>) -
     }
     if let Some(d) = description {
         meta.description = d.to_owned();
+    }
+    if let Some(s) = profile_set {
+        meta.profile_set = Some(s.to_owned());
     }
     atomic_write(&path, &serde_json::to_string_pretty(&meta)?)?;
     Ok(())

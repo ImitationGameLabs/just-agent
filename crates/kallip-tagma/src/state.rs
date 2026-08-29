@@ -507,6 +507,7 @@ impl RegistryEntry {
             created_by: identity.config.created_by.clone(),
             role: identity.config.role.clone(),
             description: identity.config.description.clone(),
+            profile_set: identity.config.profile_set.clone(),
             activity,
             duty: Default::default(),
             parked_reason,

@@ -53,8 +53,43 @@ pub enum Commands {
     /// only — management actions (spawn/remove/metadata) live under `subagent`.
     #[command(name = "agent", subcommand)]
     Dir(AgentDirCommand),
+    /// Manage named profile sets: list, rebind agents, transfer the
+    /// default marker, or remove a set (bound agents interrupt with
+    /// --force).
+    #[command(subcommand)]
+    ProfileSet(ProfileSetCommand),
 }
 
+/// The `kallip profile-set` family — runtime profile-set management.
+#[derive(Subcommand)]
+pub enum ProfileSetCommand {
+    /// List the configured profile sets, their profile counts, and the
+    /// default marker.
+    List,
+    /// Rebind an agent to a named set. A live agent swaps its failover
+    /// chain on its next wake-up; a parked one resolves it at restore.
+    Bind {
+        /// Agent id or role (resolved like every agent-addressing command).
+        id: String,
+        /// Exact set name; unknown names list the available sets.
+        set: String,
+    },
+    /// Transfer the default-set marker to an existing set.
+    Default {
+        /// Exact set name.
+        set: String,
+    },
+    /// Remove a set. The default set and the root's set are refused;
+    /// other referenced sets list their bound agents and need --force
+    /// (they are interrupted, then keep a dangling record until rebound).
+    Remove {
+        /// Exact set name.
+        set: String,
+        /// Interrupt the bound agents, then remove.
+        #[arg(long)]
+        force: bool,
+    },
+}
 /// The `kallip agent` command family: a read-only fleet directory.
 #[derive(Subcommand)]
 pub enum AgentDirCommand {

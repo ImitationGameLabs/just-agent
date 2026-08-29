@@ -9,6 +9,7 @@ import type {
   AgentStatusResponse,
   BudgetResponse,
   BudgetUpdateRequest,
+  DeleteSetResponse,
   ExternalHistoryResponse,
   ListAgentsManagementResponse,
   ListAgentsQuery,
@@ -245,6 +246,16 @@ export class TagmaClient {
       method: "POST",
       body: JSON.stringify(body),
     });
+  }
+
+  /** DELETE /profiles/sets/{name} — remove a set. Bound agents are a
+   * conflict unless `force` interrupts them first (the response lists who);
+   * the default set and the root's set are refused. */
+  deleteProfileSet(name: string, force: boolean): Promise<DeleteSetResponse> {
+    return this.json<DeleteSetResponse>(
+      `/profiles/sets/${encodeURIComponent(name)}?force=${force}`,
+      { method: "DELETE" },
+    );
   }
 
   // --- management: work schedules ---

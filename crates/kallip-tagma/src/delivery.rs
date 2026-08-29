@@ -188,7 +188,7 @@ pub(crate) async fn enqueue_prompt(
             });
         if dangling {
             return Err(ApiError::conflict(
-                "agent has no usable profile set (unbound or unknown); bind a live set or remove the agent",
+                "agent has no usable profile set (unbound or unknown); rebind it first (kallip profile-set bind <agent> <set>, or PUT /agents/{id}/profile-set) or remove the agent",
             ));
         }
     }

@@ -45,12 +45,18 @@ fn manage_router() -> Router<SharedState> {
         .route("/agents/{id}/interrupt", post(agent::interrupt_agent))
         .route("/agents/{id}/duty", put(agent::update_duty))
         .route("/agents/{id}/metadata", put(agent::update_metadata))
+        .route("/agents/{id}/profile-set", put(agent::update_profile_set))
         .route(
             "/profiles",
             get(profiles::get_profiles).put(profiles::put_profiles),
         )
         .route("/profiles/probe", post(profile_probe::probe_profiles))
         .route("/profiles/apply", post(profiles::apply_profiles))
+        .route("/profiles/default", put(profiles::set_default_profile_set))
+        .route(
+            "/profiles/sets/{name}",
+            delete(profiles::delete_profile_set),
+        )
         .route(
             "/work-schedule",
             get(work_schedule::get_work_schedule).put(work_schedule::put_work_schedule),

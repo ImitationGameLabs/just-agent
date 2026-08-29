@@ -61,6 +61,8 @@
   "manage_profiles_set_default_badge": "default",
   "manage_profiles_remove_set_confirm_title": "Remove set",
   "manage_profiles_remove_set_confirm_desc": "Agents bound to this set's name keep a dangling binding until their next spawn resolves it. Discard reverts this draft.",
+  "manage_profiles_remove_set_confirm_users_desc": "Bound agents ({users}) are interrupted and keep a dangling binding until rebound. The set is removed from the server immediately.",
+  "manage_profiles_remove_set_failed": "Failed to remove the set.",
   "manage_profiles_sets_desc_l1": "Profiles within a set fail over when one is unavailable",
   "manage_profiles_sets_desc_l2": "Each set is named; agents bind to a set by name at spawn",
   "manage_profiles_sets_desc_l3": "The default set backs the root agent and any spawn that names no set",

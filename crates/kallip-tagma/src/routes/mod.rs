@@ -101,6 +101,10 @@ pub fn router() -> Router<SharedState> {
             axum::routing::put(agent::update_metadata),
         )
         .route(
+            "/agents/{id}/profile-set",
+            axum::routing::put(agent::update_profile_set),
+        )
+        .route(
             "/agents/{id}/activity",
             axum::routing::put(agent::update_activity),
         )
@@ -140,6 +144,14 @@ pub fn router() -> Router<SharedState> {
         .route(
             "/profiles/apply",
             axum::routing::post(profiles::apply_profiles),
+        )
+        .route(
+            "/profiles/default",
+            axum::routing::put(profiles::set_default_profile_set),
+        )
+        .route(
+            "/profiles/sets/{name}",
+            axum::routing::delete(profiles::delete_profile_set),
         )
         .route(
             "/profiles/probe",

@@ -12,6 +12,8 @@
   import { profilesStore } from "../../lib/manage/profiles.svelte.ts";
   import { managementBackend } from "../../lib/manage/client.ts";
   import { refreshParkedLive as fetchParkedLive } from "../../lib/manage/parkedLive.ts";
+  import { displayError } from "../../lib/manage/errors.ts";
+  import { KallipError } from "@kallipai/kallip-common";
   import { SvelteMap } from "svelte/reactivity";
   import ProfilesToolbar from "../../components/manage/ProfilesToolbar.svelte";
   import ProvidersSection from "../../components/manage/ProvidersSection.svelte";
@@ -57,6 +59,8 @@
     manage_profiles_applied_result,
     manage_profiles_remove_set_confirm_desc,
     manage_profiles_remove_set_confirm_title,
+    manage_profiles_remove_set_confirm_users_desc,
+    manage_profiles_remove_set_failed,
     manage_profiles_title,
   } from "../../paraglide/messages.js";
 
@@ -266,15 +270,53 @@
     providerDialog.open = false;
   }
 
-  // Set removal confirm: removal can strand agents bound to the name,
-  // so the kebab Remove always opens a confirm before mutating the draft.
+  // Set removal confirm: a set with bound users cannot be dropped by the
+  // draft alone. Opening the confirm lists the users (from the live
+  // registry); confirming deletes the set server-side with force (the
+  // users are interrupted and keep a dangling binding until rebound). A
+  // set with no users stays a pure draft edit.
   let removeSetName = $state<string | null>(null);
+  let removeSetUsers = $state<string[]>([]);
+  let removeSetError = $state<string | null>(null);
 
-  function onSetRemoveConfirmed() {
-    if (removeSetName === null) return;
-    profilesStore.removeSet(removeSetName);
+  async function onSetRemoveRequested(name: string) {
+    removeSetName = name;
+    removeSetUsers = [];
+    removeSetError = null;
+    try {
+      const { agents } = await managementBackend().listAgents();
+      removeSetUsers = agents
+        .filter((a) => a.profile_set === name)
+        .map((a) => a.role || a.id);
+    } catch {
+      // The user list is advisory; the delete itself surfaces failures.
+    }
+  }
+
+  async function onSetRemoveConfirmed() {
+    const name = removeSetName;
+    if (name === null) return;
+    removeSetError = null;
+    if (removeSetUsers.length > 0) {
+      try {
+        await managementBackend().deleteProfileSet(name, true);
+      } catch (e) {
+        // 404 = the set is already gone server-side (dangling users);
+        // the local removal is still right. Everything else surfaces.
+        if (!(e instanceof KallipError && e.api.status === 404)) {
+          removeSetError = displayError(
+            "profiles",
+            e,
+            manage_profiles_remove_set_failed(),
+          );
+          return;
+        }
+      }
+    }
+    profilesStore.removeSet(name);
     profileReports.clear();
     removeSetName = null;
+    removeSetUsers = [];
   }
   let setDialog = $state<{ open: boolean; name: string }>({
     open: false,
@@ -462,7 +504,7 @@
         {onTestSet}
         {onTestProfile}
         onEditSet={(setName) => (setDialog = { open: true, name: setName })}
-        onRemoveSet={(setName) => (removeSetName = setName)}
+        onRemoveSet={(setName) => onSetRemoveRequested(setName)}
         onSetDefault={(setName) => {
           const draft = profilesStore.draft;
           if (draft) profilesStore.draft = setDefaultSet(draft, setName);
@@ -507,11 +549,21 @@
 <ConfirmDialog
   open={removeSetName !== null}
   title={manage_profiles_remove_set_confirm_title()}
-  description={manage_profiles_remove_set_confirm_desc()}
+  description={removeSetError
+    ? removeSetError
+    : removeSetUsers.length > 0
+      ? manage_profiles_remove_set_confirm_users_desc({
+          users: removeSetUsers.join(", "),
+        })
+      : manage_profiles_remove_set_confirm_desc()}
   confirmLabel={common_remove()}
   tone="danger"
   onConfirm={onSetRemoveConfirmed}
-  onCancel={() => (removeSetName = null)}
+  onCancel={() => {
+    removeSetName = null;
+    removeSetUsers = [];
+    removeSetError = null;
+  }}
 />
 
 <ProviderDialog

@@ -227,6 +227,12 @@ pub struct AgentSummary {
     /// `transient_retry` payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retrying: Option<TransientRetryInfo>,
+    /// The agent's recorded profile-set binding (exact set name), present once
+    /// bound. The root may carry none before its first apply — restore-time
+    /// default derivation fills it. Dangling names (the set was deleted) are
+    /// surfaced by delivery rejections, not scrubbed here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_set: Option<String>,
     /// Unix seconds of the most recent state transition (creation sets the
     /// baseline). Absent for entries that predate the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -259,6 +265,38 @@ pub struct UpdateAgentMetadataRequest {
     pub role: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+}
+
+/// Request body for `PUT /agents/{id}/profile-set` — rebind the agent to a named
+/// profile set. The name is exact: unknown names are rejected with the list of
+/// available sets. Requires the operator or a superior of the target.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileSetUpdateRequest {
+    pub profile_set: String,
+}
+
+/// Request body for `PUT /profiles/default` — transfer the default-set marker
+/// to an existing set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetDefaultRequest {
+    pub default: String,
+}
+
+/// One agent still bound to a set — the reference list a set deletion must
+/// clear (by interrupt) before the set can be removed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetReference {
+    pub id: AgentId,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub role: String,
+}
+
+/// Response body for `DELETE /profiles/sets/{name}` — the removed name plus the
+/// agents that were interrupted to release it (empty when unreferenced).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteSetResponse {
+    pub removed: String,
+    pub interrupted: Vec<SetReference>,
 }
 
 /// Request body for `PUT /agents/{id}/activity` — the agent reports its current

@@ -61,6 +61,8 @@
   "manage_profiles_set_default_badge": "默认",
   "manage_profiles_remove_set_confirm_title": "移除配置集",
   "manage_profiles_remove_set_confirm_desc": "绑定该配置集名称的智能体会保持悬空绑定，直到下次生成时处理。放弃更改可还原本草稿。",
+  "manage_profiles_remove_set_confirm_users_desc": "绑定的智能体（{users}）会被中断并保持悬空绑定，直到重新绑定。该配置集会立即从服务器移除。",
+  "manage_profiles_remove_set_failed": "移除配置集失败。",
   "manage_profiles_sets_desc_l1": "同一配置集内的配置在不可用时依次切换",
   "manage_profiles_sets_desc_l2": "每个配置集都有名称，智能体生成时按名称绑定配置集",
   "manage_profiles_sets_desc_l3": "默认配置集服务于根智能体与未显式指定配置集的生成",

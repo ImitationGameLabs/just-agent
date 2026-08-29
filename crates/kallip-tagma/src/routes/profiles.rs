@@ -7,14 +7,18 @@
 //! POST /profiles/apply — push the current registry to all live agents via a
 //!   pending-reset cell; each agent rebuilds its failover state on its next
 //!   wake-up. An unbound root also picks up a derived default-set binding.
+//! PUT /profiles/default — transfer the default-set marker to an existing set.
+//! DELETE /profiles/sets/{name} — remove a set; bound agents are interrupted
+//!   (force=true) and keep a dangling record the delivery gate rejects with
+//!   a rebind hint.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, Query, State};
 
-use kallip_common::protocol::ApiError;
+use kallip_common::protocol::{ApiError, DeleteSetResponse, SetDefaultRequest, SetReference};
 use kallip_runtime::profile::{
     Profile, ProfileConfig, ProfileRegistry, ProfileSet, Provider, is_valid_set_name,
     normalize_default,
@@ -66,30 +70,14 @@ pub async fn put_profiles(
         }
     }
     let config = merge_wire(&state.profiles.load().config, wire)?;
-    // Validate: build backends + trial registry. If this fails, nothing changes.
-    let factory = just_llm_client::client::BackendFactory::new();
-    let user_agent = crate::backend::DEFAULT_USER_AGENT;
-    let source = crate::backend::build_backends(&config, factory, user_agent)
-        .map_err(|e| ApiError::bad_request(format!("profile validation failed: {e:#}")))?;
-    let registry = Arc::new(
-        ProfileRegistry::new(config.sets.clone(), source)
-            .map_err(|e| ApiError::bad_request(format!("invalid profile registry: {e:#}")))?,
-    );
+    // Reference integrity: a set some agent still records must not vanish
+    // over a wholesale PUT — that would strand the agent (its delivery is
+    // rejected as dangling). Force the operator through the set-removal
+    // flow, which interrupts the bound agents first.
+    reject_dangling_bindings(&state, &config).await?;
+    let registry = validate_config(&config)?;
 
-    // Persist to disk (best-effort: a failure is logged but does not block the swap,
-    // since the in-memory state is already validated).
-    match kallip_runtime::profile::config_path() {
-        Ok(path) => {
-            if let Err(e) = kallip_runtime::profile::save(&config, &path) {
-                warn!(path = %path.display(), "failed to persist profiles to disk: {e:#}");
-            } else {
-                info!(path = %path.display(), "profiles persisted to disk");
-            }
-        }
-        Err(e) => {
-            warn!("cannot resolve profiles config path for persistence: {e:#}");
-        }
-    }
+    persist_config(&config);
 
     // Swap the ArcSwap atomically.
     let bundle = crate::state::ProfileBundle {
@@ -383,10 +371,7 @@ pub async fn apply_profiles(
     }
 
     for (reset, cell_lock, notify) in targets {
-        let mut cell = cell_lock.lock().unwrap_or_else(|e| e.into_inner());
-        *cell = Some(reset);
-        drop(cell);
-        notify.notify_one();
+        signal_profile_reset(reset, &cell_lock, &notify);
         applied += 1;
     }
 
@@ -394,11 +379,247 @@ pub async fn apply_profiles(
     Ok(Json(ApplyResponse { applied, skipped }))
 }
 
+/// Build backends and a trial registry for the candidate config; nothing
+/// changes on failure. Shared by every set-management mutation.
+fn validate_config(config: &ProfileConfig) -> Result<Arc<ProfileRegistry>, ApiError> {
+    let factory = just_llm_client::client::BackendFactory::new();
+    let user_agent = crate::backend::DEFAULT_USER_AGENT;
+    let source = crate::backend::build_backends(config, factory, user_agent)
+        .map_err(|e| ApiError::bad_request(format!("profile validation failed: {e:#}")))?;
+    Ok(Arc::new(
+        ProfileRegistry::new(config.sets.clone(), source)
+            .map_err(|e| ApiError::bad_request(format!("invalid profile registry: {e:#}")))?,
+    ))
+}
+
+/// Persist the config to disk (best-effort: a failure is logged but does not
+/// block the swap, since the in-memory state is already validated). Shared
+/// by every set-management mutation.
+fn persist_config(config: &ProfileConfig) {
+    match kallip_runtime::profile::config_path() {
+        Ok(path) => {
+            if let Err(e) = kallip_runtime::profile::save(config, &path) {
+                warn!(path = %path.display(), "failed to persist profiles to disk: {e:#}");
+            } else {
+                info!(path = %path.display(), "profiles persisted to disk");
+            }
+        }
+        Err(e) => {
+            warn!("cannot resolve profiles config path for persistence: {e:#}");
+        }
+    }
+}
+
+/// Reject a candidate config that drops a set some agent still records:
+/// the stranded agent's delivery would be rejected as dangling. Unbind or
+/// use the set-removal flow (which interrupts the bound agents first).
+async fn reject_dangling_bindings(
+    state: &SharedState,
+    config: &ProfileConfig,
+) -> Result<(), ApiError> {
+    let registry = state.registry.read().await;
+    let stranded: Vec<String> = registry
+        .iter()
+        .filter_map(|(id, entry)| {
+            let binding = entry.identity().config.profile_set.as_deref()?;
+            (!config.sets.contains_key(binding)).then(|| format!("{id} → '{binding}'"))
+        })
+        .collect();
+    if !stranded.is_empty() {
+        return Err(ApiError::conflict(format!(
+            "config drops sets still bound by agents: {}; use DELETE /profiles/sets/{{name}} to remove a referenced set",
+            stranded.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+/// Write a ProfileReset into the agent's pending cell and wake it — the
+/// shared tail of apply and the explicit per-agent rebind.
+pub(crate) fn signal_profile_reset(
+    reset: kallip_runtime::ProfileReset,
+    cell: &std::sync::Mutex<Option<kallip_runtime::ProfileReset>>,
+    notify: &tokio::sync::Notify,
+) {
+    let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = Some(reset);
+    drop(guard);
+    notify.notify_one();
+}
+
+/// PUT /profiles/default — transfer the default-set marker to an existing set.
+///
+/// Operator-only. Persisted and swapped like PUT /profiles; running agents
+/// are unaffected — new spawns and restores without a recorded binding
+/// resolve against the new default.
+pub async fn set_default_profile_set(
+    State(state): State<SharedState>,
+    auth: AuthIdentity,
+    Json(body): Json<SetDefaultRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    crate::auth::require_operator(auth.identity())?;
+    let bundle = state.profiles.load();
+    if !bundle.config.sets.contains_key(&body.default) {
+        return Err(ApiError::bad_request(format!(
+            "unknown set '{}'; available: {}",
+            body.default,
+            bundle
+                .config
+                .sets
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    let mut config = bundle.config.clone();
+    config.default = body.default.clone();
+    persist_config(&config);
+    state.profiles.store(Arc::new(crate::state::ProfileBundle {
+        config: config.clone(),
+        registry: bundle.registry.clone(),
+    }));
+    info!(default = %config.default, "default profile set transferred");
+    Ok(Json(masked_config(&config)?))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct DeleteSetQuery {
+    pub force: Option<bool>,
+}
+
+/// Scan the registry for agents bound to `name`: the reference list plus
+/// whether any of them is the root (`created_by = None`).
+async fn scan_references(state: &SharedState, name: &str) -> (Vec<SetReference>, bool) {
+    let registry = state.registry.read().await;
+    let mut refs = Vec::new();
+    let mut root = false;
+    for (id, entry) in registry.iter() {
+        let cfg = &entry.identity().config;
+        if cfg.profile_set.as_deref() != Some(name) {
+            continue;
+        }
+        if cfg.created_by.is_none() {
+            root = true;
+        }
+        refs.push(SetReference {
+            id: id.clone(),
+            role: cfg.role.clone(),
+        });
+    }
+    (refs, root)
+}
+
+/// M8 gate for the delete sweep: a post-interrupt reference scan blocks the
+/// delete when it shows a reference outside the interrupted set, or the root
+/// landed on the set. Interrupted records keep their binding (the dangling
+/// state the delivery gate rejects), so "new" means outside the interrupted
+/// set — not merely non-empty.
+fn references_grew(
+    interrupted: &[SetReference],
+    recheck: &[SetReference],
+    root_after: bool,
+) -> bool {
+    root_after
+        || recheck
+            .iter()
+            .any(|r| !interrupted.iter().any(|o| o.id == r.id))
+}
+
+/// DELETE /profiles/sets/{name} — remove a set, interrupting bound agents.
+///
+/// Refuses the default set (transfer it first) and the root's set (the root
+/// has no supervisor to rebind it). Other referenced sets need `?force=true`:
+/// each bound agent is interrupted (faulted binders are skipped — their
+/// record is already in the terminal state an interrupt produces),
+/// references are re-validated (the interrupt-to-persist window can admit
+/// a new binding), and only a sweep free of NEW references persists.
+/// Interrupted agents keep their now-dangling record — delivery rejects
+/// them with a rebind hint until rebound (PUT /agents/{id}/profile-set).
+pub async fn delete_profile_set(
+    State(state): State<SharedState>,
+    auth: AuthIdentity,
+    Path(name): Path<String>,
+    Query(q): Query<DeleteSetQuery>,
+) -> Result<Json<DeleteSetResponse>, ApiError> {
+    crate::auth::require_operator(auth.identity())?;
+    let bundle = state.profiles.load();
+    if !bundle.config.sets.contains_key(&name) {
+        return Err(ApiError::not_found(format!("unknown set '{name}'")));
+    }
+    if name == bundle.config.default {
+        return Err(ApiError::conflict(
+            "the default set cannot be deleted; transfer it first (PUT /profiles/default)",
+        ));
+    }
+    let (references, root_bound) = scan_references(&state, &name).await;
+    if root_bound {
+        return Err(ApiError::conflict(
+            "the root agent is bound to this set; rebind it first (PUT /agents/{id}/profile-set)",
+        ));
+    }
+    let interrupted = if references.is_empty() {
+        Vec::new()
+    } else {
+        if q.force != Some(true) {
+            let ids = references
+                .iter()
+                .map(|r| r.id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ApiError::conflict(format!(
+                "set '{name}' is still bound by: {ids}; pass force=true to interrupt and remove"
+            )));
+        }
+        for r in &references {
+            // A faulted binder has no live round to interrupt — its
+            // terminal state (a dangling record the delivery gate
+            // rejects until a rebind) is exactly what interrupting a
+            // live agent produces, so skip straight to it. Restored
+            // records all register as Faulted, so without this skip a
+            // referenced set could never be force-deleted after a
+            // restart.
+            let is_live = {
+                let registry = state.registry.read().await;
+                registry.get(&r.id).is_some_and(|e| e.as_live().is_some())
+            };
+            if is_live {
+                super::agent::interrupt_core(&state, &r.id).await?;
+            }
+        }
+        // M8: the interrupt-to-persist window can admit a new binding —
+        // re-validate before the write, or a spawn landing in the gap would
+        // strand on a set that no longer exists. Interrupted records keep
+        // their binding (the dangling state the delivery gate rejects), so
+        // "new" means a reference outside the interrupted set.
+        let (recheck, root_after) = scan_references(&state, &name).await;
+        if references_grew(&references, &recheck, root_after) {
+            return Err(ApiError::conflict(
+                "new bindings arrived during the sweep; retry the delete",
+            ));
+        }
+        references
+    };
+    let mut config = bundle.config.clone();
+    config.sets.remove(&name);
+    let registry = validate_config(&config)?;
+    persist_config(&config);
+    state.profiles.store(Arc::new(crate::state::ProfileBundle {
+        config: config.clone(),
+        registry,
+    }));
+    info!(set = %name, interrupted = interrupted.len(), "profile set removed");
+    Ok(Json(DeleteSetResponse {
+        removed: name,
+        interrupted,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::state::RegistryEntry;
-    use crate::test_helpers::{make_entry_with_rx, make_state};
+    use crate::test_helpers::{make_entry_with_rx, make_state, make_state_two_sets};
     use kallip_common::agentid::AgentId;
 
     fn op_auth() -> AuthIdentity {
@@ -413,6 +634,219 @@ mod tests {
         assert_eq!(value["endpoints"]["test"]["api_key"], "********");
         // Non-key fields are untouched.
         assert_eq!(value["endpoints"]["test"]["family"], "deepseek");
+    }
+
+    async fn alt_bound_sub(state: &SharedState) -> AgentId {
+        let sub = AgentId::random();
+        let supervisor = AgentId::random();
+        let (mut entry, rx) = make_entry_with_rx(Some(supervisor), format!("agent-{sub}"));
+        entry.identity.config.profile_set = Some("alt".into());
+        drop(rx);
+        state
+            .registry
+            .write()
+            .await
+            .register(sub.clone(), RegistryEntry::Live(entry));
+        sub
+    }
+
+    #[test]
+    fn references_grew_flags_only_new_ids_and_root() {
+        let a = SetReference {
+            id: AgentId::random(),
+            role: "a".into(),
+        };
+        let same_again = SetReference {
+            id: a.id.clone(),
+            role: "a".into(),
+        };
+        // Interrupted records keep their binding: the same set again passes.
+        assert!(!references_grew(
+            std::slice::from_ref(&a),
+            &[same_again],
+            false
+        ));
+        // A brand-new id in the recheck blocks.
+        let b = SetReference {
+            id: AgentId::random(),
+            role: "b".into(),
+        };
+        assert!(references_grew(&[a], &[b], false));
+        // The root landing on the set blocks regardless.
+        assert!(references_grew(&[], &[], true));
+    }
+
+    #[tokio::test]
+    async fn set_default_transfers_marker() {
+        let state = make_state_two_sets();
+        let Json(cfg) = set_default_profile_set(
+            State(state.clone()),
+            op_auth(),
+            Json(SetDefaultRequest {
+                default: "alt".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(cfg["default"], "alt");
+        assert_eq!(state.profiles.load().config.default, "alt");
+        // The marker moves; the sets themselves do not.
+        assert!(state.profiles.load().config.sets.contains_key("default"));
+    }
+
+    #[tokio::test]
+    async fn set_default_rejects_unknown_set() {
+        let state = make_state_two_sets();
+        let err = set_default_profile_set(
+            State(state),
+            op_auth(),
+            Json(SetDefaultRequest {
+                default: "ghost".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("unknown set 'ghost'"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_refuses_default_set() {
+        let state = make_state_two_sets();
+        let err = delete_profile_set(
+            State(state),
+            op_auth(),
+            Path("default".into()),
+            Query(DeleteSetQuery { force: Some(true) }),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("default set cannot be deleted"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_refuses_root_bound_set() {
+        let state = make_state_two_sets();
+        let root = AgentId::random();
+        let (mut entry, rx) = make_entry_with_rx(None, format!("agent-{root}"));
+        entry.identity.config.profile_set = Some("alt".into());
+        drop(rx);
+        state
+            .registry
+            .write()
+            .await
+            .register(root, RegistryEntry::Live(entry));
+        let err = delete_profile_set(
+            State(state),
+            op_auth(),
+            Path("alt".into()),
+            Query(DeleteSetQuery { force: Some(true) }),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("root agent is bound"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_lists_references_without_force() {
+        let state = make_state_two_sets();
+        let sub = alt_bound_sub(&state).await;
+        let err = delete_profile_set(
+            State(state.clone()),
+            op_auth(),
+            Path("alt".into()),
+            Query(DeleteSetQuery { force: None }),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains(&sub.to_string()),
+            "the refusal must name the bound agent, got: {err}"
+        );
+        assert!(err.to_string().contains("force=true"), "got: {err}");
+        // Refusal is atomic: the set is still there.
+        assert!(state.profiles.load().config.sets.contains_key("alt"));
+    }
+
+    #[tokio::test]
+    async fn remove_set_interrupts_users_and_deletes() {
+        let state = make_state_two_sets();
+        let sub = alt_bound_sub(&state).await;
+        let Json(resp) = delete_profile_set(
+            State(state.clone()),
+            op_auth(),
+            Path("alt".into()),
+            Query(DeleteSetQuery { force: Some(true) }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.removed, "alt");
+        assert_eq!(resp.interrupted.len(), 1);
+        assert_eq!(resp.interrupted[0].id, sub);
+        assert!(!state.profiles.load().config.sets.contains_key("alt"));
+        // The interrupted record keeps its (now dangling) binding — the
+        // state the delivery gate rejects until a rebind lands.
+        let reg = state.registry.read().await;
+        let entry = reg.get(&sub).unwrap();
+        assert_eq!(entry.identity().config.profile_set.as_deref(), Some("alt"));
+    }
+
+    #[tokio::test]
+    async fn remove_force_skips_faulted_binders() {
+        // After a restart every restored record registers as Faulted, so
+        // a referenced set must stay force-deletable: the sweep skips the
+        // interrupt (nothing is running) and leaves the same dangling
+        // record an interrupt would produce.
+        let state = make_state_two_sets();
+        let sub = AgentId::random();
+        let supervisor = AgentId::random();
+        let (mut entry, rx) = make_entry_with_rx(Some(supervisor), format!("agent-{sub}"));
+        entry.identity.config.profile_set = Some("alt".into());
+        drop(rx);
+        state.registry.write().await.register(
+            sub.clone(),
+            RegistryEntry::Faulted(crate::state::FaultedEntry {
+                identity: entry.identity,
+                subagent_ids: entry.subagent_ids,
+                reason: "restore".into(),
+                at: 0,
+            }),
+        );
+
+        let Json(resp) = delete_profile_set(
+            State(state.clone()),
+            op_auth(),
+            Path("alt".into()),
+            Query(DeleteSetQuery { force: Some(true) }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.removed, "alt");
+        assert_eq!(
+            resp.interrupted.len(),
+            1,
+            "faulted binders count as interrupted (same terminal state)"
+        );
+        assert!(!state.profiles.load().config.sets.contains_key("alt"));
+        let reg = state.registry.read().await;
+        assert_eq!(
+            reg.get(&sub)
+                .unwrap()
+                .identity()
+                .config
+                .profile_set
+                .as_deref(),
+            Some("alt"),
+            "the faulted record keeps its dangling binding"
+        );
     }
 
     #[test]
@@ -438,6 +872,58 @@ mod tests {
         let err = merge_wire(&live_config(), w).unwrap_err();
         assert!(
             err.to_string().contains("duplicate profile id 'p'"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn merge_wire_rejects_invalid_set_name() {
+        let w: ProfileConfigWire = serde_json::from_value(serde_json::json!({
+            "endpoints": { "main": { "id": "main", "family": "deepseek", "api_key": null, "base_url": null } },
+            "sets": [
+                { "name": "bad name!", "profiles": [ { "id": "p", "endpoint": "main", "model": "m", "max_context_window": 8 } ] }
+            ]
+        }))
+        .unwrap();
+        let err = merge_wire(&live_config(), w).unwrap_err();
+        assert!(
+            err.to_string().contains("set name 'bad name!'"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn merge_wire_rejects_duplicate_set_name() {
+        let w: ProfileConfigWire = serde_json::from_value(serde_json::json!({
+            "endpoints": { "main": { "id": "main", "family": "deepseek", "api_key": null, "base_url": null } },
+            "sets": [
+                { "name": "a", "profiles": [ { "id": "p1", "endpoint": "main", "model": "m", "max_context_window": 8 } ] },
+                { "name": "a", "profiles": [ { "id": "p2", "endpoint": "main", "model": "m", "max_context_window": 8 } ] }
+            ],
+            "default": "a"
+        }))
+        .unwrap();
+        let err = merge_wire(&live_config(), w).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate set name 'a'"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn merge_wire_rejects_default_naming_missing_set() {
+        let w: ProfileConfigWire = serde_json::from_value(serde_json::json!({
+            "endpoints": { "main": { "id": "main", "family": "deepseek", "api_key": null, "base_url": null } },
+            "sets": [
+                { "name": "a", "profiles": [ { "id": "p", "endpoint": "main", "model": "m", "max_context_window": 8 } ] }
+            ],
+            "default": "ghost"
+        }))
+        .unwrap();
+        let err = merge_wire(&live_config(), w).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("default set name 'ghost' does not match any set"),
             "got: {err}"
         );
     }

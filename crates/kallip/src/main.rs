@@ -5,17 +5,17 @@ mod reference;
 mod skill;
 
 use anyhow::Result;
+use args::{
+    AgentCommand, AgentDirCommand, ApprovalCommand, BudgetCommand, Cli, Commands, DirlockCommand,
+    InboxCommand, LescheCommand, PolicyCommand, ProfileSetCommand, SkillCommand, SubagentCommand,
+};
 use clap::{CommandFactory, Parser};
 use kallip_client::TagmaClient;
 use kallip_common::agentid::AgentId;
 use kallip_common::policy::{ExecDecision, ExecOverride};
+use kallip_common::protocol::{ProfileSetUpdateRequest, SetDefaultRequest};
 use kallip_common::timefmt;
 use kallip_common::tokens::parse_token_amount;
-
-use args::{
-    AgentCommand, AgentDirCommand, ApprovalCommand, BudgetCommand, Cli, Commands, DirlockCommand,
-    InboxCommand, LescheCommand, PolicyCommand, SkillCommand, SubagentCommand,
-};
 
 /// Read agent ID from KALLIP_ID env var.
 fn agent_id_from_env() -> anyhow::Result<AgentId> {
@@ -420,6 +420,73 @@ async fn main() -> Result<()> {
                 let value = parse_token_amount(&args.amount).map_err(|e| anyhow::anyhow!(e))?;
                 let resp = client.set_token_budget(value).await?;
                 println!("Budget set. {}", resp.format_display());
+            }
+        },
+        Commands::ProfileSet(cmd) => match cmd {
+            ProfileSetCommand::List => {
+                let cfg = client.get_profiles().await?;
+                let agents = client.list_agents(None).await?;
+                if let Some(default) = cfg.get("default").and_then(|v| v.as_str()) {
+                    println!("default set: {default}");
+                }
+                if let Some(sets) = cfg.get("sets").and_then(|v| v.as_object()) {
+                    for (name, set) in sets {
+                        let count = set
+                            .get("profiles")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        let users = agents
+                            .iter()
+                            .filter(|a| a.profile_set.as_deref() == Some(name.as_str()))
+                            .count();
+                        println!("{name}: {count} profile(s), {users} agent(s)");
+                    }
+                }
+            }
+            ProfileSetCommand::Bind { id, set } => {
+                let id = client.resolve_agent_ref(&id).await?;
+                let summary = client
+                    .bind_profile_set(
+                        &id,
+                        ProfileSetUpdateRequest {
+                            profile_set: set.clone(),
+                        },
+                    )
+                    .await?;
+                println!("Bound {} to profile set {}.", agent_label(&summary), set);
+            }
+            ProfileSetCommand::Default { set } => {
+                let cfg = client
+                    .set_default_profile_set(SetDefaultRequest {
+                        default: set.clone(),
+                    })
+                    .await?;
+                let new_default = cfg.get("default").and_then(|v| v.as_str()).unwrap_or("");
+                println!("Default profile set: {new_default}");
+            }
+            ProfileSetCommand::Remove { set, force } => {
+                let resp = client.delete_profile_set(&set, force).await?;
+                if resp.interrupted.is_empty() {
+                    println!("Removed profile set {}.", resp.removed);
+                } else {
+                    let interrupted: Vec<String> = resp
+                        .interrupted
+                        .iter()
+                        .map(|r| {
+                            if r.role.is_empty() {
+                                r.id.to_string()
+                            } else {
+                                r.role.clone()
+                            }
+                        })
+                        .collect();
+                    println!(
+                        "Removed profile set {} (interrupted: {}).",
+                        resp.removed,
+                        interrupted.join(", ")
+                    );
+                }
             }
         },
         Commands::Inbox(cmd) => match cmd {

@@ -14,8 +14,9 @@ pub mod sse;
 pub use agent::{
     ActiveProfile, AgentPermissionsResponse, AgentState, AgentStatusResponse, AgentSummary,
     CreateAgentRequest, CreateAgentResponse, DELEGATION_CARVE_OUT, DELEGATION_FULL_HANDOFF,
-    DutyStatus, ListAgentsQuery, ListAgentsResponse, MaxToolRounds, MessageRequest,
-    MessageResponse, ParkedReason, UpdateActivityRequest, UpdateAgentMetadataRequest,
+    DeleteSetResponse, DutyStatus, ListAgentsQuery, ListAgentsResponse, MaxToolRounds,
+    MessageRequest, MessageResponse, ParkedReason, ProfileSetUpdateRequest, SetDefaultRequest,
+    SetReference, UpdateActivityRequest, UpdateAgentMetadataRequest,
 };
 pub use approval::{
     ApprovalDecisionBody, ApprovalEntry, ListApprovalsQuery, ListApprovalsResponse,

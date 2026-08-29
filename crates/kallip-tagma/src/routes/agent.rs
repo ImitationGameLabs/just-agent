@@ -20,8 +20,8 @@ use serde::Deserialize;
 use tracing::{debug, error, info, warn};
 
 use kallip_common::protocol::{
-    CreateAgentRequest, CreateAgentResponse, ListAgentsQuery, UpdateActivityRequest,
-    UpdateAgentMetadataRequest,
+    CreateAgentRequest, CreateAgentResponse, ListAgentsQuery, ProfileSetUpdateRequest,
+    UpdateActivityRequest, UpdateAgentMetadataRequest,
 };
 
 use super::ListAgentsResponse;
@@ -354,6 +354,7 @@ pub async fn update_metadata(
         &agent_dir,
         body.role.as_deref(),
         body.description.as_deref(),
+        None,
     )
     .map_err(ApiError::internal)?;
     if let Some(role) = &body.role {
@@ -584,24 +585,21 @@ pub async fn remove_agent(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Interrupt the current agent operation without deleting it.
-pub async fn interrupt_agent(
-    State(state): State<SharedState>,
-    auth: crate::auth::AuthIdentity,
-    Path(id): Path<AgentId>,
-) -> Result<StatusCode, ApiError> {
-    // Interrupt = cancel the current round only (the task stays alive and returns to its
-    // outer loop). Cancels the round token if a round is in flight; a clean no-op when the
-    // agent is idle (no round to abort). Distinct from `remove_agent`, which cancels the
-    // lifecycle token and terminates the task.
-    //
-    // Clone the shared slot Arc under the registry read-lock, then release it before
-    // touching the inner std Mutex — so the async registry guard is never held across the
-    // (sync) round-cancel lock.
+/// Cancel the target's current round (or kick it out of a parked wait) — the
+/// shared core of `POST /agents/{id}/interrupt` and the set-removal sweep.
+/// The caller has already passed its own authorization check.
+///
+/// Interrupt = cancel the current round only (the task stays alive and returns
+/// to its outer loop). A clean no-op when the agent is idle (no round to
+/// abort); Err only when the agent is faulted (nothing to interrupt) or its
+/// prompt queue is full.
+pub(crate) async fn interrupt_core(state: &SharedState, id: &AgentId) -> Result<(), ApiError> {
+    // Clone the shared slot Arc under the registry read-lock, then release it
+    // before touching the inner std Mutex — so the async registry guard is
+    // never held across the (sync) round-cancel lock.
     let (round_cancel, parked_interrupt) = {
         let registry = state.registry.read().await;
-        registry.require_superior(auth.identity(), &id)?;
-        let Some(entry) = registry.get(&id) else {
+        let Some(entry) = registry.get(id) else {
             return Err(ApiError::not_found("agent not found"));
         };
         let live = entry
@@ -634,7 +632,88 @@ pub async fn interrupt_agent(
     {
         return Err(ApiError::conflict("agent prompt queue is full"));
     }
+    Ok(())
+}
+
+/// Interrupt the current agent operation without deleting it.
+pub async fn interrupt_agent(
+    State(state): State<SharedState>,
+    auth: crate::auth::AuthIdentity,
+    Path(id): Path<AgentId>,
+) -> Result<StatusCode, ApiError> {
+    {
+        let registry = state.registry.read().await;
+        registry.require_superior(auth.identity(), &id)?;
+    }
+    interrupt_core(&state, &id).await?;
     Ok(StatusCode::ACCEPTED)
+}
+
+/// PUT /agents/{id}/profile-set — rebind the agent to a named profile set.
+///
+/// Operator or a superior only; the name must resolve in the current
+/// registry (unknown names list the available sets). The record persists to
+/// meta.json first, then memory. A live agent additionally gets a
+/// ProfileReset signal — its failover chain swaps on the next wake-up;
+/// parked/faulted agents only get the record change (restore resolves it
+/// when they next come up).
+pub async fn update_profile_set(
+    State(state): State<SharedState>,
+    auth: crate::auth::AuthIdentity,
+    Path(id): Path<AgentId>,
+    Json(body): Json<ProfileSetUpdateRequest>,
+) -> Result<Json<AgentSummary>, ApiError> {
+    let bundle = state.profiles.load();
+    let Some(set) = bundle.config.sets.get(&body.profile_set) else {
+        return Err(ApiError::bad_request(format!(
+            "unknown profile set '{}'; available: {}",
+            body.profile_set,
+            bundle
+                .config
+                .sets
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    };
+    let mut registry = state.registry.write().await;
+    registry.require_superior(auth.identity(), &id)?;
+    let entry = registry
+        .get_mut(&id)
+        .ok_or_else(|| ApiError::not_found("agent not found"))?;
+    let agent_dir = entry
+        .identity()
+        .agent_dir
+        .clone()
+        .ok_or_else(|| ApiError::internal("agent has no on-disk directory to update"))?;
+    // Persist first (disk is the source of truth across restarts), then memory.
+    persistence::rewrite_meta(&agent_dir, None, None, Some(&body.profile_set))
+        .map_err(ApiError::internal)?;
+    entry.identity_mut().config.profile_set = Some(body.profile_set.clone());
+    // A live agent swaps its failover chain on its next wake-up — signal
+    // outside the registry write-lock (the cell is a sync mutex; the apply
+    // path keeps the same separation). Parked/faulted agents resolve the
+    // new binding at restore.
+    let mut signal = None;
+    let mut summary = entry.summary(&id);
+    if let Some(live) = entry.as_live() {
+        signal = Some((
+            kallip_runtime::ProfileReset {
+                set: set.clone(),
+                registry: bundle.registry.clone(),
+            },
+            live.agent.pending_profile_reset.clone(),
+            live.agent.notify.clone(),
+        ));
+    }
+    drop(registry);
+    if let Some((reset, cell, notify)) = signal {
+        super::profiles::signal_profile_reset(reset, &cell, &notify);
+    }
+    summary.duty = state.duty.get(&id);
+    info!(agent = %id, set = %body.profile_set, "agent rebound to profile set");
+    Ok(Json(summary))
 }
 
 mod permissions;

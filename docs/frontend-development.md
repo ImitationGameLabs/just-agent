@@ -14,7 +14,9 @@ through the shared `kallip-ui/src/lib/transcript.ts` reducer (`applyTagmaReply`
 / `applySignal`).
 
 The short version: **everything goes through `deno task`. Never drop down to
-`npm` / `npx` / `pnpm` / `yarn`, and never hand-invoke `node_modules/.bin/*`.**
+`npm` / `npx` / `pnpm` / `yarn`, and never hand-invoke `node_modules/.bin/*`**
+— and that includes one-off formatting fixes: `deno task fmt`, not
+`npx prettier` on a single file (it bypasses the repo's fmt script).
 
 ## Why Deno only
 

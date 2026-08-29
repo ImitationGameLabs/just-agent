@@ -18,6 +18,7 @@ import type {
   AgentStatusResponse,
   BudgetResponse,
   BudgetUpdateRequest,
+  DeleteSetResponse,
   ListAgentsManagementResponse,
   ListAgentsQuery,
   ProfileApplyResponse,
@@ -48,6 +49,7 @@ export interface ManagementBackend {
   updateProfiles(body: ProfileConfigPutRequest): Promise<ProfileConfig>;
   applyProfiles(): Promise<ProfileApplyResponse>;
   probeProfiles(body: ProfileProbeRequest): Promise<ProfileProbeResponse>;
+  deleteProfileSet(name: string, force: boolean): Promise<DeleteSetResponse>;
   getWorkSchedule(): Promise<WorkSchedule>;
   putWorkSchedule(body: PutWorkScheduleRequest): Promise<WorkSchedule>;
 }
@@ -93,6 +95,10 @@ export class OfflineBackend implements ManagementBackend {
 
   probeProfiles(body: ProfileProbeRequest) {
     return this.client.probeProfiles(body);
+  }
+
+  deleteProfileSet(name: string, force: boolean) {
+    return this.client.deleteProfileSet(name, force);
   }
   getWorkSchedule() {
     return this.client.getWorkSchedule();
@@ -176,6 +182,13 @@ export class OnlineBackend implements ManagementBackend {
 
   probeProfiles(body: ProfileProbeRequest) {
     return this.req<ProfileProbeResponse>("POST", "/profiles/probe", body);
+  }
+
+  deleteProfileSet(name: string, force: boolean) {
+    return this.req<DeleteSetResponse>(
+      "DELETE",
+      `/profiles/sets/${encodeURIComponent(name)}?force=${force}`,
+    );
   }
   getWorkSchedule() {
     return this.req<WorkSchedule>("GET", "/work-schedule");

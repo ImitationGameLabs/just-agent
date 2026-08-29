@@ -121,6 +121,9 @@ export interface WireAgentManagementSummary {
   /** Present only when `state == "retrying"`: armed backoff counters. */
   readonly retrying?: WireTransientRetryInfo | null;
   readonly conversation_id: string | null;
+  /** The named profile set this agent is bound to (omitted = none; the
+   * Rust side skips the field on `None`). */
+  readonly profile_set?: string | null;
 }
 
 /** `GET /agents` response wrapper. */
@@ -264,6 +267,19 @@ export interface ProfileConfigPutRequest {
 export interface ProfileApplyResponse {
   readonly applied: number;
   readonly skipped: number;
+}
+
+/** One agent still bound to a set — the reference list a set deletion must
+ * clear (by interrupt) before the set can be removed. */
+export interface SetReference {
+  readonly id: string;
+  readonly role?: string;
+}
+
+/** `DELETE /profiles/sets/{name}` response. */
+export interface DeleteSetResponse {
+  readonly removed: string;
+  readonly interrupted: readonly SetReference[];
 }
 
 // Profile probe (dry-run validation before applying)

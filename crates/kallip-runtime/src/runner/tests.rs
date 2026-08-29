@@ -14,9 +14,9 @@ use wiremock::{
 
 use crate::acquisition::advance_failover;
 use crate::agent_task::{RoundToken, run_and_report};
-use crate::failover::FailoverOutcome;
+use crate::failover::{FailoverOutcome, ProfileReset};
 use crate::policy::ToolCallOutcome;
-use crate::profile::BackendSource;
+use crate::profile::{BackendSource, ProfileRegistry, ProfileSet};
 use crate::runner::BreakUntil;
 use crate::test_support::{MapSource, ctx_from_source, make_ctx, profile};
 use crate::tool_execution::{run_tool_bounded, synthesize_unanswered_results};
@@ -578,6 +578,53 @@ async fn failover_primary_down_backup_succeeds() {
         vec![("p1".to_string(), "p2".to_string())],
         "exactly one failover p1→p2"
     );
+}
+
+/// A pending profile reset (what the tagma's bind/apply writes into the
+/// shared cell) is drained at the top of the next `run_and_report`: the
+/// switch takes effect on that very request, and the failover chain is
+/// rebuilt from the new set's head — not resumed at the old index.
+#[tokio::test]
+async fn switch_takes_effect_next_request_and_resets_failover_chain() {
+    let server = MockServer::start().await;
+    mount_break_stream(&server).await;
+
+    let mut map = HashMap::new();
+    map.insert("ep1".into(), wiremock_backend(&server.uri()));
+    let profiles = vec![profile("p0", "ep1", 500_000), profile("p1", "ep1", 500_000)];
+    let mut ctx = ctx_from_source(profiles, wiremock_source(map.clone()), fast_policy()).await;
+    // Advance so the active index is 1 — the switch must reset to the head.
+    ctx.failover.advance_to(1);
+    assert_eq!(ctx.failover.profile_idx(), 1);
+
+    // The pending reset the tagma would write: a one-profile "fresh" set.
+    let fresh = ProfileSet {
+        name: "fresh".into(),
+        description: None,
+        profiles: vec![profile("q0", "ep1", 500_000)],
+    };
+    let sets = std::collections::BTreeMap::from([("fresh".to_string(), fresh.clone())]);
+    let registry = Arc::new(ProfileRegistry::new(sets, wiremock_source(map)).unwrap());
+    *ctx.pending_profile_reset.lock().unwrap() = Some(ProfileReset {
+        set: fresh,
+        registry,
+    });
+
+    ctx.record_turn(vec![ChatMessage::user("switch time")])
+        .await;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentEvent>(256);
+    let (_prompt_tx, mut prompt_rx) = tokio::sync::mpsc::channel::<String>(16);
+    let terminated = run_and_report(&mut ctx, &tx, &mut prompt_rx).await;
+    assert!(!terminated);
+    let _ = rx.try_recv();
+
+    // The chain was rebuilt from the fresh set's head.
+    assert_eq!(ctx.failover.profile_idx(), 0, "reset must land on the head");
+    let snapshot = ctx.failover.profile_snapshot();
+    assert_eq!(snapshot.set_name, "fresh");
+    assert_eq!(snapshot.profile_id, "q0");
+    // The cell is drained — a second wake must not re-apply.
+    assert!(ctx.pending_profile_reset.lock().unwrap().is_none());
 }
 
 #[tokio::test]

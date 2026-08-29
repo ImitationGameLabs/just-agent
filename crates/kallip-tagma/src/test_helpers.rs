@@ -281,6 +281,77 @@ pub fn make_profile_bundle() -> Arc<arc_swap::ArcSwap<crate::state::ProfileBundl
     ))
 }
 
+/// Two-set bundle (`default` + `alt` on a second endpoint) for set-management
+/// tests — bind/default/remove all need a second set to move between.
+pub fn make_profile_bundle_two_sets() -> Arc<arc_swap::ArcSwap<crate::state::ProfileBundle>> {
+    use just_llm_client::family;
+    use kallip_runtime::profile::{Profile, ProfileConfig, ProfileRegistry, ProfileSet, Provider};
+    use std::collections::{BTreeMap, HashMap};
+    let mut endpoints = HashMap::new();
+    endpoints.insert(
+        "test".into(),
+        Provider {
+            id: "test".into(),
+            family: family::DEEPSEEK.into(),
+            api_key: "test".into(),
+            base_url: None,
+        },
+    );
+    endpoints.insert(
+        "alt".into(),
+        Provider {
+            id: "alt".into(),
+            family: family::DEEPSEEK.into(),
+            api_key: "alt".into(),
+            base_url: None,
+        },
+    );
+    let set = |name: &str, ep: &str| {
+        (
+            name.to_string(),
+            ProfileSet {
+                name: name.into(),
+                description: None,
+                profiles: vec![Profile {
+                    id: ep.into(),
+                    endpoint: ep.into(),
+                    model: ep.into(),
+                    max_context_window: 128_000,
+                }],
+            },
+        )
+    };
+    let cfg = ProfileConfig {
+        sets: BTreeMap::from([set("default", "test"), set("alt", "alt")]),
+        default: "default".into(),
+        endpoints,
+        parking: vec![],
+    };
+    let source = crate::backend::build_backends(
+        &cfg,
+        just_llm_client::client::BackendFactory::new(),
+        crate::backend::DEFAULT_USER_AGENT,
+    )
+    .expect("test backends build");
+    let registry =
+        Arc::new(ProfileRegistry::new(cfg.sets.clone(), source).expect("valid test registry"));
+    Arc::new(arc_swap::ArcSwap::from_pointee(
+        crate::state::ProfileBundle {
+            config: cfg,
+            registry,
+        },
+    ))
+}
+
+/// Like [`make_state`], but over [`make_profile_bundle_two_sets`].
+pub fn make_state_two_sets() -> SharedState {
+    Arc::new(AppState::new_with_preset(
+        TokenHash::of("op-token"),
+        make_profile_bundle_two_sets(),
+        PolicyPreset::Default,
+    ))
+}
+
 /// Create a fresh `SharedState` (default preset) for testing. The operator token
 /// plaintext is `"op-token"` (hashed into `AppState`); tests present it as a
 /// bearer token.

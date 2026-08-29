@@ -1091,3 +1091,90 @@ fn ensure_root_agent_refuses_to_mint_when_the_agents_dir_is_unreadable() {
         });
     });
 }
+
+/// The bind endpoint's live path: the record persists (disk first, then
+/// memory), and the live agent gets a pending ProfileReset for the named
+/// set — its failover chain swaps on the next wake-up.
+#[tokio::test]
+async fn bind_pushes_pending_reset_to_live_agent() {
+    let state = crate::test_helpers::make_state_two_sets();
+    let supervisor = AgentId::random();
+    let sub = AgentId::random();
+    // A live record with an on-disk dir carrying a minimal meta.json.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("meta.json"),
+        r#"{"workspace_root":"/tmp/whatever"}"#,
+    )
+    .unwrap();
+    let (mut entry, _rx) = make_entry_with_rx(Some(supervisor), format!("tok-{sub}"));
+    entry.identity.agent_dir = Some(dir.path().to_path_buf());
+    state
+        .registry
+        .write()
+        .await
+        .register(sub.clone(), RegistryEntry::Live(entry));
+
+    let axum::Json(summary) = super::update_profile_set(
+        State(state.clone()),
+        AuthIdentity::test_new(Identity::Operator),
+        Path(sub.clone()),
+        axum::Json(kallip_common::protocol::ProfileSetUpdateRequest {
+            profile_set: "alt".into(),
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(summary.profile_set.as_deref(), Some("alt"));
+    // The in-memory record carries the new binding...
+    let reg = state.registry.read().await;
+    let e = reg.get(&sub).unwrap();
+    assert_eq!(e.identity().config.profile_set.as_deref(), Some("alt"));
+    // ...the disk record does too (persist-first)...
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("meta.json")).unwrap())
+            .unwrap();
+    assert_eq!(meta["profile_set"], "alt");
+    // ...and the live agent got the pending reset for the new set.
+    let live = e.as_live().unwrap();
+    let cell = live.agent.pending_profile_reset.lock().unwrap();
+    assert_eq!(cell.as_ref().unwrap().set.name, "alt");
+}
+
+/// A dangling record (its set no longer exists — the state the delivery
+/// gate rejects) is recoverable: bind rewrites the record onto an
+/// existing set.
+#[tokio::test]
+async fn dangling_agent_recoverable_via_bind() {
+    let state = crate::test_helpers::make_state_two_sets();
+    let supervisor = AgentId::random();
+    let sub = AgentId::random();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("meta.json"),
+        r#"{"workspace_root":"/tmp/whatever"}"#,
+    )
+    .unwrap();
+    let (mut entry, _rx) = make_entry_with_rx(Some(supervisor), format!("tok-{sub}"));
+    entry.identity.agent_dir = Some(dir.path().to_path_buf());
+    // The set "gone" does not exist — the dangling state.
+    entry.identity.config.profile_set = Some("gone".into());
+    state
+        .registry
+        .write()
+        .await
+        .register(sub.clone(), RegistryEntry::Live(entry));
+
+    let axum::Json(summary) = super::update_profile_set(
+        State(state),
+        AuthIdentity::test_new(Identity::Operator),
+        Path(sub),
+        axum::Json(kallip_common::protocol::ProfileSetUpdateRequest {
+            profile_set: "alt".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(summary.profile_set.as_deref(), Some("alt"));
+}
