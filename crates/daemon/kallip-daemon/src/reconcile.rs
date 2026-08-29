@@ -40,6 +40,7 @@ pub async fn run(data_root: PathBuf) {
             tracing::warn!(
                 slug = %slug,
                 pid = ?pid,
+                log = %data_root.join(&slug).join("logs").display(),
                 "instance died: recorded pid is no longer a live kallip-tagma"
             );
         }
