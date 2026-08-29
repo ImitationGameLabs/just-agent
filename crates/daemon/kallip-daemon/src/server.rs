@@ -42,7 +42,25 @@ impl Daemon {
             let daemon = self.clone();
             tokio::spawn(async move {
                 if let Err(error) = daemon.handle(stream, peer_uid).await {
-                    tracing::warn!(%error, "connection handler failed");
+                    // A client that hangs up mid-exchange is routine
+                    // (panel polling, a ctrl-c'd kallipctl), not a
+                    // daemon problem: keep it out of the warn stream.
+                    let gone = error
+                        .root_cause()
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|e| {
+                            matches!(
+                                e.kind(),
+                                std::io::ErrorKind::BrokenPipe
+                                    | std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::NotConnected
+                            )
+                        });
+                    if gone {
+                        tracing::debug!(%error, "peer went away mid-exchange");
+                    } else {
+                        tracing::warn!(%error, "connection handler failed");
+                    }
                 }
             });
         }
