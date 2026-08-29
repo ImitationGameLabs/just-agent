@@ -349,6 +349,7 @@ async fn run(args: Args) -> Result<()> {
     // agents. Both observe the tagma-wide `shutdown` token.
     shutdown::drain_relays(&state).await;
     shutdown::graceful_agent_shutdown(&state).await;
+    info!("tagma exited");
 
     Ok(())
 }
