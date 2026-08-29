@@ -1,7 +1,7 @@
 <script lang="ts">
   // Toolbar card for the profiles page: heading, refresh/test-all/save/apply
   // buttons, the error/result/discard/loading lines, and the advisory banners
-  // (tier hazard, parked-live). The apply *flow* — dialog open state and the
+  // (set hazard, parked-live). The apply *flow* — dialog open state and the
   // confirm handler — stays in the page so the tail ConfirmDialog keeps a
   // single source of truth; this row only requests it.
   import type { ParkedLiveSnapshot } from "../../lib/manage/parkedLive.ts";
@@ -17,7 +17,7 @@
     manage_profiles_parking_warn,
     manage_profiles_save_changes,
     manage_profiles_test_all,
-    manage_profiles_tiers_hazard,
+    manage_profiles_sets_hazard,
   } from "../../paraglide/messages.js";
 
   let {
@@ -105,7 +105,7 @@
   <div
     class="card preset-tonal-surface p-3 text-xs opacity-70 border-l-4 border-l-warning-500"
   >
-    ⚠ {manage_profiles_tiers_hazard()}
+    ⚠ {manage_profiles_sets_hazard()}
   </div>
 
   {#if parkedLive}

@@ -23,9 +23,9 @@ import {
   manage_profiles_probe_status_unreachable,
 } from "../../paraglide/messages.js";
 
-/** `${tierIdx}:${profileId}` — profile ids can repeat across tiers. */
-export function profileKey(tierIdx: number, profileId: string): string {
-  return `${tierIdx}:${profileId}`;
+/** `${setName}:${profileId}` — profile ids can repeat across sets. */
+export function profileKey(setName: string, profileId: string): string {
+  return `${setName}:${profileId}`;
 }
 
 /** Merge a probe response's provider-scope results into the page-held map. */
@@ -36,40 +36,41 @@ export function mergeProviderScope(
   for (const r of resp.results) reports.set(r.endpoint_id, r);
 }
 
-/** Merge a tier-scoped response: tiers[0] is the requested tier. */
+/** Merge a set-scoped response: sets[0] is the requested set. */
 export function mergeProfileScope(
-  tierIdx: number,
+  setName: string,
   reports: Map<string, ProfileModelProbeReport>,
   resp: ProfileProbeResponse,
 ): void {
-  const t = resp.tiers[0];
-  if (!t) return;
-  for (const p of t.profiles) {
-    reports.set(profileKey(tierIdx, p.profile_id), p);
+  const s = resp.sets[0];
+  if (!s) return;
+  for (const p of s.profiles) {
+    reports.set(profileKey(setName, p.profile_id), p);
   }
 }
 
 /**
- * Merge an all-scope response: response tiers line up 1:1 with the draft
- * tiers by request order — tiers[i] reports on draft tier i.
+ * Merge an all-scope response: each reported set carries its name, so the
+ * reports map keys straight off it — set name + profile id.
  */
 export function mergeProfileScopeAll(
   reports: Map<string, ProfileModelProbeReport>,
   resp: ProfileProbeResponse,
 ): void {
-  for (const t of resp.tiers) {
-    for (const p of t.profiles) {
-      reports.set(profileKey(t.index, p.profile_id), p);
+  for (const s of resp.sets) {
+    for (const p of s.profiles) {
+      reports.set(profileKey(s.name, p.profile_id), p);
     }
   }
 }
 
+/** Drop the stored report for one profile (set-scoped key). */
 export function clearProfileResult(
   reports: Map<string, ProfileModelProbeReport>,
-  tierIdx: number,
+  setName: string,
   profileId: string,
 ): void {
-  reports.delete(profileKey(tierIdx, profileId));
+  reports.delete(profileKey(setName, profileId));
 }
 
 /** Endpoint (provider) ids of the draft config. */
@@ -80,13 +81,15 @@ export function providerIdsOf(
 }
 
 /**
- * Every profile id visible in the draft — tiers ∪ parking (the parking
+ * Every profile id visible in the draft — sets ∪ parking (the parking
  * dialog's new-mode duplicate check; advisory only, PUT is authoritative).
  */
 export function occupiedIdsOf(
   draft: ProfileConfig | null | undefined,
 ): string[] {
-  const ids = (draft?.tiers ?? []).flatMap((t) => t.profiles.map((p) => p.id));
+  const ids = Object.values(draft?.sets ?? {}).flatMap((s) =>
+    s.profiles.map((p) => p.id),
+  );
   return [...ids, ...(draft?.parking ?? []).map((p) => p.id)];
 }
 

@@ -5,7 +5,7 @@
     manage_agent_profile,
     manage_agent_model,
     manage_agent_provider,
-    manage_agent_tier,
+    manage_agent_set,
   } from "../../paraglide/messages.js";
 
   let { profile }: { profile: ActiveProfile } = $props();
@@ -37,9 +37,9 @@
     </div>
     <div>
       <span class="opacity-60 text-xs uppercase tracking-wide block"
-        >{manage_agent_tier()}</span
+        >{manage_agent_set()}</span
       >
-      <span class="font-mono">#{profile.tier_index}</span>
+      <span class="font-mono">{profile.profile_set}</span>
     </div>
   </div>
 </section>

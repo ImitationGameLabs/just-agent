@@ -103,8 +103,8 @@
   const contextWindow = $derived.by(() => {
     const pid = status?.profile?.profile_id;
     if (!pid || !profileConfig) return null;
-    for (const tier of profileConfig.tiers) {
-      for (const p of tier.profiles) {
+    for (const set of Object.values(profileConfig.sets)) {
+      for (const p of set.profiles) {
         if (p.id === pid) return p.max_context_window;
       }
     }

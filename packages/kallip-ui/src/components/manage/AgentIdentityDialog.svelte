@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Identity edit dialog for the agent detail page (TierDialog pattern:
+  // Identity edit dialog for the agent detail page (SetDialog pattern:
   // prop-driven, never touches a store). Replaces the page's old inline
   // transparent-button editing, whose only affordance was a hover opacity
   // change; a visible menu item routes here instead. Fields seed from the

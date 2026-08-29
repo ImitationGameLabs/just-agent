@@ -44,23 +44,20 @@ pub struct FailoverState {
     /// [`reset_and_rebuild`](Self::reset_and_rebuild)) and read by the tagma through its own
     /// `Arc` handle for status surfaces. The runtime never reads it outside tests.
     snapshot: Arc<Mutex<ProfileSnapshot>>,
-    /// Positional index (0-based, over the registry's sorted set names) of `set` — carried
-    /// so the snapshot can surface it. `new`/`reset_and_rebuild` establish it; within-set
-    /// failover (`advance_to`) never changes it.
-    set_index: usize,
+    /// The set's name — carried so the snapshot can surface it. The identity is
+    /// immutable per set (names are map keys), so `new`/`reset_and_rebuild`
+    /// establish it and nothing ever changes it.
+    set_name: String,
 }
 
 /// Pending profile-reset payload: the tagma's apply handler writes this into a
 /// shared cell on each live agent; the agent task drains it at the top of
 /// [`crate::agent_task::run_and_report`] and rebuilds its [`FailoverState`]
-/// against the new registry. Carries the resolved [`ProfileSet`] (with its
-/// positional index for the snapshot) and the new [`ProfileRegistry`] Arc.
+/// against the new registry. Carries the resolved [`ProfileSet`] and the new
+/// [`ProfileRegistry`] Arc.
 #[derive(Clone)]
 pub struct ProfileReset {
     pub set: ProfileSet,
-    /// Positional index of `set` in the new registry (resolved by the apply handler
-    /// alongside the set).
-    pub set_index: usize,
     pub registry: Arc<ProfileRegistry>,
 }
 
@@ -71,20 +68,19 @@ impl FailoverState {
     /// uses — so the cell never shows a placeholder once the agent is observable.
     pub fn new(
         set: ProfileSet,
-        set_index: usize,
         registry: Arc<ProfileRegistry>,
         system_prompt: Option<String>,
         snapshot: Arc<Mutex<ProfileSnapshot>>,
     ) -> Self {
         let state = Self {
+            set_name: set.name.clone(),
             set,
-            set_index,
             registry,
             system_prompt,
             profile_idx: 0,
             snapshot,
         };
-        state.write_snapshot(state.set_index, state.set.active_profile());
+        state.write_snapshot(state.set.active_profile());
         state
     }
 
@@ -140,9 +136,9 @@ impl FailoverState {
     /// Mirror `profile`'s identity into the shared cell. Private — only the active-profile
     /// writers call it. Poison-tolerant (`into_inner`): the store is a single assignment,
     /// so a poisoned lock (a panic while holding the cell) discards nothing.
-    fn write_snapshot(&self, set_index: usize, profile: &Profile) {
+    fn write_snapshot(&self, profile: &Profile) {
         *self.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = ProfileSnapshot {
-            set_index,
+            set_name: self.set_name.clone(),
             profile_id: profile.id.clone(),
             provider: profile.endpoint.clone(),
             model: profile.model.clone(),
@@ -160,7 +156,7 @@ impl FailoverState {
             self.profile_idx
         );
         self.profile_idx = idx;
-        self.write_snapshot(self.set_index, &self.set.profiles[idx]);
+        self.write_snapshot(&self.set.profiles[idx]);
     }
     /// Rebuild this failover state against a new registry and set (used by the
     /// online profile-apply path). Builds the client for the new set's active
@@ -175,29 +171,28 @@ impl FailoverState {
     pub(crate) fn reset_and_rebuild(
         &mut self,
         set: ProfileSet,
-        set_index: usize,
         registry: Arc<ProfileRegistry>,
     ) -> Result<ChatClient> {
         let profile = set.active_profile();
         let client = registry.build_client(profile, self.system_prompt.clone())?;
+        self.set_name = set.name.clone();
         self.set = set;
-        self.set_index = set_index;
         self.registry = registry;
         self.profile_idx = 0;
-        self.write_snapshot(self.set_index, self.set.active_profile());
+        self.write_snapshot(self.set.active_profile());
         Ok(client)
     }
 }
 /// The active profile's identity, mirrored into [`FailoverState`]'s shared cell for the
-/// tagma's status surfaces: the active set's positional index, the registry profile id, the
+/// tagma's status surfaces: the active set's name, the registry profile id, the
 /// provider (endpoint) id it connects through, and the concrete model string sent to the
 /// backend. Lets an operator see which model the client is actually using, which
 /// differs from the spawn-time active after a within-set failover advance or an online
 /// profile apply.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProfileSnapshot {
-    /// Positional index of the active set (0-based, over the registry's sorted names).
-    pub set_index: usize,
+    /// The active set's name (a registry map key).
+    pub set_name: String,
     pub profile_id: String,
     /// The endpoint (provider) id this profile connects through.
     pub provider: String,

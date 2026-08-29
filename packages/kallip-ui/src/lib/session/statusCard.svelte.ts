@@ -193,8 +193,8 @@ class StatusCardStore {
     try {
       const config = await backend.getProfiles();
       if (this.backend !== backend) return;
-      for (const tier of config.tiers) {
-        for (const p of tier.profiles) {
+      for (const set of Object.values(config.sets)) {
+        for (const p of set.profiles) {
           this.profileWindows.set(p.id, p.max_context_window);
         }
       }

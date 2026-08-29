@@ -201,24 +201,21 @@ impl BackendSource for TagmaBackendSource {
 /// placeholder profile's endpoint id and the sentinel backend's family.
 pub(crate) const UNCONFIGURED: &str = "unconfigured";
 
-/// The profile-less root's placeholder set: `(0, ProfileSet { one placeholder
-/// profile })`, shared by first boot (`Materialize::run`) and restore
+/// The profile-less root's placeholder set (`ProfileSet { one placeholder
+/// profile }`), shared by first boot (`Materialize::run`) and restore
 /// (`restore_one`) so both paths register the root against the sentinel.
-pub(crate) fn unconfigured_set() -> (usize, kallip_runtime::profile::ProfileSet) {
+pub(crate) fn unconfigured_set() -> kallip_runtime::profile::ProfileSet {
     let placeholder = kallip_runtime::profile::Profile {
         id: UNCONFIGURED.into(),
         endpoint: UNCONFIGURED.into(),
         model: UNCONFIGURED.into(),
         max_context_window: 128_000,
     };
-    (
-        0,
-        kallip_runtime::profile::ProfileSet {
-            name: UNCONFIGURED.into(),
-            description: None,
-            profiles: vec![placeholder],
-        },
-    )
+    kallip_runtime::profile::ProfileSet {
+        name: UNCONFIGURED.into(),
+        description: None,
+        profiles: vec![placeholder],
+    }
 }
 
 /// Backend handed to the profile-less root's `ChatClient`: every call fails

@@ -27,7 +27,7 @@ fn two_profile_state() -> (FailoverState, Arc<Mutex<ProfileSnapshot>>) {
         .unwrap(),
     );
     let snapshot = Arc::new(Mutex::new(ProfileSnapshot::default()));
-    let state = FailoverState::new(set, 0, registry, None, snapshot.clone());
+    let state = FailoverState::new(set, registry, None, snapshot.clone());
     (state, snapshot)
 }
 
@@ -35,7 +35,7 @@ fn two_profile_state() -> (FailoverState, Arc<Mutex<ProfileSnapshot>>) {
 fn new_seeds_snapshot_with_active_profile() {
     let (state, snapshot) = two_profile_state();
     let want = ProfileSnapshot {
-        set_index: 0,
+        set_name: "default".into(),
         profile_id: "p0".into(),
         provider: "prov-a".into(),
         model: "p0-model".into(),
@@ -50,8 +50,8 @@ fn advance_to_rewrites_snapshot() {
     let (mut state, snapshot) = two_profile_state();
     state.advance_to(1);
     let want = ProfileSnapshot {
-        // Within-set advance never changes the set index.
-        set_index: 0,
+        // Within-set advance never changes the set name.
+        set_name: "default".into(),
         profile_id: "p1".into(),
         provider: "prov-a".into(),
         model: "p1-model".into(),
@@ -77,11 +77,11 @@ fn reset_and_rebuild_rewrites_snapshot_on_success() {
         )
         .unwrap(),
     );
-    state.reset_and_rebuild(fresh, 1, registry).unwrap();
+    state.reset_and_rebuild(fresh, registry).unwrap();
     assert_eq!(
         state.profile_snapshot(),
         ProfileSnapshot {
-            set_index: 1,
+            set_name: "fresh".into(),
             profile_id: "q0".into(),
             provider: "prov-a".into(),
             model: "q0-model".into(),
@@ -107,11 +107,11 @@ fn reset_failure_leaves_snapshot_untouched() {
         )
         .unwrap(),
     );
-    assert!(state.reset_and_rebuild(bad, 2, registry).is_err());
+    assert!(state.reset_and_rebuild(bad, registry).is_err());
     assert_eq!(
         state.profile_snapshot(),
         ProfileSnapshot {
-            set_index: 0,
+            set_name: "default".into(),
             provider: "prov-a".into(),
             profile_id: "p1".into(),
             model: "p1-model".into(),

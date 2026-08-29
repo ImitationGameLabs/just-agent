@@ -1,9 +1,10 @@
 <script lang="ts">
   // Profiles manage page — card-based layered view (provider cards in a
-  // global pool, tier containers holding profile cards, a parking area for
-  // profiles out of rotation), matching the wire shape 1:1. Read-mostly:
-  // editing goes through the Provider/Tier/Parking dialogs; profile cards
-  // drag between tiers and parking (HTML5 DnD updating the draft).
+  // global pool, named-set containers holding profile cards, a parking
+  // area for profiles out of rotation), matching the wire shape 1:1.
+  // Read-mostly: editing goes through the Provider/Set/Parking dialogs;
+  // profile cards drag between sets and parking (HTML5 DnD updating the
+  // draft).
   //
   // Probe results route inline to the card that triggered them: the page
   // accumulates providerReports/profileReports maps keyed by id, because the
@@ -14,17 +15,20 @@
   import { SvelteMap } from "svelte/reactivity";
   import ProfilesToolbar from "../../components/manage/ProfilesToolbar.svelte";
   import ProvidersSection from "../../components/manage/ProvidersSection.svelte";
-  import TiersSection from "../../components/manage/TiersSection.svelte";
+  import SetsSection from "../../components/manage/SetsSection.svelte";
   import ParkingSection from "../../components/manage/ParkingSection.svelte";
   import ConfirmDialog from "../../components/ConfirmDialog.svelte";
   import ProviderDialog from "../../components/manage/ProviderDialog.svelte";
-  import TierDialog from "../../components/manage/TierDialog.svelte";
+  import SetDialog from "../../components/manage/SetDialog.svelte";
   import ParkingDialog from "../../components/manage/ParkingDialog.svelte";
   import {
     moveProfile,
     moveFromParking,
     moveToParking,
-    replaceTierProfiles,
+    replaceSetProfiles,
+    renameSet,
+    setDefaultSet,
+    updateSetDescription,
     replaceParkingProfiles,
     singleProfileProbeRequest,
     singleParkingProfileProbeRequest,
@@ -42,6 +46,7 @@
     ProfileProvider,
     ProfileProviderProbeReport,
     ProfileModelProbeReport,
+    ProfileSet,
   } from "@kallipai/kallip-client";
   import {
     common_remove,
@@ -50,8 +55,8 @@
     manage_profiles_apply_desc_parked,
     manage_profiles_apply_title,
     manage_profiles_applied_result,
-    manage_profiles_remove_tier_confirm_desc,
-    manage_profiles_remove_tier_confirm_title,
+    manage_profiles_remove_set_confirm_desc,
+    manage_profiles_remove_set_confirm_title,
     manage_profiles_title,
   } from "../../paraglide/messages.js";
 
@@ -95,27 +100,27 @@
     }
   }
 
-  async function onTestTier(tierIdx: number) {
-    await profilesStore.probeTier(tierIdx);
+  async function onTestSet(setName: string) {
+    await profilesStore.probeSet(setName);
     if (profilesStore.probe) {
-      mergeProfileScope(tierIdx, profileReports, profilesStore.probe);
+      mergeProfileScope(setName, profileReports, profilesStore.probe);
     }
   }
 
-  async function onTestProfile(tierIdx: number, profileIdx: number) {
+  async function onTestProfile(setName: string, profileIdx: number) {
     const draft = profilesStore.draft;
     if (!draft) return;
     const body = singleProfileProbeRequest(
       profilesStore.config,
       draft,
-      tierIdx,
+      setName,
       profileIdx,
     );
     if (!body) return;
     const resp = await profilesStore.probeRaw(body);
     if (!resp) return;
     mergeProviderScope(providerReports, resp);
-    mergeProfileScope(tierIdx, profileReports, resp);
+    mergeProfileScope(setName, profileReports, resp);
   }
 
   async function onTestAll() {
@@ -132,62 +137,64 @@
     parkedLive = null;
   }
 
-  // --- drag & drop (profile cards between tiers and the parking area) ---
+  // --- drag & drop (profile cards between sets and the parking area) ---
 
   interface DragPayload {
-    area: "tier" | "parking";
-    fromTier: number;
+    area: "set" | "parking";
+    fromSet: string | null;
     fromIdx: number;
   }
 
   let drag = $state<DragPayload | null>(null);
-  let dragOverTier = $state(-1);
+  let dragOverSet = $state<string | null>(null);
   let dragOverParking = $state(false);
 
   // Shared drag-end reset for both drop targets (card sections own the
   // markup, the page owns the drag state).
   function clearDrag(): void {
     drag = null;
-    dragOverTier = -1;
+    dragOverSet = null;
     dragOverParking = false;
   }
 
-  function onDropTier(toTier: number): void {
+  function onDropSet(toSet: string): void {
     const d = drag;
     drag = null;
-    dragOverTier = -1;
+    dragOverSet = null;
     dragOverParking = false;
     const draft = profilesStore.draft;
     if (!d || !draft) return;
     if (d.area === "parking") {
-      // parking → tier: the p:-keyed report is area-scoped, clear it.
+      // parking → set: the p:-keyed report is area-scoped, clear it.
       const id = draft.parking?.[d.fromIdx]?.id;
       if (id) profileReports.delete(`p:${id}`);
-      profilesStore.draft = moveFromParking(draft, d.fromIdx, toTier);
+      profilesStore.draft = moveFromParking(draft, d.fromIdx, toSet);
       void refreshParkedLive();
       return;
     }
-    if (d.fromTier !== toTier) {
-      // Cross-tier: the key is tier-scoped, so clear the stale source entry
-      // (same-tier keeps its key — the report survives the reorder).
-      const id = draft.tiers[d.fromTier]?.profiles[d.fromIdx]?.id;
-      if (id) clearProfileResult(profileReports, d.fromTier, id);
+    if (d.fromSet !== null && d.fromSet !== toSet) {
+      // Cross-set: the key is set-scoped, so clear the stale source entry
+      // (same-set keeps its key — the report survives the reorder).
+      const id = draft.sets[d.fromSet]?.profiles[d.fromIdx]?.id;
+      if (id) clearProfileResult(profileReports, d.fromSet, id);
     }
-    profilesStore.draft = moveProfile(draft, d.fromTier, d.fromIdx, toTier);
+    if (d.fromSet !== null) {
+      profilesStore.draft = moveProfile(draft, d.fromSet, d.fromIdx, toSet);
+    }
   }
 
   function onDropParking(): void {
     const d = drag;
     drag = null;
-    dragOverTier = -1;
+    dragOverSet = null;
     dragOverParking = false;
     const draft = profilesStore.draft;
-    if (!d || !draft || d.area !== "tier") return;
-    // tier → parking: clear the tier-scoped source entry; the card will
+    if (!d || !draft || d.area !== "set" || d.fromSet === null) return;
+    // set → parking: clear the set-scoped source entry; the card will
     // re-key its report as p:<id> on the next parking Test.
-    const id = draft.tiers[d.fromTier]?.profiles[d.fromIdx]?.id;
-    if (id) clearProfileResult(profileReports, d.fromTier, id);
-    profilesStore.draft = moveToParking(draft, d.fromTier, d.fromIdx);
+    const id = draft.sets[d.fromSet]?.profiles[d.fromIdx]?.id;
+    if (id) clearProfileResult(profileReports, d.fromSet, id);
+    profilesStore.draft = moveToParking(draft, d.fromSet, d.fromIdx);
     void refreshParkedLive();
   }
 
@@ -259,33 +266,48 @@
     providerDialog.open = false;
   }
 
-  // Tier removal confirm: every removal rebinds agents (positional tiers),
+  // Set removal confirm: removal can strand agents bound to the name,
   // so the kebab Remove always opens a confirm before mutating the draft.
-  let removeTierIdx = $state<number | null>(null);
+  let removeSetName = $state<string | null>(null);
 
-  function onTierRemoveConfirmed() {
-    if (removeTierIdx === null) return;
-    profilesStore.removeTier(removeTierIdx);
+  function onSetRemoveConfirmed() {
+    if (removeSetName === null) return;
+    profilesStore.removeSet(removeSetName);
     profileReports.clear();
-    removeTierIdx = null;
+    removeSetName = null;
   }
-  let tierDialog = $state<{ open: boolean; tierIdx: number }>({
+  let setDialog = $state<{ open: boolean; name: string }>({
     open: false,
-    tierIdx: 0,
+    name: "",
   });
 
-  function onTierSave(
+  function onSetSave(result: {
+    name: string;
+    description: string | null;
     rows: {
       id: string;
       endpoint: string;
       model: string;
       max_context_window: number;
-    }[],
-  ) {
+    }[];
+  }) {
     const draft = profilesStore.draft;
     if (!draft) return;
-    profilesStore.draft = replaceTierProfiles(draft, tierDialog.tierIdx, rows);
-    tierDialog.open = false;
+    // Rename first (it re-keys), then description, then the profile list
+    // — each helper addresses the set by its name at that step.
+    const renamed = renameSet(draft, setDialog.name, result.name);
+    const described = updateSetDescription(
+      renamed,
+      result.name,
+      result.description,
+    );
+    profilesStore.draft = replaceSetProfiles(
+      described,
+      result.name,
+      result.rows,
+    );
+    if (result.name !== setDialog.name) profileReports.clear();
+    setDialog.open = false;
   }
 
   // Parking dialog: single-profile form (see ParkingDialog). idx indexes the
@@ -365,7 +387,7 @@
     const resp = await profilesStore.probeRaw(body);
     if (!resp) return;
     mergeProviderScope(providerReports, resp);
-    const p = resp.tiers[0]?.profiles[0];
+    const p = resp.sets[0]?.profiles[0];
     if (p) parkingProbeReport = { status: p.status, detail: p.detail ?? null };
   }
 
@@ -382,7 +404,7 @@
     const resp = await profilesStore.probeRaw(body);
     if (!resp) return;
     mergeProviderScope(providerReports, resp);
-    const p = resp.tiers[0]?.profiles[0];
+    const p = resp.sets[0]?.profiles[0];
     if (p) {
       const id = draft.parking?.[idx]?.id ?? p.profile_id;
       profileReports.set(`p:${id}`, p);
@@ -390,6 +412,11 @@
   }
 
   const providerIds = $derived(providerIdsOf(profilesStore.draft));
+
+  const setEntries = $derived(
+    Object.entries(profilesStore.draft?.sets ?? {}),
+  ) as readonly [string, ProfileSet][];
+  const setNames = $derived(Object.keys(profilesStore.draft?.sets ?? {}));
 
   const occupiedIds = $derived(occupiedIdsOf(profilesStore.draft));
 </script>
@@ -419,23 +446,28 @@
         onAdd={openProviderNew}
       />
 
-      <TiersSection
-        tiers={profilesStore.draft.tiers}
+      <SetsSection
+        sets={setEntries}
+        defaultName={profilesStore.draft.default}
         reports={profileReports}
         isProbing={profilesStore.isProbing}
-        {dragOverTier}
-        onCardDragStart={(fromTier, fromIdx) =>
-          (drag = { area: "tier", fromTier, fromIdx })}
+        {dragOverSet}
+        onCardDragStart={(fromSet, fromIdx) =>
+          (drag = { area: "set", fromSet, fromIdx })}
         onCardDragEnd={clearDrag}
-        onTierDragOver={(tierIdx) => (dragOverTier = tierIdx)}
-        onTierDragLeave={(tierIdx) =>
-          (dragOverTier = tierIdx === dragOverTier ? -1 : dragOverTier)}
-        onTierDrop={onDropTier}
-        {onTestTier}
+        onSetDragOver={(setName) => (dragOverSet = setName)}
+        onSetDragLeave={(setName) =>
+          (dragOverSet = setName === dragOverSet ? null : dragOverSet)}
+        onSetDrop={onDropSet}
+        {onTestSet}
         {onTestProfile}
-        onEditTier={(tierIdx) => (tierDialog = { open: true, tierIdx })}
-        onRemoveTier={(tierIdx) => (removeTierIdx = tierIdx)}
-        onAddTier={() => profilesStore.addTier()}
+        onEditSet={(setName) => (setDialog = { open: true, name: setName })}
+        onRemoveSet={(setName) => (removeSetName = setName)}
+        onSetDefault={(setName) => {
+          const draft = profilesStore.draft;
+          if (draft) profilesStore.draft = setDefaultSet(draft, setName);
+        }}
+        onAddSet={() => profilesStore.addSet()}
       />
 
       <ParkingSection
@@ -444,7 +476,7 @@
         isProbing={profilesStore.isProbing}
         {dragOverParking}
         onCardDragStart={(fromIdx) =>
-          (drag = { area: "parking", fromTier: -1, fromIdx })}
+          (drag = { area: "parking", fromSet: null, fromIdx })}
         onCardDragEnd={clearDrag}
         onParkingDragOver={() => (dragOverParking = true)}
         onParkingDragLeave={() => (dragOverParking = false)}
@@ -473,13 +505,13 @@
 />
 
 <ConfirmDialog
-  open={removeTierIdx !== null}
-  title={manage_profiles_remove_tier_confirm_title()}
-  description={manage_profiles_remove_tier_confirm_desc()}
+  open={removeSetName !== null}
+  title={manage_profiles_remove_set_confirm_title()}
+  description={manage_profiles_remove_set_confirm_desc()}
   confirmLabel={common_remove()}
   tone="danger"
-  onConfirm={onTierRemoveConfirmed}
-  onCancel={() => (removeTierIdx = null)}
+  onConfirm={onSetRemoveConfirmed}
+  onCancel={() => (removeSetName = null)}
 />
 
 <ProviderDialog
@@ -492,13 +524,15 @@
   onRemove={providerDialog.mode === "edit" ? onProviderRemove : null}
 />
 
-<TierDialog
-  open={tierDialog.open}
-  tierIdx={tierDialog.tierIdx}
-  profiles={profilesStore.draft?.tiers[tierDialog.tierIdx]?.profiles ?? []}
+<SetDialog
+  open={setDialog.open}
+  name={setDialog.name}
+  description={profilesStore.draft?.sets[setDialog.name]?.description ?? null}
+  allNames={setNames}
+  profiles={profilesStore.draft?.sets[setDialog.name]?.profiles ?? []}
   {providerIds}
-  onSave={onTierSave}
-  onCancel={() => (tierDialog.open = false)}
+  onSave={onSetSave}
+  onCancel={() => (setDialog.open = false)}
 />
 
 <ParkingDialog

@@ -348,7 +348,7 @@ pub async fn apply_profiles(
                 // Any other binding that does not resolve (a record
                 // predating set binding, or a set the registry no
                 // longer offers) is skipped, not guessed at.
-                let Ok((set_index, set)) = registry.resolve_recorded_set(binding.as_deref()) else {
+                let Ok(set) = registry.resolve_recorded_set(binding.as_deref()) else {
                     skipped += 1;
                     return (targets, rebinds, skipped);
                 };
@@ -358,7 +358,6 @@ pub async fn apply_profiles(
                 targets.push((
                     kallip_runtime::ProfileReset {
                         set: set.clone(),
-                        set_index,
                         registry: registry.clone(),
                     },
                     live.agent.pending_profile_reset.clone(),
@@ -658,8 +657,8 @@ mod tests {
         let live = entry.as_live().unwrap();
         let cell = live.agent.pending_profile_reset.lock().unwrap();
         assert!(cell.is_some(), "pending_profile_reset should be set");
-        // make_state's bundle resolves the recorded default set at index 0.
-        assert_eq!(cell.as_ref().unwrap().set_index, 0);
+        // make_state's bundle resolves the recorded default set.
+        assert_eq!(cell.as_ref().unwrap().set.name, "default");
     }
 
     #[tokio::test]

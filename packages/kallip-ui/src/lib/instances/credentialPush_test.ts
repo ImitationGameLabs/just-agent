@@ -20,12 +20,14 @@ import {
 import { KallipError, TransportError } from "@kallipai/kallip-common";
 import type {
   ProfileConfig,
+  ProfileConfigPutRequest,
   ProfileProbeResponse,
 } from "@kallipai/kallip-client";
 
 const live: ProfileConfig = {
-  tiers: [
-    {
+  sets: {
+    main: {
+      description: null,
       profiles: [
         {
           id: "p1",
@@ -35,7 +37,7 @@ const live: ProfileConfig = {
         },
       ],
     },
-  ],
+  },
   endpoints: {
     main: {
       id: "main",
@@ -64,7 +66,7 @@ function instantPorts(
     puts: 0,
     closed: false,
     fetchLive: () => Promise.resolve(live),
-    put: (_body: ProfileConfig) => {
+    put: (_body: ProfileConfigPutRequest) => {
       ports.puts++;
       // A faithful echo masks our key as head4+8stars+tail4 (mask_key).
       return Promise.resolve({
@@ -82,7 +84,7 @@ function instantPorts(
     probe: () =>
       Promise.resolve({
         results: [],
-        tiers: [],
+        sets: [],
       }) as Promise<ProfileProbeResponse>,
     now: () => clock,
     sleep: (ms: number) => {
@@ -112,10 +114,11 @@ Deno.test("eligibility: encrypted rows lock outside a passkey session", () => {
 
 Deno.test("wire assembly round-trips live rows and adds one endpoint", () => {
   const body = buildPushConfig(live, target);
-  // Tiers round-trip plus one appended binding (failover slot).
-  assertEquals(body.tiers.length, live.tiers.length);
-  assertEquals(body.tiers[0].profiles[0], live.tiers[0].profiles[0]);
-  assertEquals(body.tiers[0].profiles[1], {
+  // The live set round-trips plus one appended binding (failover slot).
+  assertEquals(body.sets.length, 1);
+  assertEquals(body.sets[0].name, "main");
+  assertEquals(body.sets[0].profiles[0], live.sets.main.profiles[0]);
+  assertEquals(body.sets[0].profiles[1], {
     id: `profile:${target.endpointKey}`,
     endpoint: target.endpointKey,
     model: target.model,
@@ -131,15 +134,16 @@ Deno.test("wire assembly round-trips live rows and adds one endpoint", () => {
 });
 
 Deno.test(
-  "wire assembly over an empty config makes our binding the active tier",
+  "wire assembly over an empty config makes our binding the sole set",
   () => {
     const body = buildPushConfig(
-      { tiers: [], endpoints: {}, parking: [] },
+      { sets: {}, endpoints: {}, parking: [] },
       target,
     );
     assertEquals(Object.keys(body.endpoints), [target.endpointKey]);
-    assertEquals(body.tiers.length, 1);
-    assertEquals(body.tiers[0].profiles, [
+    assertEquals(body.sets.length, 1);
+    assertEquals(body.sets[0].name, "default");
+    assertEquals(body.sets[0].profiles, [
       {
         id: `profile:${target.endpointKey}`,
         endpoint: target.endpointKey,
@@ -151,12 +155,38 @@ Deno.test(
 );
 
 Deno.test("re-pushing the same instance overwrites its entry in place", () => {
-  const once = buildPushConfig(live, target);
-  const twice = buildPushConfig(once, { ...target, apiKey: "sk-rotated" });
+  // The live config as GET would return it: our binding already inside.
+  const liveOnce: ProfileConfig = {
+    sets: {
+      main: {
+        description: null,
+        profiles: [
+          ...live.sets.main.profiles,
+          {
+            id: `profile:${target.endpointKey}`,
+            endpoint: target.endpointKey,
+            model: target.model,
+            max_context_window: 128_000,
+          },
+        ],
+      },
+    },
+    endpoints: {
+      main: live.endpoints.main,
+      [target.endpointKey]: {
+        id: target.endpointKey,
+        family: target.family,
+        api_key: "sk-old",
+        base_url: null,
+      },
+    },
+    parking: [],
+  };
+  const twice = buildPushConfig(liveOnce, { ...target, apiKey: "sk-rotated" });
   assertEquals(twice.endpoints[target.endpointKey].api_key, "sk-rotated");
   assertEquals(Object.keys(twice.endpoints).length, 2);
   // The re-push replaces the prior binding too (no duplicate profile id).
-  const bindings = twice.tiers[0].profiles.filter(
+  const bindings = twice.sets[0].profiles.filter(
     (p) => p.endpoint === target.endpointKey,
   );
   assertEquals(bindings.length, 1);
@@ -173,22 +203,22 @@ Deno.test(
       api_key: null,
       base_url: target.baseUrl,
     });
-    assertEquals(req.tiers.length, 0);
+    assertEquals(req.sets.length, 0);
   },
 );
 
 Deno.test("probe verdict maps only our endpoint's ok to true", () => {
   const ok = {
     results: [{ endpoint_id: target.endpointKey, status: "ok" }],
-    tiers: [],
+    sets: [],
   } as unknown as ProfileProbeResponse;
   const bad = {
     results: [{ endpoint_id: target.endpointKey, status: "unauthorized" }],
-    tiers: [],
+    sets: [],
   } as unknown as ProfileProbeResponse;
   const other = {
     results: [{ endpoint_id: "elsewhere", status: "ok" }],
-    tiers: [],
+    sets: [],
   } as unknown as ProfileProbeResponse;
   assertEquals(probeVerdict(ok, target.endpointKey), true);
   assertEquals(probeVerdict(bad, target.endpointKey), false);
@@ -197,9 +227,14 @@ Deno.test("probe verdict maps only our endpoint's ok to true", () => {
 
 Deno.test("mask echo: our key's tail + stars reads as stored", () => {
   const body = buildPushConfig(live, target);
-  // The tagma masks a 15-char key as head4+8stars+tail4.
-  const masked = {
-    ...body,
+  // The PUT response is the GET shape: sets keyed by name, keys masked.
+  const masked: ProfileConfig = {
+    sets: Object.fromEntries(
+      body.sets.map((s) => [
+        s.name,
+        { description: s.description, profiles: s.profiles },
+      ]),
+    ),
     endpoints: {
       ...body.endpoints,
       [target.endpointKey]: {
@@ -207,13 +242,27 @@ Deno.test("mask echo: our key's tail + stars reads as stored", () => {
         api_key: "sk-v********cret",
       },
     },
+    parking: body.parking,
   };
   assertEquals(
     putEchoedOurKey(masked, target.endpointKey, target.apiKey),
     true,
   );
   // A null keep means our endpoint never landed: not stored.
-  assertEquals(putEchoedOurKey(body, target.endpointKey, target.apiKey), false);
+  const nullKeep: ProfileConfig = {
+    ...masked,
+    endpoints: {
+      ...masked.endpoints,
+      [target.endpointKey]: {
+        ...masked.endpoints[target.endpointKey],
+        api_key: null,
+      },
+    },
+  };
+  assertEquals(
+    putEchoedOurKey(nullKeep, target.endpointKey, target.apiKey),
+    false,
+  );
   // An unrelated string (wrong tail) is not our key either.
   const other = {
     ...masked,
@@ -283,7 +332,7 @@ Deno.test(
       probe: () =>
         Promise.resolve({
           results: [{ endpoint_id: target.endpointKey, status: "ok" }],
-          tiers: [],
+          sets: [],
         }) as unknown as Promise<ProfileProbeResponse>,
     });
     const outcome = await pushCredentials(target, ports);

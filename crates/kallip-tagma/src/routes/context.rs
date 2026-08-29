@@ -50,8 +50,8 @@ pub async fn agent_status(
         parked_reason: live.agent.parked_reason_snapshot(),
         retrying: live.agent.retrying_snapshot(),
         profile: Some(ActiveProfile {
+            profile_set: profile_snap.set_name,
             profile_id: profile_snap.profile_id,
-            tier_index: profile_snap.set_index,
             provider: profile_snap.provider,
             model: profile_snap.model,
         }),
@@ -217,7 +217,7 @@ mod tests {
             let reg = state.registry.read().await;
             let live = reg.get(&id).unwrap().as_live().unwrap();
             *live.agent.profile_snapshot.lock().unwrap() = kallip_runtime::ProfileSnapshot {
-                set_index: 0,
+                set_name: "set1".into(),
                 provider: "oc-go".into(),
                 profile_id: "set1-deepseek".into(),
                 model: "deepseek-chat".into(),
@@ -239,8 +239,8 @@ mod tests {
         let status: AgentStatusResponse = serde_json::from_slice(&body).unwrap();
         let profile = status.profile.expect("profile present");
         assert_eq!(profile.profile_id, "set1-deepseek");
+        assert_eq!(profile.profile_set, "set1");
         assert_eq!(profile.model, "deepseek-chat");
-        assert_eq!(profile.tier_index, 0);
         assert_eq!(profile.provider, "oc-go");
     }
 }

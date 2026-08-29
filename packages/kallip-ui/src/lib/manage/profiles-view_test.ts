@@ -37,40 +37,37 @@ function modelReport(): ProfileModelProbeReport {
 }
 
 function probeResponse(
-  tiers: { index: number; profiles: { profile_id: string }[] }[],
+  sets: { name: string; profiles: { profile_id: string }[] }[],
   results: { endpoint_id: string }[] = [],
 ): ProfileProbeResponse {
   return {
-    tiers: tiers.map((t) => ({ ...t })),
+    sets: sets.map((s) => ({ ...s })),
     results: results.map((r) => ({ ...r, status: "ok" })),
   } as unknown as ProfileProbeResponse;
 }
 
 function draft(
   endpoints: Record<string, unknown>,
-  tiers: { profiles: { id: string }[] }[],
+  sets: Record<string, { profiles: { id: string }[] }>,
   parking: { id: string }[] | undefined,
 ): ProfileConfig {
   return {
     endpoints,
-    tiers,
+    sets,
     parking,
   } as unknown as ProfileConfig;
 }
 
 // --- profileKey ---
 
-Deno.test("profileKey: joins tier index and profile id with a colon", () => {
-  assertEquals(profileKey(0, "gpt"), "0:gpt");
-  assertEquals(profileKey(2, "claude"), "2:claude");
+Deno.test("profileKey: joins set name and profile id with a colon", () => {
+  assertEquals(profileKey("s1", "gpt"), "s1:gpt");
+  assertEquals(profileKey("prod", "claude"), "prod:claude");
 });
 
-Deno.test(
-  "profileKey: negative tier index keeps current format (pinned)",
-  () => {
-    assertEquals(profileKey(-1, "x"), "-1:x");
-  },
-);
+Deno.test("profileKey: plain concatenation, no escaping (pinned)", () => {
+  assertEquals(profileKey("s", "x:y"), "s:x:y");
+});
 
 // --- mergeProviderScope ---
 
@@ -113,63 +110,57 @@ Deno.test(
 
 // --- mergeProfileScope ---
 
-Deno.test("mergeProfileScope: keys reports with the tierIdx prefix", () => {
+Deno.test("mergeProfileScope: keys reports with the setName prefix", () => {
   const m = new Map<string, ProfileModelProbeReport>();
   mergeProfileScope(
-    1,
+    "s2",
     m,
     probeResponse([
-      { index: 0, profiles: [{ profile_id: "a" }, { profile_id: "b" }] },
+      { name: "s2", profiles: [{ profile_id: "a" }, { profile_id: "b" }] },
     ]),
   );
-  assertEquals([...m.keys()], ["1:a", "1:b"]);
+  assertEquals([...m.keys()], ["s2:a", "s2:b"]);
+});
+
+Deno.test("mergeProfileScope: missing sets[0] leaves the map untouched", () => {
+  const m = new Map<string, ProfileModelProbeReport>();
+  mergeProfileScope("s1", m, probeResponse([]));
+  assertEquals(m.size, 0);
 });
 
 Deno.test(
-  "mergeProfileScope: missing tiers[0] leaves the map untouched",
-  () => {
-    const m = new Map<string, ProfileModelProbeReport>();
-    mergeProfileScope(0, m, probeResponse([]));
-    assertEquals(m.size, 0);
-  },
-);
-
-Deno.test(
-  "mergeProfileScope: same profile id in different tiers keeps both",
+  "mergeProfileScope: same profile id in different sets keeps both",
   () => {
     const m = new Map<string, ProfileModelProbeReport>();
     mergeProfileScope(
-      0,
+      "s1",
       m,
-      probeResponse([{ index: 0, profiles: [{ profile_id: "dup" }] }]),
+      probeResponse([{ name: "s1", profiles: [{ profile_id: "dup" }] }]),
     );
     mergeProfileScope(
-      1,
+      "s2",
       m,
-      probeResponse([{ index: 1, profiles: [{ profile_id: "dup" }] }]),
+      probeResponse([{ name: "s2", profiles: [{ profile_id: "dup" }] }]),
     );
-    assertEquals([...m.keys()], ["0:dup", "1:dup"]);
+    assertEquals([...m.keys()], ["s1:dup", "s2:dup"]);
   },
 );
 
 // --- mergeProfileScopeAll ---
 
-Deno.test(
-  "mergeProfileScopeAll: keys by response tier index (1:1 with draft)",
-  () => {
-    const m = new Map<string, ProfileModelProbeReport>();
-    mergeProfileScopeAll(
-      m,
-      probeResponse([
-        { index: 0, profiles: [{ profile_id: "a" }] },
-        { index: 1, profiles: [{ profile_id: "a" }] },
-      ]),
-    );
-    assertEquals([...m.keys()], ["0:a", "1:a"]);
-  },
-);
+Deno.test("mergeProfileScopeAll: keys by the response set name", () => {
+  const m = new Map<string, ProfileModelProbeReport>();
+  mergeProfileScopeAll(
+    m,
+    probeResponse([
+      { name: "a", profiles: [{ profile_id: "a" }] },
+      { name: "b", profiles: [{ profile_id: "a" }] },
+    ]),
+  );
+  assertEquals([...m.keys()], ["a:a", "b:a"]);
+});
 
-Deno.test("mergeProfileScopeAll: empty tiers leave the map untouched", () => {
+Deno.test("mergeProfileScopeAll: empty sets leave the map untouched", () => {
   const m = new Map<string, ProfileModelProbeReport>();
   mergeProfileScopeAll(m, probeResponse([]));
   assertEquals(m.size, 0);
@@ -179,22 +170,22 @@ Deno.test("mergeProfileScopeAll: empty tiers leave the map untouched", () => {
 
 Deno.test("clearProfileResult: deletes an existing entry", () => {
   const m = new Map<string, ProfileModelProbeReport>([
-    [profileKey(1, "a"), modelReport()],
+    [profileKey("s1", "a"), modelReport()],
   ]);
-  clearProfileResult(m, 1, "a");
+  clearProfileResult(m, "s1", "a");
   assertEquals(m.size, 0);
 });
 
 Deno.test("clearProfileResult: missing entry is a no-op", () => {
   const m = new Map<string, ProfileModelProbeReport>();
-  clearProfileResult(m, 3, "nope");
+  clearProfileResult(m, "ghost", "nope");
   assertEquals(m.size, 0);
 });
 
 // --- providerIdsOf / occupiedIdsOf ---
 
 Deno.test("providerIdsOf: endpoint keys of the draft", () => {
-  assertEquals(providerIdsOf(draft({ a: {}, b: {} }, [], undefined)), [
+  assertEquals(providerIdsOf(draft({ a: {}, b: {} }, {}, undefined)), [
     "a",
     "b",
   ]);
@@ -204,14 +195,14 @@ Deno.test("providerIdsOf: missing draft yields []", () => {
   assertEquals(providerIdsOf(undefined), []);
 });
 
-Deno.test("occupiedIdsOf: tiers then parking, in order", () => {
+Deno.test("occupiedIdsOf: sets then parking, in order", () => {
   const ids = occupiedIdsOf(
     draft(
       {},
-      [
-        { profiles: [{ id: "t1" }, { id: "t2" }] },
-        { profiles: [{ id: "t3" }] },
-      ],
+      {
+        s1: { profiles: [{ id: "t1" }, { id: "t2" }] },
+        s2: { profiles: [{ id: "t3" }] },
+      },
       [{ id: "p1" }],
     ),
   );
@@ -220,13 +211,13 @@ Deno.test("occupiedIdsOf: tiers then parking, in order", () => {
 
 Deno.test("occupiedIdsOf: duplicate ids are kept (current semantics)", () => {
   const ids = occupiedIdsOf(
-    draft({}, [{ profiles: [{ id: "dup" }] }], [{ id: "dup" }]),
+    draft({}, { s1: { profiles: [{ id: "dup" }] } }, [{ id: "dup" }]),
   );
   assertEquals(ids, ["dup", "dup"]);
 });
 
 Deno.test("occupiedIdsOf: empty draft yields []", () => {
-  assertEquals(occupiedIdsOf(draft({}, [], undefined)), []);
+  assertEquals(occupiedIdsOf(draft({}, {}, undefined)), []);
 });
 
 Deno.test("occupiedIdsOf: missing draft yields []", () => {

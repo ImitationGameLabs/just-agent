@@ -22,6 +22,7 @@ import type {
   ListAgentsQuery,
   ProfileApplyResponse,
   ProfileConfig,
+  ProfileConfigPutRequest,
   ProfileProbeRequest,
   ProfileProbeResponse,
   PutWorkScheduleRequest,
@@ -44,7 +45,7 @@ export interface ManagementBackend {
     body: UpdateAgentMetadataRequest,
   ): Promise<void>;
   getProfiles(): Promise<ProfileConfig>;
-  updateProfiles(body: ProfileConfig): Promise<ProfileConfig>;
+  updateProfiles(body: ProfileConfigPutRequest): Promise<ProfileConfig>;
   applyProfiles(): Promise<ProfileApplyResponse>;
   probeProfiles(body: ProfileProbeRequest): Promise<ProfileProbeResponse>;
   getWorkSchedule(): Promise<WorkSchedule>;
@@ -83,7 +84,7 @@ export class OfflineBackend implements ManagementBackend {
   getProfiles() {
     return this.client.getProfiles();
   }
-  updateProfiles(body: ProfileConfig) {
+  updateProfiles(body: ProfileConfigPutRequest) {
     return this.client.updateProfiles(body);
   }
   applyProfiles() {
@@ -166,7 +167,7 @@ export class OnlineBackend implements ManagementBackend {
   getProfiles() {
     return this.req<ProfileConfig>("GET", "/profiles");
   }
-  updateProfiles(body: ProfileConfig) {
+  updateProfiles(body: ProfileConfigPutRequest) {
     return this.req<ProfileConfig>("PUT", "/profiles", body);
   }
   applyProfiles() {

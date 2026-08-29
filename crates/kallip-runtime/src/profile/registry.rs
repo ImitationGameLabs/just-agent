@@ -74,22 +74,11 @@ impl ProfileRegistry {
     /// restore, reactivation, and delivery re-read it. A missing binding
     /// (record predates set binding) and an unknown name are the same
     /// dangling state — callers surface it instead of guessing a set.
-    ///
-    /// Returns the set's positional index (over the sorted names) alongside
-    /// the handle, so callers that carry a positional wire handle resolve
-    /// both from one lookup.
-    pub fn resolve_recorded_set(
-        &self,
-        binding: Option<&str>,
-    ) -> Result<(usize, &ProfileSet), DanglingSet> {
+    pub fn resolve_recorded_set(&self, binding: Option<&str>) -> Result<&ProfileSet, DanglingSet> {
         let name = binding.ok_or_else(|| self.dangling("agent record has no profile set"))?;
-        let idx = self
-            .sets
-            .keys()
-            .position(|k| k == name)
-            .ok_or_else(|| self.dangling(&format!("unknown profile set '{name}'")))?;
-        let set = self.sets.get(name).expect("position found the key");
-        Ok((idx, set))
+        self.sets
+            .get(name)
+            .ok_or_else(|| self.dangling(&format!("unknown profile set '{name}'")))
     }
 
     fn dangling(&self, reason: &str) -> DanglingSet {
@@ -216,15 +205,12 @@ mod tests {
     }
 
     #[test]
-    fn resolve_recorded_set_returns_named_set_and_index() {
+    fn resolve_recorded_set_returns_named_set() {
         let reg = two_set_registry();
-        let (idx, set) = reg.resolve_recorded_set(Some("beta")).unwrap();
+        let set = reg.resolve_recorded_set(Some("beta")).unwrap();
         assert_eq!(set.name, "beta");
         assert_eq!(set.active_profile().model, "deepseek-flash");
-        // "alpha" < "beta" in sorted order, so beta sits at index 1.
-        assert_eq!(idx, 1);
     }
-
     #[test]
     fn resolve_recorded_set_dangling_states_carry_reason_and_available() {
         let reg = two_set_registry();

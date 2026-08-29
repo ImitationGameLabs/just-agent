@@ -1,5 +1,5 @@
 <script lang="ts">
-  // One draggable profile card (tier slots and the parking area share this
+  // One draggable profile card (set slots and the parking area share this
   // language). The card only reports the raw drag lifecycle and menu
   // intents; payloads and mutations stay with the owning page/section.
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";

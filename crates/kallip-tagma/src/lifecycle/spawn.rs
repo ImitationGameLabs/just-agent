@@ -57,10 +57,6 @@ pub(crate) struct SpawnArgs {
     /// `set.profiles[0]`; the rest form the within-set failover chain. Owned so the
     /// runtime can carry the chain without re-touching the registry.
     pub set: kallip_runtime::profile::ProfileSet,
-    /// Positional index of `set` in the registry that resolved it (same clamp
-    /// rule), carried into the failover state so the shared snapshot can surface
-    /// "set N".
-    pub set_index: usize,
     /// Pre-created prompt channel for reactivation. When provided,
     /// `prompt_queue_size` is ignored and both ends are used as-is.
     /// The sender is already installed in the registry entry; spawn_agent
@@ -218,7 +214,6 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
         client,
         failover: kallip_runtime::FailoverState::new(
             args.set,
-            args.set_index,
             bundle.registry.clone(),
             Some(system_prompt),
             profile_snapshot.clone(),
@@ -433,16 +428,14 @@ impl<'a> Materialize<'a> {
         let exec_policy = Arc::new(std::sync::RwLock::new(self.exec_policy));
 
         // Resolve the profile set by the recorded binding — the default set
-        // name for root, the requested name for a subagent. Carry the set
-        // and its positional index into SpawnArgs for failover + the
-        // shared snapshot.
-        let (set_index, set) = {
+        // name for root, the requested name for a subagent.
+        let set = {
             let bundle = state.profiles.load();
             match bundle
                 .registry
                 .resolve_recorded_set(config.profile_set.as_deref())
             {
-                Ok((idx, set)) => (idx, set.clone()),
+                Ok(set) => set.clone(),
                 // Profile-less boot: the root registers against a placeholder
                 // profile (endpoint "unconfigured" has no provider), so the
                 // tagma — and its management page — comes up; the root's
@@ -621,7 +614,6 @@ impl<'a> Materialize<'a> {
             prompt_queue_size: state.prompt_queue_size,
             prompt_channel: None,
             set,
-            set_index,
         })
         .await
         {

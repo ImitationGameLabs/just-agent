@@ -15,6 +15,7 @@ import { KallipError, TransportError } from "@kallipai/kallip-common";
 import type {
   ProfileApplyResponse,
   ProfileConfig,
+  ProfileConfigPutRequest,
   ProfileProbeRequest,
   ProfileProbeResponse,
 } from "@kallipai/kallip-client";
@@ -97,7 +98,7 @@ export type PushOutcome =
 
 export interface PushPorts {
   fetchLive(): Promise<ProfileConfig>;
-  put(body: ProfileConfig): Promise<unknown>;
+  put(body: ProfileConfigPutRequest): Promise<unknown>;
   probe(body: ProfileProbeRequest): Promise<ProfileProbeResponse>;
   apply(): Promise<ProfileApplyResponse>;
   now(): number;
@@ -116,22 +117,23 @@ export interface PushTarget {
   /** The model the picked credential powers (operator-entered; the vault
    *  does not carry model names). */
   readonly model: string;
-  /** Tier context window, kept at the backend's placeholder constant. */
+  /** Set-profile context window, kept at the backend's placeholder constant. */
   readonly maxContextWindow?: number;
 }
 
 /**
- * Assemble the additive PUT body: every live tier/parking row round-trips
+ * Assemble the additive PUT body: every live set/parking row round-trips
  * unchanged, existing endpoints come back with tri-state nulls (keep), and
- * exactly one endpoint carries the real credential plus a tier[0] binding
- * (D3' -- an endpoint nothing references is dead config: apply skips it
- * wholesale when tiers are empty, so the binding is what makes a following
- * apply actually reach agents).
+ * exactly one endpoint carries the real credential plus a binding in the
+ * first set. On a fresh instance that set is the only one, so it resolves
+ * as the default and the next apply reaches the root agent; on a live
+ * config the binding lands in the wire-first set, and the agents bound to
+ * that set are the ones the credential reaches.
  */
 export function buildPushConfig(
   live: ProfileConfig,
   add: PushTarget,
-): ProfileConfig {
+): ProfileConfigPutRequest {
   const binding = {
     id: `profile:${add.endpointKey}`,
     endpoint: add.endpointKey,
@@ -140,20 +142,24 @@ export function buildPushConfig(
   };
   // A re-push replaces its prior binding instead of appending a duplicate
   // (the registry rejects duplicate profile ids wholesale).
-  const tiers = live.tiers.map((t) => ({
-    profiles: t.profiles
+  const sets = Object.entries(live.sets).map(([name, set]) => ({
+    name,
+    description: set.description,
+    profiles: set.profiles
       .filter((p) => p.endpoint !== add.endpointKey)
       .map((p) => ({ ...p })),
   }));
-  if (tiers.length === 0) {
-    // Fresh instance: live store is empty; ours becomes the active slot.
-    tiers.push({ profiles: [binding] });
+  if (sets.length === 0) {
+    // Fresh instance: live store is empty; ours becomes the sole set
+    // (single-set configs resolve to it as the default server-side).
+    sets.push({ name: "default", description: null, profiles: [binding] });
   } else {
-    // Append as failover; never dethrone the operator-tuned active[0].
-    tiers[0]!.profiles.push(binding);
+    // Append as failover to the first set (sorted order = the wire
+    // order); never dethrone the operator-tuned active[0].
+    sets[0]!.profiles.push(binding);
   }
   return {
-    tiers,
+    sets,
     endpoints: Object.fromEntries([
       ...Object.entries(live.endpoints).map(([key, ep]) => [
         key,
@@ -177,8 +183,9 @@ export function buildPushConfig(
 
 /**
  * The D5 verification request: probe just our endpoint inline (api_key null
- * resolves to the definition we just PUT). Tier refs stay empty -- probe
- * validates counts only, so an endpoint without referencing profiles is fine.
+ * resolves to the definition we just PUT). Set refs stay empty -- probe
+ * validates counts only, so an endpoint without referencing profiles is
+ * fine.
  */
 export function probeRequestFor(add: PushTarget): ProfileProbeRequest {
   return {
@@ -190,7 +197,7 @@ export function probeRequestFor(add: PushTarget): ProfileProbeRequest {
         base_url: add.baseUrl,
       },
     ],
-    tiers: [],
+    sets: [],
   };
 }
 

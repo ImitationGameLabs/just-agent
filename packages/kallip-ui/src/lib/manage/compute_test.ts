@@ -7,7 +7,7 @@ import type { ProfileConfig } from "@kallipai/kallip-client";
 import {
   addProvider,
   addProfile,
-  addTier,
+  addSet,
   barColorClass,
   barFillPct,
   type BudgetSample,
@@ -23,13 +23,16 @@ import {
   profileConfigEqual,
   profileConfigToWire,
   removeProvider,
-  removeTier,
   removeProfile,
-  replaceTierProfiles,
+  removeSet,
+  renameSet,
   replaceParkingProfiles,
+  replaceSetProfiles,
+  setDefaultSet,
   singleProviderProbeRequest,
   singleProfileProbeRequest,
   singleParkingProfileProbeRequest,
+  updateSetDescription,
   upsertProvider,
   validateWarnMinutes,
 } from "./compute.ts";
@@ -173,60 +176,127 @@ Deno.test("etaMinutes: rounds to nearest minute", () => {
 
 // --- Profile draft mutators ---
 
-const emptyConfig: ProfileConfig = { tiers: [], endpoints: {} };
+const emptyConfig: ProfileConfig = { sets: {}, endpoints: {} };
 
-Deno.test("addTier: appends an empty tier", () => {
-  const r = addTier(emptyConfig);
-  assertEquals(r.tiers.length, 1);
-  assertEquals(r.tiers[0].profiles, []);
+Deno.test("addSet: appends an empty set under a generated name", () => {
+  const r = addSet(emptyConfig);
+  assertEquals(r.sets["set-1"] !== undefined, true);
+  assertEquals(r.sets["set-1"].profiles, []);
+  assertEquals(r.default, "set-1"); // the first set auto-becomes the default
 });
-Deno.test("addTier: preserves existing tiers and endpoints", () => {
+
+Deno.test("addSet: preserves existing sets, endpoints, and default", () => {
   const base: ProfileConfig = {
-    tiers: [{ profiles: [] }],
+    sets: { a: { description: null, profiles: [] } },
+    default: "a",
     endpoints: {
       ep1: { id: "ep1", family: "deepseek", api_key: "", base_url: null },
     },
   };
-  const r = addTier(base);
-  assertEquals(r.tiers.length, 2);
+  const r = addSet(base);
+  assertEquals(Object.keys(r.sets).length, 2);
+  assertEquals(r.default, "a"); // an existing default is untouched
   assertEquals(r.endpoints, base.endpoints);
-  assertEquals(r.tiers[0], base.tiers[0]);
+  assertEquals(r.sets["a"], base.sets["a"]);
 });
-Deno.test("removeTier: removes a middle tier and shifts the rest up", () => {
-  const base = addTier(addTier(addTier(emptyConfig)));
-  const r = removeTier(base, 1);
-  assertEquals(r.tiers.length, 2);
+
+Deno.test("removeSet: removes a named set, keeping the default", () => {
+  const base = addSet(addSet(emptyConfig)); // set-1 (default), set-2
+  const r = removeSet(base, "set-2");
+  assertEquals(r.sets["set-2"], undefined);
+  assertEquals(r.default, "set-1");
 });
-Deno.test("removeTier: removes the last tier", () => {
-  const base = addTier(addTier(emptyConfig));
-  const r = removeTier(base, 1);
-  assertEquals(r.tiers.length, 1);
+
+Deno.test(
+  "removeSet: removing a non-default set leaves the default alone",
+  () => {
+    const base: ProfileConfig = {
+      sets: {
+        a: { description: null, profiles: [] },
+        b: { description: null, profiles: [] },
+        c: { description: null, profiles: [] },
+      },
+      default: "c",
+      endpoints: {},
+    };
+    const r = removeSet(base, "b");
+    assertEquals(r.sets["b"], undefined);
+    assertEquals(r.default, "c"); // not silently re-pointed at "a"
+  },
+);
+
+Deno.test(
+  "removeSet: removing the default re-points at the sorted-first name",
+  () => {
+    const base = addSet(addSet(emptyConfig));
+    const r = removeSet(base, "set-1");
+    assertEquals(r.default, "set-2");
+  },
+);
+
+Deno.test("removeSet: removing the only set clears the default", () => {
+  const base = addSet(emptyConfig);
+  const r = removeSet(base, "set-1");
+  assertEquals(r.sets, {});
+  assertEquals(r.default, undefined);
 });
-Deno.test("removeTier: removes the only tier leaving an empty list", () => {
-  const base = addTier(emptyConfig);
-  assertEquals(removeTier(base, 0).tiers, []);
+
+Deno.test("removeSet: unknown name is a no-op", () => {
+  assertEquals(removeSet(addSet(emptyConfig), "ghost"), addSet(emptyConfig));
 });
-Deno.test("removeTier: no-op when out of range", () => {
-  assertEquals(removeTier(addTier(emptyConfig), 5), addTier(emptyConfig));
-  assertEquals(removeTier(addTier(emptyConfig), -1), addTier(emptyConfig));
+
+Deno.test("addProfile: adds a blank profile to the named set", () => {
+  const base = addSet(addSet(emptyConfig));
+  const r = addProfile(base, "set-1");
+  assertEquals(r.sets["set-1"].profiles.length, 1);
+  assertEquals(r.sets["set-1"].profiles[0].id, "");
+  assertEquals(r.sets["set-1"].profiles[0].max_context_window, 128_000);
+  assertEquals(r.sets["set-2"].profiles.length, 0);
 });
-Deno.test("addProfile: adds blank profile to correct tier", () => {
-  const base = addTier(addTier(emptyConfig));
-  const r = addProfile(base, 0);
-  assertEquals(r.tiers[0].profiles.length, 1);
-  assertEquals(r.tiers[0].profiles[0].id, "");
-  assertEquals(r.tiers[0].profiles[0].max_context_window, 128_000);
-  assertEquals(r.tiers[1].profiles.length, 0);
+
+Deno.test("removeProfile: removes the profile from the named set", () => {
+  let c = addSet(emptyConfig);
+  c = addProfile(c, "set-1");
+  c = addProfile(c, "set-1");
+  assertEquals(c.sets["set-1"].profiles.length, 2);
+  const r = removeProfile(c, "set-1", 0);
+  assertEquals(r.sets["set-1"].profiles.length, 1);
+  assertEquals(r.sets["set-1"].profiles[0], c.sets["set-1"].profiles[1]);
 });
-Deno.test("removeProfile: removes correct profile from correct tier", () => {
-  let c = addTier(emptyConfig);
-  c = addProfile(c, 0);
-  c = addProfile(c, 0);
-  assertEquals(c.tiers[0].profiles.length, 2);
-  const r = removeProfile(c, 0, 0);
-  assertEquals(r.tiers[0].profiles.length, 1);
-  assertEquals(r.tiers[0].profiles[0], c.tiers[0].profiles[1]);
+
+Deno.test("renameSet: rewrites the key and the default reference", () => {
+  const base = addSet(addSet(emptyConfig)); // set-1 (default), set-2
+  const r = renameSet(base, "set-1", "renamed");
+  assertEquals(r.sets["renamed"] !== undefined, true);
+  assertEquals(r.sets["set-1"], undefined);
+  assertEquals(r.default, "renamed");
 });
+
+Deno.test("renameSet: existing target name is a no-op", () => {
+  const base = addSet(addSet(emptyConfig));
+  assertEquals(renameSet(base, "set-1", "set-2"), base);
+});
+
+Deno.test(
+  "updateSetDescription: writes the field; unknown set is a no-op",
+  () => {
+    const base = addSet(emptyConfig);
+    assertEquals(
+      updateSetDescription(base, "set-1", "standby").sets["set-1"].description,
+      "standby",
+    );
+    assertEquals(updateSetDescription(base, "ghost", "desc"), base);
+  },
+);
+
+Deno.test(
+  "setDefaultSet: repoints the default; unknown name is a no-op",
+  () => {
+    const base = addSet(addSet(emptyConfig));
+    assertEquals(setDefaultSet(base, "set-2").default, "set-2");
+    assertEquals(setDefaultSet(base, "ghost"), base);
+  },
+);
 Deno.test("addProvider: adds provider under given id", () => {
   const r = addProvider(emptyConfig, "new-ep");
   assertEquals(r.endpoints["new-ep"].family, "deepseek");
@@ -268,34 +338,31 @@ Deno.test(
   },
 );
 
-Deno.test(
-  "replaceTierProfiles: swaps the tier's profile list wholesale",
-  () => {
-    const profiles = [
-      {
-        id: "p9",
-        endpoint: "ep1",
-        model: "m9",
-        max_context_window: 1,
-      },
-    ];
-    const base = addProfile(addTier(emptyConfig), 0);
-    const r = replaceTierProfiles(base, 0, profiles);
-    assertEquals(r.tiers[0].profiles, profiles);
-  },
-);
+Deno.test("replaceSetProfiles: swaps the set's profile list wholesale", () => {
+  const profiles = [
+    {
+      id: "p9",
+      endpoint: "ep1",
+      model: "m9",
+      max_context_window: 1,
+    },
+  ];
+  const base = addProfile(addSet(emptyConfig), "set-1");
+  const r = replaceSetProfiles(base, "set-1", profiles);
+  assertEquals(r.sets["set-1"].profiles, profiles);
+});
 
-Deno.test("replaceTierProfiles: out-of-range tierIdx is a no-op", () => {
-  const base = addTier(emptyConfig);
-  assertEquals(replaceTierProfiles(base, 9, []), base);
+Deno.test("replaceSetProfiles: unknown set name is a no-op", () => {
+  const base = addSet(emptyConfig);
+  assertEquals(replaceSetProfiles(base, "ghost", []), base);
 });
 Deno.test("profileConfigEqual: true for identical configs", () => {
-  const a = addTier(emptyConfig);
+  const a = addSet(emptyConfig);
   assertEquals(profileConfigEqual(a, a), true);
 });
 Deno.test("profileConfigEqual: false when draft diverges", () => {
-  const committed = addTier(emptyConfig);
-  const dirty = addTier(committed);
+  const committed = addSet(emptyConfig);
+  const dirty = addSet(committed);
   assertEquals(profileConfigEqual(committed, dirty), false);
 });
 
@@ -322,14 +389,11 @@ Deno.test(
   },
 );
 
-Deno.test(
-  "addProfile: out-of-range tierIdx is a no-op (no tier created)",
-  () => {
-    const base = addTier(emptyConfig);
-    const result = addProfile(base, 99);
-    assertEquals(result.tiers[0].profiles.length, 0);
-  },
-);
+Deno.test("addProfile: unknown set name is a no-op (no set created)", () => {
+  const base = addSet(emptyConfig);
+  const result = addProfile(base, "ghost");
+  assertEquals(result.sets["set-1"].profiles.length, 0);
+});
 
 Deno.test(
   "etaMinutes: negative remaining returns negative (over-budget scenario)",
@@ -381,8 +445,9 @@ const maskedKey = "sk-a********wxyz";
 
 function draftConfig(apiKey: string | null): ProfileConfig {
   return {
-    tiers: [
-      {
+    sets: {
+      s1: {
+        description: null,
         profiles: [
           {
             id: "p1",
@@ -392,19 +457,21 @@ function draftConfig(apiKey: string | null): ProfileConfig {
           },
         ],
       },
-    ],
+    },
+    default: "s1",
     endpoints: {
       main: { id: "main", family: "deepseek", api_key: apiKey, base_url: null },
     },
   };
 }
 
-function multiTierConfig(): ProfileConfig {
+function multiSetConfig(): ProfileConfig {
   return {
     ...draftConfig(maskedKey),
-    tiers: [
-      ...draftConfig(maskedKey).tiers,
-      {
+    sets: {
+      ...draftConfig(maskedKey).sets,
+      s2: {
+        description: null,
         profiles: [
           {
             id: "p2",
@@ -414,7 +481,8 @@ function multiTierConfig(): ProfileConfig {
           },
         ],
       },
-      {
+      s3: {
+        description: null,
         profiles: [
           {
             id: "p3",
@@ -424,7 +492,7 @@ function multiTierConfig(): ProfileConfig {
           },
         ],
       },
-    ],
+    },
   };
 }
 
@@ -441,7 +509,7 @@ Deno.test(
   },
 );
 
-Deno.test("profileConfigToWire: null key stays null; tiers untouched", () => {
+Deno.test("profileConfigToWire: null key stays null; sets untouched", () => {
   const draft = draftConfig(null);
   assertEquals(profileConfigToWire(draft).endpoints.main.api_key, null);
 });
@@ -486,19 +554,20 @@ Deno.test(
   },
 );
 
-Deno.test("buildProbeRequest: tierIdx restricts to that tier", () => {
-  const req = buildProbeRequest(draftConfig(maskedKey), multiTierConfig(), 1);
-  assertEquals(req.tiers.length, 1);
-  assertEquals(req.tiers[0].profiles[0].id, "p2");
+Deno.test("buildProbeRequest: setName restricts to that set", () => {
+  const req = buildProbeRequest(draftConfig(maskedKey), multiSetConfig(), "s2");
+  assertEquals(req.sets.length, 1);
+  assertEquals(req.sets[0].name, "s2");
+  assertEquals(req.sets[0].profiles[0].id, "p2");
 });
 
-Deno.test("buildProbeRequest: omitted tierIdx probes all tiers", () => {
-  const req = buildProbeRequest(draftConfig(maskedKey), multiTierConfig());
-  assertEquals(req.tiers.length, 3);
+Deno.test("buildProbeRequest: omitted setName probes all sets", () => {
+  const req = buildProbeRequest(draftConfig(maskedKey), multiSetConfig());
+  assertEquals(req.sets.length, 3);
 });
 
 Deno.test(
-  "singleProviderProbeRequest: single provider, empty tiers, masked key → null",
+  "singleProviderProbeRequest: single provider, empty sets, masked key → null",
   () => {
     const req = singleProviderProbeRequest(
       draftConfig(maskedKey),
@@ -508,7 +577,7 @@ Deno.test(
     assertEquals(req!.endpoints.length, 1);
     assertEquals(req!.endpoints[0].id, "main");
     assertEquals(req!.endpoints[0].api_key, null);
-    assertEquals(req!.tiers.length, 0);
+    assertEquals(req!.sets.length, 0);
   },
 );
 
@@ -528,40 +597,44 @@ Deno.test("singleProviderProbeRequest: fresh key inline", () => {
   assertEquals(req!.endpoints[0].api_key, "sk-new");
 });
 
-Deno.test("moveProfile: moves to the end of the target tier", () => {
-  const r = moveProfile(multiTierConfig(), 0, 0, 2);
-  assertEquals(r.tiers[0].profiles.length, 0);
-  assertEquals(r.tiers[1].profiles[0].id, "p2");
-  assertEquals(r.tiers[2].profiles.length, 2);
-  // The moved profile lands last in the target tier.
-  assertEquals(r.tiers[2].profiles[1].id, "p1");
+Deno.test("moveProfile: moves to the end of the target set", () => {
+  const r = moveProfile(multiSetConfig(), "s1", 0, "s3");
+  assertEquals(r.sets["s1"].profiles.length, 0);
+  assertEquals(r.sets["s2"].profiles[0].id, "p2");
+  assertEquals(r.sets["s3"].profiles.length, 2);
+  // The moved profile lands last in the target set.
+  assertEquals(r.sets["s3"].profiles[1].id, "p1");
 });
 
-Deno.test("moveProfile: same-tier move reorders the profile to last", () => {
-  const sameTier: ProfileConfig = {
-    tiers: [
-      {
+Deno.test("moveProfile: same-set move reorders the profile to last", () => {
+  const sameSet: ProfileConfig = {
+    sets: {
+      s1: {
+        description: null,
         profiles: [
           { id: "a", endpoint: "main", model: "m", max_context_window: 1 },
           { id: "b", endpoint: "main", model: "m", max_context_window: 1 },
         ],
       },
-    ],
+    },
     endpoints: {},
   };
-  const r = moveProfile(sameTier, 0, 0, 0);
+  const r = moveProfile(sameSet, "s1", 0, "s1");
   assertEquals(
-    r.tiers[0].profiles.map((p) => p.id),
+    r.sets["s1"].profiles.map((p) => p.id),
     ["b", "a"],
   );
 });
 
-Deno.test("moveProfile: invalid coordinates leave the config unchanged", () => {
-  const c = multiTierConfig();
-  assertEquals(moveProfile(c, 5, 0, 1), c);
-  assertEquals(moveProfile(c, 0, 9, 1), c);
-  assertEquals(moveProfile(c, 0, 0, 9), c);
-});
+Deno.test(
+  "moveProfile: unknown set or bad index leave the config unchanged",
+  () => {
+    const c = multiSetConfig();
+    assertEquals(moveProfile(c, "ghost", 0, "s1"), c);
+    assertEquals(moveProfile(c, "s1", 9, "s2"), c);
+    assertEquals(moveProfile(c, "s1", 0, "ghost"), c);
+  },
+);
 
 // --- single-profile probe requests (profile Test button) ---
 
@@ -571,12 +644,12 @@ Deno.test(
     const req = singleProfileProbeRequest(
       draftConfig(maskedKey),
       draftConfig(maskedKey),
-      0,
+      "s1",
       0,
     );
-    assertEquals(req!.tiers.length, 1);
-    assertEquals(req!.tiers[0].profiles.length, 1);
-    assertEquals(req!.tiers[0].profiles[0].id, "p1");
+    assertEquals(req!.sets.length, 1);
+    assertEquals(req!.sets[0].profiles.length, 1);
+    assertEquals(req!.sets[0].profiles[0].id, "p1");
     assertEquals(req!.endpoints.length, 1);
     assertEquals(req!.endpoints[0].id, "main");
     assertEquals(req!.endpoints[0].api_key, null);
@@ -587,7 +660,7 @@ Deno.test("singleProfileProbeRequest: fresh key sent inline", () => {
   const req = singleProfileProbeRequest(
     draftConfig(maskedKey),
     draftConfig("sk-fresh"),
-    0,
+    "s1",
     0,
   );
   assertEquals(req!.endpoints[0].api_key, "sk-fresh");
@@ -597,8 +670,9 @@ Deno.test(
   "singleProfileProbeRequest: dangling provider still probes with empty providers",
   () => {
     const draft: ProfileConfig = {
-      tiers: [
-        {
+      sets: {
+        s1: {
+          description: null,
           profiles: [
             {
               id: "p1",
@@ -608,24 +682,24 @@ Deno.test(
             },
           ],
         },
-      ],
+      },
       endpoints: {},
     };
-    const req = singleProfileProbeRequest(draft, draft, 0, 0);
+    const req = singleProfileProbeRequest(draft, draft, "s1", 0);
     assertEquals(req!.endpoints.length, 0);
-    assertEquals(req!.tiers[0].profiles[0].endpoint, "ghost");
+    assertEquals(req!.sets[0].profiles[0].endpoint, "ghost");
   },
 );
 
 Deno.test(
-  "singleProfileProbeRequest: out-of-range coordinates return null",
+  "singleProfileProbeRequest: out-of-range set or index returns null",
   () => {
     assertEquals(
-      singleProfileProbeRequest(null, draftConfig(maskedKey), 3, 0),
+      singleProfileProbeRequest(null, draftConfig(maskedKey), "ghost", 0),
       null,
     );
     assertEquals(
-      singleProfileProbeRequest(null, draftConfig(maskedKey), 0, 3),
+      singleProfileProbeRequest(null, draftConfig(maskedKey), "s1", 3),
       null,
     );
   },
@@ -634,7 +708,7 @@ Deno.test(
 
 function parkedConfig(): ProfileConfig {
   return {
-    ...multiTierConfig(),
+    ...multiSetConfig(),
     parking: [
       {
         id: "spare",
@@ -646,15 +720,15 @@ function parkedConfig(): ProfileConfig {
   };
 }
 
-Deno.test("moveToParking: appends the tier profile to the parked list", () => {
-  const r = moveToParking(multiTierConfig(), 0, 0);
-  assertEquals(r.tiers[0].profiles.length, 0);
+Deno.test("moveToParking: appends the set profile to the parked list", () => {
+  const r = moveToParking(multiSetConfig(), "s1", 0);
+  assertEquals(r.sets["s1"].profiles.length, 0);
   assertEquals(r.parking?.length, 1);
   assertEquals(r.parking?.[0].id, "p1");
 });
 
 Deno.test("moveToParking: appends after existing parked profiles", () => {
-  const r = moveToParking(parkedConfig(), 1, 0); // p2 from tier 1
+  const r = moveToParking(parkedConfig(), "s2", 0); // p2 from s2
   assertEquals(
     r.parking?.map((p) => p.id),
     ["spare", "p2"],
@@ -662,41 +736,41 @@ Deno.test("moveToParking: appends after existing parked profiles", () => {
 });
 
 Deno.test(
-  "moveToParking: invalid coordinates leave the config unchanged",
+  "moveToParking: unknown set or bad index leave the config unchanged",
   () => {
     const c = parkedConfig();
-    assertEquals(moveToParking(c, 9, 0), c);
-    assertEquals(moveToParking(c, 0, 9), c);
+    assertEquals(moveToParking(c, "ghost", 0), c);
+    assertEquals(moveToParking(c, "s1", 9), c);
   },
 );
 
 Deno.test(
-  "moveFromParking: lands the parked profile at the target tier end",
+  "moveFromParking: lands the parked profile at the target set end",
   () => {
-    const r = moveFromParking(parkedConfig(), 0, 0);
+    const r = moveFromParking(parkedConfig(), 0, "s1");
     assertEquals(r.parking, undefined); // empty list normalizes to the absent key
     assertEquals(
-      r.tiers[0].profiles[r.tiers[0].profiles.length - 1].id,
+      r.sets["s1"].profiles[r.sets["s1"].profiles.length - 1].id,
       "spare",
     );
   },
 );
 
 Deno.test(
-  "moveFromParking: invalid coordinates leave the config unchanged",
+  "moveFromParking: unknown set or bad index leave the config unchanged",
   () => {
     const c = parkedConfig();
-    assertEquals(moveFromParking(c, 0, 9), c); // tier out of range
-    assertEquals(moveFromParking(c, 9, 0), c); // parked index out of range
+    assertEquals(moveFromParking(c, 0, "ghost"), c); // target set unknown
+    assertEquals(moveFromParking(c, 9, "s1"), c); // parked index out of range
     // A config that never carried the key (GET omitted it) is a no-op too.
-    assertEquals(moveFromParking(multiTierConfig(), 0, 0), multiTierConfig());
+    assertEquals(moveFromParking(multiSetConfig(), 0, "s1"), multiSetConfig());
   },
 );
 
 Deno.test("park then unpark everything compares equal to the original", () => {
-  const c = multiTierConfig();
-  const parked = moveToParking(c, 0, 0);
-  const back = moveFromParking(parked, 0, 0);
+  const c = multiSetConfig();
+  const parked = moveToParking(c, "s1", 0);
+  const back = moveFromParking(parked, 0, "s1");
   assertEquals(profileConfigEqual(c, back), true);
 });
 
@@ -720,7 +794,7 @@ Deno.test(
 Deno.test("profileConfigToWire: always sends the parking key", () => {
   // Absent in the draft (never parked) → explicit empty list on the wire;
   // absent on the wire would mean "keep live" server-side.
-  const wire = profileConfigToWire(multiTierConfig());
+  const wire = profileConfigToWire(multiSetConfig());
   assertEquals(wire.parking, []);
   const parkedWire = profileConfigToWire(parkedConfig());
   assertEquals(
@@ -740,14 +814,15 @@ Deno.test(
     assertEquals(req!.endpoints.length, 1);
     assertEquals(req!.endpoints[0].id, "main");
     assertEquals(req!.endpoints[0].api_key, null);
-    assertEquals(req!.tiers[0].profiles[0].id, "spare");
+    assertEquals(req!.sets[0].name, ":parking");
+    assertEquals(req!.sets[0].profiles[0].id, "spare");
   },
 );
 
 Deno.test(
   "singleParkingProfileProbeRequest: dangling endpoint still probes",
   () => {
-    const dangling = replaceParkingProfiles(multiTierConfig(), [
+    const dangling = replaceParkingProfiles(multiSetConfig(), [
       {
         id: "ghost-ep",
         endpoint: "nowhere",
@@ -757,15 +832,17 @@ Deno.test(
     ]);
     const req = singleParkingProfileProbeRequest(null, dangling, 0);
     assertEquals(req!.endpoints, []); // no provider rides along; server reports invalid_config
-    assertEquals(req!.tiers[0].profiles[0].id, "ghost-ep");
+    assertEquals(req!.sets[0].profiles[0].id, "ghost-ep");
   },
 );
-
 Deno.test("singleParkingProfileProbeRequest: out of range returns null", () => {
   assertEquals(singleParkingProfileProbeRequest(null, parkedConfig(), 3), null);
   // A draft whose parking key was never present is out of range too.
   assertEquals(
-    singleParkingProfileProbeRequest(null, multiTierConfig(), 0),
+    singleParkingProfileProbeRequest(null, multiSetConfig(), 0),
     null,
   );
+
+  assertEquals(singleParkingProfileProbeRequest(null, parkedConfig(), 3), null);
+  // A draft whose parking key was never present is out of range too.
 });

@@ -356,13 +356,13 @@ pub(crate) async fn enqueue_prompt(
         // dangling binding cannot be reactivated — reject before any
         // state is swapped.
         let config = live.identity.config.clone();
-        let (set_index, set) = {
+        let set = {
             let bundle = state.profiles.load();
-            let (idx, set) = bundle
+            let set = bundle
                 .registry
                 .resolve_recorded_set(config.profile_set.as_deref())
                 .map_err(|e| ApiError::bad_request(format!("{e}")))?;
-            (idx, set.clone())
+            set.clone()
         };
 
         SpawnArgs {
@@ -388,7 +388,6 @@ pub(crate) async fn enqueue_prompt(
             prompt_queue_size: state.prompt_queue_size,
             prompt_channel: Some((live.agent.prompt_tx.clone(), prompt_rx)),
             set,
-            set_index,
         }
     }; // Write lock released. Concurrent requests see open channel.
 

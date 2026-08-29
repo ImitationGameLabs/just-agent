@@ -1,4 +1,4 @@
-// Profiles store: model profile config (tiers + endpoints) with local editing,
+// Profiles store: model profile config (named sets + endpoints) with local
 // save (PUT), apply (POST /profiles/apply), and probe (POST /profiles/probe).
 
 import type {
@@ -9,12 +9,12 @@ import type {
 import {
   addProvider as addProviderFn,
   addProfile as addProfileFn,
-  addTier as addTierFn,
+  addSet as addSetFn,
   buildProbeRequest as buildProbeRequestFn,
   profileConfigEqual,
   profileConfigToWire as profileConfigToWireFn,
   removeProvider as removeProviderFn,
-  removeTier as removeTierFn,
+  removeSet as removeSetFn,
   removeProfile as removeProfileFn,
   singleProviderProbeRequest as singleProviderProbeRequestFn,
 } from "./compute.ts";
@@ -108,15 +108,15 @@ export class ProfilesStore {
   /**
    * Build a probe request from the draft: endpoints not carrying a freshly typed
    * key probe with the live key (api_key: null), so the masked value from GET is
-   * never sent as a credential. `tierIdx` probes a single tier; omit for all.
+   * never sent as a credential. `setName` probes a single set; omit for all.
    */
-  private buildProbeRequest(tierIdx?: number): ProfileProbeRequest | null {
+  private buildProbeRequest(setName?: string): ProfileProbeRequest | null {
     if (!this.draft) return null;
-    return buildProbeRequestFn(this.config, this.draft, tierIdx);
+    return buildProbeRequestFn(this.config, this.draft, setName);
   }
 
-  private async runProbe(tierIdx?: number): Promise<void> {
-    const body = this.buildProbeRequest(tierIdx);
+  private async runProbe(setName?: string): Promise<void> {
+    const body = this.buildProbeRequest(setName);
     if (!body) return;
     this.isProbing = true;
     this.probeError = null;
@@ -139,12 +139,12 @@ export class ProfilesStore {
     return this.runProbe();
   }
 
-  /** Probe the endpoints referenced by one tier. */
-  probeTier(tierIdx: number): Promise<void> {
-    return this.runProbe(tierIdx);
+  /** Probe the endpoints referenced by one set. */
+  probeSet(setName: string): Promise<void> {
+    return this.runProbe(setName);
   }
 
-  /** Probe a single provider (no tier checks). */
+  /** Probe a single provider (no set checks). */
   async probeProvider(id: string): Promise<void> {
     if (!this.draft) return;
     const body = singleProviderProbeRequestFn(this.config, this.draft, id);
@@ -208,29 +208,30 @@ export class ProfilesStore {
 
   // --- draft mutators ---
 
-  /** Append a new tier (append-only — tiers are positional). */
-  addTier(): void {
+  /** Append a new set under a generated name (the set dialog can rename
+   * it); the first set of an empty config also becomes the default. */
+  addSet(): void {
     if (!this.draft) return;
-    this.draft = addTierFn(this.draft);
+    this.draft = addSetFn(this.draft);
   }
 
-  /** Remove the tier at tierIdx (callers gate behind a confirm — removal
-   * rebinds agents positioned after it). */
-  removeTier(tierIdx: number): void {
+  /** Remove the named set (callers gate behind a confirm — removal can
+   * strand agents bound to the name). */
+  removeSet(name: string): void {
     if (!this.draft) return;
-    this.draft = removeTierFn(this.draft, tierIdx);
+    this.draft = removeSetFn(this.draft, name);
   }
 
-  /** Add a profile to a tier at the given index. */
-  addProfile(tierIdx: number): void {
+  /** Add a profile to the named set. */
+  addProfile(setName: string): void {
     if (!this.draft) return;
-    this.draft = addProfileFn(this.draft, tierIdx);
+    this.draft = addProfileFn(this.draft, setName);
   }
 
-  /** Remove a profile from a tier. */
-  removeProfile(tierIdx: number, profileIdx: number): void {
+  /** Remove a profile from a set. */
+  removeProfile(setName: string, profileIdx: number): void {
     if (!this.draft) return;
-    this.draft = removeProfileFn(this.draft, tierIdx, profileIdx);
+    this.draft = removeProfileFn(this.draft, setName, profileIdx);
   }
 
   /** Add a new provider with a generated id. */

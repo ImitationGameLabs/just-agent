@@ -1,14 +1,15 @@
 <script lang="ts" module>
-  // Tier edit dialog for the Profiles page's tier containers: a compact
-  // row form for the tier's profiles (id / provider / model / max
-  // context), rows removable, add-profile button at the bottom. Tiers are
-  // created empty by the page's add-card, so there is no create mode.
-  // Prop-driven (CreateRoomDialog pattern): the dialog never touches a
-  // store; on save it hands the full profile list back and the page
-  // applies it (replaceTierProfiles).
+  // Set edit dialog for the Profiles page's set containers: name and
+  // description fields plus a compact row form for the set's profiles
+  // (id / provider / model / max context), rows removable, add-profile
+  // button at the bottom. Sets are created empty by the page's add-card,
+  // so there is no create mode. Prop-driven (CreateRoomDialog pattern):
+  // the dialog never touches a store; on save it hands name, description,
+  // and the full profile list back, and the page applies them
+  // (renameSet / updateSetDescription / replaceSetProfiles).
   import type { ProfileModel } from "@kallipai/kallip-client";
 
-  export interface TierDialogRow {
+  export interface SetDialogRow {
     readonly id: string;
     readonly endpoint: string;
     readonly model: string;
@@ -26,31 +27,45 @@
     manage_profiles_id_placeholder,
     manage_profiles_model_placeholder,
     manage_profiles_remove_profile,
-    manage_profiles_tier_dialog_desc,
-    manage_profiles_tier_dialog_edit_title,
-    manage_profiles_tier_dialog_max_context_label,
-    manage_profiles_tier_dialog_id_label,
-    manage_profiles_tier_dialog_provider_label,
-    manage_profiles_tier_dialog_model_label,
-    manage_profiles_tier_dialog_no_providers,
+    manage_profiles_set_dialog_desc,
+    manage_profiles_set_dialog_edit_title,
+    manage_profiles_set_dialog_max_context_label,
+    manage_profiles_set_dialog_id_label,
+    manage_profiles_set_dialog_name_invalid,
+    manage_profiles_set_dialog_name_label,
+    manage_profiles_set_dialog_name_taken,
+    manage_profiles_set_dialog_description_label,
+    manage_profiles_set_dialog_provider_label,
+    manage_profiles_set_dialog_model_label,
+    manage_profiles_set_dialog_no_providers,
   } from "../../paraglide/messages.js";
 
   let {
     open,
+    name = "",
+    description = null,
+    allNames = [],
     profiles = [],
-    tierIdx = 0,
     providerIds = [],
     onSave,
     onCancel,
   }: {
     open: boolean;
-    /** The tier's current profiles (the dialog's initial rows). */
+    /** The set's current name (the dialog's title and rename source). */
+    name?: string;
+    /** The set's current description (null = unset). */
+    description?: string | null;
+    /** Every set name in the draft (duplicate-name validation). */
+    allNames?: string[];
+    /** The set's current profiles (the dialog's initial rows). */
     profiles?: readonly ProfileModel[];
-    /** Tier index for the title (0-based, shown as-is — tiers are 0-based). */
-    tierIdx?: number;
     /** Provider ids available in the draft (the provider dropdown). */
     providerIds?: string[];
-    onSave: (rows: TierDialogRow[]) => void;
+    onSave: (result: {
+      name: string;
+      description: string | null;
+      rows: SetDialogRow[];
+    }) => void;
     onCancel: () => void;
   } = $props();
 
@@ -61,11 +76,16 @@
     maxContext: string;
   }
 
-  // Rows, reset on each open transition (plain latch, no self-trigger).
+  // Rows and the meta fields, reset on each open transition (plain
+  // latch, no self-trigger).
   let rows = $state<Row[]>([]);
+  let nameDraft = $state("");
+  let descriptionDraft = $state("");
   let lastOpen = false;
   $effect(() => {
     if (open && !lastOpen) {
+      nameDraft = name;
+      descriptionDraft = description ?? "";
       rows = profiles.map((p) => ({
         id: p.id,
         endpoint: p.endpoint,
@@ -89,8 +109,17 @@
   const duplicateIds = $derived(
     new Set(rows.map((r) => r.id.trim())).size !== rows.length,
   );
+  // The wire identifier rule — the server validates the same pattern.
+  const nameError = $derived(
+    !/^[A-Za-z0-9_-]+$/.test(nameDraft)
+      ? manage_profiles_set_dialog_name_invalid()
+      : nameDraft !== name && allNames.includes(nameDraft)
+        ? manage_profiles_set_dialog_name_taken()
+        : null,
+  );
   const canSubmit = $derived(
-    rows.length > 0 &&
+    nameError === null &&
+      rows.length > 0 &&
       !duplicateIds &&
       rows.every(
         (r) =>
@@ -108,14 +137,16 @@
 
   function submit(): void {
     if (!canSubmit) return;
-    onSave(
-      rows.map((r) => ({
+    onSave({
+      name: nameDraft,
+      description: descriptionDraft.trim() === "" ? null : descriptionDraft,
+      rows: rows.map((r) => ({
         id: r.id.trim(),
         endpoint: r.endpoint,
         model: r.model.trim(),
         max_context_window: Number(r.maxContext),
       })),
-    );
+    });
   }
 </script>
 
@@ -127,11 +158,11 @@
         class="card preset-tonal-surface w-full max-w-2xl p-6 flex flex-col gap-4 max-h-[85vh] overflow-y-auto"
       >
         <Dialog.Title class="text-lg font-semibold">
-          {manage_profiles_tier_dialog_edit_title()}
-          <span class="font-mono opacity-80">#{tierIdx}</span>
+          {manage_profiles_set_dialog_edit_title()}
+          <span class="font-mono opacity-80">{name}</span>
         </Dialog.Title>
         <Dialog.Description class="sr-only">
-          {manage_profiles_tier_dialog_desc()}
+          {manage_profiles_set_dialog_desc()}
         </Dialog.Description>
 
         <form
@@ -141,9 +172,29 @@
             submit();
           }}
         >
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label class="flex flex-col gap-1">
+              <span class="text-xs font-medium">
+                {manage_profiles_set_dialog_name_label()}
+              </span>
+              <input class="input text-sm font-mono" bind:value={nameDraft} />
+              {#if nameError}
+                <span class="text-xs text-error-500 dark:text-error-400">
+                  {nameError}
+                </span>
+              {/if}
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-xs font-medium">
+                {manage_profiles_set_dialog_description_label()}
+              </span>
+              <input class="input text-sm" bind:value={descriptionDraft} />
+            </label>
+          </div>
+
           {#if providerIds.length === 0}
             <p class="text-xs text-error-500 dark:text-error-400">
-              {manage_profiles_tier_dialog_no_providers()}
+              {manage_profiles_set_dialog_no_providers()}
             </p>
           {/if}
 
@@ -154,7 +205,7 @@
               >
                 <label class="flex flex-col gap-1">
                   <span class="text-xs font-medium">
-                    {manage_profiles_tier_dialog_id_label()}
+                    {manage_profiles_set_dialog_id_label()}
                   </span>
                   <input
                     class="input text-sm font-mono"
@@ -164,7 +215,7 @@
                 </label>
                 <label class="flex flex-col gap-1">
                   <span class="text-xs font-medium">
-                    {manage_profiles_tier_dialog_provider_label()}
+                    {manage_profiles_set_dialog_provider_label()}
                   </span>
                   <select class="select text-sm" bind:value={row.endpoint}>
                     {#each providerIds as eid (eid)}
@@ -174,7 +225,7 @@
                 </label>
                 <label class="flex flex-col gap-1">
                   <span class="text-xs font-medium">
-                    {manage_profiles_tier_dialog_model_label()}
+                    {manage_profiles_set_dialog_model_label()}
                   </span>
                   <input
                     class="input text-sm font-mono"
@@ -184,7 +235,7 @@
                 </label>
                 <label class="flex flex-col gap-1">
                   <span class="text-xs font-medium">
-                    {manage_profiles_tier_dialog_max_context_label()}
+                    {manage_profiles_set_dialog_max_context_label()}
                   </span>
                   <input
                     class="input text-sm font-mono"

@@ -6,9 +6,11 @@
 
 import type {
   ProfileConfig,
+  ProfileConfigPutRequest,
   ProfileProvider,
   ProfileModel,
   ProfileProbeRequest,
+  ProfileSet,
 } from "@kallipai/kallip-client";
 import {
   manage_schedules_warn_invalid,
@@ -96,55 +98,132 @@ export function etaMinutes(
 /** Default max_context_window for a newly added profile. */
 const DEFAULT_MAX_CONTEXT = 128_000;
 
-/** Append a new empty tier to the end of the tiers array. */
-export function addTier(config: ProfileConfig): ProfileConfig {
-  return { ...config, tiers: [...config.tiers, { profiles: [] }] };
-}
-
-/** Remove the tier at tierIdx. No-op when out of range. */
-export function removeTier(
+/** Replace one set's value, keeping the rest (the shared tail of every
+ * set-mutating helper below). */
+function updateSet(
   config: ProfileConfig,
-  tierIdx: number,
+  name: string,
+  set: ProfileSet,
 ): ProfileConfig {
-  if (tierIdx < 0 || tierIdx >= config.tiers.length) return config;
-  return { ...config, tiers: config.tiers.filter((_, i) => i !== tierIdx) };
+  return { ...config, sets: { ...config.sets, [name]: set } };
 }
 
-/** Add a blank profile with default fields to the tier at tierIdx. */
+/** First free `set-N` name (N counts from 1). Generated names are wire
+ * identifiers (the server restricts set names to `[A-Za-z0-9_-]`), which
+ * this pattern always satisfies; the set dialog can rename them. */
+function generatedSetName(config: ProfileConfig): string {
+  let n = 1;
+  while (config.sets[`set-${n}`] !== undefined) n++;
+  return `set-${n}`;
+}
+
+/** Append a new empty set under a generated name. The first set of an
+ * empty config also becomes the default, mirroring the server's
+ * single-set resolution so the draft never shows a default-less config. */
+export function addSet(config: ProfileConfig): ProfileConfig {
+  const name = generatedSetName(config);
+  const next = updateSet(config, name, { description: null, profiles: [] });
+  return Object.keys(config.sets).length === 0
+    ? { ...next, default: name }
+    : next;
+}
+
+/** Remove the named set. Removing the default set re-points the default at
+ * the first remaining name (sorted — the wire order) or clears it when no
+ * sets remain; removing any other set leaves the default untouched.
+ * Unknown names are a no-op. */
+export function removeSet(config: ProfileConfig, name: string): ProfileConfig {
+  if (config.sets[name] === undefined) return config;
+  const { [name]: _removed, ...sets } = config.sets;
+  const { default: _oldDefault, ...rest } = config;
+  // Only removing the default set re-points it; a surviving default stays.
+  if (config.default !== name) {
+    return config.default === undefined
+      ? { ...rest, sets }
+      : { ...rest, sets, default: config.default };
+  }
+  const next = Object.keys(sets).sort()[0];
+  return next === undefined
+    ? { ...rest, sets }
+    : { ...rest, sets, default: next };
+}
+
+/** Rename a set (the set dialog Save path when the name changed). The
+ * default reference follows the rename; renaming to an existing name or
+ * an unknown source is a no-op. Agents bound to the old name are the
+ * server's dangling-record concern, surfaced by its own flows. */
+export function renameSet(
+  config: ProfileConfig,
+  from: string,
+  to: string,
+): ProfileConfig {
+  const set = config.sets[from];
+  if (!set || from === to || config.sets[to] !== undefined) return config;
+  const { [from]: _old, ...rest } = config.sets;
+  const sets = { ...rest, [to]: set };
+  return config.default === from
+    ? { ...config, sets, default: to }
+    : { ...config, sets };
+}
+
+/** Set the set's description (the set dialog Save path). Unknown names
+ * are a no-op. */
+export function updateSetDescription(
+  config: ProfileConfig,
+  name: string,
+  description: string | null,
+): ProfileConfig {
+  const set = config.sets[name];
+  if (!set) return config;
+  return updateSet(config, name, { ...set, description });
+}
+
+/** Mark the named set as the default (rides PUT as the `default`
+ * field). Unknown names are a no-op. */
+export function setDefaultSet(
+  config: ProfileConfig,
+  name: string,
+): ProfileConfig {
+  return config.sets[name] === undefined
+    ? config
+    : { ...config, default: name };
+}
+
+/** Add a blank profile with default fields to the named set. Unknown set
+ * names leave the config unchanged. */
 export function addProfile(
   config: ProfileConfig,
-  tierIdx: number,
+  setName: string,
 ): ProfileConfig {
-  const tiers = config.tiers.map((t, i) =>
-    i === tierIdx
-      ? {
-          profiles: [
-            ...t.profiles,
-            {
-              id: "",
-              endpoint: "",
-              model: "",
-              max_context_window: DEFAULT_MAX_CONTEXT,
-            },
-          ],
-        }
-      : t,
-  );
-  return { ...config, tiers };
+  const set = config.sets[setName];
+  if (!set) return config;
+  return updateSet(config, setName, {
+    ...set,
+    profiles: [
+      ...set.profiles,
+      {
+        id: "",
+        endpoint: "",
+        model: "",
+        max_context_window: DEFAULT_MAX_CONTEXT,
+      },
+    ],
+  });
 }
 
-/** Remove the profile at (tierIdx, profileIdx). */
+/** Remove the profile at (setName, profileIdx). Unknown set names or an
+ * out-of-range index leave the config unchanged. */
 export function removeProfile(
   config: ProfileConfig,
-  tierIdx: number,
+  setName: string,
   profileIdx: number,
 ): ProfileConfig {
-  const tiers = config.tiers.map((t, i) =>
-    i === tierIdx
-      ? { profiles: t.profiles.filter((_, pi) => pi !== profileIdx) }
-      : t,
-  );
-  return { ...config, tiers };
+  const set = config.sets[setName];
+  if (!set) return config;
+  return updateSet(config, setName, {
+    ...set,
+    profiles: set.profiles.filter((_, pi) => pi !== profileIdx),
+  });
 }
 
 /** Add a new provider under the given id. */
@@ -182,35 +261,39 @@ export function upsertProvider(
   };
 }
 
-/** Replace the profile list of the tier at tierIdx (dialog Save path).
- * Out-of-range tierIdx leaves the config unchanged.
+/** Replace the profile list of the named set (dialog Save path). Unknown
+ * set names leave the config unchanged.
  */
-export function replaceTierProfiles(
+export function replaceSetProfiles(
   config: ProfileConfig,
-  tierIdx: number,
+  setName: string,
   profiles: readonly ProfileModel[],
 ): ProfileConfig {
-  const tiers = config.tiers.map((t, i) => (i === tierIdx ? { profiles } : t));
-  return { ...config, tiers };
+  const set = config.sets[setName];
+  if (!set) return config;
+  return updateSet(config, setName, { ...set, profiles: [...profiles] });
 }
 
-/** Move a profile from one tier to another (drag-and-drop draft update).
- * The profile lands at the end of the target tier; a move within the same
- * tier reorders it to last. Invalid coordinates leave the config unchanged.
+/** Move a profile from one set to another (drag-and-drop draft update).
+ * The profile lands at the end of the target set; a move within the same
+ * set reorders it to last. Unknown set names or an out-of-range index
+ * leave the config unchanged.
  */
 export function moveProfile(
   config: ProfileConfig,
-  fromTier: number,
+  fromSet: string,
   fromIdx: number,
-  toTier: number,
+  toSet: string,
 ): ProfileConfig {
-  const profile = config.tiers[fromTier]?.profiles[fromIdx];
-  if (!profile || toTier < 0 || toTier >= config.tiers.length) return config;
-  const without = removeProfile(config, fromTier, fromIdx);
-  const tiers = without.tiers.map((t, i) =>
-    i === toTier ? { profiles: [...t.profiles, profile] } : t,
-  );
-  return { ...without, tiers };
+  const profile = config.sets[fromSet]?.profiles[fromIdx];
+  if (!profile) return config;
+  const without = removeProfile(config, fromSet, fromIdx);
+  const target = without.sets[toSet];
+  if (!target) return config;
+  return updateSet(without, toSet, {
+    ...target,
+    profiles: [...target.profiles, profile],
+  });
 }
 
 /** The parked list with `undefined` normalized back to absent when empty,
@@ -233,37 +316,41 @@ function omitParking(config: ProfileConfig): ProfileConfig {
   return rest;
 }
 
-/** Move a tier profile into the parking area (drag-and-drop draft update).
- * The profile lands at the end of the parked list. Invalid coordinates leave
- * the config unchanged.
+/** Move a set profile into the parking area (drag-and-drop draft update).
+ * The profile lands at the end of the parked list. Unknown set names or
+ * an out-of-range index leave the config unchanged.
  */
 export function moveToParking(
   config: ProfileConfig,
-  fromTier: number,
+  fromSet: string,
   fromIdx: number,
 ): ProfileConfig {
-  const profile = config.tiers[fromTier]?.profiles[fromIdx];
+  const profile = config.sets[fromSet]?.profiles[fromIdx];
   if (!profile) return config;
-  const without = removeProfile(config, fromTier, fromIdx);
+  const without = removeProfile(config, fromSet, fromIdx);
   return withParking(without, [...(without.parking ?? []), profile]);
 }
 
-/** Move a parked profile back into the tier at toTier (drag-and-drop draft
- * update). The profile lands at the end of the target tier. Invalid
- * coordinates leave the config unchanged.
+/** Move a parked profile back into the named set (drag-and-drop draft
+ * update). The profile lands at the end of the target set. Unknown set
+ * names or an out-of-range index leave the config unchanged.
  */
 export function moveFromParking(
   config: ProfileConfig,
   fromIdx: number,
-  toTier: number,
+  toSet: string,
 ): ProfileConfig {
   const profile = config.parking?.[fromIdx];
-  if (!profile || toTier < 0 || toTier >= config.tiers.length) return config;
+  const target = config.sets[toSet];
+  if (!profile || !target) return config;
   const rest = (config.parking ?? []).filter((_, i) => i !== fromIdx);
-  const tiers = config.tiers.map((t, i) =>
-    i === toTier ? { profiles: [...t.profiles, profile] } : t,
+  return withParking(
+    updateSet(config, toSet, {
+      ...target,
+      profiles: [...target.profiles, profile],
+    }),
+    rest,
   );
-  return withParking({ ...config, tiers }, rest);
 }
 
 /** Replace the parked list wholesale (the parking dialog Save path).
@@ -297,33 +384,50 @@ function probeWireKey(
 }
 
 /**
- * Translate the editable draft into a PUT wire body: an empty key means "keep
- * the live key" (null on the wire); a masked echo is passed through — the
- * server also treats it as "keep".
+ * Translate the editable draft into a PUT wire body: sets flatten to a
+ * name-carrying array, an empty key means "keep the live key" (null on
+ * the wire), and a masked echo passes through — the server also treats
+ * it as "keep".
  */
-export function profileConfigToWire(draft: ProfileConfig): ProfileConfig {
+export function profileConfigToWire(
+  draft: ProfileConfig,
+): ProfileConfigPutRequest {
   const endpoints = Object.fromEntries(
     Object.entries(draft.endpoints).map(([id, ep]) => [
       id,
       { ...ep, api_key: ep.api_key === "" ? null : ep.api_key },
     ]),
   );
-  // Always send the parking key: an explicit empty list is the only way to
-  // clear the parked area (the server keeps live parking when the key is
-  // absent, so an omitted key would silently mean "keep").
-  return { ...draft, endpoints, parking: draft.parking ?? [] };
+  const sets = Object.entries(draft.sets).map(([name, set]) => ({
+    name,
+    description: set.description,
+    profiles: set.profiles,
+  }));
+  const wire: ProfileConfigPutRequest = {
+    sets,
+    endpoints,
+    // Always send the parking key: an explicit empty list is the only way
+    // to clear the parked area (the server keeps live parking when the
+    // key is absent, so an omitted key would silently mean "keep").
+    parking: draft.parking ?? [],
+  };
+  // `default` rides the draft as-is: absent when no sets exist, a
+  // resolvable name otherwise.
+  return draft.default === undefined
+    ? wire
+    : { ...wire, default: draft.default };
 }
 
 /**
  * Build a probe request from the draft: endpoints not carrying a freshly
  * typed key probe with the live key (`api_key: null`), so the masked value
- * from GET is never sent as a credential. `tierIdx` probes a single tier;
+ * from GET is never sent as a credential. `setName` probes a single set;
  * omit for all.
  */
 export function buildProbeRequest(
   committed: ProfileConfig | null,
   draft: ProfileConfig,
-  tierIdx?: number,
+  setName?: string,
 ): ProfileProbeRequest {
   const endpoints = Object.values(draft.endpoints).map((ep) => ({
     id: ep.id,
@@ -331,22 +435,26 @@ export function buildProbeRequest(
     base_url: ep.base_url,
     api_key: probeWireKey(ep.api_key, committed?.endpoints[ep.id]?.api_key),
   }));
-  const tiers = [
-    ...(tierIdx === undefined
-      ? draft.tiers
-      : [draft.tiers[tierIdx]].filter((t) => t !== undefined)),
-  ].map((t) => ({
-    profiles: t.profiles.map((p) => ({
+  const only = setName === undefined ? undefined : draft.sets[setName];
+  const entries =
+    setName === undefined
+      ? Object.entries(draft.sets)
+      : only
+        ? [[setName, only] as const]
+        : [];
+  const sets = entries.map(([name, set]) => ({
+    name,
+    profiles: set.profiles.map((p) => ({
       id: p.id,
       endpoint: p.endpoint,
       model: p.model,
     })),
   }));
-  return { endpoints, tiers };
+  return { endpoints, sets };
 }
 
 /**
- * Build a single-provider probe request (no tier checks); null when the
+ * Build a single-provider probe request (no set checks); null when the
  * provider id is not in the draft.
  */
 export function singleProviderProbeRequest(
@@ -365,24 +473,25 @@ export function singleProviderProbeRequest(
         api_key: probeWireKey(ep.api_key, committed?.endpoints[id]?.api_key),
       },
     ],
-    tiers: [],
+    sets: [],
   };
 }
 
 /**
- * Build a single-profile probe request (the profile Test button): the
- * tier carries only that profile, and its provider rides inline under the
+ * Build a single-profile probe request (the profile Test button): the set
+ * carries only that profile, and its provider rides inline under the
  * shared key rule. A dangling provider reference still probes — the server
  * reports the missing reference as invalid_config, which is the honest
- * verdict for that profile. Null when the coordinates are out of range.
+ * verdict for that profile. Null when the set name or profile index is
+ * out of range.
  */
 export function singleProfileProbeRequest(
   committed: ProfileConfig | null,
   draft: ProfileConfig,
-  tierIdx: number,
+  setName: string,
   profileIdx: number,
 ): ProfileProbeRequest | null {
-  const profile = draft.tiers[tierIdx]?.profiles[profileIdx];
+  const profile = draft.sets[setName]?.profiles[profileIdx];
   if (!profile) return null;
   const ep = draft.endpoints[profile.endpoint];
   const endpoints = ep
@@ -400,8 +509,9 @@ export function singleProfileProbeRequest(
     : [];
   return {
     endpoints,
-    tiers: [
+    sets: [
       {
+        name: setName,
         profiles: [
           {
             id: profile.id,
@@ -413,13 +523,18 @@ export function singleProfileProbeRequest(
     ],
   };
 }
+/** Probe-set name for parked profiles: `:` is invalid in a real set name
+ * (the server restricts names to `[A-Za-z0-9_-]`), so this placeholder
+ * can never collide with a named set's reports. */
+const PARKING_PROBE_SET = ":parking";
+
 /**
  * Build a single-profile probe request for a parked profile (the parking
- * card Test button): same shape as the tier variant — the profile rides in
- * a one-profile "tier", its provider inline under the shared key rule. A
- * dangling provider reference still probes (server verdict: invalid_config),
- * and an undefined parked list (GET omitted the key) is simply out of range.
- * Null when idx is out of range.
+ * card Test button): same shape as the set variant — the profile rides
+ * in a one-profile probe set, its provider inline under the shared key
+ * rule. A dangling provider reference still probes (server verdict:
+ * invalid_config), and an undefined parked list (GET omitted the key) is
+ * simply out of range. Null when idx is out of range.
  */
 export function singleParkingProfileProbeRequest(
   committed: ProfileConfig | null,
@@ -444,8 +559,9 @@ export function singleParkingProfileProbeRequest(
     : [];
   return {
     endpoints,
-    tiers: [
+    sets: [
       {
+        name: PARKING_PROBE_SET,
         profiles: [
           {
             id: profile.id,

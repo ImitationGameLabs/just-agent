@@ -270,15 +270,15 @@ pub struct UpdateActivityRequest {
     pub activity: String,
 }
 
-/// The model profile an agent's client is currently using: the set's positional
-/// index, the registry profile id, the provider (endpoint) id, and the concrete model
+/// The model profile an agent's client is currently using: the recorded set
+/// name, the registry profile id, the provider (endpoint) id, and the concrete model
 /// string sent to the backend. This is the *runtime* active profile — it drifts from
 /// the spawn-time active after a within-set failover advance or an online profile
 /// apply, which is exactly when an operator needs to see it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActiveProfile {
-    /// Positional set index in the registry (0-based).
-    pub tier_index: usize,
+    /// The recorded profile-set name this agent resolves against.
+    pub profile_set: String,
     pub profile_id: String,
     /// The endpoint (provider) id this profile connects through.
     pub provider: String,

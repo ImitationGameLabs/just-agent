@@ -834,7 +834,7 @@ async fn bridge_dispatches_failover_exhausted_to_superior() {
     agent_tx
         .send(AgentEvent::FailoverChainExhausted {
             reason: kallip_common::protocol::FailoverChainExhaustion::NoFailoverConfigured,
-            detail: "all tiers unhealthy".into(),
+            detail: "all sets unhealthy".into(),
             transient_retry: None,
         })
         .await
@@ -863,7 +863,7 @@ async fn bridge_dispatches_failover_exhausted_to_superior() {
         msg.contains("exhausted its model failover chain and parked"),
         "body: {msg}"
     );
-    assert!(msg.contains("all tiers unhealthy"), "detail: {msg}");
+    assert!(msg.contains("all sets unhealthy"), "detail: {msg}");
     drop(agent_tx);
 }
 /// Full-bridge dispatch of `AgentEvent::MaxRoundsExceeded`.

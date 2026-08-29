@@ -1,11 +1,11 @@
 <script lang="ts" module>
   // Parked-profile create/edit dialog for the Profiles page's parking
   // section: a single-profile form (one field per block, vertical — the
-  // ProviderDialog pattern), deliberately NOT the TierDialog row editor
-  // (which edits a whole tier at once). Prop-driven (CreateRoomDialog
+  // ProviderDialog pattern), deliberately NOT the SetDialog row editor
+  // (which edits a whole set at once). Prop-driven (CreateRoomDialog
   // pattern): the dialog never touches a store; the page applies the
   // result to its draft. In edit mode the id is locked — the id is the
-  // profile's identity in the tiers ∪ parking uniqueness rule, and
+  // profile's identity in the sets ∪ parking uniqueness rule, and
   // renaming would dangle probe reports keyed by it.
   import type { ProfileModel } from "@kallipai/kallip-client";
 
@@ -56,7 +56,7 @@
     profile?: ProfileModel | null;
     /** Provider ids available in the draft (the endpoint dropdown). */
     providerIds?: string[];
-    /** Every profile id visible in the draft, tiers ∪ parking (the
+    /** Every profile id visible in the draft, sets ∪ parking (the
      * new-mode duplicate check — advisory; PUT stays authoritative). */
     occupiedIds?: string[];
     /** Latest probe report for the in-form Test (rendered inline). */
@@ -70,7 +70,7 @@
   } = $props();
 
   // Field drafts, reset on each open transition (plain latch, no
-  // self-trigger — same latch as ProviderDialog/TierDialog).
+  // self-trigger — same latch as ProviderDialog/SetDialog).
   let id = $state("");
   let endpoint = $state("");
   let model = $state("");

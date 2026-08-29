@@ -90,7 +90,7 @@
     onOneClick: (opts: {
       workspace: string;
       providerId?: string | null;
-      /** Required when providerId is set (D3': the tier binding's model). */
+      /** Required when providerId is set (D3': the bound set's model). */
       model?: string;
     }) => Promise<void> | void;
     onSpawn: (fields: AdvancedSpawnFields) => Promise<void> | void;

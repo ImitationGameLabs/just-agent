@@ -6,14 +6,14 @@
 //! backends and exercises the zero-cost capability probes upstream offers
 //! (`ModelCatalog::list_models`, `Balance::get_balance`). Nothing is
 //! persisted and the live registry (`ArcSwap`) is untouched. Provider tests
-//! stay zero-cost, but a tier profile that survives its catalog pre-check
+//! stay zero-cost, but a set profile that survives its catalog pre-check
 //! is verified with one minimal, billed chat completion (test prompt,
 //! 256-token cap) — that call is the profile Test's real verdict.
 //!
 //! Statuses are layered so the UI can tell apart the failure classes an
 //! operator can act on differently: `invalid_config` (fix the definition),
 //! `unreachable` (network/endpoint down), `unauthorized` (credential), and
-//! `model_missing`-style catalog mismatch (checked per tier profile).
+//! `model_missing`-style catalog mismatch (checked per set profile).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,7 +36,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// concurrent outbound connection, so an unbounded list is a self-DoS lever
 /// on an operator-only route.
 pub(crate) const MAX_PROBE_PROVIDERS: usize = 64;
-/// Upper bound on tier profiles per request: every profile that survives the
+/// Upper bound on set profiles per request: every profile that survives the
 /// catalog pre-check fans out one real (billed) inference call, so an
 /// unbounded list is a spend lever on an operator-only route.
 pub(crate) const MAX_PROBE_PROFILES: usize = 64;
@@ -58,9 +58,10 @@ pub struct ProbeRequest {
     /// sent back up.
     #[serde(default)]
     pub endpoints: Vec<ProbeProvider>,
-    /// Tiers of profiles to check model names against the fetched catalogs.
+    /// Named sets of profiles to check model names against the fetched
+    /// catalogs.
     #[serde(default)]
-    pub tiers: Vec<ProbeTier>,
+    pub sets: Vec<ProbeSet>,
 }
 
 #[derive(Deserialize)]
@@ -72,7 +73,8 @@ pub struct ProbeProvider {
 }
 
 #[derive(Deserialize)]
-pub struct ProbeTier {
+pub struct ProbeSet {
+    pub name: String,
     pub profiles: Vec<ProbeProfile>,
 }
 
@@ -95,7 +97,7 @@ pub enum ProbeStatus {
     Unauthorized,
     /// The definition failed backend construction, the provider answered
     /// with an unexpected HTTP status (404/429/5xx on the probe path), or a
-    /// tier profile's model is absent from the provider's catalog.
+    /// set profile's model is absent from the provider's catalog.
     InvalidConfig,
     /// Provider responded, but the family offers no zero-cost probe
     /// capability — liveness could not be established without a chat call.
@@ -116,7 +118,7 @@ pub struct ProviderReport {
     pub balance: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-    /// Model ids from the catalog when fetched AND tier checks were
+    /// Model ids from the catalog when fetched AND set checks were
     /// requested (the model-name verification needs the full list).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub models: Option<Vec<String>>,
@@ -132,8 +134,8 @@ pub struct ProfileReport {
 }
 
 #[derive(Serialize)]
-pub struct TierReport {
-    pub index: usize,
+pub struct SetReport {
+    pub name: String,
     pub all_ok: bool,
     pub profiles: Vec<ProfileReport>,
 }
@@ -141,18 +143,18 @@ pub struct TierReport {
 #[derive(Serialize)]
 pub struct ProbeResponse {
     pub results: Vec<ProviderReport>,
-    pub tiers: Vec<TierReport>,
+    pub sets: Vec<SetReport>,
 }
 
 /// Run the full probe: resolve the provider set against the live config,
-/// probe every endpoint concurrently, then settle tier profiles in two
+/// probe every endpoint concurrently, then settle set profiles in two
 /// stages (catalog pre-check, shared real inference). Bounds were already
 /// enforced by the HTTP layer (`MAX_PROBE_PROVIDERS`/`MAX_PROBE_PROFILES`).
 pub(crate) async fn run_probe(state: &SharedState, request: ProbeRequest) -> ProbeResponse {
     let live = state.profiles.load().config.clone();
-    let wants_models = !request.tiers.is_empty();
+    let wants_models = !request.sets.is_empty();
 
-    // Resolve the provider set: inline definitions win; tiers may reference
+    // Resolve the provider set: inline definitions win; sets may reference
     // provider ids not submitted inline — those resolve to live definitions.
     let mut defs: HashMap<String, Provider> = HashMap::new();
     let mut reports: Vec<ProviderReport> = Vec::new();
@@ -165,8 +167,8 @@ pub(crate) async fn run_probe(state: &SharedState, request: ProbeRequest) -> Pro
         }
     }
     let mut referenced: Vec<String> = Vec::new();
-    for tier in &request.tiers {
-        for profile in &tier.profiles {
+    for set in &request.sets {
+        for profile in &set.profiles {
             if !defs.contains_key(&profile.endpoint)
                 && !reports.iter().any(|r| r.endpoint_id == profile.endpoint)
                 && !referenced.contains(&profile.endpoint)
@@ -199,7 +201,7 @@ pub(crate) async fn run_probe(state: &SharedState, request: ProbeRequest) -> Pro
     .await;
     reports.append(&mut probed);
 
-    // Tier checks run in two stages. Stage 1 settles every profile the
+    // Set checks run in two stages. Stage 1 settles every profile the
     // per-provider reports already condemn (failed endpoint, catalog miss);
     // catalog hits and catalog-less ok providers defer to stage 2 — one
     // minimal real inference per unique (provider, model), shared by every
@@ -209,11 +211,11 @@ pub(crate) async fn run_probe(state: &SharedState, request: ProbeRequest) -> Pro
         .map(|r| (r.endpoint_id.as_str(), r))
         .collect();
     let mut settled: Vec<Vec<Option<ProfileReport>>> = request
-        .tiers
+        .sets
         .iter()
         .map(|t| (0..t.profiles.len()).map(|_| None).collect::<Vec<_>>())
         .collect();
-    // One deferred (provider, model) pair and the tier/profile coordinates
+    // One deferred (provider, model) pair and the set/profile coordinates
     // waiting on its shared inference verdict.
     struct PendingInference {
         endpoint_id: String,
@@ -221,8 +223,8 @@ pub(crate) async fn run_probe(state: &SharedState, request: ProbeRequest) -> Pro
         coords: Vec<(usize, usize)>,
     }
     let mut pending: Vec<PendingInference> = Vec::new();
-    for (t_idx, tier) in request.tiers.iter().enumerate() {
-        for (p_idx, p) in tier.profiles.iter().enumerate() {
+    for (t_idx, set) in request.sets.iter().enumerate() {
+        for (p_idx, p) in set.profiles.iter().enumerate() {
             match catalog_stage(p, by_id.get(p.endpoint.as_str()).copied()) {
                 CatalogStage::Settled(report) => settled[t_idx][p_idx] = Some(report),
                 CatalogStage::DeferInference => {
@@ -260,7 +262,7 @@ pub(crate) async fn run_probe(state: &SharedState, request: ProbeRequest) -> Pro
     });
     for ((status, detail), coords) in join_all(jobs).await {
         for (t_idx, p_idx) in coords {
-            let p = &request.tiers[t_idx].profiles[p_idx];
+            let p = &request.sets[t_idx].profiles[p_idx];
             settled[t_idx][p_idx] = Some(ProfileReport {
                 profile_id: p.id.clone(),
                 endpoint_id: p.endpoint.clone(),
@@ -270,21 +272,20 @@ pub(crate) async fn run_probe(state: &SharedState, request: ProbeRequest) -> Pro
         }
     }
 
-    let tiers = request
-        .tiers
+    let sets = request
+        .sets
         .iter()
         .zip(settled)
-        .enumerate()
-        .map(|(index, (tier, reports))| {
-            let profiles = tier
+        .map(|(set, reports)| {
+            let profiles = set
                 .profiles
                 .iter()
                 .zip(reports)
                 .map(|(p, report)| report.unwrap_or_else(|| not_probed_report(p)))
                 .collect::<Vec<_>>();
             let all_ok = profiles.iter().all(|p| p.status == ProbeStatus::Ok);
-            TierReport {
-                index,
+            SetReport {
+                name: set.name.clone(),
                 all_ok,
                 profiles,
             }
@@ -293,7 +294,7 @@ pub(crate) async fn run_probe(state: &SharedState, request: ProbeRequest) -> Pro
 
     ProbeResponse {
         results: reports,
-        tiers,
+        sets,
     }
 }
 fn invalid_config_report(endpoint_id: String, detail: String) -> ProviderReport {
@@ -307,7 +308,7 @@ fn invalid_config_report(endpoint_id: String, detail: String) -> ProviderReport 
         models: None,
     }
 }
-/// Outcome of the catalog pre-check for one tier profile: the report is
+/// Outcome of the catalog pre-check for one set profile: the report is
 /// either settled without spending tokens, or it defers to a real inference.
 enum CatalogStage {
     Settled(ProfileReport),
@@ -324,7 +325,7 @@ fn not_probed_report(p: &ProbeProfile) -> ProfileReport {
     }
 }
 
-/// Stage 1 of tier checking — settle what the per-endpoint reports already
+/// Stage 1 of set checking — settle what the per-endpoint reports already
 /// decide, for free: a failed provider propagates its status, a catalog miss
 /// settles as invalid_config, and a catalog hit (or a catalog-less-but-ok
 /// endpoint) defers to a real inference, which is the profile Test's verdict.
@@ -357,7 +358,7 @@ fn catalog_stage(p: &ProbeProfile, ep: Option<&ProviderReport>) -> CatalogStage 
     }
 }
 
-/// Stage 2 of tier checking — the minimal real inference behind a profile's
+/// Stage 2 of set checking — the minimal real inference behind a profile's
 /// Test button: one non-streaming chat completion with a fixed test prompt
 /// and a 256-token cap. `timeout` is a parameter so tests can exercise the
 /// deadline without waiting out the production budget.
@@ -440,7 +441,7 @@ fn resolve_provider(probe: &ProbeProvider, live: &ProfileConfig) -> Result<Provi
 }
 
 /// Build a throwaway backend and run the zero-cost probes, classifying the
-/// outcome. `wants_models` keeps the catalog ids for tier model checks.
+/// outcome. `wants_models` keeps the catalog ids for set model checks.
 async fn probe_one(factory: &BackendFactory, def: Provider, wants_models: bool) -> ProviderReport {
     let endpoint_id = def.id.clone();
     let mut report = ProviderReport {

@@ -15,6 +15,7 @@ import type {
   MessageResponse,
   ProfileApplyResponse,
   ProfileConfig,
+  ProfileConfigPutRequest,
   ProfileProbeRequest,
   ProfileProbeResponse,
   PutWorkScheduleRequest,
@@ -224,7 +225,7 @@ export class TagmaClient {
   }
 
   /** PUT /profiles — validate, persist, and hot-swap (operator-only). */
-  updateProfiles(body: ProfileConfig): Promise<ProfileConfig> {
+  updateProfiles(body: ProfileConfigPutRequest): Promise<ProfileConfig> {
     return this.json<ProfileConfig>("/profiles", {
       method: "PUT",
       body: JSON.stringify(body),

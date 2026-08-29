@@ -197,9 +197,9 @@ fn validate_permission_class_from_chain(
 fn set_for_restore(
     registry: &kallip_runtime::profile::ProfileRegistry,
     binding: Option<&str>,
-) -> (usize, kallip_runtime::profile::ProfileSet) {
+) -> kallip_runtime::profile::ProfileSet {
     match registry.resolve_recorded_set(binding) {
-        Ok((idx, set)) => (idx, set.clone()),
+        Ok(set) => set.clone(),
         Err(_) => crate::backend::unconfigured_set(),
     }
 }
@@ -279,7 +279,7 @@ async fn restore_one(
         .unwrap_or_else(|| p.agent_id.clone());
 
     // Resolve the profile set from the persisted binding.
-    let (set_index, set) = {
+    let set = {
         let bundle = shared_state.profiles.load();
         set_for_restore(&bundle.registry, config.profile_set.as_deref())
     };
@@ -332,7 +332,6 @@ async fn restore_one(
         prompt_queue_size: shared_state.prompt_queue_size,
         prompt_channel: None,
         set,
-        set_index,
     })
     .await?;
     // Spawn succeeded: the agent owns the workspace lock for its lifetime.
@@ -737,13 +736,11 @@ mod tests {
         )
         .expect("empty set map is constructible");
         // A record with no binding (predates set binding)...
-        let (idx, set) = set_for_restore(&reg, None);
-        assert_eq!(idx, 0);
+        let set = set_for_restore(&reg, None);
         assert_eq!(set.active_profile().endpoint, crate::backend::UNCONFIGURED);
         // ...and one naming a set the registry no longer offers: both
         // come back unspecified instead of faulting the restore.
-        let (idx, set) = set_for_restore(&reg, Some("gone"));
-        assert_eq!(idx, 0);
+        let set = set_for_restore(&reg, Some("gone"));
         assert_eq!(set.active_profile().endpoint, crate::backend::UNCONFIGURED);
     }
 
@@ -764,8 +761,8 @@ mod tests {
             std::sync::Arc::new(NilSource),
         )
         .expect("single set registry constructs");
-        let (idx, set) = set_for_restore(&reg, Some("research"));
-        assert_eq!(idx, 0);
+        let set = set_for_restore(&reg, Some("research"));
+        assert_eq!(set.name, "research");
         assert_eq!(set.active_profile().model, "m");
     }
     // A supervisor chain node carrying only the fields the validator reads

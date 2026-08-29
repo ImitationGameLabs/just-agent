@@ -26,7 +26,7 @@
   "manage_agent_current_profile": "当前 Profile",
   "manage_agent_profile": "Profile",
   "manage_agent_provider": "提供商",
-  "manage_agent_tier": "模型顺位",
+  "manage_agent_set": "配置集",
   "manage_agent_model": "模型",
   "manage_agent_turns": "轮次",
   "manage_agent_pinned_items": "固定项",

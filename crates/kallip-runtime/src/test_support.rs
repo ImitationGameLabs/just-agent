@@ -102,7 +102,7 @@ pub(crate) async fn ctx_from_source(
     let sets = BTreeMap::from([("default".to_string(), set.clone())]);
     let registry = Arc::new(ProfileRegistry::new(sets, source).unwrap());
     let snapshot = Arc::new(std::sync::Mutex::new(ProfileSnapshot::default()));
-    let failover = FailoverState::new(set, 0, registry, Some("sys".into()), snapshot);
+    let failover = FailoverState::new(set, registry, Some("sys".into()), snapshot);
     let client = failover
         .build_client(failover.current_profile())
         .expect("active profile is buildable");

@@ -3,7 +3,7 @@
 //! A thin envelope over [`crate::probe`]: operator auth and the request-size
 //! bounds (self-DoS and spend levers on an operator-only route) are HTTP
 //! policy enforced here; the probing domain — resolution, concurrent
-//! provider checks, tier settlement — lives in the domain module, whose
+//! provider checks, set settlement — lives in the domain module, whose
 //! wire types the relay's manage shim also reuses.
 
 use axum::Json;
@@ -30,10 +30,10 @@ pub async fn probe_profiles(
             request.endpoints.len()
         )));
     }
-    let profile_count: usize = request.tiers.iter().map(|t| t.profiles.len()).sum();
+    let profile_count: usize = request.sets.iter().map(|s| s.profiles.len()).sum();
     if profile_count > MAX_PROBE_PROFILES {
         return Err(ApiError::bad_request(format!(
-            "probe request carries {profile_count} tier profiles; at most {MAX_PROBE_PROFILES} per request"
+            "probe request carries {profile_count} set profiles; at most {MAX_PROBE_PROFILES} per request"
         )));
     }
 
@@ -93,7 +93,8 @@ mod tests {
         let profiles: Vec<serde_json::Value> = (0..=MAX_PROBE_PROFILES)
             .map(|i| serde_json::json!({ "id": format!("p{i}"), "endpoint": "test", "model": "m" }))
             .collect();
-        let req = probe_req(serde_json::json!({ "tiers": [{ "profiles": profiles }] }));
+        let req =
+            probe_req(serde_json::json!({ "sets": [{ "name": "s0", "profiles": profiles }] }));
         let err = probe_profiles(State(state), op_auth(), Json(req))
             .await
             .map(|_| ())
@@ -128,10 +129,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tier_reference_to_unknown_provider_reports_invalid() {
+    async fn set_reference_to_unknown_provider_reports_invalid() {
         let state = make_state();
         let req = probe_req(serde_json::json!({
-            "tiers": [{ "profiles": [{
+            "sets": [{ "name": "s0", "profiles": [{
                 "id": "p1", "endpoint": "nowhere", "model": "m"
             }]}]
         }));
@@ -145,9 +146,9 @@ mod tests {
                 .iter()
                 .any(|r| r.endpoint_id == "nowhere" && r.status == ProbeStatus::InvalidConfig)
         );
-        // ...and the tier profile inherits the failure.
-        assert_eq!(resp.tiers[0].profiles[0].status, ProbeStatus::InvalidConfig);
-        assert!(!resp.tiers[0].all_ok);
+        // ...and the set profile inherits the failure.
+        assert_eq!(resp.sets[0].profiles[0].status, ProbeStatus::InvalidConfig);
+        assert!(!resp.sets[0].all_ok);
     }
 
     #[tokio::test]
@@ -242,7 +243,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tier_profile_test_runs_minimal_inference() {
+    async fn set_profile_test_runs_minimal_inference() {
         use wiremock::matchers::{method, path};
 
         let server = wiremock::MockServer::start().await;
@@ -257,17 +258,17 @@ mod tests {
         let state = make_state();
         let req = probe_req(serde_json::json!({
             "endpoints": [mock_provider(&server.uri())],
-            "tiers": [{ "profiles": [{ "id": "p1", "endpoint": "mock", "model": "m1" }] }]
+            "sets": [{ "name": "s0", "profiles": [{ "id": "p1", "endpoint": "mock", "model": "m1" }] }]
         }));
         let resp = probe_profiles(State(state), op_auth(), Json(req))
             .await
             .unwrap()
             .0;
         assert_eq!(resp.results[0].status, ProbeStatus::Ok);
-        let report = &resp.tiers[0].profiles[0];
+        let report = &resp.sets[0].profiles[0];
+        assert!(resp.sets[0].all_ok);
         assert_eq!(report.status, ProbeStatus::Ok);
         assert!(report.detail.is_none());
-        assert!(resp.tiers[0].all_ok);
     }
 
     #[tokio::test]
@@ -286,7 +287,7 @@ mod tests {
         let state = make_state();
         let req = probe_req(serde_json::json!({
             "endpoints": [mock_provider(&server.uri())],
-            "tiers": [{ "profiles": [{ "id": "p1", "endpoint": "mock", "model": "m1" }] }]
+            "sets": [{ "name": "s0", "profiles": [{ "id": "p1", "endpoint": "mock", "model": "m1" }] }]
         }));
         let resp = probe_profiles(State(state), op_auth(), Json(req))
             .await
@@ -295,8 +296,8 @@ mod tests {
         // The catalog probe succeeded, so the profile's verdict is the
         // inference call's own classification.
         assert_eq!(resp.results[0].status, ProbeStatus::Ok);
-        assert_eq!(resp.tiers[0].profiles[0].status, ProbeStatus::Unauthorized);
-        assert!(!resp.tiers[0].all_ok);
+        assert_eq!(resp.sets[0].profiles[0].status, ProbeStatus::Unauthorized);
+        assert!(!resp.sets[0].all_ok);
     }
 
     #[tokio::test]
@@ -317,13 +318,13 @@ mod tests {
         let state = make_state();
         let req = probe_req(serde_json::json!({
             "endpoints": [mock_provider(&server.uri())],
-            "tiers": [{ "profiles": [{ "id": "p1", "endpoint": "mock", "model": "m1" }] }]
+            "sets": [{ "name": "s0", "profiles": [{ "id": "p1", "endpoint": "mock", "model": "m1" }] }]
         }));
         let resp = probe_profiles(State(state), op_auth(), Json(req))
             .await
             .unwrap()
             .0;
-        let report = &resp.tiers[0].profiles[0];
+        let report = &resp.sets[0].profiles[0];
         assert_eq!(report.status, ProbeStatus::InvalidConfig);
         assert!(
             report
@@ -350,7 +351,7 @@ mod tests {
         let state = make_state();
         let req = probe_req(serde_json::json!({
             "endpoints": [mock_provider(&server.uri())],
-            "tiers": [{ "profiles": [
+            "sets": [{ "name": "s0", "profiles": [
                 { "id": "p1", "endpoint": "mock", "model": "m1" },
                 { "id": "p2", "endpoint": "mock", "model": "m1" }
             ] }]
@@ -359,8 +360,8 @@ mod tests {
             .await
             .unwrap()
             .0;
-        assert_eq!(resp.tiers[0].profiles[0].status, ProbeStatus::Ok);
-        assert_eq!(resp.tiers[0].profiles[1].status, ProbeStatus::Ok);
-        assert!(resp.tiers[0].all_ok);
+        assert_eq!(resp.sets[0].profiles[0].status, ProbeStatus::Ok);
+        assert_eq!(resp.sets[0].profiles[1].status, ProbeStatus::Ok);
+        assert!(resp.sets[0].all_ok);
     }
 }

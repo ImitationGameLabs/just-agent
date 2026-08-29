@@ -156,11 +156,11 @@ export interface RetryRecord {
 }
 
 /** Runtime-active model profile (`AgentStatusResponse.profile`): the id of the
- * registry profile in use, its provider endpoint, its tier position, and the
- * concrete model string the client sends. */
+ * registry profile in use, its provider endpoint, the recorded profile-set
+ * name, and the concrete model string the client sends. */
 export interface ActiveProfile {
-  /** Positional tier index in the registry (0-based). */
-  readonly tier_index: number;
+  /** The recorded profile-set name this agent resolves against. */
+  readonly profile_set: string;
   readonly profile_id: string;
   /** The endpoint (provider) id this profile connects through. */
   readonly provider: string;
@@ -220,14 +220,18 @@ export interface ProfileModel {
   readonly max_context_window: number;
 }
 
-/** A capability tier — purely positional (tiers[depth]). */
-export interface ProfileTier {
+/** A named profile set: an ordered failover chain. The map key in
+ * `ProfileConfig.sets` carries the name. */
+export interface ProfileSet {
+  readonly description: string | null;
   readonly profiles: readonly ProfileModel[];
 }
 
-/** `GET /profiles` / `PUT /profiles` body. */
+/** `GET /profiles` response body. */
 export interface ProfileConfig {
-  readonly tiers: readonly ProfileTier[];
+  readonly sets: Readonly<Record<string, ProfileSet>>;
+  /** The default set's name (GET omits it when no sets exist). */
+  readonly default?: string;
   readonly endpoints: Readonly<Record<string, ProfileProvider>>;
   /** Profiles parked out of rotation (draft space, absent = empty).
    * GET omits the key when empty; on PUT an absent key keeps the live
@@ -236,6 +240,26 @@ export interface ProfileConfig {
   readonly parking?: readonly ProfileModel[];
 }
 
+/** One named set inside a `PUT /profiles` body: sets serialize as an
+ * array (GET maps them by name), so each element carries its name
+ * explicitly. */
+export interface ProfileSetPutRequest {
+  readonly name: string;
+  readonly description: string | null;
+  readonly profiles: readonly ProfileModel[];
+}
+
+/** `PUT /profiles` request body: sets serialize as a name-carrying array.
+ * The tri-state fields mirror the Rust merge: an absent `default` lets the
+ * server resolve it, an absent `parking` keeps the live list (the UI
+ * always sends parking explicitly), and a null endpoint `api_key` keeps
+ * the live key. */
+export interface ProfileConfigPutRequest {
+  readonly sets: readonly ProfileSetPutRequest[];
+  readonly default?: string;
+  readonly endpoints: Readonly<Record<string, ProfileProvider>>;
+  readonly parking: readonly ProfileModel[];
+}
 /** `POST /profiles/apply` response. */
 export interface ProfileApplyResponse {
   readonly applied: number;
@@ -252,7 +276,7 @@ export interface ProfileProviderProbeRequest {
   readonly base_url: string | null;
 }
 
-/** Per-profile model reference inside a probed tier. */
+/** Per-profile model reference inside a probed set. */
 export interface ProfileModelProbeRequest {
   readonly id: string;
   readonly endpoint: string;
@@ -262,7 +286,8 @@ export interface ProfileModelProbeRequest {
 /** `POST /profiles/probe` request. */
 export interface ProfileProbeRequest {
   readonly endpoints: readonly ProfileProviderProbeRequest[];
-  readonly tiers: readonly {
+  readonly sets: readonly {
+    readonly name: string;
     readonly profiles: readonly ProfileModelProbeRequest[];
   }[];
 }
@@ -285,7 +310,7 @@ export interface ProfileProviderProbeReport {
   readonly detail: string | null | undefined;
 }
 
-/** Probe outcome for one profile (model reference) inside a tier. */
+/** Probe outcome for one profile (model reference) inside a set. */
 export interface ProfileModelProbeReport {
   readonly profile_id: string;
   readonly endpoint_id: string;
@@ -293,9 +318,9 @@ export interface ProfileModelProbeReport {
   readonly detail: string | null | undefined;
 }
 
-/** Probe rollup for one tier. */
-export interface ProfileTierProbeReport {
-  readonly index: number;
+/** Probe rollup for one set. */
+export interface ProfileSetProbeReport {
+  readonly name: string;
   readonly all_ok: boolean;
   readonly profiles: readonly ProfileModelProbeReport[];
 }
@@ -303,7 +328,7 @@ export interface ProfileTierProbeReport {
 /** `POST /profiles/probe` response. */
 export interface ProfileProbeResponse {
   readonly results: readonly ProfileProviderProbeReport[];
-  readonly tiers: readonly ProfileTierProbeReport[];
+  readonly sets: readonly ProfileSetProbeReport[];
 }
 
 // Work schedules
