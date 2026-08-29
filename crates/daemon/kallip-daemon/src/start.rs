@@ -21,7 +21,9 @@ pub enum StartError {
     Invalid(String),
     #[error("instance {0} is already running")]
     AlreadyRunning(String),
-    #[error("instance did not publish pid/port within {timeout_secs}s")]
+    #[error(
+        "instance did not publish pid/port within {timeout_secs}s; the instance's own stderr (if any) went to the daemon's stderr"
+    )]
     Timeout { timeout_secs: u64 },
     #[error(transparent)]
     Internal(#[from] anyhow::Error),

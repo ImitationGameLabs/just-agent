@@ -29,7 +29,9 @@ pub enum SpawnError {
     },
     #[error("{0}")]
     Invalid(String),
-    #[error("instance did not publish pid/port within {timeout_secs}s")]
+    #[error(
+        "instance did not publish pid/port within {timeout_secs}s; the instance's own stderr (if any) went to the daemon's stderr"
+    )]
     Timeout { timeout_secs: u64 },
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
