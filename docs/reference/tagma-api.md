@@ -51,6 +51,9 @@ the full authorization matrix, see [auth.md](auth.md).
 | `GET`    | `/agents/{id}/permissions`        | Get permission profile and classify preset | any                          |
 | `PUT`    | `/agents/{id}/metadata`           | Update role / description                  | direct supervisor / operator |
 | `PUT`    | `/agents/{id}/activity`           | Report current activity (self)             | self / operator              |
+| `PUT`    | `/agents/{id}/profile-set`        | Rebind an agent to another named set       | operator / superior          |
+| `PUT`    | `/profiles/default`               | Transfer the default-set marker            | operator                     |
+| `DELETE` | `/profiles/sets/{name}`           | Remove a set (`?force=true` interrupts)    | operator                     |
 | `GET`    | `/budget`                         | Get tagma-wide token budget status         | any                          |
 | `POST`   | `/budget`                         | Adjust or set tagma-wide token budget      | operator                     |
 | `GET`    | `/approvals`                      | List approvals                             | any (filtered by scope)      |
@@ -319,6 +322,82 @@ Status: `200 OK`
 
 > **Lagged messages:** If the client reads too slowly, lagged messages are
 > silently skipped. For high-volume monitoring, consume events promptly.
+
+## Profile sets
+
+Profile sets are the named model groups of `profiles.toml` (see
+[env.md](env.md)). Three endpoints manage them at runtime; the file remains
+the source of truth, and every mutation persists to disk before it takes
+effect in memory.
+
+### `PUT /agents/{id}/profile-set` — Rebind an agent
+
+Rebinds the agent to another named set. Requires the operator or a superior
+of the target.
+
+#### Request body
+
+```json
+{
+  "profile_set": "string — required: set name (exact match)"
+}
+```
+
+An unknown name is rejected with `400 Bad Request` listing the available
+sets. The new binding is persisted first, then applied in memory: a live
+agent swaps its failover chain on its next wake-up; a parked or faulted
+agent resolves the new binding at its next restore. Responds with the
+updated agent summary (`AgentSummary`, `profile_set` mirroring the new
+name).
+
+### `PUT /profiles/default` — Transfer the default-set marker
+
+Moves the `default` marker to an existing set and persists the config.
+Operator only. An unknown name is rejected with `400 Bad Request` listing
+the available sets. Responds with the full masked config — the same shape
+as the profiles config file, with `api_key` values masked.
+
+#### Request body
+
+```json
+{
+  "default": "string — required: set name (exact match)"
+}
+```
+
+### `DELETE /profiles/sets/{name}` — Remove a set
+
+Operator only. Removal is refused while it would break an invariant, and
+each refusal names its recovery path:
+
+| Condition | Status | Body |
+| --------- | ------ | ---- |
+| Unknown set name | `404` | `unknown set '{name}'` |
+| The set is the default | `409` | transfer it first (`PUT /profiles/default`) |
+| The root agent is bound to it | `409` | rebind the root first (`PUT /agents/{id}/profile-set`) |
+| Other agents bound, no `force` | `409` | binder ids; pass `force=true` to interrupt and remove |
+| New bindings arrived mid-sweep | `409` | retry the same delete (state unchanged) |
+
+With `?force=true` every binder is released — live agents are interrupted —
+and the set is removed:
+
+```json
+{
+  "removed": "cheap",
+  "interrupted": [{ "id": "b4c2d3e5-…", "role": "reviewer" }]
+}
+```
+
+`interrupted` lists every agent that was bound, live or faulted. A faulted
+binder has no live round to interrupt; its end state — a dangling record,
+delivery-gated until recovery — is exactly what interrupting a live agent
+produces, so the sweep skips straight to it. Either way the record keeps
+the set name and dangles: prompt delivery rejects with `409` until a set
+exists again under that name, the agent is rebound via
+`PUT /agents/{id}/profile-set`, or the agent is removed. Before the
+write the sweep re-scans the registry — a spawn that landed inside the
+interrupt-to-persist window fails the whole delete with `409` (retry the
+same command; nothing was removed).
 
 ## External chat-room API
 

@@ -77,6 +77,16 @@ so set order in the file carries no meaning. Renaming or deleting a set
 leaves bound agents dangling — restore tolerates the placeholder, but
 prompt delivery rejects with `409` until the set returns under that name.
 
+The `default` marker resolves at load: an explicit `default = "<name>"` must
+name an existing set (a name matching nothing is a config error); with exactly
+one set and no marker, that set becomes the default and the tagma writes the
+marker back into the file — inserted ahead of the first table header, so
+comments, key order, and `${VAR}` spellings survive; several sets with no
+marker is a config error (name one explicitly). A hand-written empty
+marker (`default = ""`) reads back as unmarked and takes the single-set
+auto-mark path rather than erroring. An empty `sets` table boots
+profile-less.
+
 The selected set's first profile is the active model; the remaining profiles
 form a within-set failover chain. When the active profile fails terminally
 (HTTP 401/403/404, or transient retries exhausted), the runner advances to the

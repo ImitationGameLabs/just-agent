@@ -67,6 +67,17 @@ own root takes its class at startup from `KALLIP_ROOT_AGENT_PERMISSION_CLASS`
 (see [env.md](env.md)). The granted class is reported by
 `GET /agents/{id}/permissions` (see [tagma-api.md](tagma-api.md)).
 
+### Profile sets
+
+| Endpoint                       | Operator | Supervisor | Superior | Any agent | Self |
+| ------------------------------ | -------- | ---------- | -------- | --------- | ---- |
+| `PUT /agents/{id}/profile-set` | Yes      | —          | Yes      | —         | —    |
+| `PUT /profiles/default`        | Yes      | —          | —        | —         | —    |
+| `DELETE /profiles/sets/{name}` | Yes      | —          | —        | —         | —    |
+
+Rebinding an agent follows the remove/interrupt pattern (any superior); the
+config-level endpoints are operator-only.
+
 ### Context and policy
 
 | Endpoint                       | Operator | Superior | Any agent |

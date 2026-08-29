@@ -102,6 +102,30 @@ The spawn reads an optional initial prompt from stdin: `< /dev/null` above
 means "no prompt" and keeps the spawn from swallowing a surrounding script's
 stdin when the id is captured. Pipe or heredoc the prompt instead.
 
+### `profile-set` — Manage named profile sets
+
+Inspects and rewires the named profile sets of `profiles.toml` at runtime
+(see [env.md](env.md)):
+
+```bash
+$ kallip profile-set list
+default set: primary
+primary: 2 profile(s), 3 agent(s)
+cheap: 1 profile(s), 0 agent(s)
+$ kallip profile-set bind reviewer cheap
+Bound reviewer to profile set cheap.
+$ kallip profile-set remove cheap --force
+Removed profile set cheap (interrupted: reviewer).
+```
+
+`list` prints the default marker plus per-set profile and agent counts.
+`bind` takes effect on the agent's next wake-up (parked agents pick the new
+binding up at their next restore). `remove` refuses while the set is the
+default, while the root agent is bound to it, or while other agents hold
+bindings and `--force` is absent; with `--force` every binder is
+interrupted (faulted binders skip straight to the dangling state) and the
+output names them (by role when the record has one, else by id).
+
 ### `approval` — Manage approvals
 
 Subcommands for listing, inspecting, and responding to approvals
