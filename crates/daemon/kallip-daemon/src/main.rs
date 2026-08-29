@@ -19,6 +19,7 @@ mod spawn;
 mod start;
 mod stop;
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
@@ -95,15 +96,38 @@ fn main() -> Result<()> {
 /// Instance tree root: `KALLIP_DAEMON_DATA_DIR` verbatim, else the XDG data home
 /// namespaced `kallip` (matching `kallip_runtime::persistence`'s default, so
 /// daemon and instances agree on where the tree lives without sharing code).
+/// The `kallip` namespace is the shared-tree contract (the standalone
+/// runtime writes the same tree); the state side is deliberately named
+/// `kallip-daemon` (see [`state_dir`]) — the asymmetry is intentional.
 fn data_root() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("KALLIP_DAEMON_DATA_DIR") {
-        return Ok(PathBuf::from(dir));
+    // The base lookup stays lazy: an explicit override must keep working
+    // where the platform data home cannot be determined (a unit with
+    // the env set but no HOME), so only the None branch ever looks it up.
+    match std::env::var_os("KALLIP_DAEMON_DATA_DIR") {
+        Some(dir) => Ok(resolve_data_root(Some(dir), PathBuf::new())),
+        None => Ok(resolve_data_root(
+            None,
+            dirs::data_dir().context("could not determine platform data directory")?,
+        )),
     }
-    dirs_data_home().map(|home| home.join("kallip"))
+}
+
+/// Pure resolution of the instance-tree root: an explicit override wins
+/// verbatim (a set-but-empty value included - it is still a set value),
+/// else the platform data home gains exactly one `kallip` segment - the
+/// same tree the standalone runtime writes. Pure so the default shape
+/// is testable without touching process-environment state.
+fn resolve_data_root(override_dir: Option<OsString>, data_home: PathBuf) -> PathBuf {
+    match override_dir {
+        Some(dir) => PathBuf::from(dir),
+        None => data_home.join("kallip"),
+    }
 }
 
 /// Daemon-owned state dir: `KALLIP_STATE_DIR` verbatim, else the XDG state
 /// home namespaced `kallip-daemon`.
+/// Private to the daemon (the control socket lives here), unlike the data
+/// root's shared `kallip` namespace (see [`data_root`]).
 fn state_dir() -> Result<PathBuf> {
     if let Some(dir) = std::env::var_os("KALLIP_STATE_DIR") {
         return Ok(PathBuf::from(dir));
@@ -111,12 +135,6 @@ fn state_dir() -> Result<PathBuf> {
     Ok(dirs::state_dir()
         .context("could not determine platform state directory")?
         .join("kallip-daemon"))
-}
-
-fn dirs_data_home() -> Result<PathBuf> {
-    Ok(dirs::data_dir()
-        .context("could not determine platform data directory")?
-        .join("kallip"))
 }
 
 /// Refuse to take over a live daemon's socket (root 16:31Z mandate): a
@@ -140,5 +158,35 @@ fn socket_path(state_dir: &std::path::Path) -> PathBuf {
     match std::env::var_os("KALLIP_DAEMON_SOCKET") {
         Some(path) => PathBuf::from(path),
         None => state_dir.join("control.sock"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    /// Both branches of the pure resolution: an override wins verbatim
+    /// (set-but-empty included - it is still a set value), and the default
+    /// gains exactly one kallip segment.
+    #[test]
+    fn resolve_data_root_overrides_win_verbatim() {
+        assert_eq!(
+            resolve_data_root(Some("/custom/root".into()), PathBuf::from("/xdg/data")),
+            PathBuf::from("/custom/root")
+        );
+        assert_eq!(
+            resolve_data_root(Some(String::new().into()), PathBuf::from("/xdg/data")),
+            PathBuf::from("")
+        );
+    }
+
+    /// The default carries exactly one kallip segment - the same tree
+    /// the standalone runtime writes - pinning the shape against a
+    /// doubled-namespace regression.
+    #[test]
+    fn resolve_data_root_default_joins_one_kallip_segment() {
+        assert_eq!(
+            resolve_data_root(None, PathBuf::from("/xdg/data")),
+            PathBuf::from("/xdg/data/kallip")
+        );
     }
 }

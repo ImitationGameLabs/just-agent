@@ -283,6 +283,19 @@ every spawned `bash`:
 The backend also hardcodes `TERM=dumb`, `NO_COLOR=1`, `LS_COLORS=""`,
 `CLICOLOR="0"` into every spawned `bash` to suppress color output.
 
+## Local daemon
+
+Variables read by `kallip-daemon` itself; `kallipctl` mirrors the state
+and socket resolution.
+
+| Variable                  | Required | Default                         | Description                                                                                                                                                                                             |
+| ------------------------- | -------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KALLIP_DAEMON_DATA_DIR`  | no       | `~/.local/share/kallip/`        | The daemon's instance-tree root, used verbatim. The default matches the runtime's own default data root, so daemon-managed and standalone layouts share one tree.                                       |
+| `KALLIP_STATE_DIR`        | no       | `~/.local/state/kallip-daemon/` | Daemon-owned state directory; the control socket lives at `STATE_DIR/control.sock`. The socket path itself can be overridden directly via `KALLIP_DAEMON_SOCKET`. Private to the daemon.                |
+
+Source:
+[`crates/daemon/kallip-daemon/src/main.rs`](../../crates/daemon/kallip-daemon/src/main.rs).
+
 ## Instances service
 
 The web instances service (daemon backend) fills these server-side defaults
