@@ -84,7 +84,7 @@ pub enum ParkedReason {
 }
 
 impl std::fmt::Display for ParkedReason {
-    /// Operator-readable prose, shared by the park-kick turn text and TUI rendering.
+    /// Operator-readable prose, shared by the park-kick turn text and client rendering.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::FailoverChainExhausted { reason, .. } => {

@@ -21,7 +21,7 @@ use crate::direct::DirectFrame;
 /// - the tagma-wide `shutdown` token fires.
 ///
 /// The shutdown arm is load-bearing: without it, a long-lived SSE connection
-/// (e.g. an attached TUI) keeps the inner `BroadcastStream` open, so hyper's
+/// (e.g. an attached client) keeps the inner `BroadcastStream` open, so hyper's
 /// `serve_connection` never completes and `axum::serve(...).with_graceful_shutdown`
 /// never returns — Ctrl-C hangs. `take_until(shutdown.cancelled())` ends the
 /// stream the instant the tagma-wide token fires, letting graceful shutdown
@@ -190,7 +190,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     /// Regression: without the `take_until(shutdown.cancelled())` arm, a
-    /// long-lived SSE connection (e.g. an attached TUI) keeps the inner stream
+    /// long-lived SSE connection (e.g. an attached client) keeps the inner stream
     /// open and hangs graceful shutdown. The stream must end promptly when the
     /// tagma-wide shutdown token fires — proven here with a tight 100ms bound
     /// (a regression that re-introduces a seconds-long park would be caught).

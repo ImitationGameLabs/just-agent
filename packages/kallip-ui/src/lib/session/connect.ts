@@ -19,7 +19,7 @@ export interface DirectConnection {
  * Connect to the tagma and bind a {@link DirectTransport} to its single root
  * agent (eagerly created at tagma startup). The transport consumes the tagma's
  * external chat-room API (`/agents/{id}/external/events` + the inbound message
- * POST). Mirrors kallip-tui's `Session::connect`. Also surfaces the tagma's
+ * POST). Eagerly connects and subscribes in one step. Also surfaces the tagma's
  * conversation id so offline + online share one cache.
  */
 export async function connectDirect(

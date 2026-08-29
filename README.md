@@ -26,7 +26,6 @@ For planned direction, see the [roadmap](docs/roadmap.md).
 | `kallip-tagma`   | HTTP API server hosting multiple agent instances                                      |
 | `kallip-client`  | Async client library for the tagma HTTP API                                           |
 | `kallip`         | Headless CLI — designed for agents to call, so an agent can manage other agents       |
-| `kallip-tui`     | Interactive terminal UI for human users, with approval prompts and markdown rendering |
 | `kallip-run`     | Agent runner for scripting and automation — CI, benchmarks, scripted workflows        |
 
 > Note: `just-llm-client` is an unrelated upstream crate, not part of this project.
@@ -83,7 +82,7 @@ The flow:
 2. A deferred result is returned to the LLM immediately, so the agent can
    continue working on other things.
 3. An `ApprovalUpdated` event is emitted on the tagma's **internal** event
-   stream, visible to the TUI, CLI, or a supervisor agent.
+   stream, visible to the CLI or a supervisor agent.
 4. The client approves or denies the request via the tagma's approval API
    (`GET /approvals`, `POST /approvals/{id}`).
 5. On the next agent round, the approval notification is injected into context.
@@ -101,6 +100,8 @@ KALLIP_LLM_MODEL=deepseek-v4-flash \
 KALLIP_LLM_DEEPSEEK_API_KEY=your-key \
 cargo run -p kallip-tagma
 
-# TUI client
-cargo run -p kallip-tui
+# Web frontend (the human entry point): deno task dev
 ```
+
+For terminals and scripts, the headless `kallip` CLI and the
+`kallip-run` runner cover the same API.

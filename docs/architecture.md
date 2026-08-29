@@ -9,7 +9,7 @@ For planned direction, see [roadmap.md](roadmap.md).
 The tagma (`kallip-tagma`) is the center: it hosts multiple isolated agent
 instances, each running as a pair of tokio tasks (agent task + bridge task)
 behind an HTTP API. Clients — the headless CLI (`kallip`), the runner
-(`kallip-run`), or the TUI (`kallip-tui`) — connect over HTTP
+(`kallip-run`), or the web frontend — connect over HTTP
 and SSE, send messages, stream events,
 and disconnect without affecting running agents.
 
@@ -22,7 +22,7 @@ works for single-session coding but breaks down when you need:
 - **Agent-to-agent coordination** — one agent spawning and managing others
 - **Detached operation** — agents continue running after the client disconnects
 - **Multiple client surfaces** — headless CLI for agents, runner for scripting,
-  TUI for interactive use, programmatic access via the client library
+  web frontend for interactive use, programmatic access via the client library
 
 The tagma makes these possible. Each agent is an isolated unit behind a stable
 HTTP API. Clients connect, send messages, stream events, and disconnect without
@@ -130,7 +130,7 @@ results double as member ids by value equality.
 ## External chat-room API (authored vs signal)
 
 The tagma exposes two event surfaces (see [tagma-api.md](reference/tagma-api.md)).
-The **internal** stream carries the full rich event vocabulary for the TUI/CLI.
+The **internal** stream carries the full rich event vocabulary for the CLI.
 The **external chat-room API** is the frontend's conversation surface. The tagma
 projects each internal event into two channels with different destinations:
 
@@ -157,7 +157,7 @@ stay internal-only — they never reach the frontend.
 6. Bridge task receives `AgentEvent`s, converts them to `SseEvent`s, and
    broadcasts via a `broadcast` channel.
 7. A client subscribed to the internal event stream receives the full rich
-   vocabulary (TUI, `kallip`, `kallip-run`). A frontend client subscribes to the
+   vocabulary (`kallip`, `kallip-run`). A frontend client subscribes to the
    external chat-room stream instead, where the tagma splits each event into the
    authored + signal channels above (and persists the authored half).
 
@@ -280,11 +280,10 @@ deliberate supervisor decision stays meaningful under every preset.
 
 | Crate            | Role                                                                                                                                                                                                      |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `kallip-common`  | Shared types, slash command definitions, and protocol types. Used by all crates.                                                                                                                          |
+| `kallip-common`  | Shared types and protocol types. Used by all crates.                                                                                                                                                    |
 | `kallip-runtime` | Agent runtime: agent loop, context management, tool dispatch, policy engine. No network code.                                                                                                             |
 | `kallip-shell`   | Provider-neutral shell/session tools for LLM applications. Used by the runtime.                                                                                                                           |
 | `kallip-tagma`   | HTTP server hosting agent instances. Uses `kallip-runtime` internally.                                                                                                                                    |
 | `kallip`         | Headless CLI for agents. Thin wrapper over `kallip-client`. No agent logic.                                                                                                                               |
-| `kallip-tui`     | Interactive terminal UI. Same client library, adds ratatui rendering.                                                                                                                                     |
 | `kallip-run`     | Agent runner for scripting and automation. Streams progress to stderr; emits a semantic exit code (and an optional JSON object on stdout with `--json`). Does not print the agent's user-facing messages. |
-| `kallip-client`  | Async HTTP client for the tagma API. Used by CLI, TUI, and runner.                                                                                                                                        |
+| `kallip-client`  | Async HTTP client for the tagma API. Used by CLI and runner.                                                                                                                                             |

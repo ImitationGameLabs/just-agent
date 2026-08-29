@@ -1,7 +1,7 @@
 //! The tool-result envelope the runtime emits and local clients parse.
 //!
 //! Every tool call's result reaches the LLM transcript (and from there the
-//! TUI) wrapped in one JSON object: success `{"ok":true,"tool_name":...,
+//! CLI) wrapped in one JSON object: success `{"ok":true,"tool_name":...,
 //! "result":...}`, error `{"ok":false,...,"error":...}`, or
 //! approval-deferred `{"ok":true,...,"pending_approval":true,...}`. The
 //! single type keeps producer and consumers from drifting apart silently.

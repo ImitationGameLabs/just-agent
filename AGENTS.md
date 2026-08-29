@@ -16,7 +16,6 @@ The project brand is `kallipai` (literally `kallip` + `ai`); the technical stem 
 │   ├── kallip-runtime/   # Agent runtime: agent context, policy, tool dispatch (tagma-only)
 │   ├── kallip-shell/     # Reusable shell/session tools for LLM applications
 │   ├── kallip/           # Headless CLI for agent (tagma client)
-│   ├── kallip-tui/       # Interactive TUI client
 │   ├── kallip-tagma/    # HTTP API server hosting multiple agent instances
 │   ├── kallip-run/       # Agent runner for scripting and benchmarking
 │   ├── kallip-client/    # Tagma client library

@@ -77,11 +77,6 @@ async fn run(args: Args) -> Result<()> {
     println!();
     println!("  WARNING: Do not leak this token.");
     println!();
-    println!("  To authenticate, either:");
-    println!("  - Set env and launch TUI:");
-    println!("      export KALLIP_AUTH_TOKEN={}", operator.secret());
-    println!("      kallip-tui");
-    println!("  - Or enter the token when prompted inside the TUI.");
     println!("─────────────────────────────────────────────────");
 
     anyhow::ensure!(

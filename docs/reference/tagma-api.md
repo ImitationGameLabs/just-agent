@@ -6,7 +6,7 @@ The tagma (`kallip-tagma`) exposes an HTTP API at `KALLIP_TAGMA_ADDR`
 - The **internal event stream** (`GET /agents/{id}/events`) carries the full
   rich `SseEvent` vocabulary (streaming deltas, tool events, retry/failover
   telemetry) and is consumed by the agent CLI (`kallip`), the runner
-  (`kallip-run`), and the TUI.
+  (`kallip-run`), and admin/automation clients.
 - The **external chat-room API** (`GET /agents/{id}/external/events`) is the
   frontend's sole window onto a conversation: a single multiplexed SSE carrying
   authored messages, runtime signals, and status snapshots (see
@@ -296,7 +296,7 @@ Status: `202 Accepted`
 
 Opens an SSE connection to receive the full, rich agent event vocabulary
 (streaming deltas, tool calls/results, retry/failover telemetry, approvals).
-This is the surface the TUI, `kallip`, and `kallip-run` consume; the browser
+This is the surface `kallip` and `kallip-run` consume; the browser
 frontend uses the [external chat-room stream](#external-chat-room-api) instead.
 See [SSE Event Types](#sse-event-types) for the event format.
 
@@ -631,7 +631,7 @@ Status: `200 OK`
 
 > These endpoints and the `approvalUpdated` event are part of the **internal**
 > event surface. The external chat-room API does not carry approvals and the
-> browser frontend does not render them; these are consumed by the TUI and
+> browser frontend does not render them; these are consumed by
 > admin/automation clients over the internal event stream
 > (`GET /agents/{id}/events`).
 
@@ -738,7 +738,7 @@ Status: `200 OK`
 ## SSE Event Types
 
 These are the **internal** event stream's variants (`GET /agents/{id}/events`),
-consumed by the TUI, `kallip`, and `kallip-run`. The
+consumed by `kallip` and `kallip-run`. The
 [external chat-room stream](#external-chat-room-api) is a separate surface that
 does not use this vocabulary -- it discriminates frames by the SSE `event:`
 field (`authored` / `signal` / `status`) and carries only complete authored

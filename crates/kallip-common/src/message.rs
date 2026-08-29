@@ -1,5 +1,5 @@
 //! The message-delivery marker shared by the `kallip lesche send` CLI emitter
-//! and the local-client parsers (TUI, transcript reducers).
+//! and the local-client parsers (CLI, transcript reducers).
 //!
 //! The agent addresses the user by invoking `kallip lesche send` (a subcommand
 //! of the `kallip` CLI) via `bash_exec`. The CLI prints a stable marker line to
@@ -46,7 +46,7 @@ pub fn marker_line(text: &str) -> String {
 /// exactly one JSON line:
 /// `{"kallip.message.sent":{"to":"<id>","text":"<message>","queue_depth":N}}`
 /// (plus `"warning"` when the tagma included one). The key is deliberately
-/// distinct from the lesche marker: local clients (TUI, transcript reducers)
+/// distinct from the lesche marker: local clients (CLI, transcript reducers)
 /// match on `kallip.lesche.message` to render user chat lines, and must not
 /// render an agent-to-agent send as one.
 pub fn message_sent_line(

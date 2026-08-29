@@ -12,7 +12,6 @@ members = [
   "crates/kallip-runtime",
   "crates/kallip-shell",
   "crates/kallip",
-  "crates/kallip-tui",
   "crates/kallip-tagma",
   "crates/kallip-client",
   "crates/kallip-run",
@@ -151,15 +150,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 rable = "0.2.0"
 clap = { version = "4.6", features = ["derive", "env"] }
-ratatui = { version = "0.30.0", features = ["unstable-rendered-line-info"] }
-ratatui-textarea = "0.9.1"
-pulldown-cmark = "0.13.3"
 comfy-table = "7.2.2"
-syntect = "5.3"
 dirs = "6"
 ipnet = "2.12"
 unicode-normalization = "0.1"
-rpassword = "7.5"
 time = { version = "0.3", features = ["serde-well-known", "macros"] }
 toml = "1"
 arc-swap = "1"

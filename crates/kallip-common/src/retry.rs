@@ -34,7 +34,7 @@ impl Default for RetryKind {
 }
 
 impl RetryKind {
-    /// Stable rendering key, shared by the CLI and TUI summary lines so
+    /// Stable rendering key, shared by the CLI summary lines so
     /// `last: rate-limit` reads identically everywhere.
     pub fn as_str(self) -> &'static str {
         match self {

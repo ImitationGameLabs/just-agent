@@ -45,7 +45,7 @@ pub enum FailoverChainExhaustion {
 }
 
 impl std::fmt::Display for FailoverChainExhaustion {
-    /// Operator-readable lowercase prose, shared by the TUI and `kallip-run` so
+    /// Operator-readable lowercase prose, shared by the CLI and `kallip-run` so
     /// both surfaces render the same cause identically.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {

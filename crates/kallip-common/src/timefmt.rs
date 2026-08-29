@@ -1,4 +1,4 @@
-//! Time and count rendering shared by the CLI and TUI status views.
+//! Time and count rendering shared by the CLI status views.
 //!
 //! The rule these helpers encode: arithmetic belongs to the system, not the
 //! reader. A bare epoch or a 10-digit token count forces every reader to
@@ -19,7 +19,7 @@ const UTC_SECONDS: &[FormatItem<'static>] =
 const UTC_DAY: &[FormatItem<'static>] = format_description!("[year]-[month]-[day]");
 
 /// Current wall clock as epoch seconds (0 on a pre-epoch clock); shared by
-/// the CLI and TUI so every view anchors to the same clock source.
+/// the CLI so every view anchors to the same clock source.
 pub fn now_epoch() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
