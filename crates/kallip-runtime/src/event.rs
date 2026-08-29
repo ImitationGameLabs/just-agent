@@ -70,8 +70,8 @@ pub enum AgentEvent {
         max_attempts: u32,
         delay_secs: f64,
     },
-    /// Within-tier failover: the active profile failed terminally and the runner advanced to the
-    /// next profile in the tier's chain.
+    /// Within-set failover: the active profile failed terminally and the runner advanced to the
+    /// next profile in the set's chain.
     Failover {
         from: String,
         to: String,
@@ -92,7 +92,7 @@ pub enum AgentEvent {
         consumed: u64,
         budget: u64,
     },
-    /// Within-tier failover chain exhausted (terminal for the turn). The runner reached a known
+    /// Within-set failover chain exhausted (terminal for the turn). The runner reached a known
     /// end-of-chain state — distinct from [`Error`](Self::Error), which is an undifferentiated
     /// failure. Bridges to `SseEvent::FailoverChainExhausted`; emitted by `run_and_report`.
     FailoverChainExhausted {
@@ -285,7 +285,7 @@ pub enum AgentOutcome {
         consumed: u64,
         budget: u64,
     },
-    /// Within-tier failover chain exhausted — a defined non-success round-end (sibling of
+    /// Within-set failover chain exhausted — a defined non-success round-end (sibling of
     /// `MaxRoundsExceeded`), not an `Err`. The active profile failed terminally and no buildable
     /// backup remained; `reason` distinguishes the cause, `detail` is the original trigger's
     /// `{:#}` display. The agent stays alive and idle (the operator may reconfigure failover and

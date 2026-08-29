@@ -201,19 +201,19 @@ fn validate_permission_class_from_chain(
 }
 
 /// Restore a single persisted agent to a running agent.
-/// Resolve the restore-time tier, mirroring the spawn path's profile-less
+/// Resolve the restore-time set, mirroring the spawn path's profile-less
 /// boot: a root restoring against an empty registry gets the placeholder
-/// tier (its LLM calls fail per call with the management-page hint until
-/// a profile is applied); a subagent without a tier stays a restore
+/// set (its LLM calls fail per call with the management-page hint until
+/// a profile is applied); a subagent without a set stays a restore
 /// failure → Faulted.
-fn tier_for_restore(
+fn set_for_restore(
     registry: &kallip_runtime::profile::ProfileRegistry,
     depth: usize,
     is_root: bool,
-) -> anyhow::Result<(usize, kallip_runtime::profile::Tier)> {
+) -> anyhow::Result<(usize, kallip_runtime::profile::ProfileSet)> {
     match registry.select_tier(depth) {
-        Ok((idx, tier)) => Ok((idx, tier.clone())),
-        Err(_) if is_root => Ok(crate::backend::unconfigured_tier()),
+        Ok((idx, set)) => Ok((idx, set.clone())),
+        Err(_) if is_root => Ok(crate::backend::unconfigured_set()),
         Err(e) => Err(e),
     }
 }
@@ -285,20 +285,20 @@ async fn restore_one(
         .cloned()
         .unwrap_or_else(|| p.agent_id.clone());
 
-    // Resolve the model tier purely by depth (positional tiers — no persisted binding). Warn if
-    // the agent's depth exceeds the tier list: it clamps to the lowest-capability tier.
+    // Resolve the profile set purely by depth (positional — no persisted binding). Warn if
+    // the agent's depth exceeds the set list: it clamps to the last set.
     let depth = config.permissions.depth();
-    let tier_count = shared_state.profiles.load().registry.tiers().len();
-    if depth >= tier_count && tier_count > 0 {
+    let set_count = shared_state.profiles.load().registry.sets().len();
+    if depth >= set_count && set_count > 0 {
         tracing::warn!(
             depth,
-            tier_count,
-            "agent depth exceeds tier count; clamping to the lowest tier"
+            set_count,
+            "agent depth exceeds set count; clamping to the last set"
         );
     }
-    let (tier_index, tier) = {
+    let (set_index, set) = {
         let bundle = shared_state.profiles.load();
-        tier_for_restore(&bundle.registry, depth, p.meta.created_by.is_none())?
+        set_for_restore(&bundle.registry, depth, p.meta.created_by.is_none())?
     };
 
     let store = Arc::new(tokio::sync::Mutex::new(restored.store));
@@ -348,8 +348,8 @@ async fn restore_one(
         exec_policy,
         prompt_queue_size: shared_state.prompt_queue_size,
         prompt_channel: None,
-        tier,
-        tier_index,
+        set,
+        set_index,
     })
     .await?;
     // Spawn succeeded: the agent owns the workspace lock for its lifetime.
@@ -730,7 +730,7 @@ pub async fn restore_agents(state: &SharedState) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChainNode, faulted_from_meta, tier_for_restore, validate_permission_class_from_chain,
+        ChainNode, faulted_from_meta, set_for_restore, validate_permission_class_from_chain,
     };
     use kallip_common::agentid::AgentId;
     use kallip_common::policy::ExecPolicy;
@@ -748,14 +748,14 @@ mod tests {
     #[test]
     fn empty_registry_restores_root_against_placeholder_and_faults_subagent() {
         let reg = kallip_runtime::profile::ProfileRegistry::new(
-            Vec::new(),
+            std::collections::BTreeMap::new(),
             std::sync::Arc::new(NilSource),
         )
-        .expect("empty tier list is constructible");
-        let (idx, tier) = tier_for_restore(&reg, 0, true).expect("root restores");
+        .expect("empty set map is constructible");
+        let (idx, set) = set_for_restore(&reg, 0, true).expect("root restores");
         assert_eq!(idx, 0);
-        assert_eq!(tier.active_profile().endpoint, crate::backend::UNCONFIGURED);
-        let err = tier_for_restore(&reg, 1, false).expect_err("subagent faults");
+        assert_eq!(set.active_profile().endpoint, crate::backend::UNCONFIGURED);
+        let err = set_for_restore(&reg, 1, false).expect_err("subagent faults");
         assert!(format!("{err:#}").contains("management page"));
     }
     // A supervisor chain node carrying only the fields the validator reads

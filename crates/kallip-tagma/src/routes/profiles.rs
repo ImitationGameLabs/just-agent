@@ -14,7 +14,10 @@ use axum::Json;
 use axum::extract::State;
 
 use kallip_common::protocol::ApiError;
-use kallip_runtime::profile::{Profile, ProfileConfig, ProfileRegistry, Provider, Tier};
+use kallip_runtime::profile::{
+    Profile, ProfileConfig, ProfileRegistry, ProfileSet, Provider, is_valid_set_name,
+    normalize_default,
+};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -68,7 +71,7 @@ pub async fn put_profiles(
     let source = crate::backend::build_backends(&config, factory, user_agent)
         .map_err(|e| ApiError::bad_request(format!("profile validation failed: {e:#}")))?;
     let registry = Arc::new(
-        ProfileRegistry::new(config.tiers.clone(), source)
+        ProfileRegistry::new(config.sets.clone(), source)
             .map_err(|e| ApiError::bad_request(format!("invalid profile registry: {e:#}")))?,
     );
 
@@ -117,13 +120,22 @@ struct ProfileWire {
 }
 
 #[derive(Deserialize)]
-struct TierWire {
+struct SetWire {
+    /// The set name doubles as its map key; the config schema keeps a single
+    /// source of truth for it.
+    name: String,
+    description: Option<String>,
     profiles: Vec<ProfileWire>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct ProfileConfigWire {
-    tiers: Vec<TierWire>,
+    sets: Vec<SetWire>,
+    /// Tri-state like the endpoint fields: an absent key lets the collection
+    /// resolve (exactly one set becomes the default), a present name must
+    /// reference one of `sets`.
+    #[serde(default)]
+    default: Option<String>,
     endpoints: HashMap<String, ProviderPatch>,
     /// Tri-state like the endpoint fields: an absent key keeps the live
     /// parking (an old client PUTting its full config cannot clear it);
@@ -181,25 +193,43 @@ fn merge_wire(live: &ProfileConfig, wire: ProfileConfigWire) -> Result<ProfileCo
             },
         );
     }
-    let tiers: Vec<Tier> = wire
-        .tiers
-        .into_iter()
-        .map(|t| Tier {
-            profiles: t
-                .profiles
-                .into_iter()
-                .map(|p| Profile {
-                    id: p.id,
-                    endpoint: p.endpoint,
-                    model: p.model,
-                    max_context_window: p.max_context_window,
-                })
-                .collect(),
-        })
-        .collect();
+    let mut sets: std::collections::BTreeMap<String, ProfileSet> =
+        std::collections::BTreeMap::new();
+    for s in wire.sets {
+        if !is_valid_set_name(&s.name) {
+            return Err(ApiError::bad_request(format!(
+                "set name '{}' must match ^[A-Za-z0-9_-]+$ (letters, digits, '_', '-')",
+                s.name
+            )));
+        }
+        let profiles = s
+            .profiles
+            .into_iter()
+            .map(|p| Profile {
+                id: p.id,
+                endpoint: p.endpoint,
+                model: p.model,
+                max_context_window: p.max_context_window,
+            })
+            .collect();
+        let set = ProfileSet {
+            name: s.name.clone(),
+            description: s.description,
+            profiles,
+        };
+        if sets.insert(s.name.clone(), set).is_some() {
+            return Err(ApiError::bad_request(format!(
+                "duplicate set name '{}'",
+                s.name
+            )));
+        }
+    }
+    let default = normalize_default(&sets, wire.default.as_deref().unwrap_or(""))
+        .map_err(|e| ApiError::bad_request(format!("{e:#}")))?
+        .0;
     // Resolve the final parking first: absent key keeps the live list (the
     // tri-state rule), a present list replaces it wholesale. The seen-set
-    // below scans tiers ∪ this final parking, so a tier referencing an id
+    // below scans sets ∪ this final parking, so a set referencing an id
     // that only exists in the kept live parking is caught at the wire
     // boundary, not on the next startup's file validate().
     let parking: Vec<Profile> = match wire.parking {
@@ -214,12 +244,12 @@ fn merge_wire(live: &ProfileConfig, wire: ProfileConfigWire) -> Result<ProfileCo
             })
             .collect(),
     };
-    // Cross-tier duplicate profile ids pass registry validation but the stricter
+    // Cross-set duplicate profile ids pass registry validation but the stricter
     // load-time validate() bails on them — a config the tagma could no longer
     // start from. Reject here so the wire boundary matches the file boundary.
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for tier in &tiers {
-        for p in &tier.profiles {
+    for set in sets.values() {
+        for p in &set.profiles {
             if !seen.insert(p.id.as_str()) {
                 return Err(ApiError::bad_request(format!(
                     "duplicate profile id '{}'",
@@ -237,7 +267,8 @@ fn merge_wire(live: &ProfileConfig, wire: ProfileConfigWire) -> Result<ProfileCo
         }
     }
     Ok(ProfileConfig {
-        tiers,
+        sets,
+        default,
         parking,
         endpoints,
     })
@@ -268,7 +299,7 @@ pub struct ApplyResponse {
 
 /// POST /profiles/apply — push the current registry to all live agents.
 ///
-/// For each live agent, reads its depth, selects the new tier, and writes a
+/// For each live agent, reads its depth, selects the new set, and writes a
 /// [`ProfileReset`] to the agent's pending-reset cell. The agent picks it up
 /// on its next wake-up (top of `run_and_report`). Agents mid-round finish
 /// their current work first.
@@ -295,17 +326,17 @@ pub async fn apply_profiles(
                     return (targets, skipped);
                 };
                 let depth = live.identity.config.permissions.depth();
-                // Empty registry: no new tier to push; the live agent keeps
+                // Empty registry: no new set to push; the live agent keeps
                 // its current pair (an apply after the first profile lands
                 // re-syncs it).
-                let Some((tier_index, tier)) = registry.select_tier(depth).ok() else {
+                let Some((set_index, set)) = registry.select_tier(depth).ok() else {
                     skipped += 1;
                     return (targets, skipped);
                 };
                 targets.push((
                     kallip_runtime::ProfileReset {
-                        tier: tier.clone(),
-                        tier_index,
+                        set: set.clone(),
+                        set_index,
                         registry: registry.clone(),
                     },
                     live.agent.pending_profile_reset.clone(),
@@ -360,13 +391,14 @@ mod tests {
         assert_eq!(mask_key("密钥密钥"), "********");
     }
     #[test]
-    fn merge_wire_duplicate_profile_id_across_tiers_is_rejected() {
+    fn merge_wire_duplicate_profile_id_across_sets_is_rejected() {
         let w: ProfileConfigWire = serde_json::from_value(serde_json::json!({
             "endpoints": { "main": { "id": "main", "family": "deepseek", "api_key": null, "base_url": null } },
-            "tiers": [
-                { "profiles": [ { "id": "p", "endpoint": "main", "model": "m", "max_context_window": 8 } ] },
-                { "profiles": [ { "id": "p", "endpoint": "main", "model": "m", "max_context_window": 8 } ] }
-            ]
+            "sets": [
+                { "name": "a", "profiles": [ { "id": "p", "endpoint": "main", "model": "m", "max_context_window": 8 } ] },
+                { "name": "b", "profiles": [ { "id": "p", "endpoint": "main", "model": "m", "max_context_window": 8 } ] }
+            ],
+            "default": "a"
         }))
         .unwrap();
         let err = merge_wire(&live_config(), w).unwrap_err();
@@ -408,13 +440,13 @@ mod tests {
     }
 
     #[test]
-    fn merge_wire_rejects_tier_id_colliding_with_kept_live_parking() {
-        // The tier references an id that only exists in the kept live parking;
+    fn merge_wire_rejects_set_id_colliding_with_kept_live_parking() {
+        // The set references an id that only exists in the kept live parking;
         // the seen set must scan the final parking, not just the wire.
         let w: ProfileConfigWire = serde_json::from_value(serde_json::json!({
             "endpoints": { "main": { "id": "main", "family": "deepseek", "api_key": null, "base_url": null } },
-            "tiers": [
-                { "profiles": [ { "id": "parked", "endpoint": "main", "model": "m", "max_context_window": 8 } ] }
+            "sets": [
+                { "name": "a", "profiles": [ { "id": "parked", "endpoint": "main", "model": "m", "max_context_window": 8 } ] }
             ]
         }))
         .unwrap();
@@ -427,7 +459,8 @@ mod tests {
 
     fn live_config() -> ProfileConfig {
         ProfileConfig {
-            tiers: vec![],
+            default: String::new(),
+            sets: std::collections::BTreeMap::new(),
             endpoints: std::collections::HashMap::from([(
                 "main".into(),
                 Provider {
@@ -455,7 +488,7 @@ mod tests {
                 "api_key": api_key,
                 "base_url": base_url
             }},
-            "tiers": [{ "profiles": [{
+            "sets": [{ "name": "a", "profiles": [{
                 "id": "p", "endpoint": "main", "model": "m", "max_context_window": 128000
             }]}]
         }))
@@ -563,7 +596,7 @@ mod tests {
             "endpoints": { "wrong": {
                 "id": "main", "family": "deepseek", "api_key": null, "base_url": null
             }},
-            "tiers": []
+            "sets": []
         }))
         .unwrap();
         let err = merge_wire(&live_config(), w).unwrap_err();
@@ -590,9 +623,9 @@ mod tests {
         let live = entry.as_live().unwrap();
         let cell = live.agent.pending_profile_reset.lock().unwrap();
         assert!(cell.is_some(), "pending_profile_reset should be set");
-        // make_state's bundle is single-tier, so a root agent (depth 0) resolves index 0;
-        // a multi-tier fixture asserting the clamp would be the follow-up if one lands.
-        assert_eq!(cell.as_ref().unwrap().tier_index, 0);
+        // make_state's bundle is single-set, so a root agent (depth 0) resolves index 0;
+        // a multi-set fixture asserting the clamp would be the follow-up if one lands.
+        assert_eq!(cell.as_ref().unwrap().set_index, 0);
     }
 
     #[tokio::test]

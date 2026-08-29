@@ -1,6 +1,6 @@
 //! LLM stream acquisition for the agent round loop.
 //!
-//! Owns the within-tier acquisition loop: consume an SSE stream, retry mid-stream
+//! Owns the within-set acquisition loop: consume an SSE stream, retry mid-stream
 //! transport drops in place, and advance the failover chain when an endpoint or the
 //! retry budget gives out. The [`crate::failover::FailoverState`] state machine stays
 //! pure in its own module — this module drives it, and `advance_failover` below is the
@@ -125,10 +125,10 @@ async fn consume_stream(
 }
 
 // ---------------------------------------------------------------------------
-// Within-tier acquisition
+// Within-set acquisition
 // ---------------------------------------------------------------------------
 
-/// Outcome of the within-tier failover acquisition loop.
+/// Outcome of the within-set failover acquisition loop.
 pub(crate) enum AcquireResult {
     /// A stream was acquired AND fully consumed — proceed to post-stream budgeting / tool calls.
     Consumed(StreamConsumed),
@@ -137,12 +137,12 @@ pub(crate) enum AcquireResult {
     /// A request-level error — the round errors.
     Error(Error),
 }
-/// Within-tier failover acquisition: rebuild the request per profile, retry, and on a `Failover`
+/// Within-set failover acquisition: rebuild the request per profile, retry, and on a `Failover`
 /// outcome advance the chain. Self-contained — owns `retry_records` and flushes them on every
 /// early-exit arm and after a successful break.
 ///
 /// On `Failover` (endpoint-level failure, or transient retries exhausted) the acquisition loop
-/// advances to the next profile in the tier, rebuilds the client, and retries the same turn. On `Fatal`
+/// advances to the next profile in the set, rebuilds the client, and retries the same turn. On `Fatal`
 /// (request-level) it errors the round. `profile_idx` only moves forward and sticks for the
 /// agent's lifetime (resets to 0 on spawn/restore). The inner `tokio::select!` cancel arm stays
 /// inside this function so a cancel during the retry backoff flushes and short-circuits here.
@@ -351,7 +351,7 @@ async fn flush_retry_records(ctx: &mut AgentContext, retry_records: &mut Vec<Ret
 // Failover driving
 // ---------------------------------------------------------------------------
 
-/// One step of within-tier failover, shared by the prepare/send/parse `Failover` arm and the
+/// One step of within-set failover, shared by the prepare/send/parse `Failover` arm and the
 /// mid-stream-drop budget-exhausted path so both entry points behave identically.
 enum FailoverStep {
     /// The chain advanced to a new profile; the caller re-loops with the rebound `messages`.
@@ -360,7 +360,7 @@ enum FailoverStep {
     Done(AcquireResult),
 }
 
-/// Drive within-tier failover for `trigger`: advance the chain, emit a `Failover` event on
+/// Drive within-set failover for `trigger`: advance the chain, emit a `Failover` event on
 /// advance, and map the [`FailoverOutcome`] to a [`FailoverStep`]. `reason` is the operator-facing
 /// diagnostic captured from `trigger` before it is moved into [`advance_failover`].
 async fn step_failover(
@@ -380,7 +380,7 @@ async fn step_failover(
             *messages = new_messages;
             // Under skip, `from`→`to` may jump over unbuildable intermediates; those are
             // warned inside advance_failover (not surfaced here).
-            warn!(from = %from, to = %to, reason = %reason, "within-tier failover");
+            warn!(from = %from, to = %to, reason = %reason, "within-set failover");
             tx.send(AgentEvent::Failover { from, to, reason })
                 .await
                 .ok();
@@ -410,7 +410,7 @@ async fn step_failover(
     }
 }
 
-/// Advance the within-tier failover chain on a terminal endpoint failure (`trigger`).
+/// Advance the within-set failover chain on a terminal endpoint failure (`trigger`).
 ///
 /// Walks the chain forward from the active profile and lands on the first candidate that is
 /// **both buildable and window-feasible**. **Skip:** a candidate whose
@@ -440,9 +440,9 @@ pub(crate) async fn advance_failover(
     if round_cancel.is_cancelled() {
         return FailoverOutcome::Cancelled;
     }
-    // No candidate ahead — single-profile tier, or already at the chain tail. Distinguish the
-    // two: a single-profile tier means failover was never configured, while a multi-profile
-    // tier at its tail means the chain was advanced through and now the last profile failed.
+    // No candidate ahead — single-profile set, or already at the chain tail. Distinguish the
+    // two: a single-profile set means failover was never configured, while a multi-profile
+    // set at its tail means the chain was advanced through and now the last profile failed.
     if !ctx.failover.can_advance() {
         let reason = if ctx.failover.profile_count() == 1 {
             FailoverChainExhaustion::NoFailoverConfigured
@@ -526,7 +526,7 @@ pub(crate) async fn advance_failover(
 
 /// Re-apply the active profile's declared context window to the config and re-sync the store's
 /// pinned-budget guard. Called after a failover advance swaps to a profile that may declare a
-/// different window (within-tier heterogeneous windows are supported).
+/// different window (within-set heterogeneous windows are supported).
 ///
 /// The window was already pre-checked feasible in `advance_failover` (before the commit), so
 /// `set_context_window` is expected to succeed here. The `warn!`-and-keep-prior branch stays as

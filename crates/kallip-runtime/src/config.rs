@@ -297,7 +297,7 @@ impl AgentConfig {
 
     /// Pinned-context budget: the slice of [`effective_budget`](Self::effective_budget) reserved
     /// for pinned items, per `pinned_budget_ratio`. Single source of truth for the formula used
-    /// at spawn (tagma) and on within-tier failover (runtime). The private `check_context_budget`
+    /// at spawn (tagma) and on within-set failover (runtime). The private `check_context_budget`
     /// recomputes the same value from raw args because it runs before an `AgentConfig` exists.
     pub fn pinned_budget(&self) -> usize {
         (self.effective_budget() as f64 * self.pinned_budget_ratio) as usize
@@ -326,7 +326,7 @@ impl AgentConfig {
     /// Install `tokens` as the active context window after validating the window-dependent budget
     /// invariants. The single installer: every window — including the implicit env profile's
     /// (`profile::from_env` reads `KALLIP_CONTEXT_WINDOW_TOKENS` into `max_context_window`) —
-    /// flows through here at spawn, and within-tier failover re-applies the advanced profile's
+    /// flows through here at spawn, and within-set failover re-applies the advanced profile's
     /// window via `acquisition::reapply_window`. `context_window_tokens` is thus a derived snapshot of
     /// the active profile's declared window, not an independent config knob.
     ///
@@ -341,7 +341,7 @@ impl AgentConfig {
     }
 
     /// Check whether `tokens` would satisfy the window-dependent budget invariants **without
-    /// mutating**. The pre-advance probe used by within-tier failover: `advance_to` is forward-only
+    /// mutating**. The pre-advance probe used by within-set failover: `advance_to` is forward-only
     /// and cannot roll back, so an infeasible candidate must be rejected *before* committing. The
     /// same invariants as [`set_context_window`](Self::set_context_window) / [`load`](Self::load),
     /// via the shared private `check_context_budget`.
@@ -358,7 +358,7 @@ impl AgentConfig {
 /// Validate the context-window-dependent budget invariants. Shared by [`AgentConfig::load`]
 /// (env values) and [`AgentConfig::set_context_window`] (profile override) so the two paths
 /// cannot drift. `pinned_budget` is recomputed locally here because `ContextStore`'s
-/// `set_pinned_budget` runs later and independently (at spawn via the tagma, and on within-tier
+/// `set_pinned_budget` runs later and independently (at spawn via the tagma, and on within-set
 /// failover via `acquisition::reapply_window`).
 fn check_context_budget(
     context_window_tokens: usize,

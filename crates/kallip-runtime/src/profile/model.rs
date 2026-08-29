@@ -23,32 +23,36 @@ pub struct Profile {
     /// Declared context window — the authoritative source for this profile's window. Required on
     /// both paths: config-file profiles declare it in TOML; the implicit env profile
     /// (`profile::from_env`) derives it from `KALLIP_CONTEXT_WINDOW_TOKENS`. Installed into
-    /// `AgentConfig` at spawn via `set_context_window`, and re-applied on within-tier failover.
+    /// `AgentConfig` at spawn via `set_context_window`, and re-applied on within-set failover.
     pub max_context_window: usize,
 }
 
-/// A capability bucket with an ordered failover chain of profiles.
+/// A named set of profiles with an ordered failover chain.
 ///
-/// Tiers are **purely positional**: the registry is ordered by capability rank and an agent's
-/// tier is selected by supervisor depth (`tiers[depth.min(len-1)]`) — root (depth 0) maps to the
-/// highest-capability tier. There is no name or explicit override; treat the tier list as
-/// append-only / truncate-tail, since reordering or removing a middle tier silently rebinds
-/// agents. The order here is the within-tier failover order (profile 0 first). Cross-tier
+/// Sets are addressed by **name** (exact match, case-sensitive, `^[A-Za-z0-9_-]+$`)
+/// and chosen explicitly at spawn; the name is persisted on the agent record. The
+/// order within `profiles` is the failover order (profile 0 first). Cross-set
 /// failover is intentionally off.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Tier {
+pub struct ProfileSet {
+    /// Addressed by its map key in `profiles.toml` (`[sets.<name>]`); serde skips it so the
+    /// serialized form carries no redundant copy (the registry/loader injects the key).
+    #[serde(skip)]
+    pub name: String,
+    /// Optional human-readable summary of what this set is for.
+    pub description: Option<String>,
     pub profiles: Vec<Profile>,
 }
 
-impl Tier {
+impl ProfileSet {
     /// The spawn-time active profile (always `profiles[0]`). At runtime the active profile may
-    /// advance via within-tier failover — see `FailoverState::current_profile`, which tracks the
+    /// advance via within-set failover — see `FailoverState::current_profile`, which tracks the
     /// live position and differs once failover has advanced. Non-empty profiles is a registry
-    /// construction invariant ([`crate::profile::ProfileRegistry::new`] rejects empty tiers), so
-    /// this never panics for a tier obtained through the registry.
+    /// construction invariant ([`crate::profile::ProfileRegistry::new`] rejects empty sets), so
+    /// this never panics for a set obtained through the registry.
     pub fn active_profile(&self) -> &Profile {
         self.profiles
             .first()
-            .expect("tier has profiles (registry construction invariant)")
+            .expect("set has profiles (registry construction invariant)")
     }
 }

@@ -2,8 +2,8 @@
 //!
 //! The tagma owns the HTTP-client concern (reqwest TLS + connect/read timeouts) and, via [`BackendFactory`],
 //! builds one shared [`LlmBackend`] per provider. At startup only the **active set** — each
-//! tier's `profiles[0]` — is built, so misconfiguration of the primary path fails fast. Failover
-//! profiles' providers are built lazily by [`TagmaBackendSource`] on first use (within-tier
+//! set's `profiles[0]` — is built, so misconfiguration of the primary path fails fast. Failover
+//! profiles' providers are built lazily by [`TagmaBackendSource`] on first use (within-set
 //! failover). The resulting [`BackendSource`] is handed to `ProfileRegistry`, which does
 //! selection + lookup only; the runtime reuses `reqwest` types for HTTP-shape retry
 //! classification (see `retry.rs`) but never constructs a backend.
@@ -51,14 +51,14 @@ pub(crate) fn resolve_user_agent(provided: Option<&str>) -> &str {
         .unwrap_or(DEFAULT_USER_AGENT)
 }
 
-/// Validate every provider referenced by `cfg`'s tiers (active **and** failover): the provider
+/// Validate every provider referenced by `cfg`'s sets (active **and** failover): the provider
 /// exists, its family is registered with `factory`, and an openai-compatible provider declares a
 /// `base_url`. Cheap — no construction — so misconfiguration fails fast at startup, before any
 /// agent relies on a failover profile. Unreferenced providers are not checked (dead config).
 fn validate_providers(cfg: &ProfileConfig, factory: &BackendFactory) -> Result<()> {
     let families: Vec<&str> = factory.families().collect();
-    for tier in &cfg.tiers {
-        for profile in &tier.profiles {
+    for set in cfg.sets.values() {
+        for profile in &set.profiles {
             let provider = cfg.endpoints.get(&profile.endpoint).with_context(|| {
                 format!(
                     "profile '{}' references unknown provider '{}'",
@@ -126,8 +126,8 @@ pub fn build_backends(
     validate_providers(cfg, &factory)?;
 
     let mut cache = HashMap::new();
-    for tier in &cfg.tiers {
-        let active = tier.active_profile();
+    for set in cfg.sets.values() {
+        let active = set.active_profile();
         if cache.contains_key(&active.endpoint) {
             continue;
         }
@@ -201,10 +201,10 @@ impl BackendSource for TagmaBackendSource {
 /// placeholder profile's endpoint id and the sentinel backend's family.
 pub(crate) const UNCONFIGURED: &str = "unconfigured";
 
-/// The profile-less root's placeholder tier: `(0, Tier { one placeholder
+/// The profile-less root's placeholder set: `(0, ProfileSet { one placeholder
 /// profile })`, shared by first boot (`Materialize::run`) and restore
 /// (`restore_one`) so both paths register the root against the sentinel.
-pub(crate) fn unconfigured_tier() -> (usize, kallip_runtime::profile::Tier) {
+pub(crate) fn unconfigured_set() -> (usize, kallip_runtime::profile::ProfileSet) {
     let placeholder = kallip_runtime::profile::Profile {
         id: UNCONFIGURED.into(),
         endpoint: UNCONFIGURED.into(),
@@ -213,7 +213,9 @@ pub(crate) fn unconfigured_tier() -> (usize, kallip_runtime::profile::Tier) {
     };
     (
         0,
-        kallip_runtime::profile::Tier {
+        kallip_runtime::profile::ProfileSet {
+            name: UNCONFIGURED.into(),
+            description: None,
             profiles: vec![placeholder],
         },
     )
@@ -307,7 +309,8 @@ pub(crate) fn unconfigured_client(system_prompt: Option<String>) -> ChatClient {
 mod tests {
     use super::*;
     use just_llm_client::types::chat::{ChatCompletionRequest, ChatMessage};
-    use kallip_runtime::profile::{Profile, Tier};
+    use kallip_runtime::profile::{Profile, ProfileSet};
+    use std::collections::BTreeMap;
 
     #[test]
     fn sentinel_errors_carry_the_management_page_hint() {
@@ -319,13 +322,13 @@ mod tests {
             "got: {err}"
         );
     }
-    /// One deepseek provider + a single-profile tier referencing it.
+    /// One deepseek provider + a single-profile set referencing it.
     fn ds_cfg() -> ProfileConfig {
-        single_tier_cfg("ds", "p", "ds")
+        single_set_cfg("ds", "p", "ds")
     }
 
-    /// Build a one-tier config whose active profile references `provider_id`.
-    fn single_tier_cfg(provider_id: &str, profile: &str, endpoint: &str) -> ProfileConfig {
+    /// Build a one-set config whose active profile references `provider_id`.
+    fn single_set_cfg(provider_id: &str, profile: &str, endpoint: &str) -> ProfileConfig {
         let mut endpoints = HashMap::new();
         endpoints.insert(
             provider_id.into(),
@@ -337,14 +340,20 @@ mod tests {
             },
         );
         ProfileConfig {
-            tiers: vec![Tier {
-                profiles: vec![Profile {
-                    id: profile.into(),
-                    endpoint: endpoint.into(),
-                    model: "deepseek-test".into(),
-                    max_context_window: 500_000,
-                }],
-            }],
+            sets: BTreeMap::from([(
+                "default".to_string(),
+                ProfileSet {
+                    name: "default".into(),
+                    description: None,
+                    profiles: vec![Profile {
+                        id: profile.into(),
+                        endpoint: endpoint.into(),
+                        model: "deepseek-test".into(),
+                        max_context_window: 500_000,
+                    }],
+                },
+            )]),
+            default: "default".into(),
             endpoints,
             parking: vec![],
         }
@@ -359,7 +368,7 @@ mod tests {
 
     #[test]
     fn only_active_set_is_pre_built() {
-        // Two profiles in one tier: active "ds" (profiles[0]) + failover "backup" (profiles[1]).
+        // Two profiles in one set: active "ds" (profiles[0]) + failover "backup" (profiles[1]).
         let mut cfg = ds_cfg();
         cfg.endpoints.insert(
             "backup".into(),
@@ -370,7 +379,7 @@ mod tests {
                 base_url: None,
             },
         );
-        cfg.tiers[0].profiles.push(Profile {
+        cfg.sets.get_mut("default").unwrap().profiles.push(Profile {
             id: "p2".into(),
             endpoint: "backup".into(),
             model: "deepseek-backup".into(),
@@ -425,14 +434,20 @@ mod tests {
             },
         );
         let cfg = ProfileConfig {
-            tiers: vec![Tier {
-                profiles: vec![Profile {
-                    id: "p".into(),
-                    endpoint: "oa".into(),
-                    model: "gpt-4.1-mini".into(),
-                    max_context_window: 128_000,
-                }],
-            }],
+            sets: BTreeMap::from([(
+                "default".to_string(),
+                ProfileSet {
+                    name: "default".into(),
+                    description: None,
+                    profiles: vec![Profile {
+                        id: "p".into(),
+                        endpoint: "oa".into(),
+                        model: "gpt-4.1-mini".into(),
+                        max_context_window: 128_000,
+                    }],
+                },
+            )]),
+            default: "default".into(),
             endpoints,
             parking: vec![],
         };

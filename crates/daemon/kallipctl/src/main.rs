@@ -30,7 +30,8 @@ struct Cli {
 enum Command {
     /// Launch a new instance under a slug.
     Spawn {
-        /// Instance slug ([a-z0-9][a-z0-9-]*).
+        /// Instance slug: lowercase letters, digits, and '-'; must start
+        /// with a letter or digit.
         slug: String,
         /// Absolute path of the instance workspace.
         workspace: String,

@@ -327,16 +327,16 @@ pub(crate) async fn enqueue_prompt(
         let (prompt_tx, prompt_rx) = tokio::sync::mpsc::channel(state.prompt_queue_size);
         live.agent.prompt_tx = prompt_tx;
 
-        // Resolve the tier purely by depth (positional tiers) — reactivation re-derives the same
+        // Resolve the set purely by depth (positional) — reactivation re-derives the same
         // way restore does.
         let config = live.identity.config.clone();
-        let (tier_index, tier) = {
+        let (set_index, set) = {
             let bundle = state.profiles.load();
-            let (idx, tier) = bundle
+            let (idx, set) = bundle
                 .registry
                 .select_tier(config.permissions.depth())
                 .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
-            (idx, tier.clone())
+            (idx, set.clone())
         };
 
         SpawnArgs {
@@ -361,8 +361,8 @@ pub(crate) async fn enqueue_prompt(
             exec_policy: live.agent.exec_policy.clone(),
             prompt_queue_size: state.prompt_queue_size,
             prompt_channel: Some((live.agent.prompt_tx.clone(), prompt_rx)),
-            tier,
-            tier_index,
+            set,
+            set_index,
         }
     }; // Write lock released. Concurrent requests see open channel.
 

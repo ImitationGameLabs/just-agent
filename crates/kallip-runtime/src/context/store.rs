@@ -575,7 +575,7 @@ impl ContextStore {
         store.retry_log = manifest.retry_log.clone();
         store
     }
-    /// Set the pinned token budget. Called at agent setup and re-synced on within-tier failover
+    /// Set the pinned token budget. Called at agent setup and re-synced on within-set failover
     /// (see `acquisition::reapply_window`).
     pub fn set_pinned_budget(&mut self, budget: usize) {
         self.pinned_token_budget = budget;

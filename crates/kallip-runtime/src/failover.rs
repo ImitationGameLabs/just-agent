@@ -1,7 +1,7 @@
-//! Within-tier failover state and outcome types.
+//! Within-set failover state and outcome types.
 //!
 //! [`FailoverState`] bundles the runtime failover fields that were previously scattered on
-//! [`crate::agent_task::AgentContext`]: the resolved capability [`Tier`], the
+//! [`crate::agent_task::AgentContext`]: the resolved [`ProfileSet`], the
 //! [`ProfileRegistry`] (used to rebuild the client on advance), the system prompt applied to
 //! every client built for this agent, and a sticky `profile_idx`. `profile_idx` is private and
 //! mutated only by [`FailoverState::advance_to`], making the forward-only invariant structural
@@ -21,22 +21,22 @@ use anyhow::Result;
 use just_llm_client::types::chat::ChatMessage;
 use kallip_common::protocol::FailoverChainExhaustion;
 
-use crate::profile::{ChatClient, Profile, ProfileRegistry, Tier};
+use crate::profile::{ChatClient, Profile, ProfileRegistry, ProfileSet};
 
-/// Runtime within-tier failover state. Owned by [`crate::agent_task::AgentContext`] as
+/// Runtime within-set failover state. Owned by [`crate::agent_task::AgentContext`] as
 /// `ctx.failover`.
 ///
-/// The active profile is `tier.profiles[profile_idx]`; the rest of the chain is the failover
+/// The active profile is `set.profiles[profile_idx]`; the rest of the chain is the failover
 /// order, walked forward-only on a terminal endpoint failure. `profile_idx` resets to 0 on
 /// spawn/restore (a fresh [`FailoverState::new`]).
 ///
 /// `pub` + a `pub` [`new`](Self::new) so the tagma can construct an `AgentContext`; the
 /// accessors are `pub(crate)` (only the runtime reads the state).
 pub struct FailoverState {
-    tier: Tier,
+    set: ProfileSet,
     registry: Arc<ProfileRegistry>,
     system_prompt: Option<String>,
-    /// Index into `tier.profiles` of the currently active profile. Private — advanced only via
+    /// Index into `set.profiles` of the currently active profile. Private — advanced only via
     /// [`advance_to`](Self::advance_to).
     profile_idx: usize,
     /// Mirror of the active profile's identity, written by the three methods that establish
@@ -44,60 +44,59 @@ pub struct FailoverState {
     /// [`reset_and_rebuild`](Self::reset_and_rebuild)) and read by the tagma through its own
     /// `Arc` handle for status surfaces. The runtime never reads it outside tests.
     snapshot: Arc<Mutex<ProfileSnapshot>>,
-    /// Positional index (0-based) of `tier` in the registry that resolved it — carried so
-    /// the snapshot can surface "tier N". `new`/`reset_and_rebuild` establish it; within-tier
+    /// Positional index (0-based, over the registry's sorted set names) of `set` — carried
+    /// so the snapshot can surface it. `new`/`reset_and_rebuild` establish it; within-set
     /// failover (`advance_to`) never changes it.
-    tier_index: usize,
+    set_index: usize,
 }
 
 /// Pending profile-reset payload: the tagma's apply handler writes this into a
 /// shared cell on each live agent; the agent task drains it at the top of
 /// [`crate::agent_task::run_and_report`] and rebuilds its [`FailoverState`]
-/// against the new registry. Carries the re-derived [`Tier`] (selected by the
-/// agent's depth from the new registry, with its positional index for the snapshot)
-/// and the new [`ProfileRegistry`] Arc.
+/// against the new registry. Carries the resolved [`ProfileSet`] (with its
+/// positional index for the snapshot) and the new [`ProfileRegistry`] Arc.
 #[derive(Clone)]
 pub struct ProfileReset {
-    pub tier: Tier,
-    /// Positional index of `tier` in the new registry (resolved by the apply handler
-    /// alongside the tier, same clamp rule).
-    pub tier_index: usize,
+    pub set: ProfileSet,
+    /// Positional index of `set` in the new registry (resolved by the apply handler
+    /// alongside the set).
+    pub set_index: usize,
     pub registry: Arc<ProfileRegistry>,
 }
 
 impl FailoverState {
     /// Construct at the head of the chain (`profile_idx = 0`). `snapshot` is the cell the
     /// tagma created (it keeps a clone of the `Arc` to read for status surfaces); it is
-    /// seeded with the tier's active profile here — the same derivation every later write
+    /// seeded with the set's active profile here — the same derivation every later write
     /// uses — so the cell never shows a placeholder once the agent is observable.
     pub fn new(
-        tier: Tier,
-        tier_index: usize,
+        set: ProfileSet,
+        set_index: usize,
         registry: Arc<ProfileRegistry>,
         system_prompt: Option<String>,
         snapshot: Arc<Mutex<ProfileSnapshot>>,
     ) -> Self {
         let state = Self {
-            tier,
-            tier_index,
+            set,
+            set_index,
             registry,
             system_prompt,
             profile_idx: 0,
             snapshot,
         };
-        state.write_snapshot(state.tier_index, state.tier.active_profile());
+        state.write_snapshot(state.set_index, state.set.active_profile());
         state
     }
 
-    /// The currently active profile (`tier.profiles[profile_idx]`).
+    /// The currently active profile (`set.profiles[profile_idx]`).
     ///
-    /// Named `current_profile` to disambiguate from [`Tier::active_profile`], which is always
+    /// Named `current_profile` to disambiguate from [`ProfileSet::active_profile`], which is always
     /// `profiles[0]` (the spawn-time active); `current_profile` tracks the runtime position and
     /// differs once failover has advanced.
     pub(crate) fn current_profile(&self) -> &Profile {
         // profile_idx is always in range: it starts at 0 and only advances within the chain
         // (advance_to is forward-only; the skip loop bounds via candidate_profile).
-        &self.tier.profiles[self.profile_idx]
+        &self.set.profiles[self.profile_idx]
     }
 
     /// A cloned candidate `offset` positions ahead of the active profile (`None` past the chain
@@ -105,7 +104,7 @@ impl FailoverState {
     /// after inspecting the candidate without a borrow conflict. Failover is rare; the clone is
     /// cheap.
     pub(crate) fn candidate_profile(&self, offset: usize) -> Option<Profile> {
-        self.tier.profiles.get(self.profile_idx + offset).cloned()
+        self.set.profiles.get(self.profile_idx + offset).cloned()
     }
 
     pub(crate) fn profile_idx(&self) -> usize {
@@ -120,15 +119,15 @@ impl FailoverState {
             .clone()
     }
 
-    /// Total profiles in the tier (chain length). Used to distinguish the single-profile
+    /// Total profiles in the set (chain length). Used to distinguish the single-profile
     /// (`NoFailoverConfigured`) from multi-profile-tail (`AllBackupsExhausted`) exhaustion case.
     pub(crate) fn profile_count(&self) -> usize {
-        self.tier.profiles.len()
+        self.set.profiles.len()
     }
 
     /// Whether there is at least one profile ahead of the active one to fail over to.
     pub(crate) fn can_advance(&self) -> bool {
-        self.profile_idx + 1 < self.tier.profiles.len()
+        self.profile_idx + 1 < self.set.profiles.len()
     }
 
     /// Build a [`ChatClient`] for `profile` via the registry (looks up the endpoint's backend),
@@ -141,9 +140,9 @@ impl FailoverState {
     /// Mirror `profile`'s identity into the shared cell. Private — only the active-profile
     /// writers call it. Poison-tolerant (`into_inner`): the store is a single assignment,
     /// so a poisoned lock (a panic while holding the cell) discards nothing.
-    fn write_snapshot(&self, tier_index: usize, profile: &Profile) {
+    fn write_snapshot(&self, set_index: usize, profile: &Profile) {
         *self.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = ProfileSnapshot {
-            tier_index,
+            set_index,
             profile_id: profile.id.clone(),
             provider: profile.endpoint.clone(),
             model: profile.model.clone(),
@@ -161,12 +160,12 @@ impl FailoverState {
             self.profile_idx
         );
         self.profile_idx = idx;
-        self.write_snapshot(self.tier_index, &self.tier.profiles[idx]);
+        self.write_snapshot(self.set_index, &self.set.profiles[idx]);
     }
-    /// Rebuild this failover state against a new registry and tier (used by the
-    /// online profile-apply path). Builds the client for the new tier's active
+    /// Rebuild this failover state against a new registry and set (used by the
+    /// online profile-apply path). Builds the client for the new set's active
     /// profile first (fail-fast on a misconfigured endpoint), then commits the
-    /// tier, registry, resets `profile_idx` to 0, and rewrites the shared profile snapshot.
+    /// set, registry, resets `profile_idx` to 0, and rewrites the shared profile snapshot.
     /// [`ChatClient`] so the caller can swap `ctx.client`. On error, nothing is
     /// mutated — the agent continues on its prior config.
     ///
@@ -175,37 +174,37 @@ impl FailoverState {
     /// from the new active profile's `max_context_window`.
     pub(crate) fn reset_and_rebuild(
         &mut self,
-        tier: Tier,
-        tier_index: usize,
+        set: ProfileSet,
+        set_index: usize,
         registry: Arc<ProfileRegistry>,
     ) -> Result<ChatClient> {
-        let profile = tier.active_profile();
+        let profile = set.active_profile();
         let client = registry.build_client(profile, self.system_prompt.clone())?;
-        self.tier = tier;
-        self.tier_index = tier_index;
+        self.set = set;
+        self.set_index = set_index;
         self.registry = registry;
         self.profile_idx = 0;
-        self.write_snapshot(self.tier_index, self.tier.active_profile());
+        self.write_snapshot(self.set_index, self.set.active_profile());
         Ok(client)
     }
 }
 /// The active profile's identity, mirrored into [`FailoverState`]'s shared cell for the
-/// tagma's status surfaces: the tier's positional index, the registry profile id, the
+/// tagma's status surfaces: the active set's positional index, the registry profile id, the
 /// provider (endpoint) id it connects through, and the concrete model string sent to the
 /// backend. Lets an operator see which model the client is actually using, which
-/// differs from the spawn-time active after a within-tier failover advance or an online
+/// differs from the spawn-time active after a within-set failover advance or an online
 /// profile apply.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProfileSnapshot {
-    /// Positional tier index (0-based in the registry).
-    pub tier_index: usize,
+    /// Positional index of the active set (0-based, over the registry's sorted names).
+    pub set_index: usize,
     pub profile_id: String,
     /// The endpoint (provider) id this profile connects through.
     pub provider: String,
     pub model: String,
 }
 
-/// Outcome of one within-tier failover advance attempt (see `crate::acquisition::advance_failover`).
+/// Outcome of one within-set failover advance attempt (see `crate::acquisition::advance_failover`).
 ///
 /// `messages` is returned on [`Advanced`](Self::Advanced) — recomputed if compaction ran, else
 /// unchanged — so the acquisition loop can rebind its local without `advance_failover` taking

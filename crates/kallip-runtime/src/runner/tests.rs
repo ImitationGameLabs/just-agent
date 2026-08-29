@@ -797,7 +797,7 @@ async fn chain_exhausted_single_profile_500() {
 
     let mut map = HashMap::new();
     map.insert("ep1".into(), wiremock_backend(&primary.uri()));
-    let profiles = vec![profile("p1", "ep1", 500_000)]; // single-profile tier
+    let profiles = vec![profile("p1", "ep1", 500_000)]; // single-profile set
     let mut ctx = ctx_from_source(profiles, wiremock_source(map), fast_policy()).await;
 
     let (outcome, events) = run_rounds(&mut ctx).await;
@@ -844,7 +844,7 @@ async fn mid_stream_drop_retries_and_emits_stream_reset() {
 #[tokio::test]
 async fn mid_stream_drop_budget_exhausted_failovers() {
     // Every request drops mid-stream; after `max_retries` (2) mid-stream retries the endpoint
-    // is treated as transient-exhausted → Failover, which a single-profile tier surfaces as
+    // is treated as transient-exhausted → Failover, which a single-profile set surfaces as
     // ChainExhausted(NoFailoverConfigured).
     let uri = always_dropping_server();
     let mut map = HashMap::new();
@@ -865,7 +865,7 @@ async fn mid_stream_drop_budget_exhausted_failovers() {
     }
     // Two in-budget mid-stream retries ((1,2), (2,2)), then the third drop voids the partial
     // once more before failover — its `attempt` exceeds `max_attempts`, signalling the blown
-    // budget — and the chain exhausts (single-profile tier).
+    // budget — and the chain exhausts (single-profile set).
     assert_eq!(stream_resets(&events), vec![(1, 2), (2, 2), (3, 2)]);
 }
 

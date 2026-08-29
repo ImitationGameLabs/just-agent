@@ -97,7 +97,7 @@ pub trait MessagePuller: Send + Sync + 'static {
 /// Shared agent resources passed between modes.
 pub struct AgentContext {
     pub client: crate::profile::ChatClient,
-    /// Within-tier failover state: the resolved capability tier, the profile registry (for
+    /// Within-set failover state: the resolved profile set, the profile registry (for
     /// rebuilding the client on advance), the system prompt, and the sticky `profile_idx` (the
     /// sole writer of which is `FailoverState::advance_to`). See `FailoverState`.
     pub failover: crate::failover::FailoverState,
@@ -417,10 +417,10 @@ fn apply_pending_profile_reset(ctx: &mut AgentContext) {
         .unwrap_or_else(|e| e.into_inner())
         .take();
     let Some(reset) = reset else { return };
-    let new_window = reset.tier.active_profile().max_context_window;
+    let new_window = reset.set.active_profile().max_context_window;
     match ctx
         .failover
-        .reset_and_rebuild(reset.tier, reset.tier_index, reset.registry)
+        .reset_and_rebuild(reset.set, reset.set_index, reset.registry)
     {
         Ok(new_client) => {
             ctx.client = new_client;

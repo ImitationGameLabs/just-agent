@@ -117,7 +117,7 @@ pub(crate) async fn run_agent_rounds(
             BudgetAction::Proceed => {}
         }
 
-        // -- Within-tier failover acquisition (also consumes the stream, retrying mid-stream
+        // -- Within-set failover acquisition (also consumes the stream, retrying mid-stream
         // transport drops in-place) --
         let consumed = match acquire_stream(ctx, messages, tools, tx, round_cancel, round).await {
             AcquireResult::Consumed(c) => c,

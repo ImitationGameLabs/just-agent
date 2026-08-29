@@ -53,14 +53,14 @@ pub(crate) struct SpawnArgs {
     pub preset: PolicyPreset,
     pub exec_policy: Arc<std::sync::RwLock<ExecPolicy>>,
     pub prompt_queue_size: usize,
-    /// The resolved model tier (selected by the caller). The active profile is
-    /// `tier.profiles[0]`; the rest form the within-tier failover chain. Owned so the
+    /// The resolved profile set (selected by the caller). The active profile is
+    /// `set.profiles[0]`; the rest form the within-set failover chain. Owned so the
     /// runtime can carry the chain without re-touching the registry.
-    pub tier: kallip_runtime::profile::Tier,
-    /// Positional index of `tier` in the registry that resolved it (same clamp
+    pub set: kallip_runtime::profile::ProfileSet,
+    /// Positional index of `set` in the registry that resolved it (same clamp
     /// rule), carried into the failover state so the shared snapshot can surface
-    /// "tier N".
-    pub tier_index: usize,
+    /// "set N".
+    pub set_index: usize,
     /// Pre-created prompt channel for reactivation. When provided,
     /// `prompt_queue_size` is ignored and both ends are used as-is.
     /// The sender is already installed in the registry entry; spawn_agent
@@ -114,10 +114,10 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
     let client = {
         // Install the active profile's declared context window (authoritative on both paths — the
         // implicit env profile derives it from KALLIP_CONTEXT_WINDOW_TOKENS), then build the
-        // client. The tier's remaining profiles are the within-tier failover chain, walked by the
+        // client. The set's remaining profiles are the within-set failover chain, walked by the
         // runner on `RequestFailure::Failover`. The profile-less root instead
         // gets the sentinel client (see `backend::UnconfiguredBackend`).
-        let profile = args.tier.active_profile();
+        let profile = args.set.active_profile();
         args.config.set_context_window(profile.max_context_window)?;
         if profile.endpoint == crate::backend::UNCONFIGURED {
             crate::backend::unconfigured_client(Some(system_prompt.clone()))
@@ -217,8 +217,8 @@ pub(crate) async fn spawn_agent(mut args: SpawnArgs) -> anyhow::Result<(Agent, A
     let ctx = AgentContext {
         client,
         failover: kallip_runtime::FailoverState::new(
-            args.tier,
-            args.tier_index,
+            args.set,
+            args.set_index,
             bundle.registry.clone(),
             Some(system_prompt),
             profile_snapshot.clone(),
@@ -431,22 +431,22 @@ impl<'a> Materialize<'a> {
         let mut config = self.config;
         let exec_policy = Arc::new(std::sync::RwLock::new(self.exec_policy));
 
-        // Resolve the model tier purely by depth (positional tiers — no
-        // name/override). Carry the tier and its positional index into SpawnArgs
+        // Resolve the profile set purely by depth (positional — no
+        // name/override). Carry the set and its positional index into SpawnArgs
         // for failover + the shared snapshot.
         let depth = config.permissions.depth();
-        let (tier_index, tier) = {
+        let (set_index, set) = {
             let bundle = state.profiles.load();
             match bundle.registry.select_tier(depth) {
-                Ok((idx, tier)) => (idx, tier.clone()),
+                Ok((idx, set)) => (idx, set.clone()),
                 // Profile-less boot: the root registers against a placeholder
                 // profile (endpoint "unconfigured" has no provider), so the
                 // tagma — and its management page — comes up; the root's
                 // first LLM call then fails per call with the
-                // management-page hint (see `backend::unconfigured_tier`).
+                // management-page hint (see `backend::unconfigured_set`).
                 // Subagent spawns reject instead — a client error the caller
                 // can act on.
-                Err(_) if is_root => crate::backend::unconfigured_tier(),
+                Err(_) if is_root => crate::backend::unconfigured_set(),
                 Err(e) => return Err(ApiError::bad_request(format!("{e:#}"))),
             }
         };
@@ -613,8 +613,8 @@ impl<'a> Materialize<'a> {
             exec_policy: exec_policy.clone(),
             prompt_queue_size: state.prompt_queue_size,
             prompt_channel: None,
-            tier,
-            tier_index,
+            set,
+            set_index,
         })
         .await
         {

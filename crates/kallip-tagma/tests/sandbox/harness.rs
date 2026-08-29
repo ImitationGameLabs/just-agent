@@ -133,13 +133,15 @@ impl World {
     }
 }
 
-/// Write a two-tier `profiles.toml`: tier 0 (root) -> `parent_url`, tier 1
+/// Write a two-set `profiles.toml`: the default set `parent` -> `parent_url`, `subagent`
 /// (subagents) -> `child_url`. Routing a subagent's LLM traffic to a separate
 /// mock server is what makes the dirlock scenario deterministic (parent and
 /// child never contend for the same scripted replies).
 fn write_profiles(world: &World, parent_url: &str, child_url: &str) {
     let toml = format!(
         r#"
+default = "parent"
+
 [endpoints.parent]
 family = "openai-compatible"
 api_key = "test-key"
@@ -150,15 +152,15 @@ family = "openai-compatible"
 api_key = "test-key"
 base_url = "{child_url}"
 
-[[tiers]]
-  [[tiers.profiles]]
+[sets.parent]
+  [[sets.parent.profiles]]
   id = "parent/test-model"
   endpoint = "parent"
   model = "test-model"
   max_context_window = 128000
 
-[[tiers]]
-  [[tiers.profiles]]
+[sets.subagent]
+  [[sets.subagent.profiles]]
   id = "child/test-model"
   endpoint = "child"
   model = "test-model"
@@ -273,7 +275,7 @@ fn sse_response(body: String) -> ResponseTemplate {
 /// Mount a sequence of scripted replies on `server`, **forward order** (wiremock
 /// matches first-mounted first; each reply `up_to_n_times(1)` so it is consumed
 /// by exactly one POST). A trailing 500 catch-all makes any *unplanned* call fail
-/// loudly (within-tier failover exhausts -> non-success exit) rather than silently
+/// loudly (within-set failover exhausts -> non-success exit) rather than silently
 /// pass.
 async fn mount_script(server: &MockServer, replies: &[Reply]) {
     for reply in replies {

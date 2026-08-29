@@ -117,7 +117,7 @@ async fn run(args: Args) -> Result<()> {
     let user_agent = backend::resolve_user_agent(args.llm_api_user_agent.as_deref());
     let source = backend::build_backends(&cfg, factory, user_agent)
         .context("failed to build LLM backends")?;
-    let registry = Arc::new(ProfileRegistry::new(cfg.tiers.clone(), source)?);
+    let registry = Arc::new(ProfileRegistry::new(cfg.sets.clone(), source)?);
     let profiles = Arc::new(arc_swap::ArcSwap::from_pointee(ProfileBundle {
         config: cfg,
         registry,

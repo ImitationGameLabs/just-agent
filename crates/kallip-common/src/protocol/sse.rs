@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::approval::ApprovalStatus;
 
-/// Distinguishable cause for within-tier failover chain exhaustion.
+/// Distinguishable cause for within-set failover chain exhaustion.
 ///
 /// Carried by [`SseEvent::FailoverChainExhausted`] (and, on the runtime side, by the matching
 /// `AgentOutcome` / `FailoverOutcome` variants) so operators can tell apart the structurally
@@ -141,8 +141,8 @@ pub enum SseEvent {
         max_attempts: u32,
         delay_secs: f64,
     },
-    /// Within-tier failover: the active profile failed terminally and the runner advanced to the
-    /// next profile in the tier's chain. Non-terminal — the agent stays busy and continues the
+    /// Within-set failover: the active profile failed terminally and the runner advanced to the
+    /// next profile in the set's chain. Non-terminal — the agent stays busy and continues the
     /// turn on the new profile. `from`/`to` are profile ids.
     Failover {
         from: String,
@@ -157,7 +157,7 @@ pub enum SseEvent {
         consumed: u64,
         budget: u64,
     },
-    /// Within-tier failover chain exhausted: the active profile failed terminally and no
+    /// Within-set failover chain exhausted: the active profile failed terminally and no
     /// buildable backup remained. Terminal for the turn (the agent goes idle) but **not**
     /// lifecycle-terminal — the agent stays alive and can be re-prompted (e.g. after the
     /// operator reconfigures failover). `reason` distinguishes the cause; `detail` is the

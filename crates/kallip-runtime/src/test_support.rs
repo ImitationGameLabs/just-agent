@@ -4,7 +4,7 @@
 //! several modules (`runner`, `context::estimate`, `profile::registry`). This module factors out
 //! the shared fixtures so each is written once. `#[cfg(test)]`-gated — never compiled into a build.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -19,7 +19,7 @@ use crate::config::{AgentConfig, PermissionProfile};
 use crate::context::{ContextStore, ContextSummarizer};
 use crate::failover::{FailoverState, ProfileSnapshot};
 use crate::policy::{AgentPolicy, AuthorizedToolExecutor};
-use crate::profile::{BackendSource, Profile, ProfileRegistry, Tier};
+use crate::profile::{BackendSource, Profile, ProfileRegistry, ProfileSet};
 use crate::retry::RetryPolicy;
 use crate::token_budget::TokenBudget;
 
@@ -93,10 +93,15 @@ pub(crate) async fn ctx_from_source(
 ) -> AgentContext {
     let mut config = test_config();
     config.retry_policy = retry_policy;
-    let tier = Tier { profiles };
-    let registry = Arc::new(ProfileRegistry::new(vec![tier.clone()], source).unwrap());
+    let set = ProfileSet {
+        name: "default".into(),
+        description: None,
+        profiles,
+    };
+    let sets = BTreeMap::from([("default".to_string(), set.clone())]);
+    let registry = Arc::new(ProfileRegistry::new(sets, source).unwrap());
     let snapshot = Arc::new(std::sync::Mutex::new(ProfileSnapshot::default()));
-    let failover = FailoverState::new(tier, 0, registry, Some("sys".into()), snapshot);
+    let failover = FailoverState::new(set, 0, registry, Some("sys".into()), snapshot);
     let client = failover
         .build_client(failover.current_profile())
         .expect("active profile is buildable");

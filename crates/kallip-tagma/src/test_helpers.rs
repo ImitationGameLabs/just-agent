@@ -234,8 +234,8 @@ pub async fn enqueue_committed_approval(
 /// spawn real agents. No declared window (env-path semantics).
 pub fn make_profile_bundle() -> Arc<arc_swap::ArcSwap<crate::state::ProfileBundle>> {
     use just_llm_client::family;
-    use kallip_runtime::profile::{Profile, ProfileConfig, ProfileRegistry, Provider, Tier};
-    use std::collections::HashMap;
+    use kallip_runtime::profile::{Profile, ProfileConfig, ProfileRegistry, ProfileSet, Provider};
+    use std::collections::{BTreeMap, HashMap};
     let mut endpoints = HashMap::new();
     endpoints.insert(
         "test".into(),
@@ -247,14 +247,20 @@ pub fn make_profile_bundle() -> Arc<arc_swap::ArcSwap<crate::state::ProfileBundl
         },
     );
     let cfg = ProfileConfig {
-        tiers: vec![Tier {
-            profiles: vec![Profile {
-                id: "test".into(),
-                endpoint: "test".into(),
-                model: "test".into(),
-                max_context_window: 128_000,
-            }],
-        }],
+        sets: BTreeMap::from([(
+            "default".to_string(),
+            ProfileSet {
+                name: "default".into(),
+                description: None,
+                profiles: vec![Profile {
+                    id: "test".into(),
+                    endpoint: "test".into(),
+                    model: "test".into(),
+                    max_context_window: 128_000,
+                }],
+            },
+        )]),
+        default: "default".into(),
         endpoints,
         parking: vec![],
     };
@@ -265,7 +271,7 @@ pub fn make_profile_bundle() -> Arc<arc_swap::ArcSwap<crate::state::ProfileBundl
     )
     .expect("test backends build");
     let registry =
-        Arc::new(ProfileRegistry::new(cfg.tiers.clone(), source).expect("valid test registry"));
+        Arc::new(ProfileRegistry::new(cfg.sets.clone(), source).expect("valid test registry"));
     Arc::new(arc_swap::ArcSwap::from_pointee(
         crate::state::ProfileBundle {
             config: cfg,
