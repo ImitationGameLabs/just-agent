@@ -44,6 +44,20 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     init_logging(&filter);
 
+    // The whole body lives in `run` so a fatal error at any point —
+    // startup or the serving loop — is logged through the subscriber
+    // before main returns it; the Rust runtime's stderr report alone
+    // would bypass the instance log file. Returning the error keeps
+    // the exit code; in the stderr-logging mode the runtime line and
+    // this one differ in shape (debug form carries the source chain).
+    if let Err(e) = run(args).await {
+        tracing::error!(error = format!("{e:#}"), "fatal error, exiting");
+        return Err(e);
+    }
+    Ok(())
+}
+
+async fn run(args: Args) -> Result<()> {
     // Mint the operator token: honor KALLIP_OPERATOR_TOKEN if set (back-compat
     // for automation), otherwise generate a fresh 256-bit `sk-operator-…` token.
     // Only the SHA-256 hash is retained by AppState; the plaintext is printed below
