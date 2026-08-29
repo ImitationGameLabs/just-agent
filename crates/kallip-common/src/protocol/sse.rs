@@ -28,10 +28,10 @@ use crate::approval::ApprovalStatus;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FailoverChainExhaustion {
-    /// The tier has a single profile — failover was never configured.
+    /// The set has a single profile — failover was never configured.
     NoFailoverConfigured,
-    /// Multi-profile tier, but the active profile was already the last (the chain was advanced
-    /// through and now its tail has failed terminally).
+    /// A multi-profile set, but the active profile was already the last (the chain
+    /// was advanced through and now its tail has failed terminally).
     AllBackupsExhausted,
     /// Remaining candidate profiles existed but every one's backend refused to build
     /// (configuration / credential failure, distinct from the runtime trigger).

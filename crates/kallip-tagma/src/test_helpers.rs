@@ -96,6 +96,7 @@ fn make_entry_inner(
         agent_id: None,
         created_by,
         permissions: PermissionProfile::new(PathBuf::from("/tmp")),
+        profile_set: Some("default".into()),
         permissions_class: Default::default(),
         role: String::new(),
         description: String::new(),

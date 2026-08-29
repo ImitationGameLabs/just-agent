@@ -21,7 +21,7 @@ no [model profiles](#model-profiles) config file is present.
 ## Model Profiles
 
 A profile binds a model to an endpoint and its declared capabilities
-(`max_context_window`), grouped into capability tiers. With a profiles config
+(`max_context_window`), grouped into named sets. With a profiles config
 file, the tagma loads multiple provider/model combinations, each profile
 declaring its own `max_context_window`.
 
@@ -35,6 +35,8 @@ its `max_context_window` is derived from `KALLIP_CONTEXT_WINDOW_TOKENS` (default
 Example `profiles.toml`:
 
 ```toml
+default = "primary"
+
 [endpoints.deepseek-primary]
 family = "deepseek"
 api_key = "${KALLIP_LLM_DEEPSEEK_API_KEY}" # env-var indirection keeps secrets out of the file
@@ -44,15 +46,17 @@ family = "openai-compatible"
 api_key = "${OPENROUTER_API_KEY}"
 base_url = "https://openrouter.ai/api/v1"
 
-[[tiers]] # capability rank 0 (highest) — selected first
-  [[tiers.profiles]]
+[sets.primary]
+description = "full-capability work"
+  [[sets.primary.profiles]]
   id = "deepseek-v4-pro"
   endpoint = "deepseek-primary"
   model = "deepseek-v4-pro"
   max_context_window = 500000
 
-[[tiers]]
-  [[tiers.profiles]]
+[sets.fast]
+description = "cheap delegation"
+  [[sets.fast.profiles]]
   id = "deepseek-v4-flash"
   endpoint = "deepseek-primary"
   model = "deepseek-v4-flash"
@@ -64,27 +68,25 @@ base_url = "https://openrouter.ai/api/v1"
 - The config file should be `chmod 600` (the tagma warns if
   group/other-readable, since it may hold API keys).
 
-### Tier selection
+### Set selection
 
-Tiers are purely positional — each agent resolves `tiers[depth]`, where `depth`
-derives from delegation level: root agents (depth 0) resolve to `tiers[0]`
-(conventionally the highest-capability tier — order your tiers by capability),
-and each level of subagent delegation moves one tier down, clamped to the last
-tier. There is no name and no explicit override; treat the tier list as
-append-only / truncate-tail (reordering or removing a middle tier rebinds agents
-silently).
+Sets are addressed by name: the root agent is bound to the config's `default`
+set, and each subagent spawn declares its set explicitly via `profile_set`
+(an unknown name is rejected). The binding is recorded on the agent record,
+so set order in the file carries no meaning. Renaming or deleting a set
+leaves bound agents dangling — restore tolerates the placeholder, but
+prompt delivery rejects with `409` until the set returns under that name.
 
-The selected tier's first profile is the active model; the remaining profiles
-form a within-tier failover chain. When the active profile fails terminally
+The selected set's first profile is the active model; the remaining profiles
+form a within-set failover chain. When the active profile fails terminally
 (HTTP 401/403/404, or transient retries exhausted), the runner advances to the
-next profile in the tier and retries the same turn; a request-level failure
+next profile in the set and retries the same turn; a request-level failure
 (400/422) errors the round instead. The active profile index sticks for the
-agent's lifetime and resets to 0 on restore. No tier binding is persisted — it
-is re-derived from depth on every spawn/restore.
+agent's lifetime and resets to 0 on restore.
 
 On advance, the context window tracks the new profile's declared
-`max_context_window` (within-tier windows may differ — placing models with
-different windows in one tier is supported). If the carried context now exceeds
+`max_context_window` (within-set windows may differ — placing models with
+different windows in one set is supported). If the carried context now exceeds
 the new (possibly smaller) window, the runner compacts it before retrying, so
 the turn survives the switch. A candidate whose window would violate a budget
 invariant is skipped _before_ the advance (so the agent never sends an oversized
@@ -103,9 +105,9 @@ gets fewer retries, forcing failover or a round error), and it matches the
 pre-failover agent-wide behavior for the active profile. The index only advances
 forward, so a failed-over-from endpoint's accumulated budget never re-bites.
 
-Edge cases: an agent whose depth exceeds the tier count is clamped to the last
-(lowest-capability) tier with a warning. With a two-tier config, every subagent
-level maps onto `tiers[1]`.
+Edge case: an agent whose recorded set name matches no live set dangles — the
+record keeps the name, restore tolerates it as a placeholder, but prompt
+delivery rejects with `409` until the set returns under that name.
 
 Source:
 [`crates/kallip-runtime/src/profile/`](../../crates/kallip-runtime/src/profile).
@@ -148,7 +150,7 @@ identity vars `KALLIP_ID` / `KALLIP_SUPERVISOR_AGENT_ID` /
 | `KALLIP_RETRY_MAX_DELAY_SECS`                  | `60`                                  | > 0, ≤ 3600                                            | Cap in seconds for a single retry backoff.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `KALLIP_RETRY_TIMEOUT_SECS`                    | `300`                                 | > 0, ≤ 86400                                           | Overall deadline in seconds for one retry sequence. Upper bound avoids `Instant + Duration` overflow on the deadline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `KALLIP_POLICY_PRESET`                         | _(unset — `default`)_                 | `default`, `auto`, or `allow-all`                      | Tagma-global `bash_exec` classify preset, read once at startup and immutable for the tagma's lifetime. Every agent (root and subagent) runs under this preset. `default` (also when unset): catalog commands allow, unclassified commands ask, the builtin command denylist (`sed`, `awk`, `ed`, `ex`) and structural rejects (e.g. `curl \| sh`) deny. `auto` is the practical permissive mode: unclassified commands allow too, while the denylist and structural rejects still deny. `allow-all` is a **debug preset, not for production**: the classifier short-circuits to allow every parseable command, so the denylist and structural rejects do not apply. Per-command overrides are configured separately via `ExecPolicy` (`PUT /agents/{id}/exec-policy`). See _Classify presets_ in `docs/architecture.md`. |
-| `KALLIP_ROOT_AGENT_PERMISSION_CLASS`           | `normal`                              | `normal` or `guest`                                    | Debug override: sandbox permission class for root agents. `normal` = home broad-write + workspace write; `guest` = readonly workspace, no home write. Only affects root agents at creation time; subagents derive their class from their model tier (or an explicit `permission_class` downgrade on `POST /agents` / `kallip subagent spawn --permission-class`), and restored agents use their persisted `meta.json`. The env form is lowercase; `meta.json` stores the PascalCase serde form (`Normal`/`Guest`).                                                                                                                                                                                                                                                                                                       |
+| `KALLIP_ROOT_AGENT_PERMISSION_CLASS`           | `normal`                              | `normal` or `guest`                                    | Debug override: sandbox permission class for root agents. `normal` = home broad-write + workspace write; `guest` = readonly workspace, no home write. Only affects root agents at creation time; subagents require an explicit `permission_class` on `POST /agents` / `kallip subagent spawn --permission-class`, granted at most the supervisor's own class; restored agents use their persisted `meta.json`. The env form is lowercase; `meta.json` stores the PascalCase serde form (`Normal`/`Guest`). |
 | `KALLIP_TOKEN_BUDGET_WARNINGS`                 | `80,95`                               | Comma-separated `1`–`99`, sorted ascending, ≥ 1 value  | Token budget usage thresholds (percentage) at which the agent receives a warning message.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 Source:
@@ -173,7 +175,7 @@ at spawn, not at tagma startup):
 
 These are checked at startup against the implicit-profile window
 (`CONTEXT_WINDOW_TOKENS`); a config-file profile's window is checked per-profile
-at spawn (and again, lazily, on within-tier failover) — config-file profile
+at spawn (and again, lazily, on within-set failover) — config-file profile
 windows were never validated at tagma startup.
 
 - `CONTEXT_THRESHOLDS` must have at least 2 values, sorted ascending, each in

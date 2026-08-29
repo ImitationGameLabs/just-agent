@@ -402,8 +402,9 @@ pub(crate) async fn watch_agent_task(
 ///
 /// This is the shared tail of every agent-creation path. The two callers build
 /// the head themselves and hand off:
-/// - [`create_agent`](super::create_agent) resolves a *subagent* (supervisor validation, permission
-///   ceiling, exec-policy inheritance, pre-reserved slot) and passes
+/// - [`create_agent`](super::create_agent) resolves a *subagent* (supervisor validation,
+///   the explicit permission-class grant, exec-policy inheritance, pre-reserved slot)
+///   and passes
 ///   `rollback_supervisor: Some(…)`.
 /// - [`ensure_root_agent`](super::ensure_root_agent) resolves the tagma singleton *root* (env-driven
 ///   config, default exec-policy) and passes `rollback_supervisor: None`.
@@ -431,13 +432,16 @@ impl<'a> Materialize<'a> {
         let mut config = self.config;
         let exec_policy = Arc::new(std::sync::RwLock::new(self.exec_policy));
 
-        // Resolve the profile set purely by depth (positional — no
-        // name/override). Carry the set and its positional index into SpawnArgs
-        // for failover + the shared snapshot.
-        let depth = config.permissions.depth();
+        // Resolve the profile set by the recorded binding — the default set
+        // name for root, the requested name for a subagent. Carry the set
+        // and its positional index into SpawnArgs for failover + the
+        // shared snapshot.
         let (set_index, set) = {
             let bundle = state.profiles.load();
-            match bundle.registry.select_tier(depth) {
+            match bundle
+                .registry
+                .resolve_recorded_set(config.profile_set.as_deref())
+            {
                 Ok((idx, set)) => (idx, set.clone()),
                 // Profile-less boot: the root registers against a placeholder
                 // profile (endpoint "unconfigured" has no provider), so the
@@ -447,7 +451,7 @@ impl<'a> Materialize<'a> {
                 // Subagent spawns reject instead — a client error the caller
                 // can act on.
                 Err(_) if is_root => crate::backend::unconfigured_set(),
-                Err(e) => return Err(ApiError::bad_request(format!("{e:#}"))),
+                Err(e) => return Err(ApiError::bad_request(format!("{e}"))),
             }
         };
 
@@ -458,12 +462,15 @@ impl<'a> Materialize<'a> {
         // agent's metadata files.
         let agent_dir = persistence::create_agent_dir(
             &id,
-            &config.workspace_root,
-            config.created_by.as_ref(),
-            &config.role,
-            &config.description,
-            config.permissions_class,
-            config.delegation_mode,
+            persistence::AgentMeta {
+                workspace_root: config.workspace_root.clone(),
+                created_by: config.created_by.clone(),
+                role: config.role.clone(),
+                description: config.description.clone(),
+                profile_set: config.profile_set.clone(),
+                permissions_class: config.permissions_class,
+                delegation_mode: config.delegation_mode,
+            },
         )
         .map_err(ApiError::internal)?;
 

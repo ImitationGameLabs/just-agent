@@ -29,7 +29,7 @@ pub(crate) type AccessSourceFn =
 /// enforcement (Linux + `landlock`). Wrapped in a newtype so the closure can
 /// live in a `#[derive(Debug)]` builder. Agent-agnostic: the runtime composes
 /// the decision from its permission class + the dirlock coordinator and hands it
-/// to the shell here, keeping the shell decoupled from agent identity/tiers.
+/// to the shell here, keeping the shell decoupled from agent identity.
 #[cfg(all(target_os = "linux", feature = "landlock"))]
 #[derive(Clone)]
 pub(crate) struct AccessSource(pub(crate) AccessSourceFn);

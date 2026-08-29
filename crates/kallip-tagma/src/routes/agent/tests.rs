@@ -221,67 +221,24 @@ fn compose_system_prompt_static_tail_identical_across_variants() {
 // -- resolve_granted_class (the §2.3 reference-monitor decision, extracted) --
 
 #[test]
-fn granted_defaults_to_tier_ceiling_when_unrequested() {
-    // No explicit request -> historical behavior: grant the ceiling.
+fn granted_accepts_supervisor_class_and_downgrades() {
+    // An explicit request at the supervisor's own class, or below it,
+    // grants.
     assert_eq!(
-        resolve_granted_class(PermissionClass::Normal, PermissionClass::Normal, None).unwrap(),
+        resolve_granted_class(PermissionClass::Normal, PermissionClass::Normal).unwrap(),
         PermissionClass::Normal
     );
     assert_eq!(
-        resolve_granted_class(PermissionClass::Guest, PermissionClass::Guest, None).unwrap(),
+        resolve_granted_class(PermissionClass::Normal, PermissionClass::Guest).unwrap(),
         PermissionClass::Guest
     );
 }
 
 #[test]
-fn granted_accepts_explicit_downgrade() {
-    // A Normal-ceiling, Normal supervisor may actively grant Guest.
-    assert_eq!(
-        resolve_granted_class(
-            PermissionClass::Normal,
-            PermissionClass::Normal,
-            Some(PermissionClass::Guest)
-        )
-        .unwrap(),
-        PermissionClass::Guest
-    );
-    // Asking for exactly the ceiling is fine too.
-    assert_eq!(
-        resolve_granted_class(
-            PermissionClass::Normal,
-            PermissionClass::Normal,
-            Some(PermissionClass::Normal)
-        )
-        .unwrap(),
-        PermissionClass::Normal
-    );
-}
-
-#[test]
-fn granted_rejects_request_above_tier_ceiling() {
-    // depth-2 tier (ceiling Guest) cannot be bumped to Normal, even though the
-    // supervisor is Normal.
-    let err = resolve_granted_class(
-        PermissionClass::Guest,
-        PermissionClass::Normal,
-        Some(PermissionClass::Normal),
-    )
-    .unwrap_err();
-    assert!(err.to_string().contains("tier ceiling"), "{}", err);
-}
-
-#[test]
-fn granted_rejects_request_above_downgraded_supervisor() {
-    // A supervisor downgraded to Guest can no longer grant a child at its
-    // tier's default Normal ceiling — the child's granted (Normal, the ceiling)
-    // exceeds the supervisor's granted (Guest). Fail-closed: correct escalation
-    // prevention, newly reachable once downgrade exists.
-    let err = resolve_granted_class(
-        PermissionClass::Normal,
-        PermissionClass::Guest,
-        None, // child asks for the default ceiling, which is now too high
-    )
-    .unwrap_err();
+fn granted_rejects_class_above_supervisor() {
+    // Fail-closed escalation prevention: a Normal request under a Guest
+    // supervisor is rejected, never clamped.
+    let err = resolve_granted_class(PermissionClass::Guest, PermissionClass::Normal).unwrap_err();
     assert!(err.to_string().contains("supervisor"), "{}", err);
 }
 
@@ -486,7 +443,7 @@ async fn validate_rejects_full_handoff_when_supervisor_has_a_child() {
         &Identity::Operator,
         &sup,
         &ws,
-        None,
+        PermissionClass::Normal,
         DelegationMode::FullHandoff,
     )
     .expect_err("full-handoff with an existing child must be refused");
@@ -526,7 +483,7 @@ async fn validate_rejects_new_child_when_full_handoff_child_exists() {
         &Identity::Operator,
         &sup,
         &ws,
-        None,
+        PermissionClass::Normal,
         DelegationMode::CarveOut,
     )
     .expect_err("a new child while a full-handoff child lives must be refused");
@@ -947,7 +904,8 @@ async fn create_agent_rejects_duplicate_role() {
             role: "scout".into(),
             description: String::new(),
             max_tool_rounds: None,
-            permission_class: None,
+            profile_set: "default".into(),
+            permission_class: "normal".into(),
             delegation_mode: None,
         }),
     )
@@ -960,6 +918,62 @@ async fn create_agent_rejects_duplicate_role() {
     assert!(
         err.message.contains(&holder.to_string()),
         "names the holder"
+    );
+}
+
+/// The spawn wire fields are required: a body omitting `profile_set` or
+/// `permission_class` fails deserialization (surfaced as a client error),
+/// so a binding or grant never lands by accident.
+#[test]
+fn spawn_request_requires_profile_set_and_permission_class() {
+    use kallip_common::protocol::CreateAgentRequest;
+    let base = r#"{"workspace_root":"/tmp","skills":[],"created_by":null,"role":"x"}"#;
+    let err = serde_json::from_str::<CreateAgentRequest>(base).unwrap_err();
+    assert!(err.to_string().contains("profile_set"), "{err}");
+    let with_set = r#"{"workspace_root":"/tmp","skills":[],"created_by":null,"role":"x","profile_set":"default"}"#;
+    let err = serde_json::from_str::<CreateAgentRequest>(with_set).unwrap_err();
+    assert!(err.to_string().contains("permission_class"), "{err}");
+}
+
+#[tokio::test]
+async fn create_agent_rejects_unknown_set_name() {
+    let state = make_state();
+    let sup = AgentId::random();
+    {
+        let mut reg = state.registry.write().await;
+        add_root(&mut reg, &sup);
+    }
+    let resp = super::create_agent(
+        State(state.clone()),
+        AuthIdentity::test_new(Identity::Operator),
+        axum::Json(kallip_common::protocol::CreateAgentRequest {
+            workspace_root: "/tmp".into(),
+            skills: vec![],
+            prompt: None,
+            created_by: Some(sup),
+            role: "scout".into(),
+            description: String::new(),
+            max_tool_rounds: None,
+            profile_set: "missing".into(),
+            permission_class: "normal".into(),
+            delegation_mode: None,
+        }),
+    )
+    .await;
+    let err = match resp {
+        Err(e) => e,
+        Ok(_) => panic!("unknown profile set accepted"),
+    };
+    assert_eq!(err.status, 400, "unknown set name is a client error");
+    assert!(
+        err.message.contains("unknown profile set 'missing'"),
+        "{}",
+        err.message
+    );
+    assert!(
+        err.message.contains("default"),
+        "lists the available sets: {}",
+        err.message
     );
 }
 
@@ -1026,6 +1040,7 @@ fn ensure_root_agent_refuses_to_mint_when_a_disk_root_exists() {
             created_by: None,
             role: "root".into(),
             description: String::new(),
+            profile_set: None,
             permissions_class: PermissionClass::Normal,
             delegation_mode: DelegationMode::CarveOut,
         })

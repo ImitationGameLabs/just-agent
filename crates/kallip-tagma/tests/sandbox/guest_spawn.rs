@@ -1,8 +1,8 @@
 //! Scenario 4 -- Explicit permission-class downgrade on subagent spawn.
 //!
-//! A Normal-tier parent spawns a subagent with `--permission-class guest`. This
-//! exercises the full new path end-to-end: CLI flag -> protocol field -> tagma
-//! reference-monitor downgrade (`resolve_granted_class`) -> persistence of the
+//! A Normal parent spawns a subagent with `--permission-class guest` (and an
+//! explicit `--profile-set`). This exercises the full path end-to-end: CLI
+//! flags -> protocol fields -> tagma reference-monitor downgrade
 //! granted class to `meta.json`. The happy path must succeed and print the
 //! child id. A bad spelling is rejected at the `kallip` CLI by the flag's
 //! `value_parser` before the tagma is ever contacted.
@@ -28,6 +28,7 @@ async fn scenario4_guest_spawn_downgrade() {
             // for canonicalize). Success prints the child agent id.
             "mkdir -p {0}/reviewer && \
              kallip subagent spawn --permission-class guest \
+             --profile-set subagent \
              --workspace-root {0}/reviewer --role reviewer",
             ws.display()
         )),

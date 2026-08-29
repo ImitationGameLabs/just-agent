@@ -156,27 +156,16 @@ fn validate_exec_policy_from_chain(
     Ok(())
 }
 
-/// Validate the restored agent's `PermissionClass` against its tier ceiling and
-/// the supervisor chain (§2.3 ceiling invariant). Mirrors the policy/exec
-/// validators: the agent's class must not exceed its model tier's ceiling nor
-/// its immediate supervisor's, and the chain must be monotonic. This is the
-/// restore-side guard against a tampered `meta.json` elevating a child above
-/// its parent — depth monotonicity alone does NOT imply this (the tier 0/1 and
-/// 2/3 plateaus).
+/// Validate the restored agent's `PermissionClass` against the supervisor
+/// chain (§2.3 class invariant). Mirrors the policy/exec validators: the
+/// agent's class must not exceed its immediate supervisor's, and the chain
+/// must be monotonic. This is the restore-side guard against a tampered
+/// `meta.json` elevating a child above its parent.
 fn validate_permission_class_from_chain(
     agent_id: &AgentId,
     class: kallip_runtime::config::PermissionClass,
-    depth: usize,
     chain: &[ChainNode],
 ) -> anyhow::Result<()> {
-    use kallip_runtime::config::PermissionClass;
-
-    let ceiling = PermissionClass::ceiling_for_tier(depth);
-    if class > ceiling {
-        anyhow::bail!(
-            "agent {agent_id}: permission class {class} exceeds its tier ceiling {ceiling}"
-        );
-    }
     if let Some(supervisor) = chain.first() {
         let supervisor_class = supervisor.meta.permissions_class;
         if class > supervisor_class {
@@ -200,21 +189,18 @@ fn validate_permission_class_from_chain(
     Ok(())
 }
 
-/// Restore a single persisted agent to a running agent.
-/// Resolve the restore-time set, mirroring the spawn path's profile-less
-/// boot: a root restoring against an empty registry gets the placeholder
-/// set (its LLM calls fail per call with the management-page hint until
-/// a profile is applied); a subagent without a set stays a restore
-/// failure → Faulted.
+/// Restore-time set resolution. A dangling binding (a record that predates
+/// set binding, or one naming a set the registry no longer offers) does not
+/// fault the restore: the agent comes back unspecified, running against the
+/// unconfigured placeholder, and delivery rejects inbound messages until a
+/// live set is bound again.
 fn set_for_restore(
     registry: &kallip_runtime::profile::ProfileRegistry,
-    depth: usize,
-    is_root: bool,
-) -> anyhow::Result<(usize, kallip_runtime::profile::ProfileSet)> {
-    match registry.select_tier(depth) {
-        Ok((idx, set)) => Ok((idx, set.clone())),
-        Err(_) if is_root => Ok(crate::backend::unconfigured_set()),
-        Err(e) => Err(e),
+    binding: Option<&str>,
+) -> (usize, kallip_runtime::profile::ProfileSet) {
+    match registry.resolve_recorded_set(binding) {
+        Ok((idx, set)) => (idx, set.clone()),
+        Err(_) => crate::backend::unconfigured_set(),
     }
 }
 
@@ -242,6 +228,7 @@ async fn restore_one(
     config.description = p.meta.description.clone();
     config.permissions_class = p.meta.permissions_class;
     config.delegation_mode = p.meta.delegation_mode;
+    config.profile_set = p.meta.profile_set.clone();
 
     // Same data-dir overlap guard as `create_agent` (bidirectional, fail-closed).
     // An agent persisted before this guard existed with an overlapping workspace
@@ -254,6 +241,14 @@ async fn restore_one(
         .get_exec_policy(&p.agent_id)
         .context("failed to load exec_policy")?;
 
+    // The root's binding is derived: an unbound root record re-binds to
+    // the current default set, so a bootless spawn followed by configuring
+    // profiles needs no manual repair. A subagent's missing binding stays
+    // dangling (unspecified) — only its supervisor can re-spawn it.
+    if p.meta.created_by.is_none() && config.profile_set.is_none() {
+        let default_set = shared_state.profiles.load().config.default.clone();
+        config.profile_set = (!default_set.is_empty()).then_some(default_set);
+    }
     // Walk the delegation ancestor chain once and reuse it both for the
     // strictness validations below and for the workspace write-lock acquire
     // (the carve-out needs the ancestor ids so a nested lock is treated as
@@ -265,11 +260,9 @@ async fn restore_one(
     if p.meta.created_by.is_some() {
         config.permissions.max_depth =
             validate_depth_from_chain(&p.meta.workspace_root, &supervisor_chain)?;
-        let depth = config.permissions.depth();
         validate_permission_class_from_chain(
             &p.agent_id,
             config.permissions_class,
-            depth,
             &supervisor_chain,
         )?;
         validate_exec_policy_from_chain(&p.agent_id, &exec_policy, &supervisor_chain)?;
@@ -285,20 +278,10 @@ async fn restore_one(
         .cloned()
         .unwrap_or_else(|| p.agent_id.clone());
 
-    // Resolve the profile set purely by depth (positional — no persisted binding). Warn if
-    // the agent's depth exceeds the set list: it clamps to the last set.
-    let depth = config.permissions.depth();
-    let set_count = shared_state.profiles.load().registry.sets().len();
-    if depth >= set_count && set_count > 0 {
-        tracing::warn!(
-            depth,
-            set_count,
-            "agent depth exceeds set count; clamping to the last set"
-        );
-    }
+    // Resolve the profile set from the persisted binding.
     let (set_index, set) = {
         let bundle = shared_state.profiles.load();
-        set_for_restore(&bundle.registry, depth, p.meta.created_by.is_none())?
+        set_for_restore(&bundle.registry, config.profile_set.as_deref())
     };
 
     let store = Arc::new(tokio::sync::Mutex::new(restored.store));
@@ -394,6 +377,7 @@ fn faulted_from_meta(
         role: meta.role.clone(),
         description: meta.description.clone(),
         workspace_root: meta.workspace_root.clone(),
+        profile_set: meta.profile_set.clone(),
         permissions_class: meta.permissions_class,
         delegation_mode: meta.delegation_mode,
         ..AgentConfig::default()
@@ -746,17 +730,43 @@ mod tests {
     }
 
     #[test]
-    fn empty_registry_restores_root_against_placeholder_and_faults_subagent() {
+    fn dangling_binding_restores_against_placeholder() {
         let reg = kallip_runtime::profile::ProfileRegistry::new(
             std::collections::BTreeMap::new(),
             std::sync::Arc::new(NilSource),
         )
         .expect("empty set map is constructible");
-        let (idx, set) = set_for_restore(&reg, 0, true).expect("root restores");
+        // A record with no binding (predates set binding)...
+        let (idx, set) = set_for_restore(&reg, None);
         assert_eq!(idx, 0);
         assert_eq!(set.active_profile().endpoint, crate::backend::UNCONFIGURED);
-        let err = set_for_restore(&reg, 1, false).expect_err("subagent faults");
-        assert!(format!("{err:#}").contains("management page"));
+        // ...and one naming a set the registry no longer offers: both
+        // come back unspecified instead of faulting the restore.
+        let (idx, set) = set_for_restore(&reg, Some("gone"));
+        assert_eq!(idx, 0);
+        assert_eq!(set.active_profile().endpoint, crate::backend::UNCONFIGURED);
+    }
+
+    #[test]
+    fn bound_record_restores_its_named_set() {
+        let set = kallip_runtime::profile::ProfileSet {
+            name: "research".into(),
+            description: None,
+            profiles: vec![kallip_runtime::profile::Profile {
+                id: "p".into(),
+                endpoint: "ds".into(),
+                model: "m".into(),
+                max_context_window: 500_000,
+            }],
+        };
+        let reg = kallip_runtime::profile::ProfileRegistry::new(
+            std::collections::BTreeMap::from([("research".to_string(), set)]),
+            std::sync::Arc::new(NilSource),
+        )
+        .expect("single set registry constructs");
+        let (idx, set) = set_for_restore(&reg, Some("research"));
+        assert_eq!(idx, 0);
+        assert_eq!(set.active_profile().model, "m");
     }
     // A supervisor chain node carrying only the fields the validator reads
     // (permissions_class) — the rest are defaulted/minimal.
@@ -768,6 +778,7 @@ mod tests {
                 created_by: None,
                 role: String::new(),
                 description: String::new(),
+                profile_set: None,
                 permissions_class: class,
                 delegation_mode: kallip_runtime::config::DelegationMode::CarveOut,
             },
@@ -786,6 +797,7 @@ mod tests {
             created_by: Some(AgentId::from("parent".to_owned())),
             role: "researcher".into(),
             description: "goners".into(),
+            profile_set: Some("research".into()),
             permissions_class: PermissionClass::Guest,
             delegation_mode: kallip_runtime::config::DelegationMode::CarveOut,
         };
@@ -802,6 +814,10 @@ mod tests {
         );
         assert_eq!(entry.identity.config.role, "researcher");
         assert_eq!(
+            entry.identity.config.profile_set.as_deref(),
+            Some("research")
+        );
+        assert_eq!(
             entry.identity.config.permissions_class,
             PermissionClass::Guest
         );
@@ -811,23 +827,23 @@ mod tests {
 
     #[test]
     fn restore_accepts_downgraded_subagent() {
-        // A Normal-tier (depth 1, ceiling Normal) child explicitly granted Guest
-        // beneath a Normal supervisor must restore cleanly — the downgrade is
-        // strictly lower than both the ceiling and the supervisor's class, and the
-        // chain stays monotonic. Guards the restore-side gate (zero prior coverage).
+        // A child explicitly granted Guest beneath a Normal supervisor must
+        // restore cleanly — the downgrade is strictly lower than the
+        // supervisor's class, and the chain stays monotonic. Guards the
+        // restore-side gate (zero prior coverage).
         let child = AgentId::from("child".to_owned());
         let chain = vec![node("root", PermissionClass::Normal)];
-        validate_permission_class_from_chain(&child, PermissionClass::Guest, 1, &chain).unwrap();
+        validate_permission_class_from_chain(&child, PermissionClass::Guest, &chain).unwrap();
     }
 
     #[test]
     fn restore_rejects_class_above_downgraded_supervisor() {
         // The restore-side mirror of the downgrade tightening: a child whose granted
         // class (Normal) exceeds its downgraded supervisor's (Guest) must fail
-        // restore, even though it sits at its tier ceiling.
+        // restore (the supervisor, not a depth-derived table, is the limit).
         let child = AgentId::from("child".to_owned());
         let chain = vec![node("root", PermissionClass::Guest)];
-        let err = validate_permission_class_from_chain(&child, PermissionClass::Normal, 1, &chain)
+        let err = validate_permission_class_from_chain(&child, PermissionClass::Normal, &chain)
             .unwrap_err();
         assert!(err.to_string().contains("supervisor"), "{}", err);
     }
@@ -836,7 +852,7 @@ mod tests {
     fn restore_enforces_chain_monotonicity() {
         // A two-level chain where the deeper ancestor (root) was downgraded to
         // Guest but the mid node persisted at Normal (tampered meta.json). The
-        // agent itself sits validly at depth 2 (ceiling Guest, class Guest), and
+        // agent itself sits validly at Guest, and
         // beneath its immediate supervisor (mid = Normal) — so only the
         // `chain.windows(2)` monotonicity check catches the mid>root inversion.
         // This is the case depth monotonicity alone cannot detect.
@@ -846,7 +862,7 @@ mod tests {
             node("mid", PermissionClass::Normal),
             node("root", PermissionClass::Guest),
         ];
-        let err = validate_permission_class_from_chain(&deep, PermissionClass::Guest, 2, &chain)
+        let err = validate_permission_class_from_chain(&deep, PermissionClass::Guest, &chain)
             .unwrap_err();
         assert!(
             err.to_string().contains("exceeds its supervisor"),
@@ -901,6 +917,7 @@ mod tests {
                     created_by: created_by.cloned(),
                     role: String::new(),
                     description: String::new(),
+                    profile_set: None,
                     permissions_class: PermissionClass::Normal,
                     delegation_mode: kallip_runtime::config::DelegationMode::CarveOut,
                 })

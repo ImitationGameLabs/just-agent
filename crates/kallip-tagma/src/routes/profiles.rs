@@ -5,7 +5,8 @@
 //!   hot-swap the in-memory registry.
 //!   Does NOT affect running agents — new agents pick up the swap at spawn.
 //! POST /profiles/apply — push the current registry to all live agents via a
-//!   pending-reset cell; each agent rebuilds its failover state on its next wake-up.
+//!   pending-reset cell; each agent rebuilds its failover state on its next
+//!   wake-up. An unbound root also picks up a derived default-set binding.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -299,10 +300,13 @@ pub struct ApplyResponse {
 
 /// POST /profiles/apply — push the current registry to all live agents.
 ///
-/// For each live agent, reads its depth, selects the new set, and writes a
-/// [`ProfileReset`] to the agent's pending-reset cell. The agent picks it up
-/// on its next wake-up (top of `run_and_report`). Agents mid-round finish
-/// their current work first.
+/// For each live agent, resolves its recorded set name against the new
+/// registry and writes a [`ProfileReset`] to the agent's pending-reset
+/// cell. An unbound root instead derives its binding from the current
+/// default set, and the derived name is written back to the in-memory
+/// record (not meta.json — restore re-derives it on the next boot).
+/// The agent picks it up on its next wake-up (top of
+/// `run_and_report`). Agents mid-round finish their current work first.
 pub async fn apply_profiles(
     State(state): State<SharedState>,
     auth: AuthIdentity,
@@ -316,23 +320,41 @@ pub async fn apply_profiles(
 
     // Collect the reset targets under the read lock, then apply outside it
     // so register/remove writes are not blocked during cell writes + notify.
-    let (targets, non_live): (Vec<_>, usize) = {
+    let (targets, rebinds, non_live): (Vec<_>, Vec<_>, usize) = {
         let registry_guard = state.registry.read().await;
         registry_guard.iter().fold(
-            (Vec::new(), 0usize),
-            |(mut targets, mut skipped), (_id, entry)| {
+            (Vec::new(), Vec::new(), 0usize),
+            |(mut targets, mut rebinds, mut skipped), (id, entry)| {
                 let Some(live) = entry.as_live() else {
                     skipped += 1;
-                    return (targets, skipped);
+                    return (targets, rebinds, skipped);
                 };
-                let depth = live.identity.config.permissions.depth();
-                // Empty registry: no new set to push; the live agent keeps
-                // its current pair (an apply after the first profile lands
-                // re-syncs it).
-                let Some((set_index, set)) = registry.select_tier(depth).ok() else {
+                // An unbound root derives its binding from the current
+                // default set — the same rule restore applies — so a
+                // profile-less boot picks up the first configured
+                // profile on the next apply instead of needing a
+                // restart. The derived name is written back to the
+                // in-memory record below, never to meta.json (restore
+                // re-derives it on the next boot).
+                let recorded = live.identity.config.profile_set.clone();
+                let derived_root = recorded.is_none()
+                    && live.identity.config.created_by.is_none()
+                    && !bundle.config.default.is_empty();
+                let binding = if derived_root {
+                    Some(bundle.config.default.clone())
+                } else {
+                    recorded
+                };
+                // Any other binding that does not resolve (a record
+                // predating set binding, or a set the registry no
+                // longer offers) is skipped, not guessed at.
+                let Ok((set_index, set)) = registry.resolve_recorded_set(binding.as_deref()) else {
                     skipped += 1;
-                    return (targets, skipped);
+                    return (targets, rebinds, skipped);
                 };
+                if derived_root {
+                    rebinds.push((id.clone(), binding.clone()));
+                }
                 targets.push((
                     kallip_runtime::ProfileReset {
                         set: set.clone(),
@@ -342,11 +364,24 @@ pub async fn apply_profiles(
                     live.agent.pending_profile_reset.clone(),
                     live.agent.notify.clone(),
                 ));
-                (targets, skipped)
+                (targets, rebinds, skipped)
             },
         )
     };
     let skipped = non_live;
+
+    // Write the derived root bindings back to the in-memory records so
+    // the delivery gate sees them without a restart.
+    if !rebinds.is_empty() {
+        let mut registry_guard = state.registry.write().await;
+        for (id, name) in rebinds {
+            if let Some(entry) = registry_guard.get_mut(&id)
+                && let Some(live) = entry.as_live_mut()
+            {
+                live.identity.config.profile_set = name;
+            }
+        }
+    }
 
     for (reset, cell_lock, notify) in targets {
         let mut cell = cell_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -623,9 +658,44 @@ mod tests {
         let live = entry.as_live().unwrap();
         let cell = live.agent.pending_profile_reset.lock().unwrap();
         assert!(cell.is_some(), "pending_profile_reset should be set");
-        // make_state's bundle is single-set, so a root agent (depth 0) resolves index 0;
-        // a multi-set fixture asserting the clamp would be the follow-up if one lands.
+        // make_state's bundle resolves the recorded default set at index 0.
         assert_eq!(cell.as_ref().unwrap().set_index, 0);
+    }
+
+    #[tokio::test]
+    async fn apply_rebinds_unbound_root_to_current_default() {
+        // The behavior contract for a profile-less boot: the root's
+        // record starts unbound, profiles get configured, and the next
+        // apply both pushes the new set and writes the derived binding
+        // back to the in-memory record — so the delivery gate admits
+        // the root without a restart (restore re-derives the same way
+        // on the next boot).
+        let state = make_state();
+        let root = AgentId::random();
+        let (mut entry, _rx) = make_entry_with_rx(None, format!("agent-{root}"));
+        entry.identity.config.profile_set = None;
+        state
+            .registry
+            .write()
+            .await
+            .register(root.clone(), RegistryEntry::Live(entry));
+
+        let resp = apply_profiles(State(state.clone()), op_auth())
+            .await
+            .expect("apply succeeds");
+        assert_eq!(resp.applied, 1, "unbound root is applied, not skipped");
+        let binding = {
+            let reg = state.registry.read().await;
+            reg.get(&root)
+                .expect("root registered")
+                .as_live()
+                .expect("live")
+                .identity
+                .config
+                .profile_set
+                .clone()
+        };
+        assert_eq!(binding.as_deref(), Some("default"));
     }
 
     #[tokio::test]

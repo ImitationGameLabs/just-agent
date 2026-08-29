@@ -147,20 +147,18 @@ pub struct CreateAgentRequest {
     /// - `Some(MaxToolRounds::Limited(N))` → explicit limit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tool_rounds: Option<MaxToolRounds>,
-    /// Optional explicit FS-access permission class for a subagent spawn, as the
-    /// lowercase wire spelling (`"normal"` / `"guest"`). Subagent spawns are the
-    /// only HTTP create path (`created_by` is required); the tagma's own root
-    /// takes its class at startup from `KALLIP_ROOT_AGENT_PERMISSION_CLASS`,
-    /// not from this field.
-    ///
-    /// `None` → grant the model tier's ceiling (`ceiling_for_tier`), preserving
-    /// the historical default. An explicit value is treated as a downgrade
-    /// request by the tagma (the reference monitor): it is rejected with
-    /// `forbidden` if it exceeds the tier ceiling or the supervisor's own
-    /// granted class. The string carries no runtime type here to keep
-    /// `kallip-common` free of any `kallip-runtime` dependency.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_class: Option<String>,
+    /// Profile set the subagent resolves against, by exact name. Required:
+    /// the spawn rejects unknown names (the error lists the available
+    /// ones), so a binding never lands on the record by accident.
+    pub profile_set: String,
+    /// FS-access permission class for the subagent spawn, as the lowercase
+    /// wire spelling (`"normal"` / `"guest"`). Required — there is no
+    /// implicit default: the tagma (the reference monitor) accepts the
+    /// request only as a downgrade, rejecting it with `forbidden` if it
+    /// exceeds the supervisor's own granted class. The string carries no
+    /// runtime type here to keep `kallip-common` free of any
+    /// `kallip-runtime` dependency.
+    pub permission_class: String,
     /// Optional workspace delegation mode for a subagent spawn, as the lowercase
     /// wire spelling ([`DELEGATION_CARVE_OUT`] / [`DELEGATION_FULL_HANDOFF`]). Omit
     /// (or [`DELEGATION_CARVE_OUT`]) for the default: the subagent scopes into a
@@ -272,14 +270,14 @@ pub struct UpdateActivityRequest {
     pub activity: String,
 }
 
-/// The model profile an agent's client is currently using: the tier's positional
+/// The model profile an agent's client is currently using: the set's positional
 /// index, the registry profile id, the provider (endpoint) id, and the concrete model
 /// string sent to the backend. This is the *runtime* active profile — it drifts from
 /// the spawn-time active after a within-set failover advance or an online profile
 /// apply, which is exactly when an operator needs to see it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActiveProfile {
-    /// Positional tier index in the registry (0-based).
+    /// Positional set index in the registry (0-based).
     pub tier_index: usize,
     pub profile_id: String,
     /// The endpoint (provider) id this profile connects through.

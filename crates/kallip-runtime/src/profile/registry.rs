@@ -37,7 +37,7 @@ impl ProfileRegistry {
     /// the wire — so this constructor is the single normalization point,
     /// unconditionally overwriting `name` with the key; the name can never
     /// disagree with the key it is addressed by). An empty collection is
-    /// allowed (profile-less boot — select errors per call until a profile is
+    /// allowed (profile-less boot — resolution dangles until a profile is
     /// added). Provider existence, family, and base_url are validated by the
     /// tagma when it builds the active set (see `kallip_tagma::backend`);
     /// the registry only checks structure.
@@ -70,45 +70,33 @@ impl ProfileRegistry {
             )
         })
     }
-
-    /// Resolve the agent's set by supervisor depth, positional over the sorted set names:
-    /// `sets.values()[depth.min(len-1)]`. Errors with a management-page hint when the
-    /// registry is empty (profile-less boot).
+    /// Resolve the set a record is bound to. Spawn writes the binding;
+    /// restore, reactivation, and delivery re-read it. A missing binding
+    /// (record predates set binding) and an unknown name are the same
+    /// dangling state — callers surface it instead of guessing a set.
     ///
-    /// Returns the resolved [`ProfileSet`] handle so the caller (and the failover loop) can
-    /// walk `set.profiles`. The active profile is always `set.profiles[0]`. Callers that need
-    /// to know whether `depth` was clamped (e.g. to warn) compare `depth` against
-    /// [`sets().len()`](Self::sets).
-    pub fn select_profile(&self, depth: usize) -> Result<&ProfileSet> {
-        let idx = self.set_index(depth).ok_or_else(no_profile_configured)?;
-        Ok(self
+    /// Returns the set's positional index (over the sorted names) alongside
+    /// the handle, so callers that carry a positional wire handle resolve
+    /// both from one lookup.
+    pub fn resolve_recorded_set(
+        &self,
+        binding: Option<&str>,
+    ) -> Result<(usize, &ProfileSet), DanglingSet> {
+        let name = binding.ok_or_else(|| self.dangling("agent record has no profile set"))?;
+        let idx = self
             .sets
-            .values()
-            .nth(idx)
-            .expect("index derived from the map length"))
-    }
-
-    /// Same resolution as [`select_profile`](Self::select_profile), but also returns the
-    /// resolved set's positional index (0-based, over the sorted names) so callers that
-    /// surface a positional handle can carry the pair without re-deriving it. The pair is
-    /// taken atomically at resolution time — after a registry swap but before an apply, a
-    /// live agent still holds its old (index, set) pair, which is what its client is using.
-    pub fn select_tier(&self, depth: usize) -> Result<(usize, &ProfileSet)> {
-        let idx = self.set_index(depth).ok_or_else(no_profile_configured)?;
-        let set = self
-            .sets
-            .values()
-            .nth(idx)
-            .expect("index derived from the map length");
+            .keys()
+            .position(|k| k == name)
+            .ok_or_else(|| self.dangling(&format!("unknown profile set '{name}'")))?;
+        let set = self.sets.get(name).expect("position found the key");
         Ok((idx, set))
     }
 
-    /// The clamped positional index for `depth` over the sorted set names.
-    fn set_index(&self, depth: usize) -> Option<usize> {
-        if self.sets.is_empty() {
-            return None;
+    fn dangling(&self, reason: &str) -> DanglingSet {
+        DanglingSet {
+            reason: reason.to_owned(),
+            available: self.sets.keys().cloned().collect(),
         }
-        Some(depth.min(self.sets.len() - 1))
     }
 
     /// Build a [`ChatClient`] for a profile, looking up its provider's backend via the
@@ -133,13 +121,29 @@ impl ProfileRegistry {
     }
 }
 
-/// Hint surfaced by `select_*` on an empty registry (and reused verbatim by the
-/// tagma's sentinel backend, so the zero-profile story reads one voice).
+/// Hint surfaced on an empty registry (and reused verbatim by the tagma's
+/// sentinel backend, so the zero-profile story reads one voice).
 pub const NO_PROFILE_HINT: &str =
     "no model profile is configured; add one via the tagma management page";
 
-fn no_profile_configured() -> anyhow::Error {
-    anyhow::anyhow!(NO_PROFILE_HINT)
+/// A recorded profile-set binding that does not resolve: the record has no
+/// binding, or names a set the registry no longer offers. `available`
+/// carries the current set names so callers can surface a recovery hint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DanglingSet {
+    pub reason: String,
+    pub available: Vec<String>,
+}
+
+impl std::fmt::Display for DanglingSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names = if self.available.is_empty() {
+            "none configured".to_owned()
+        } else {
+            self.available.join(", ")
+        };
+        write!(f, "{}; available sets: {names}", self.reason)
+    }
 }
 
 #[cfg(test)]
@@ -212,42 +216,33 @@ mod tests {
     }
 
     #[test]
-    fn select_profile_depth_zero_is_first_sorted_set() {
+    fn resolve_recorded_set_returns_named_set_and_index() {
         let reg = two_set_registry();
-        let set = reg.select_profile(0).unwrap();
-        assert_eq!(set.name, "alpha");
-        assert_eq!(set.active_profile().model, "deepseek-pro");
+        let (idx, set) = reg.resolve_recorded_set(Some("beta")).unwrap();
+        assert_eq!(set.name, "beta");
+        assert_eq!(set.active_profile().model, "deepseek-flash");
+        // "alpha" < "beta" in sorted order, so beta sits at index 1.
+        assert_eq!(idx, 1);
     }
 
     #[test]
-    fn select_profile_depth_routes_and_clamps() {
+    fn resolve_recorded_set_dangling_states_carry_reason_and_available() {
         let reg = two_set_registry();
-        assert_eq!(
-            reg.select_profile(0).unwrap().active_profile().model,
-            "deepseek-pro"
+        let missing = reg
+            .resolve_recorded_set(None)
+            .expect_err("unbound record dangles");
+        assert!(
+            missing.reason.contains("no profile set"),
+            "got: {missing:?}"
         );
-        assert_eq!(
-            reg.select_profile(1).unwrap().active_profile().model,
-            "deepseek-flash"
-        );
-        assert_eq!(
-            reg.select_profile(9).unwrap().active_profile().model,
-            "deepseek-flash"
-        );
-    }
-
-    #[test]
-    fn select_tier_returns_index_matching_select_profile() {
-        let reg = two_set_registry();
-        for depth in [0, 1, 9] {
-            let (idx, set) = reg.select_tier(depth).unwrap();
-            assert_eq!(
-                set.active_profile().model,
-                reg.select_profile(depth).unwrap().active_profile().model
-            );
-            let clamped = depth.min(reg.sets().len() - 1);
-            assert_eq!(idx, clamped);
-        }
+        assert_eq!(missing.available, vec!["alpha", "beta"]);
+        let unknown = reg
+            .resolve_recorded_set(Some("missing"))
+            .expect_err("unknown name dangles");
+        assert!(unknown.reason.contains("'missing'"), "got: {unknown:?}");
+        assert_eq!(unknown.available, vec!["alpha", "beta"]);
+        let msg = format!("{unknown}");
+        assert!(msg.contains("alpha, beta"), "hint lists sets: {msg}");
     }
 
     #[test]
@@ -260,17 +255,14 @@ mod tests {
     }
 
     #[test]
-    fn new_allows_empty_collection_and_select_errors() {
+    fn new_allows_empty_collection_and_resolve_dangles() {
         let reg = ProfileRegistry::new(BTreeMap::new(), Arc::new(MapSource(HashMap::new())))
             .expect("empty collection is constructible");
-        let err = reg
-            .select_tier(0)
-            .expect_err("select on an empty registry errors");
-        assert!(
-            format!("{err}").contains("management page"),
-            "error should point at the management page, got: {err}"
-        );
-        assert!(reg.select_profile(0).is_err());
+        let dangling = reg
+            .resolve_recorded_set(Some("any"))
+            .expect_err("resolve on an empty registry dangles");
+        assert!(dangling.available.is_empty());
+        assert!(format!("{dangling}").contains("none configured"));
         assert!(reg.select_set("any").is_err());
     }
 

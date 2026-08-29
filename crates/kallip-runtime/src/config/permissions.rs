@@ -1,8 +1,8 @@
 //! FS-access and delegation permissions for the agent sandbox.
 //!
-//! Owns the static sandbox axes: [`PermissionClass`] (FS-access baseline, tier
-//! ceilings, lowercase wire spelling), [`DelegationMode`] (how a subagent
-//! relates to the supervisor's workspace write-lock), and [`PermissionProfile`]
+//! Owns the static sandbox axes: [`PermissionClass`] (FS-access baseline,
+//! lowercase wire spelling), [`DelegationMode`] (how a subagent relates to
+//! the supervisor's workspace write-lock), and [`PermissionProfile`]
 //! (delegation depth and workspace boundary, seeded from [`DEFAULT_MAX_DEPTH`]).
 //! Re-exported by `crate::config`, so the `config::` paths stay stable.
 
@@ -21,11 +21,11 @@ pub const DEFAULT_MAX_DEPTH: u8 = 3;
 /// FS-access permission class — the static baseline axis of the agent sandbox
 /// (`.draft/design/agent-sandbox.md` §2.3).
 ///
-/// Independent of model tier: tier only sets the *ceiling* via
-/// [`PermissionClass::ceiling_for_tier`]. `Ord` is derived (`Guest < Normal`) so the
-/// ceiling invariants `granted <= ceiling(tier)` and `ceiling(child) <=
-/// ceiling(parent)` are plain comparisons. Persisted on `AgentMeta` and
-/// re-validated on restore (a safety invariant, unlike display fields).
+/// Granted explicitly at spawn (never above the supervisor's own class) and
+/// re-validated against the supervisor chain on restore. `Ord` is derived
+/// (`Guest < Normal`) so the invariant `class(child) <= class(supervisor)`
+/// is a plain comparison. Persisted on `AgentMeta` (a safety invariant,
+/// unlike display fields).
 #[derive(
     Clone,
     Copy,
@@ -106,24 +106,6 @@ impl std::fmt::Display for DelegationMode {
     }
 }
 
-impl PermissionClass {
-    /// Ceiling table: depth 0/1 -> Normal, depth 2/3 -> Guest (§2.3). Depths
-    /// beyond the table clamp to the last entry (Guest), mirroring
-    /// `ProfileRegistry::select_profile`.
-    /// NOTE: depth monotonicity does NOT imply ceiling monotonicity (the 0/1 and
-    /// 2/3 plateaus), so `ceiling(child) <= ceiling(parent)` must be enforced
-    /// explicitly at spawn/restore — not derived from depth.
-    pub fn ceiling_for_tier(depth: usize) -> Self {
-        const CEILINGS: [PermissionClass; (DEFAULT_MAX_DEPTH as usize) + 1] = [
-            PermissionClass::Normal, // depth 0 (root)
-            PermissionClass::Normal, // depth 1
-            PermissionClass::Guest,  // depth 2
-            PermissionClass::Guest,  // depth 3
-        ];
-        CEILINGS[depth.min(CEILINGS.len() - 1)]
-    }
-}
-
 /// Error returned when a [`PermissionClass`] cannot be parsed from its lowercase
 /// wire/env spelling. Surfaced by the tagma as a `400 Bad Request` body, so the
 /// message stays client-readable and stable.
@@ -195,13 +177,5 @@ impl PermissionProfile {
             max_depth: supervisor_depth.saturating_sub(1),
             workspace_root,
         }
-    }
-
-    /// Delegation depth as a tier-selection index: root (`max_depth == DEFAULT_MAX_DEPTH`) → 0,
-    /// each delegation level decrements. Single source of truth for the depth formula used by
-    /// tier selection. This consumes `max_depth` (set at spawn or recomputed from the chain on
-    /// restore); it does not participate in setting it.
-    pub fn depth(&self) -> usize {
-        DEFAULT_MAX_DEPTH.saturating_sub(self.max_depth) as usize
     }
 }

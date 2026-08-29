@@ -200,12 +200,16 @@ pub struct SpawnArgs {
     /// Longer prose: what this agent is for.
     #[arg(long)]
     pub description: Option<String>,
-    /// Explicitly downgrade the subagent's FS-access permission class
-    /// (`normal` = home+workspace read-write, `guest` = read-only). Omit to
-    /// grant the tier's default ceiling. Honored only for subagent spawns; the
-    /// tagma rejects a value above the tier ceiling or the supervisor's class.
+    /// Profile set the subagent resolves against, by exact name (see the
+    /// tagma's profile config for the configured sets). Required; the
+    /// spawn rejects unknown names.
+    #[arg(long, value_name = "SET")]
+    pub profile_set: String,
+    /// FS-access permission class (`normal` = home+workspace read-write,
+    /// `guest` = read-only). Required, explicit, and downgrade-only — the
+    /// tagma rejects a value above the supervisor's class.
     #[arg(long, value_name = "CLASS", value_parser = ["normal", "guest"])]
-    pub permission_class: Option<String>,
+    pub permission_class: String,
     /// Transfer the supervisor's entire workspace to this subagent for its
     /// lifetime (the supervisor cannot write its workspace until the child is
     /// removed). Exclusive: the supervisor may have no other subagent while a

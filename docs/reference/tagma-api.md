@@ -85,7 +85,8 @@ Auth: operator or direct supervisor. See [auth.md](auth.md).
   "role": "string — short display label, e.g. \"researcher\" (required, non-empty)",
   "description": "string — longer prose, what this agent is for (optional)",
   "max_tool_rounds": "null — use tagma default (see below)",
-  "permission_class": "null — grant the tier ceiling (see below)"
+  "profile_set": "string — required: profile set name (exact match)",
+  "permission_class": "string — required: \"normal\" / \"guest\" (see below)"
 }
 ```
 
@@ -108,14 +109,17 @@ To force unlimited rounds (bounded only by token budget):
 
 `Limited` values must be > 0; `Limited(0)` returns 400.
 
-**`permission_class`** — optional explicit FS-access permission class for the
-subagent, as the lowercase wire spelling (`"normal"` / `"guest"`). Omit or
-`null` to grant the model tier's ceiling (`ceiling_for_tier`). The tagma
-treats an explicit value as a **downgrade only**: a value above the tier
-ceiling or the supervisor's own granted class is rejected with `403 Forbidden`
-(never silently clamped). So a `normal` (root-tier) agent can spawn a
-read-only `guest` subagent for review work, but no agent can escalate a child
-above its tier. The granted class is observable on
+**`profile_set`** — the profile set the subagent resolves against, by exact
+name. Required: an unknown name is rejected with `400 Bad Request`
+listing the available sets.
+
+**`permission_class`** — the required FS-access permission class for the
+subagent, as the lowercase wire spelling (`"normal"` / `"guest"`). The
+tagma treats it as a **downgrade only**: a value above the supervisor's
+own granted class is rejected with `403 Forbidden` (never silently
+clamped). So a `normal` supervisor can spawn a read-only `guest`
+subagent for review work, but no agent can escalate a child above
+itself. The granted class is observable on
 `GET /agents/{id}/permissions`.
 
 > **Token budget:** All agents share a single tagma-wide token budget
@@ -785,7 +789,7 @@ outcomes park the agent (the next incoming message auto-wakes it). Only `cancell
 | `idle`                   | _(none)_                                                                                                                              | Agent completed the turn and returned to idle (a `finished`-style content event is `assistantContent`)                                                                                              |
 | `maxRoundsExceeded`      | _(none)_                                                                                                                             | Hit the max tool rounds limit for this turn; the agent parks                                                                                                                                              |
 | `error`                  | `message: string` | Turn failed with a fatal error; the agent parks (a message auto-wakes it) |
-| `failoverChainExhausted` | `reason: "noFailoverConfigured" \| "allBackupsExhausted" \| "allCandidatesUnbuildable" \| "allCandidatesInfeasible", detail: string, transient_retry: { attempt, max_attempts, retry_in_secs }` | Within-tier failover chain exhausted — every profile in the tier is unavailable; `reason` distinguishes the cause (`allCandidatesInfeasible` = every candidate's declared window violated the budget shape — tune `SUMMARY_MAX_TOKENS` / `PINNED_BUDGET_RATIO` or raise the window), `detail` is the original trigger. With `transient_retry` present the agent enters a retrying backoff (the timer re-runs the original prompt); absent, it parks |
+| `failoverChainExhausted` | `reason: "noFailoverConfigured" \| "allBackupsExhausted" \| "allCandidatesUnbuildable" \| "allCandidatesInfeasible", detail: string, transient_retry: { attempt, max_attempts, retry_in_secs }` | Within-set failover chain exhausted — every profile in the set is unavailable; `reason` distinguishes the cause (`allCandidatesInfeasible` = every candidate's declared window violated the budget shape — tune `SUMMARY_MAX_TOKENS` / `PINNED_BUDGET_RATIO` or raise the window), `detail` is the original trigger. With `transient_retry` present the agent enters a retrying backoff (the timer re-runs the original prompt); absent, it parks |
 | `waiting`                | `timeout_secs: u64`                                                                                                                  | Turn ended on `break(wait)`; the agent parks on a wake timer — the timer expiring or any external event resumes it                                                                                         |
 | `interrupted`            | _(none)_                                                                                                                             | Round aborted via interrupt; agent stays alive and idle                                                                                                                                                                                                                                                                                           |
 | `tokenBudgetExceeded`    | `consumed: u64, budget: u64`                                                                                                         | Token budget hit; the agent parks on a re-armed wait timer as a zero-cost recovery probe (waiting, not idle) until the budget is raised                                                                                                 |
@@ -799,4 +803,4 @@ outcomes park the agent (the next incoming message auto-wakes it). Only `cancell
 | `status`          | `message: string`                                                                        | Informational status message                                                                                                       |
 | `approvalUpdated` | `id: string, status: "committed" \| "approved" \| "denied" \| "redeemed" \| "cancelled"` | Approval state changed                                                                                                             |
 | `retrying`        | `attempt: u32, max_attempts: u32, error: string, delay_secs: f64`                        | LLM API retry in progress                                                                                                          |
-| `failover`        | `from: string, to: string, reason: string`                                               | Within-tier failover to the next profile (`from`/`to` are profile ids); non-terminal — the agent stays busy and continues the turn |
+| `failover`        | `from: string, to: string, reason: string`                                               | Within-set failover to the next profile (`from`/`to` are profile ids); non-terminal — the agent stays busy and continues the turn |

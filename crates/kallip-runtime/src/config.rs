@@ -54,10 +54,15 @@ pub struct AgentConfig {
     pub agent_id: Option<AgentId>,
     pub created_by: Option<AgentId>,
     pub permissions: PermissionProfile,
+    /// The profile set this agent resolves against (by name). `None` marks a
+    /// record written before set binding existed — restore tolerates it
+    /// (the agent surfaces as unspecified), but every spawn sets it.
+    pub profile_set: Option<String>,
     /// FS-access permission class (Guest readonly / Normal home-rw) — the static
-    /// baseline axis of the sandbox (§2.3). Defaults to Normal; the tagma clamps
-    /// it to the model tier's ceiling at spawn and re-validates on restore. Unlike
-    /// `role`/`description`, this is a safety invariant, not display metadata.
+    /// baseline axis of the sandbox (§2.3). Defaults to Normal; spawn requires it
+    /// explicitly (never above the supervisor's own class) and restore re-validates
+    /// it against the supervisor chain. Unlike `role`/`description`, this is a
+    /// safety invariant, not display metadata.
     ///
     /// Spelled `permissions_class` (plural) here for historical reasons; the
     /// wire/protocol field that sets it on a subagent spawn is the singular
@@ -84,8 +89,8 @@ impl Default for AgentConfig {
     /// construct a placeholder config for a faulted registry entry (which never
     /// runs, so the runtime knobs are irrelevant) and to keep test literals small.
     /// The identity fields (`agent_id`, `created_by`, `role`, `description`,
-    /// `workspace_root`, `permissions_class`) default to empty/None and are
-    /// overwritten by the caller.
+    /// `workspace_root`, `permissions_class`, `profile_set`) default to
+    /// empty/None and are overwritten by the caller.
     fn default() -> Self {
         Self {
             prompt: None,
@@ -106,6 +111,7 @@ impl Default for AgentConfig {
             agent_id: None,
             created_by: None,
             permissions: PermissionProfile::new(PathBuf::new()),
+            profile_set: None,
             permissions_class: PermissionClass::Normal,
             role: String::new(),
             description: String::new(),
@@ -269,6 +275,7 @@ impl AgentConfig {
             agent_id: None,
             created_by: None,
             permissions: PermissionProfile::new(workspace_root),
+            profile_set: None,
             permissions_class: PermissionClass::default(),
             // Set by the tagma at spawn (CreateAgentRequest) / restore (AgentMeta),
             // like `agent_id` / `created_by` above.

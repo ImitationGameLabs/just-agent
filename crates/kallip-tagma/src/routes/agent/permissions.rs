@@ -1,4 +1,4 @@
-//! Subagent permission validation: supervisor/ceiling checks and the
+//! Subagent permission validation: supervisor checks and the
 //! requested-vs-granted permission-class resolution.
 
 use kallip_common::agentid::AgentId;
@@ -13,14 +13,12 @@ use kallip_runtime::config::{DelegationMode, PermissionClass, PermissionProfile}
 /// overrides (cloned), so monotonic strictness holds at creation. The classify
 /// preset is tagma-global, so it is not part of the per-agent inheritance.
 ///
-/// `requested_class` is the optional explicit downgrade from the spawn request
-/// (already parsed from the wire string by the caller). When `None`, the child
-/// is granted its model tier's ceiling (`ceiling_for_tier`); otherwise the
-/// requested class is treated as a downgrade and is rejected with `forbidden` if
-/// it exceeds the tier ceiling or the supervisor's own granted class. This is
-/// the §2.3 ceiling invariant, enforced explicitly by the tagma as the trusted
-/// reference monitor (depth monotonicity alone does NOT imply it — the tier 0/1
-/// and 2/3 plateaus).
+/// `requested_class` is the explicit class from the spawn request (already
+/// parsed from the wire string by the caller — the field is required on the
+/// wire). It is treated as a downgrade and is rejected with `forbidden` if
+/// it exceeds the supervisor's own granted class. This is the §2.3 class
+/// invariant, enforced explicitly by the tagma as the trusted reference
+/// monitor.
 ///
 /// Lock ordering: `registry` RwLock is held when calling this function.
 /// Inside, `exec_policy.read()` acquires the per-agent `std::sync::RwLock`.
@@ -29,7 +27,7 @@ pub(crate) fn validate_subagent_request(
     identity: &crate::auth::Identity,
     supervisor_id: &AgentId,
     workspace_root: &std::path::Path,
-    requested_class: Option<PermissionClass>,
+    requested_class: PermissionClass,
     requested_mode: DelegationMode,
 ) -> Result<(PermissionProfile, ExecPolicy, PermissionClass), ApiError> {
     let supervisor_entry = registry.require_supervisor(identity, supervisor_id)?;
@@ -92,15 +90,12 @@ pub(crate) fn validate_subagent_request(
 
     let permissions = PermissionProfile::subagent(subagent_ws, supervisor_perms.max_depth);
 
-    // Ceiling invariant (`.draft/design/agent-sandbox.md` §2.3): the child's
-    // granted permission class cannot exceed its model tier's ceiling, nor its
-    // supervisor's granted class. The decision is delegated to
-    // `resolve_granted_class`, a pure function unit-tested in isolation (the
-    // depth monotonicity alone does NOT imply the ceiling monotonicity — tier
-    // 0/1 share Normal, 2/3 share Guest — so these are explicit checks).
-    let ceiling = PermissionClass::ceiling_for_tier(permissions.depth());
+    // §2.3 class invariant: the child's granted permission class is
+    // explicit and can only be a downgrade of its supervisor's own
+    // granted class. The decision is delegated to
+    // `resolve_granted_class`, a pure function unit-tested in isolation.
     let supervisor_class = supervisor.identity.config.permissions_class;
-    let granted = resolve_granted_class(ceiling, supervisor_class, requested_class)?;
+    let granted = resolve_granted_class(supervisor_class, requested_class)?;
 
     // FullHandoff transfers the supervisor's workspace WRITE-lock to the child,
     // so the child must be Normal (a Guest is readonly: it skips the workspace
@@ -127,48 +122,33 @@ pub(crate) fn validate_subagent_request(
     Ok((permissions, exec_policy, granted))
 }
 
-/// Parse the optional `permission_class` wire string (lowercase `"normal"` /
+/// Parse the required `permission_class` wire string (lowercase `"normal"` /
 /// `"guest"`) into a typed class. A client spelling error is a `400 Bad
 /// Request` here — distinct from the `403 Forbidden` the reference monitor
-/// returns for a class that parses fine but exceeds the ceiling/supervisor.
-pub(crate) fn parse_requested_class(
-    raw: &Option<String>,
-) -> Result<Option<PermissionClass>, ApiError> {
+/// returns for a class that parses fine but exceeds the supervisor's.
+pub(crate) fn parse_requested_class(raw: &str) -> Result<PermissionClass, ApiError> {
     use std::str::FromStr;
-    match raw {
-        None => Ok(None),
-        Some(s) => Ok(Some(
-            PermissionClass::from_str(s).map_err(|e| ApiError::bad_request(e.to_string()))?,
-        )),
-    }
+    PermissionClass::from_str(raw).map_err(|e| ApiError::bad_request(e.to_string()))
 }
 
-/// Pure reference-monitor decision for the §2.3 ceiling invariant, separated
+/// Pure reference-monitor decision for the §2.3 class invariant, separated
 /// from `validate_subagent_request` so it can be unit-tested without building
 /// a full `Agent`/registry. Returns the class to actually grant.
 ///
-/// - `None` requested -> grant the tier `ceiling` (historical default).
-/// - An explicit request is a **downgrade only**: anything above the ceiling or
-///   the supervisor's own granted class is rejected with `forbidden`, never
-///   silently clamped, so a caller mistake surfaces loudly. Because the gate
-///   compares granted (not ceiling) classes, a supervisor that was itself
-///   downgraded can no longer grant a child at its tier's default ceiling — the
-///   intended "weak model can never escalate" property.
+/// The class is always an explicit request, and a grant can only ever be a
+/// **downgrade**: anything above the supervisor's own granted class is
+/// rejected with `forbidden`, never silently clamped, so a caller mistake
+/// surfaces loudly. Because the gate compares granted classes, a supervisor
+/// that was itself downgraded can no longer grant a child above itself —
+/// the intended "weak supervisor can never escalate" property.
 pub(crate) fn resolve_granted_class(
-    ceiling: PermissionClass,
     supervisor_class: PermissionClass,
-    requested: Option<PermissionClass>,
+    requested: PermissionClass,
 ) -> Result<PermissionClass, ApiError> {
-    let granted = requested.unwrap_or(ceiling);
-    if granted > ceiling {
+    if requested > supervisor_class {
         return Err(ApiError::forbidden(format!(
-            "requested permission class {granted} exceeds tier ceiling {ceiling}"
+            "requested permission class {requested} exceeds supervisor's {supervisor_class}"
         )));
     }
-    if granted > supervisor_class {
-        return Err(ApiError::forbidden(format!(
-            "requested permission class {granted} exceeds supervisor's {supervisor_class}"
-        )));
-    }
-    Ok(granted)
+    Ok(requested)
 }

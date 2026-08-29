@@ -14,7 +14,9 @@ use kallip_common::agentid::AgentId;
 
 use crate::lifecycle::SpawnArgs;
 use crate::state::{AgentEntry, RegistryEntry, SharedState};
-use crate::test_helpers::{install_inbox_store, make_entry_with_rx, make_state_with_spawn};
+use crate::test_helpers::{
+    install_inbox_store, make_entry_with_rx, make_state, make_state_with_spawn,
+};
 
 #[derive(Default)]
 struct Seen {
@@ -138,5 +140,81 @@ async fn slow_path_spawn_failure_leaves_agent_dead_with_conflict_free_state() {
     assert!(
         listed.iter().any(|e| e.body == "hello"),
         "message stays buffered after failed spawn"
+    );
+}
+
+// -- dangling-binding gate (reject before the inbox write) --
+
+/// A live idle agent whose recorded binding does not resolve: the send is
+/// rejected and the message never reaches the inbox (both the notify fast
+/// path and the kick path pass through the gate).
+#[tokio::test]
+async fn delivery_rejected_for_dangling_agent_live_idle() {
+    let state = make_state();
+    install_inbox_store(&state).await;
+    let id = AgentId::random();
+    let (mut entry, _rx) = make_entry_with_rx(None, format!("agent-{id}"));
+    entry.identity.config.profile_set = Some("gone".into());
+    state
+        .registry
+        .write()
+        .await
+        .register(id.clone(), RegistryEntry::Live(entry));
+    state.duty.set(id.clone(), crate::duty::DutyStatus::OnDuty);
+
+    let err = crate::delivery::enqueue_prompt(&state, &id, "hello".to_string(), "operator")
+        .await
+        .expect_err("dangling binding must reject");
+    assert_eq!(err.status, 409);
+    assert!(
+        err.message.contains("no usable profile set"),
+        "{}",
+        err.message
+    );
+
+    let inbox = state.inboxes.get().expect("inbox installed");
+    let listed = inbox.list(&id, &crate::inbox::InboxFilter::default()).await;
+    assert!(
+        listed.is_empty(),
+        "rejected message must not reach the inbox"
+    );
+}
+
+/// The parked kick path is gated the same way: a parked agent with an
+/// unbound record is not kickable, and the message never reaches the inbox.
+#[tokio::test]
+async fn delivery_rejected_for_parked_kick() {
+    let state = make_state();
+    install_inbox_store(&state).await;
+    let id = AgentId::random();
+    let (mut entry, _rx) = make_entry_with_rx(None, format!("agent-{id}"));
+    entry.identity.config.profile_set = None;
+    entry.agent.state.store(
+        crate::state::AgentState::PARKED,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    *entry.agent.parked.lock().unwrap() = Some(crate::state::ParkedSnapshot {
+        reason: kallip_common::protocol::ParkedReason::FatalError {
+            message: "boom".to_string(),
+        },
+        at: std::time::Instant::now(),
+    });
+    state
+        .registry
+        .write()
+        .await
+        .register(id.clone(), RegistryEntry::Live(entry));
+    state.duty.set(id.clone(), crate::duty::DutyStatus::OnDuty);
+
+    let err = crate::delivery::enqueue_prompt(&state, &id, "hello".to_string(), "operator")
+        .await
+        .expect_err("unbound parked agent must not be kickable");
+    assert_eq!(err.status, 409);
+
+    let inbox = state.inboxes.get().expect("inbox installed");
+    let listed = inbox.list(&id, &crate::inbox::InboxFilter::default()).await;
+    assert!(
+        listed.is_empty(),
+        "rejected message must not reach the inbox"
     );
 }

@@ -167,6 +167,31 @@ pub(crate) async fn enqueue_prompt(
     envelope: String,
     source: &str,
 ) -> Result<MessageResponse, ApiError> {
+    // Dangling-binding gate: an agent whose recorded profile-set binding
+    // does not resolve (a record that predates set binding, or one naming
+    // a set the registry no longer offers) cannot be woken — its LLM calls
+    // would all fail. Reject before the inbox write so the message does
+    // not sit in a dead queue; the recovery paths are binding a live set
+    // (the root re-binds the default set at restore) or removing the agent.
+    {
+        let registry = state.registry.read().await;
+        let dangling = registry
+            .get(id)
+            .and_then(|entry| entry.as_live())
+            .is_some_and(|live| {
+                state
+                    .profiles
+                    .load()
+                    .registry
+                    .resolve_recorded_set(live.identity.config.profile_set.as_deref())
+                    .is_err()
+            });
+        if dangling {
+            return Err(ApiError::conflict(
+                "agent has no usable profile set (unbound or unknown); bind a live set or remove the agent",
+            ));
+        }
+    }
     // Push the full message body to the inbox — always. The inbox is the
     // universal message store; the agent pulls undelivered direct messages on
     // wake via the MessagePuller trait.
@@ -327,15 +352,16 @@ pub(crate) async fn enqueue_prompt(
         let (prompt_tx, prompt_rx) = tokio::sync::mpsc::channel(state.prompt_queue_size);
         live.agent.prompt_tx = prompt_tx;
 
-        // Resolve the set purely by depth (positional) — reactivation re-derives the same
-        // way restore does.
+        // Resolve the set from the recorded binding, as restore does. A
+        // dangling binding cannot be reactivated — reject before any
+        // state is swapped.
         let config = live.identity.config.clone();
         let (set_index, set) = {
             let bundle = state.profiles.load();
             let (idx, set) = bundle
                 .registry
-                .select_tier(config.permissions.depth())
-                .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
+                .resolve_recorded_set(config.profile_set.as_deref())
+                .map_err(|e| ApiError::bad_request(format!("{e}")))?;
             (idx, set.clone())
         };
 

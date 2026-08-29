@@ -86,10 +86,10 @@ Scoping notes (server-enforced):
 - `subagent spawn` requires a non-empty `--role`; the tagma rejects subagents
   with an empty role.
 - `subagent spawn --permission-class {normal,guest}` explicitly **downgrades**
-  the subagent's FS-access class below its tier ceiling (e.g. a `normal` parent
-  spawning a read-only `guest` reviewer). The tagma rejects a value above the
-  tier ceiling or the parent's own class with `403`. Omit to grant the tier
-  ceiling. The granted class is shown by `kallip`/`GET /agents/{id}/permissions`.
+  the subagent's FS-access class below the parent's own class (e.g. a `normal`
+  parent spawning a read-only `guest` reviewer). The tagma rejects a value
+  above the parent's class with `403`. The flag is required. The granted class
+  is shown by `kallip`/`GET /agents/{id}/permissions`.
 
 ```bash
 $ kallip subagent list

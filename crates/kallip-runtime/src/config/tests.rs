@@ -5,27 +5,6 @@ use kallip_common::policy::PolicyPreset;
 use kallip_shell::tools::names;
 
 #[test]
-fn permission_class_ceiling_matches_tier_table() {
-    // §2.3: tier 0/1 -> Normal, tier 2/3 -> Guest (the plateaus that mean depth
-    // monotonicity does NOT imply ceiling monotonicity).
-    assert_eq!(
-        PermissionClass::ceiling_for_tier(0),
-        PermissionClass::Normal
-    );
-    assert_eq!(
-        PermissionClass::ceiling_for_tier(1),
-        PermissionClass::Normal
-    );
-    assert_eq!(PermissionClass::ceiling_for_tier(2), PermissionClass::Guest);
-    assert_eq!(PermissionClass::ceiling_for_tier(3), PermissionClass::Guest);
-    // Beyond the table clamps to the last entry (Guest), like select_profile.
-    assert_eq!(
-        PermissionClass::ceiling_for_tier(99),
-        PermissionClass::Guest
-    );
-}
-
-#[test]
 fn permission_class_from_str_display_round_trip() {
     use std::str::FromStr;
     // Lowercase wire/env spelling, both variants round-trip through Display.
@@ -144,6 +123,7 @@ fn set_context_window_leaves_field_unchanged_on_validation_failure() {
         agent_id: None,
         created_by: None,
         permissions: PermissionProfile::new(PathBuf::from("/tmp")),
+        profile_set: None,
         permissions_class: PermissionClass::default(),
         role: String::new(),
         description: String::new(),
@@ -185,6 +165,7 @@ fn try_context_window_validates_without_mutating() {
         agent_id: None,
         created_by: None,
         permissions: PermissionProfile::new(PathBuf::from("/tmp")),
+        profile_set: None,
         permissions_class: PermissionClass::default(),
         role: String::new(),
         description: String::new(),
@@ -226,6 +207,7 @@ fn pinned_budget_matches_effective_times_ratio() {
         agent_id: None,
         created_by: None,
         permissions: PermissionProfile::new(PathBuf::from("/tmp")),
+        profile_set: None,
         permissions_class: PermissionClass::default(),
         role: String::new(),
         description: String::new(),

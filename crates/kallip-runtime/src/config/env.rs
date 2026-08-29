@@ -31,8 +31,8 @@ pub fn policy_preset_from_env() -> PolicyPreset {
 ///
 /// Root-only test knob, parallel to [`policy_preset_from_env`]: read in the
 /// tagma's root-create branch, never on the subagent or restore paths
-/// (subagents derive their class from `ceiling_for_tier`; restore uses the
-/// persisted `meta.json`). Accepts lowercase `"normal"` / `"guest"` — the env-var
+/// (subagents carry the explicit class from their spawn request; restore
+/// uses the persisted `meta.json`). Accepts lowercase `"normal"` / `"guest"` — the env-var
 /// convention, distinct from the PascalCase serde form persisted in `meta.json`.
 /// Panics on an invalid value, matching [`policy_preset_from_env`]'s misconfig behavior.
 pub fn permission_class_from_env() -> PermissionClass {

@@ -57,15 +57,15 @@ supervisor).
 
 #### Permission class (FS-access downgrade)
 
-A subagent spawn (`POST /agents` with `created_by`) accepts an optional
+A subagent spawn (`POST /agents` with `created_by`) requires a
 `permission_class` field (`"normal"` / `"guest"`) that explicitly **downgrades**
-the child's FS-access class below its model tier's ceiling. The tagma is the
-reference monitor: a value above the tier ceiling or the supervisor's own
-granted class is rejected with `403 Forbidden` — downgrade only, never an
-escalation. A `normal` root may thus spawn a read-only `guest` reviewer. This
-field is subagent-only; the tagma's own root takes its class at startup from
-`KALLIP_ROOT_AGENT_PERMISSION_CLASS` (see [env.md](env.md)). The granted class is
-reported by `GET /agents/{id}/permissions` (see [tagma-api.md](tagma-api.md)).
+the child's FS-access class below the supervisor's own granted class. The tagma
+is the reference monitor: a value above the supervisor's class is rejected with
+`403 Forbidden` — downgrade only, never an escalation. A `normal` root may thus
+spawn a read-only `guest` reviewer. This field is subagent-only; the tagma's
+own root takes its class at startup from `KALLIP_ROOT_AGENT_PERMISSION_CLASS`
+(see [env.md](env.md)). The granted class is reported by
+`GET /agents/{id}/permissions` (see [tagma-api.md](tagma-api.md)).
 
 ### Context and policy
 

@@ -81,6 +81,7 @@ pub async fn create_agent(
         .unwrap_or(kallip_common::protocol::DELEGATION_CARVE_OUT)
         .parse::<kallip_runtime::config::DelegationMode>()
         .map_err(ApiError::bad_request)?;
+    config.profile_set = Some(req.profile_set.clone());
     // Fleet discipline: a subagent spawn must carry a non-empty role so a
     // superior can tell its subagents apart.
     if config.role.trim().is_empty() {
@@ -98,11 +99,10 @@ pub async fn create_agent(
     persistence::ensure_workspace_disjoint(&config.workspace_root)
         .map_err(|e| ApiError::conflict(e.to_string()))?;
 
-    // Parse the optional downgrade request once, before taking the lock, so a
-    // bad spelling is a cheap client-side 400 rather than a held-write-lock
-    // rejection. The tagma is the reference monitor: a value is accepted only
-    // as a downgrade, clamped to the tier ceiling and supervisor class inside
-    // validate_subagent_request.
+    // Parse the class request once, before taking the lock, so a bad
+    // spelling is a cheap client-side 400 rather than a held-write-lock
+    // rejection. The tagma is the reference monitor: the value is accepted
+    // only as a downgrade inside validate_subagent_request.
     let requested_class = parse_requested_class(&req.permission_class)?;
     // Subagent head: validate supervisor + delegation constraints and pre-reserve
     // the slot under write lock to eliminate TOCTOU. The tagma-global preset
@@ -203,6 +203,12 @@ pub async fn ensure_root_agent(state: &SharedState) -> anyhow::Result<()> {
     let mut config = AgentConfig::load(None, Vec::new(), None)?;
     config.agent_id = Some(id.clone());
     config.permissions_class = permission_class_from_env();
+    // Bind the root to the default set by name (the root is the default
+    // set's consumer by definition; restore re-derives an unbound root
+    // record the same way). With no sets configured yet the binding stays
+    // empty and Materialize falls back to the unconfigured placeholder.
+    let default_set = state.profiles.load().config.default.clone();
+    config.profile_set = (!default_set.is_empty()).then_some(default_set);
     config.role = "root".to_string();
     config.description = "Tagma-owned root agent".to_string();
     // Reject any workspace that overlaps the tagma data tree (e.g. a tagma

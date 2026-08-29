@@ -2,9 +2,9 @@
 //! enforcement.
 //!
 //! This is the **mechanism contract** at the seam between the runtime (which
-//! owns agent policy — permission classes, tiers, the dirlock coordinator) and
+//! owns agent policy — permission classes, the dirlock coordinator) and
 //! the shell (which owns enforcement). It deliberately carries no agent
-//! identity, tier, or policy labels: the shell crate stays decoupled from the
+//! identity or policy labels: the shell crate stays decoupled from the
 //! runtime, and the runtime maps its policy onto these mechanism types when it
 //! builds the snapshot closure (`.draft/design/agent-sandbox.md` §6.1).
 //!

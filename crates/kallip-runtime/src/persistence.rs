@@ -129,27 +129,10 @@ pub fn agent_dir(agent_id: &AgentId) -> Result<PathBuf> {
 }
 
 /// Create agent directory and write initial meta.json.
-pub fn create_agent_dir(
-    agent_id: &AgentId,
-    workspace_root: &Path,
-    created_by: Option<&AgentId>,
-    role: &str,
-    description: &str,
-    permissions_class: crate::config::PermissionClass,
-    delegation_mode: crate::config::DelegationMode,
-) -> Result<PathBuf> {
+pub fn create_agent_dir(agent_id: &AgentId, meta: AgentMeta) -> Result<PathBuf> {
     let dir = agent_dir(agent_id)?;
     std::fs::create_dir_all(&dir)?;
 
-    let meta = AgentMeta {
-        workspace_root: workspace_root.to_path_buf(),
-
-        created_by: created_by.cloned(),
-        role: role.to_owned(),
-        description: description.to_owned(),
-        permissions_class,
-        delegation_mode,
-    };
     atomic_write(
         &dir.join("meta.json"),
         &serde_json::to_string_pretty(&meta)?,
@@ -412,11 +395,17 @@ pub struct AgentMeta {
     #[serde(default)]
     pub description: String,
     /// FS-access permission class (Guest readonly / Normal home-rw). A safety
-    /// invariant — persisted so restore can re-validate the ceiling chain (unlike
-    /// `role`/`description`, which are display-only). Defaults to Normal for legacy
-    /// `meta.json` files written before this field existed.
+    /// invariant — persisted so restore can re-validate it against the
+    /// supervisor chain (unlike `role`/`description`, which are display-only).
+    /// Defaults to Normal for legacy `meta.json` files written before this
+    /// field existed.
     #[serde(default)]
     pub permissions_class: crate::config::PermissionClass,
+    /// Profile-set binding (by name), resolved at spawn and re-read on
+    /// restore. `None` marks a record written before set binding existed;
+    /// restore surfaces such agents as unspecified instead of guessing.
+    #[serde(default)]
+    pub profile_set: Option<String>,
     /// Workspace delegation mode (`carve_out` subdir vs `full_handoff`
     /// whole-workspace). Persisted so restore reproduces the supervisor lock
     /// transfer for a FullHandoff child. Defaults to CarveOut for legacy metas.
@@ -1840,6 +1829,7 @@ mod tests {
             created_by: None,
             role: "researcher".into(),
             description: "gathers sources".into(),
+            profile_set: Some("research".into()),
             permissions_class: crate::config::PermissionClass::Guest,
             delegation_mode: crate::config::DelegationMode::CarveOut,
         };
@@ -1848,6 +1838,7 @@ mod tests {
         assert_eq!(back.workspace_root, PathBuf::from("/app"));
         assert_eq!(back.role, "researcher");
         assert_eq!(back.description, "gathers sources");
+        assert_eq!(back.profile_set.as_deref(), Some("research"));
         assert_eq!(
             back.permissions_class,
             crate::config::PermissionClass::Guest
@@ -1880,6 +1871,7 @@ mod tests {
             created_by: None,
             role: String::new(),
             description: String::new(),
+            profile_set: None,
             permissions_class: crate::config::PermissionClass::Guest,
             delegation_mode: crate::config::DelegationMode::FullHandoff,
         };
@@ -2025,12 +2017,15 @@ mod tests {
             let id = AgentId::from("archive-rt-1".to_owned());
             let dir = create_agent_dir(
                 &id,
-                Path::new("/app"),
-                None,
-                "",
-                "",
-                crate::config::PermissionClass::Normal,
-                crate::config::DelegationMode::CarveOut,
+                AgentMeta {
+                    workspace_root: Path::new("/app").to_path_buf(),
+                    created_by: None,
+                    role: String::new(),
+                    description: String::new(),
+                    profile_set: None,
+                    permissions_class: crate::config::PermissionClass::Normal,
+                    delegation_mode: crate::config::DelegationMode::CarveOut,
+                },
             )
             .unwrap();
 
@@ -2079,12 +2074,15 @@ mod tests {
             let id = AgentId::from("scan-ignores-1".to_owned());
             create_agent_dir(
                 &id,
-                Path::new("/app"),
-                None,
-                "",
-                "",
-                crate::config::PermissionClass::Normal,
-                crate::config::DelegationMode::CarveOut,
+                AgentMeta {
+                    workspace_root: Path::new("/app").to_path_buf(),
+                    created_by: None,
+                    role: String::new(),
+                    description: String::new(),
+                    profile_set: None,
+                    permissions_class: crate::config::PermissionClass::Normal,
+                    delegation_mode: crate::config::DelegationMode::CarveOut,
+                },
             )
             .unwrap();
             archive_agent_dir(&id).unwrap();
@@ -2104,12 +2102,15 @@ mod tests {
             let id = AgentId::from("scan-refused-1".to_owned());
             create_agent_dir(
                 &id,
-                Path::new("/app"),
-                None,
-                "",
-                "",
-                crate::config::PermissionClass::Normal,
-                crate::config::DelegationMode::CarveOut,
+                AgentMeta {
+                    workspace_root: Path::new("/app").to_path_buf(),
+                    created_by: None,
+                    role: String::new(),
+                    description: String::new(),
+                    profile_set: None,
+                    permissions_class: crate::config::PermissionClass::Normal,
+                    delegation_mode: crate::config::DelegationMode::CarveOut,
+                },
             )
             .unwrap();
             // Corrupt the meta so the directory cannot be scanned.
@@ -2141,22 +2142,28 @@ mod tests {
             let sub = AgentId::from("disk-sub-1".to_owned());
             create_agent_dir(
                 &root,
-                Path::new("/r"),
-                None,
-                "root",
-                "",
-                crate::config::PermissionClass::Normal,
-                crate::config::DelegationMode::CarveOut,
+                AgentMeta {
+                    workspace_root: Path::new("/r").to_path_buf(),
+                    created_by: None,
+                    role: "root".to_string(),
+                    description: String::new(),
+                    profile_set: None,
+                    permissions_class: crate::config::PermissionClass::Normal,
+                    delegation_mode: crate::config::DelegationMode::CarveOut,
+                },
             )
             .unwrap();
             create_agent_dir(
                 &sub,
-                Path::new("/s"),
-                Some(&root),
-                "sub",
-                "",
-                crate::config::PermissionClass::Normal,
-                crate::config::DelegationMode::CarveOut,
+                AgentMeta {
+                    workspace_root: Path::new("/s").to_path_buf(),
+                    created_by: Some(root.clone()),
+                    role: "sub".to_string(),
+                    description: String::new(),
+                    profile_set: None,
+                    permissions_class: crate::config::PermissionClass::Normal,
+                    delegation_mode: crate::config::DelegationMode::CarveOut,
+                },
             )
             .unwrap();
             assert_eq!(
@@ -2201,12 +2208,15 @@ mod tests {
             let id = AgentId::from("rollback-1".to_owned());
             let dir = create_agent_dir(
                 &id,
-                Path::new("/app"),
-                None,
-                "",
-                "",
-                crate::config::PermissionClass::Normal,
-                crate::config::DelegationMode::CarveOut,
+                AgentMeta {
+                    workspace_root: Path::new("/app").to_path_buf(),
+                    created_by: None,
+                    role: String::new(),
+                    description: String::new(),
+                    profile_set: None,
+                    permissions_class: crate::config::PermissionClass::Normal,
+                    delegation_mode: crate::config::DelegationMode::CarveOut,
+                },
             )
             .unwrap();
             // Rollback of a never-alive agent removes the live dir directly,
@@ -2236,12 +2246,15 @@ mod tests {
             let id = AgentId::from("collision-1".to_owned());
             let dir = create_agent_dir(
                 &id,
-                Path::new("/app"),
-                None,
-                "",
-                "",
-                crate::config::PermissionClass::Normal,
-                crate::config::DelegationMode::CarveOut,
+                AgentMeta {
+                    workspace_root: Path::new("/app").to_path_buf(),
+                    created_by: None,
+                    role: String::new(),
+                    description: String::new(),
+                    profile_set: None,
+                    permissions_class: crate::config::PermissionClass::Normal,
+                    delegation_mode: crate::config::DelegationMode::CarveOut,
+                },
             )
             .unwrap();
             // Pre-create the archived destination (an anomaly: UUIDs should not collide).
