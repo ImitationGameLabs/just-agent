@@ -390,6 +390,7 @@ pub(crate) async fn watch_agent_task(
             };
             *registry.get_mut(&agent_id).expect("entry borrowed above") =
                 RegistryEntry::Faulted(faulted);
+            tracing::error!(id = %agent_id, reason = %detail, "agent task panicked, entry marked faulted");
         }
     }
 }
