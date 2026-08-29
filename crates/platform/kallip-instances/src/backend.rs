@@ -108,7 +108,13 @@ impl InstanceBackend for UdsBackend {
     async fn start(&self, slug: String) -> Result<Spawned, BackendError> {
         // The daemon answers start with the shared spawn-shaped launch
         // payload, so the unwrap is verbatim.
-        let wire = self.client.call(RequestBody::Start { slug }).await?;
+        let wire = self
+            .client
+            .call(RequestBody::Start {
+                slug,
+                env: Vec::new(),
+            })
+            .await?;
         unwrap_spawn(wire)
     }
 

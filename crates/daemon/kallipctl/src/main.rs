@@ -1,6 +1,6 @@
 //! kallipctl: operator-side management CLI for the kallip local daemon.
 //!
-//! Four verbs over the daemon's UDS protocol; the socket's 0600 mode is the
+//! Five verbs over the daemon's UDS protocol; the socket's 0600 mode is the
 //! auth. Deliberately NOT part of the `kallip` command family: `kallip` is
 //! the in-instance runtime, `kallipctl` manages instances from outside
 //! (separate installation surfaces).
@@ -35,12 +35,23 @@ enum Command {
         /// Absolute path of the instance workspace.
         workspace: String,
         /// Extra env for the instance, KEY=VALUE (repeatable); only
-        /// KALLIP_* keys and RUST_LOG are accepted by the daemon.
+        /// KALLIP_* keys plus RUST_LOG and PATH are accepted by the daemon.
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
     },
     /// Terminate an instance (TERM, grace, KILL).
     Stop { slug: String },
+    /// Relaunch a stopped or dead instance under its recorded workspace
+    /// and env.
+    Start {
+        /// Instance slug.
+        slug: String,
+        /// One-shot env overlay, KEY=VALUE (repeatable); applied to this
+        /// launch only, never written to the instance's meta.json.
+        /// Same allowlist as spawn's env.
+        #[arg(short = 'e', long = "env")]
+        env: Vec<String>,
+    },
     /// List managed instances.
     List,
     /// Daemon health, or one instance's health by slug.
@@ -74,6 +85,7 @@ async fn main() -> Result<()> {
         });
     let client = DaemonClient::new(socket);
 
+    let started = matches!(cli.command, Command::Start { .. });
     let body = match cli.command {
         Command::Spawn {
             slug,
@@ -85,6 +97,7 @@ async fn main() -> Result<()> {
             env,
         },
         Command::Stop { slug } => RequestBody::Stop { slug },
+        Command::Start { slug, env } => RequestBody::Start { slug, env },
         Command::List => RequestBody::List,
         Command::Health { slug } => RequestBody::Health { slug },
     };
@@ -92,15 +105,16 @@ async fn main() -> Result<()> {
         .call(body)
         .await
         .context("talking to the kallip daemon")?;
-    print(response)
+    print(response, started)
 }
 
-fn print(response: Response) -> Result<()> {
+fn print(response: Response, started: bool) -> Result<()> {
     match response.body {
         ResponseBody::Ok { payload } => {
             match payload {
                 OkPayload::Spawn { slug, pid, port } => {
-                    println!("spawned {slug} (pid {pid}, port {port})");
+                    let verb = if started { "started" } else { "spawned" };
+                    println!("{verb} {slug} (pid {pid}, port {port})");
                 }
                 OkPayload::Stop { slug } => {
                     println!("stopped {slug}");
@@ -144,7 +158,7 @@ fn print(response: Response) -> Result<()> {
             // Errors exit non-zero with a human line; stable codes are the
             // machine interface for scripting.
             let prefix = match code {
-                ErrorCode::SlugTaken => "slug already exists",
+                ErrorCode::SlugTaken => "instance conflict",
                 ErrorCode::WorkspaceOverlap => "workspace overlaps an existing instance",
                 ErrorCode::InvalidSpawnInput => "invalid spawn input",
                 ErrorCode::SpawnTimeout => "spawn timed out (rolled back)",

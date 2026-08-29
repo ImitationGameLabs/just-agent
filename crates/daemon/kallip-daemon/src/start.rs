@@ -110,9 +110,12 @@ fn replay_env(meta: &scan::InstanceMeta, instance_dir: &Path) -> Vec<String> {
 
 /// Blocking relaunch. `pid_is_tagma` is injected so tests can fake the
 /// liveness verdict without a real process (mirroring stop).
+/// `env_overrides` is a one-shot overlay validated like spawn's request
+/// env and applied for this launch only.
 pub fn start(
     data_root: &Path,
     slug: &str,
+    env_overrides: &[String],
     timeout: Duration,
     pid_is_tagma: &dyn Fn(u32) -> bool,
 ) -> Result<(u32, u16), StartError> {
@@ -121,6 +124,9 @@ pub fn start(
             "slug {slug:?} does not match [a-z0-9][a-z0-9-]*"
         )));
     }
+    // Same rules as spawn's request env, checked before any filesystem
+    // work: what could not be sent to spawn cannot overlay a replay.
+    validate_user_env(env_overrides)?;
     let instance_dir = data_root.join(slug);
     let Some(meta) = scan::read_meta(&instance_dir) else {
         return Err(StartError::NotFound(slug.to_string()));
@@ -140,7 +146,12 @@ pub fn start(
     validate_user_env(&meta.env)?;
     // material that is provably spent (see replay_env).
     let replay = replay_env(&meta, &instance_dir);
-    match launch(&instance_dir, Path::new(&workspace), &replay, timeout) {
+    // One-shot overlay: appended after the replay so compose_launch_env's
+    // map composition lets the later pair win. Not written back — the
+    // persisted snapshot stays the spawn-time truth.
+    let mut launch_env = replay;
+    launch_env.extend(env_overrides.iter().cloned());
+    match launch(&instance_dir, Path::new(&workspace), &launch_env, timeout) {
         Ok(started) => Ok(started),
         Err(SpawnError::Timeout { timeout_secs }) => Err(StartError::Timeout { timeout_secs }),
         Err(SpawnError::Internal(e)) => Err(StartError::Internal(e)),
@@ -225,5 +236,36 @@ mod tests {
         write_meta(dir.path(), &value);
 
         assert_eq!(replay_env(&value, dir.path()), ["KALLIP_OPERATOR_TOKEN=t"]);
+    }
+
+    #[test]
+    fn start_rejects_overlay_key_outside_the_allowlist() {
+        // Validation fires before any filesystem work, so the path is
+        // never read and no meta.json is needed.
+        let error = start(
+            std::path::Path::new("."),
+            "instance-1",
+            &["SOME_OTHER_KEY=v".to_string()],
+            Duration::from_secs(1),
+            &|_| false,
+        )
+        .expect_err("non-allowlisted overlay key");
+        assert!(error.to_string().contains("allowlisted"), "{error}");
+    }
+
+    #[test]
+    fn start_rejects_overlay_on_daemon_owned_key() {
+        let error = start(
+            std::path::Path::new("."),
+            "instance-1",
+            &["KALLIP_TAGMA_ADDR=127.0.0.1:1".to_string()],
+            Duration::from_secs(1),
+            &|_| false,
+        )
+        .expect_err("reserved overlay key");
+        assert!(
+            error.to_string().contains("cannot be overridden"),
+            "{error}"
+        );
     }
 }

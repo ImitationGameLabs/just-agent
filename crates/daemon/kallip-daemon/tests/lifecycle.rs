@@ -196,7 +196,10 @@ fn spawn_health_stop_round_trip() {
 
     // Start: relaunch from the surviving tree. The fresh pid proves a new
     // process (not the old one lingering); the health gate re-opens.
-    let started = tokio_block_on(client.call(RequestBody::Start { slug: "e2e".into() }));
+    let started = tokio_block_on(client.call(RequestBody::Start {
+        slug: "e2e".into(),
+        env: vec!["KALLIP_TAGMA_LOG_TO_STDERR=1".into()],
+    }));
     let OkPayload::Spawn {
         slug: started_slug,
         pid: started_pid,
@@ -219,15 +222,23 @@ fn spawn_health_stop_round_trip() {
         meta_after["env"][0],
         serde_json::json!("KALLIP_OPERATOR_TOKEN=test-op-token")
     );
+    assert_eq!(
+        meta_after["env"].as_array().expect("env array").len(),
+        4,
+        "one-shot overlay is not persisted to meta.json"
+    );
     assert!(
         instance_dir.join("credentials").exists(),
         "credentials survive"
     );
 
     // Starting the now-running instance again is the conflict case.
-    let code = match tokio_block_on(client.call(RequestBody::Start { slug: "e2e".into() }))
-        .expect("double start response")
-        .body
+    let code = match tokio_block_on(client.call(RequestBody::Start {
+        slug: "e2e".into(),
+        env: Vec::new(),
+    }))
+    .expect("double start response")
+    .body
     {
         ResponseBody::Err { code, .. } => code,
         other => panic!("expected slug_taken conflict, got {other:?}"),
@@ -306,6 +317,7 @@ fn start_filters_consumed_enrollment_code() {
 
     let started = tokio_block_on(client.call(RequestBody::Start {
         slug: "stale-code".into(),
+        env: Vec::new(),
     }));
     let OkPayload::Spawn {
         pid: started_pid,

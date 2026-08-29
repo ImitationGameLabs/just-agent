@@ -145,7 +145,7 @@ impl Daemon {
                     Err(join_error) => err(ErrorCode::Internal, format!("stop task: {join_error}")),
                 }
             }
-            RequestBody::Start { slug } => {
+            RequestBody::Start { slug, env } => {
                 let slug_out = slug.clone();
                 // Same blocking profile as spawn: start waits up to 30s for
                 // the relaunched tagma's runtime.json.
@@ -153,7 +153,13 @@ impl Daemon {
                 match tokio::task::spawn_blocking({
                     let data_root = self.data_root.clone();
                     move || {
-                        crate::start::start(&data_root, &slug, timeout, &crate::scan::pid_is_tagma)
+                        crate::start::start(
+                            &data_root,
+                            &slug,
+                            &env,
+                            timeout,
+                            &crate::scan::pid_is_tagma,
+                        )
                     }
                 })
                 .await

@@ -294,6 +294,7 @@ fn restart_reharvests_following_profile_changes() {
         &client,
         RequestBody::Start {
             slug: "harvest".to_owned(),
+            env: Vec::new(),
         },
     ))
     else {
@@ -304,6 +305,40 @@ fn restart_reharvests_following_profile_changes() {
         get(&read_environ(relaunched), "KALLIP_HARVEST_MARKER"),
         Some("stage-two"),
         "the relaunch harvested the changed profile"
+    );
+    stop_and_wait(&client, relaunched);
+}
+
+#[test]
+fn restart_overlay_reaches_the_relaunched_env() {
+    if !harvest_bash_exists() {
+        eprintln!("skip: no /bin/bash on this host");
+        return;
+    }
+    let home = fixture_home();
+    let daemon = start_daemon_with_home(home.path());
+    let client = DaemonClient::new(&daemon.socket);
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+
+    let pid = spawn_instance(&client, workspace.path(), &["PATH=/persisted-bin"]);
+    stop_and_wait(&client, pid);
+
+    let OkPayload::Spawn {
+        pid: relaunched, ..
+    } = expect_ok(exchange(
+        &client,
+        RequestBody::Start {
+            slug: "harvest".to_owned(),
+            env: vec!["PATH=/overlay-bin".to_owned()],
+        },
+    ))
+    else {
+        panic!("expected start payload");
+    };
+    assert_eq!(
+        get(&read_environ(relaunched), "PATH"),
+        Some("/overlay-bin"),
+        "the one-shot overlay wins over the persisted pair"
     );
     stop_and_wait(&client, relaunched);
 }
@@ -335,6 +370,7 @@ fn harvested_env_is_not_persisted() {
         &client,
         RequestBody::Start {
             slug: "harvest".to_owned(),
+            env: Vec::new(),
         },
     ))
     else {

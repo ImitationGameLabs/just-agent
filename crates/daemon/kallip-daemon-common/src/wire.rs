@@ -47,8 +47,15 @@ pub enum RequestBody {
     Stop { slug: String },
     /// Relaunch an existing stopped or dead instance from its persisted
     /// tree: workspace and user env reload from meta.json; the surviving
-    /// credentials are adopted by the fresh process.
-    Start { slug: String },
+    /// credentials are adopted by the fresh process. `env` is a one-shot
+    /// overlay for this launch only — validated like spawn's env and
+    /// not written back to meta.json. `#[serde(default)]` keeps
+    /// pre-field payloads (the instances backend) parsing.
+    Start {
+        slug: String,
+        #[serde(default)]
+        env: Vec<String>,
+    },
     /// List all managed instances (directory scan).
     List,
     /// One instance's health, or omit `slug` for the daemon itself.
@@ -252,6 +259,32 @@ mod tests {
         let back = decode_request(&line).expect("decode");
         assert_eq!(back.v, PROTOCOL_VERSION);
         assert_eq!(back.body, body);
+    }
+
+    #[test]
+    fn start_request_round_trips_with_env() {
+        let body = RequestBody::Start {
+            slug: "team-a".into(),
+            env: vec!["KALLIP_TAGMA_LOG_TO_STDERR=1".into()],
+        };
+        let line = encode_request(&request(body.clone())).expect("encode");
+        let back = decode_request(&line).expect("decode");
+        assert_eq!(back.body, body);
+    }
+
+    #[test]
+    fn start_request_without_env_defaults_empty() {
+        // The instances backend predates the field; its field-less
+        // payload must keep parsing (additive evolution, no `v` bump).
+        let line = r#"{"v":1,"type":"start","slug":"team-a"}"#;
+        let back = decode_request(line).expect("decode");
+        match back.body {
+            RequestBody::Start { slug, env } => {
+                assert_eq!(slug, "team-a");
+                assert!(env.is_empty());
+            }
+            other => panic!("expected start, got {other:?}"),
+        }
     }
 
     #[test]
