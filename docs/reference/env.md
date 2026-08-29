@@ -84,7 +84,9 @@ marker back into the file — inserted ahead of the first table header, so
 comments, key order, and `${VAR}` spellings survive; several sets with no
 marker is a config error (name one explicitly). A hand-written empty
 marker (`default = ""`) reads back as unmarked and takes the single-set
-auto-mark path rather than erroring. An empty `sets` table boots
+auto-mark path rather than erroring. In that corner the file keeps its
+explicit empty marker — the auto-mark write-back is skipped, so the
+resolved default is memory-only. An empty `sets` table boots
 profile-less.
 
 The selected set's first profile is the active model; the remaining profiles

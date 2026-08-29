@@ -54,6 +54,10 @@ the full authorization matrix, see [auth.md](auth.md).
 | `PUT`    | `/agents/{id}/profile-set`        | Rebind an agent to another named set       | operator / superior          |
 | `PUT`    | `/profiles/default`               | Transfer the default-set marker            | operator                     |
 | `DELETE` | `/profiles/sets/{name}`           | Remove a set (`?force=true` interrupts)    | operator                     |
+| `GET`    | `/profiles`                       | Read the profile config (masked)           | operator                     |
+| `PUT`    | `/profiles`                       | Validate, persist, hot-swap the registry   | operator                     |
+| `POST`   | `/profiles/apply`                 | Push the registry to all live agents       | operator                     |
+| `POST`   | `/profiles/probe`                 | Trial-probe candidate endpoints and sets   | operator                     |
 | `GET`    | `/budget`                         | Get tagma-wide token budget status         | any                          |
 | `POST`   | `/budget`                         | Adjust or set tagma-wide token budget      | operator                     |
 | `GET`    | `/approvals`                      | List approvals                             | any (filtered by scope)      |
@@ -326,7 +330,7 @@ Status: `200 OK`
 ## Profile sets
 
 Profile sets are the named model groups of `profiles.toml` (see
-[env.md](env.md)). Three endpoints manage them at runtime; the file remains
+[env.md](env.md)). Seven endpoints manage them at runtime; the file remains
 the source of truth, and every mutation persists to disk before it takes
 effect in memory.
 
@@ -398,6 +402,50 @@ exists again under that name, the agent is rebound via
 write the sweep re-scans the registry — a spawn that landed inside the
 interrupt-to-persist window fails the whole delete with `409` (retry the
 same command; nothing was removed).
+
+### `GET /profiles` — Read the profile config
+
+Operator only (the config carries API keys). Returns the current config
+in the same shape as the profiles config file, with `api_key` values
+masked.
+
+### `PUT /profiles` — Validate, persist, hot-swap
+
+Operator only. Accepts a full config in the file's schema. Each
+endpoint's `api_key` is tri-state on the wire: `null` keeps the live
+key, the masked form echoed back also counts as keep, and a new string
+replaces it; `base_url` follows the same null-keeps rule (an empty
+string resets it to the family default). The request is merged against
+the live config and validated by building backends and a trial
+registry; on success the config is written to disk, the in-memory
+registry is swapped as a unit, and running agents are unaffected until
+`POST /profiles/apply` (or their next restore). Responds with the
+merged masked config.
+
+### `POST /profiles/apply` — Push the registry to live agents
+
+Operator only. For each live agent, resolves its recorded set name
+against the current registry and queues a profile reset — the agent
+rebuilds its failover chain at its next wake-up. An unbound root
+instead derives its binding from the default set (recorded in memory
+only; restore re-derives it). Responds with counts:
+
+```json
+{ "applied": 3, "skipped": 1 }
+```
+
+`applied` counts live agents that received the signal; `skipped` counts
+faulted entries and live agents whose recorded set no longer resolves.
+
+### `POST /profiles/probe` — Trial-probe candidate definitions
+
+Operator only. Builds throwaway backends from the request — inline
+`endpoints` (`api_key: null` reuses the live key for that provider id,
+the same draft semantics as the masked PUT) and named `sets` whose
+profiles are checked against the fetched model catalogs — and probes
+them without registering anything, so a candidate config can be
+validated before a PUT. Capped at 64 endpoints and 64 set profiles per
+request. Responds with per-endpoint results and per-set reports.
 
 ## External chat-room API
 
@@ -883,3 +931,4 @@ outcomes park the agent (the next incoming message auto-wakes it). Only `cancell
 | `approvalUpdated` | `id: string, status: "committed" \| "approved" \| "denied" \| "redeemed" \| "cancelled"` | Approval state changed                                                                                                             |
 | `retrying`        | `attempt: u32, max_attempts: u32, error: string, delay_secs: f64`                        | LLM API retry in progress                                                                                                          |
 | `failover`        | `from: string, to: string, reason: string`                                               | Within-set failover to the next profile (`from`/`to` are profile ids); non-terminal — the agent stays busy and continues the turn |
+| `streamReset`    | `error: string, attempt: u32, max_attempts: u32, delay_secs: f64`                        | LLM stream dropped mid-turn (transport error after content started flowing); the runner retries from scratch — discard partial content since the last boundary. Non-terminal; mirrors `retrying` plus the carried `error` |

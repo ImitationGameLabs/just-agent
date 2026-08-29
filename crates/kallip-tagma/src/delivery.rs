@@ -20,7 +20,7 @@ use crate::state::{RegistryEntry, SharedState};
 
 /// Deliver `text` to agent `id` as `identity`, attaching the `[From: ...]`
 /// header, enqueuing on the live prompt channel, and reactivating a dead agent.
-/// The HTTP [`send_message`][crate::routes::message::send_message] handler and the in-process relay share this single
+/// The HTTP `send_message` handler and the in-process relay share this single
 /// seam so reactivation + header formatting cannot drift.
 ///
 /// `sender` is the user-facing wire sender (`Participant`): the relay passes

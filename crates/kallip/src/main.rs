@@ -544,7 +544,7 @@ fn resolve_id(id: Option<AgentId>) -> Result<AgentId, anyhow::Error> {
 }
 
 /// `--id`-style target: the env default (a uuid) passes through; an explicit
-/// value may be a role and goes through ref resolution like any <ID>.
+/// value may be a role and goes through ref resolution like any `<ID>`.
 async fn resolve_id_ref(client: &TagmaClient, id: Option<AgentId>) -> Result<AgentId> {
     let id = resolve_id(id)?;
     client.resolve_agent_ref(id.as_ref()).await

@@ -37,7 +37,7 @@ pub type SharedState = Arc<AppState>;
 /// (for GET /profiles) and the assembled registry (for agent spawn + apply).
 /// Swapped as a unit on PUT /profiles via [`ArcSwap`]; readers load a
 /// consistent snapshot. Each running agent pins its own `Arc<ProfileRegistry>`
-/// snapshot in its [`FailoverState`] — a swap does not disturb running agents
+/// snapshot in its [`FailoverState`](kallip_runtime::FailoverState) — a swap does not disturb running agents
 /// until an explicit apply.
 pub struct ProfileBundle {
     /// The config as loaded (GET) or written (PUT) — serializable, no backends.

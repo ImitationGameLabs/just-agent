@@ -270,7 +270,7 @@ fn data_dir_profile_path() -> Option<PathBuf> {
 
 /// Serialize a [`ProfileConfig`] to TOML and write it to `path` atomically
 /// (temp file + rename), chmod 600. The `id` field inside each endpoint is
-/// redundant with the map key but harmless: [`load_file`] uses an intermediate
+/// redundant with the map key but harmless: `load_file` uses an intermediate
 /// type that ignores it.
 pub fn save(config: &ProfileConfig, path: &Path) -> Result<()> {
     let toml =

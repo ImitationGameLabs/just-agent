@@ -49,7 +49,7 @@ pub async fn get_profiles(
 /// "keep" (round-trip safe). `base_url` follows the same null-keeps rule; an
 /// empty string resets it to the family default. Merged against the live
 /// config, validated by building backends + a trial registry (fail-fast). On
-/// success, writes to disk and swaps the [`ArcSwap`]; running agents are
+/// success, writes to disk and swaps the `ArcSwap`; running agents are
 /// unaffected until an explicit apply.
 pub async fn put_profiles(
     State(state): State<SharedState>,
@@ -282,14 +282,15 @@ fn masked_config(config: &ProfileConfig) -> Result<serde_json::Value, ApiError> 
 pub struct ApplyResponse {
     /// Number of live agents that received a pending-reset signal.
     pub applied: usize,
-    /// Number of agents that were skipped (faulted or already pending).
+    /// Number of agents skipped: faulted entries and live agents whose
+    /// recorded set no longer resolves.
     pub skipped: usize,
 }
 
 /// POST /profiles/apply — push the current registry to all live agents.
 ///
 /// For each live agent, resolves its recorded set name against the new
-/// registry and writes a [`ProfileReset`] to the agent's pending-reset
+/// registry and writes a [`ProfileReset`](kallip_runtime::ProfileReset) to the agent's pending-reset
 /// cell. An unbound root instead derives its binding from the current
 /// default set, and the derived name is written back to the in-memory
 /// record (not meta.json — restore re-derives it on the next boot).

@@ -159,7 +159,7 @@ pub struct AgentContext {
     /// Cloned from `AppState` — same underlying Arc counters across all agents.
     pub token_budget: crate::token_budget::TokenBudget,
     /// Pending profile-reset cell: the tagma's apply handler writes a
-    /// [`ProfileReset`] here; the agent task drains it at the top of
+    /// [`ProfileReset`](crate::failover::ProfileReset) here; the agent task drains it at the top of
     /// [`run_and_report`] and rebuilds its failover state + client. Shared
     /// (same `Arc`) with the tagma `Agent` struct so the apply route can write
     /// to it without reaching into runtime internals. `None` when no reset is

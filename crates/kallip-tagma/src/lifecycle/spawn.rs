@@ -397,11 +397,11 @@ pub(crate) async fn watch_agent_task(
 ///
 /// This is the shared tail of every agent-creation path. The two callers build
 /// the head themselves and hand off:
-/// - [`create_agent`](super::create_agent) resolves a *subagent* (supervisor validation,
+/// - [`create_agent`](crate::routes::agent::create_agent) resolves a *subagent* (supervisor validation,
 ///   the explicit permission-class grant, exec-policy inheritance, pre-reserved slot)
 ///   and passes
 ///   `rollback_supervisor: Some(…)`.
-/// - [`ensure_root_agent`](super::ensure_root_agent) resolves the tagma singleton *root* (env-driven
+/// - [`ensure_root_agent`](crate::routes::agent::ensure_root_agent) resolves the tagma singleton *root* (env-driven
 ///   config, default exec-policy) and passes `rollback_supervisor: None`.
 ///
 /// `rollback_supervisor` doubles as the creation shape: `None` means this is the

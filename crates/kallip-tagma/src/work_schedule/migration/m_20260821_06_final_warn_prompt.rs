@@ -1,7 +1,7 @@
 //! Final-warn prompt: an optional custom closing message.
 //!
 //! `''` is the stored form of "use the built-in default", mirroring how the
-//! wake_prompt column reads; the store boundary normalizes Option<String>
+//! wake_prompt column reads; the store boundary normalizes `Option<String>`
 //! <-> '' in both directions.
 
 use sea_orm_migration::prelude::*;
