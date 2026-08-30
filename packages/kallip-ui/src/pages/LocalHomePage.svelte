@@ -8,7 +8,6 @@
   import {
     Calendar,
     LayoutGrid,
-    Server,
     MessageSquare,
     Settings,
     Users,
@@ -23,7 +22,6 @@
     nav_agents,
     nav_profiles,
     nav_schedules,
-    nav_tagmata,
   } from "../paraglide/messages.js";
 
   const rows = [
@@ -32,7 +30,6 @@
     { href: "/local/manage/agents", label: nav_agents, Icon: Users },
     { href: "/local/manage/profiles", label: nav_profiles, Icon: Settings },
     { href: "/local/manage/schedules", label: nav_schedules, Icon: Calendar },
-    { href: "/tagmata", label: nav_tagmata, Icon: Server },
   ];
 </script>
 
