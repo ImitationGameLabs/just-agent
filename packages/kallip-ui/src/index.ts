@@ -111,6 +111,9 @@ export { default as AppShell } from "./components/AppShell.svelte";
 export { default as Banner } from "./components/Banner.svelte";
 export { type BannerTone, bannerTones } from "./components/Banner.svelte";
 export { default as Brand } from "./components/Brand.svelte";
+export { default as PageHeader } from "./components/PageHeader.svelte";
+export { default as Breadcrumbs } from "./components/Breadcrumbs.svelte";
+export type { BreadcrumbSegment } from "./components/Breadcrumbs.svelte";
 export type { NavItem } from "./lib/shell.ts";
 
 // Components

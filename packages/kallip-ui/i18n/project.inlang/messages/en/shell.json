@@ -16,6 +16,7 @@
   "nav_rooms": "Rooms",
   "nav_tagma_management": "Tagma management",
   "nav_room_management": "Room management",
+  "nav_breadcrumbs_aria": "Breadcrumbs",
   "shell_status_agents_one": "{count}/{total} agent",
   "shell_status_agents_other": "{count}/{total} agents",
   "shell_status_tokens": "{consumed}/{total} tokens",

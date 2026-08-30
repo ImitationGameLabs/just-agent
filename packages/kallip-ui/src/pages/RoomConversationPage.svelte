@@ -5,8 +5,9 @@
   // is a separate page from ChannelChatPage -- the transcript model is
   // multi-member (a sender uuid per line, not a user/assistant role).
   //
-  // The page owns the chrome (a header + the loading/error/empty states) and
-  // composes the shared <Composer>. The transcript is rendered inline (member-
+  // The page composes the shared chrome (PageHeader top bar + its own
+  // loading/error/empty states) and the shared <Composer>. The transcript
+  // renders inline (member-
   // aware: `mine` alignment + a sender label for others); stick-to-tail auto-
   // scroll is the shared `createAutoScroll`. A poll pump refreshes the history
   // + roster on a slow cadence (the room_membership_changed SSE nudge is the
@@ -15,6 +16,7 @@
   import { Settings, Users, X } from "@lucide/svelte";
   import Composer from "../components/Composer.svelte";
   import MessageBubble from "../components/MessageBubble.svelte";
+  import PageHeader from "../components/PageHeader.svelte";
   import {
     createAutoScroll,
     createTogglePin,
@@ -150,55 +152,57 @@
 />
 
 <div class="flex flex-col h-full">
-  <header
-    class="px-4 py-2 border-b border-surface-200-800 flex items-center gap-2"
-  >
-    <div class="flex flex-col min-w-0 flex-1">
+  <PageHeader>
+    {#snippet title()}
       <p class="text-sm font-semibold truncate">{roomLabel}</p>
       <p class="text-xs opacity-50 truncate">
         <span class="opacity-70">{room_id_label()}</span><span class="font-mono"
           >{roomId}</span
         >
       </p>
-    </div>
-    {#if room?.visibility === "public"}
-      <span class="text-xs preset-tonal-surface px-2 py-0.5 rounded-base"
-        >{room_public_badge()}</span
-      >
-    {/if}
-    {#if conv?.roster}
-      <span class="text-xs opacity-60">
-        {conv.roster.members.length === 1
-          ? room_member_one({ count: conv.roster.members.length })
-          : room_member_other({ count: conv.roster.members.length })}
-      </span>
-      {#if conv.roster.is_creator}
+    {/snippet}
+    {#snippet badges()}
+      {#if room?.visibility === "public"}
         <span class="text-xs preset-tonal-surface px-2 py-0.5 rounded-base"
-          >{room_creator_badge()}</span
+          >{room_public_badge()}</span
         >
       {/if}
-    {/if}
-    <button
-      type="button"
-      class="size-10 grid place-items-center rounded-base shrink-0 disabled:opacity-60 {showMembers
-        ? 'preset-filled-surface-500'
-        : 'preset-tonal-surface hover:preset-filled-surface-500'}"
-      aria-label={room_toggle_members_aria()}
-      aria-pressed={showMembers}
-      disabled={!conv || conv.status === "loading"}
-      onclick={() => (showMembers = !showMembers)}
-    >
-      <Users class="size-4" />
-    </button>
-    <button
-      type="button"
-      class="size-10 {TONAL_ICON_SURF} shrink-0"
-      aria-label={room_settings_aria()}
-      onclick={() => navigate(`/rooms/${roomId}/settings`)}
-    >
-      <Settings class="size-4" />
-    </button>
-  </header>
+      {#if conv?.roster}
+        <span class="text-xs opacity-60">
+          {conv.roster.members.length === 1
+            ? room_member_one({ count: conv.roster.members.length })
+            : room_member_other({ count: conv.roster.members.length })}
+        </span>
+        {#if conv.roster.is_creator}
+          <span class="text-xs preset-tonal-surface px-2 py-0.5 rounded-base"
+            >{room_creator_badge()}</span
+          >
+        {/if}
+      {/if}
+    {/snippet}
+    {#snippet actions()}
+      <button
+        type="button"
+        class="size-10 grid place-items-center rounded-base shrink-0 disabled:opacity-60 {showMembers
+          ? 'preset-filled-surface-500'
+          : 'preset-tonal-surface hover:preset-filled-surface-500'}"
+        aria-label={room_toggle_members_aria()}
+        aria-pressed={showMembers}
+        disabled={!conv || conv.status === "loading"}
+        onclick={() => (showMembers = !showMembers)}
+      >
+        <Users class="size-4" />
+      </button>
+      <button
+        type="button"
+        class="size-10 {TONAL_ICON_SURF} shrink-0"
+        aria-label={room_settings_aria()}
+        onclick={() => navigate(`/rooms/${roomId}/settings`)}
+      >
+        <Settings class="size-4" />
+      </button>
+    {/snippet}
+  </PageHeader>
 
   {#if !conv || conv.status === "loading"}
     <div class="flex-1 grid place-items-center p-6">

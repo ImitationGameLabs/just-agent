@@ -16,6 +16,7 @@
   "nav_rooms": "群聊",
   "nav_tagma_management": "智能体编队管理",
   "nav_room_management": "群聊管理",
+  "nav_breadcrumbs_aria": "面包屑导航",
   "shell_status_agents_one": "{count}/{total} 个智能体",
   "shell_status_agents_other": "{count}/{total} 个智能体",
   "shell_status_tokens": "{consumed} / {total} token",
