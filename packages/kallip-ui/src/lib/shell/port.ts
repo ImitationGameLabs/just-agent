@@ -28,8 +28,9 @@ export function navigate(url: string, opts?: GotoOptions): Promise<void> {
 // package, a web/app shell is always "online" (a stored offline config
 // from an older build is clamped away -- its routes and entries no longer
 // exist there), and the direct shell is always "offline" (agora is
-// unreachable). Components read this instead of re-deriving via modeOf so
-// the mode can never disagree between the layout and the chrome.
+// unreachable). Components read this instead of re-deriving the mode
+// from the persisted config, so the mode can never disagree between the
+// layout and the chrome.
 let offlineOnlyShell = false;
 
 /** Declare the host shell offline-only (kallip-direct). Called once at bootstrap. */

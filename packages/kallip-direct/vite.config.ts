@@ -53,8 +53,10 @@ export default defineConfig({
     },
   ],
   server: {
-    // Direct-entry developer shell: loopback only, no Caddy front. strictPort
-    // so a silent port drift can't be mistaken for this app.
+    // LAN-open so the operator can reach the fallback shell from other
+    // devices on the network (by IP; no vhost, so no allowHosts list).
+    // strictPort so a silent port drift can't be mistaken for this app.
+    host: "0.0.0.0",
     port: 5175,
     strictPort: true,
     // The kallip-ui live source (a sibling workspace package) lives outside this
