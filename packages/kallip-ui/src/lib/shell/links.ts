@@ -6,7 +6,7 @@
 //     management surfaces are reached through the section header, not a flat
 //     sibling link. "Tagmata" lists EVERY enrolled tagma (whether or not a
 //     relay channel is currently open -- the link is always navigable and the
-//     channel opens on demand at /chat/t/{tagmaId}); "Rooms" lists the caller's
+//     channel opens on demand at /tagma/{tagmaId}/chat); "Rooms" lists the caller's
 //     rooms as direct chat entries (`/rooms/{id}`).
 //   - offline -> Chat (the single local conversation at /local/chat), no header.
 // Settings is intentionally NOT a nav link: it lives in the AccountMenu
@@ -16,6 +16,7 @@
 import type { Component } from "svelte";
 import type { AppMode } from "../config/mode.ts";
 import type { NavIndicator, NavItem } from "../shell.ts";
+import { tagmaChatPath } from "./routes.ts";
 import type { TagmaChannelState } from "../session/channels.svelte.ts";
 import {
   nav_agents,
@@ -198,7 +199,7 @@ export function navFor(args: {
         // reads as its own destination under the tagma surface. The link is
         // always navigable; the channel opens on demand at the tagma route.
         return {
-          href: `/chat/t/${t.tagmaId}`,
+          href: tagmaChatPath(t.tagmaId),
           label: t.label ?? tagma_profile_unnamed(),
           indicator: t.indicator,
         };

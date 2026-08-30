@@ -98,6 +98,9 @@ export { agentsStore } from "./lib/manage/agents.svelte.ts";
 export { profilesStore } from "./lib/manage/profiles.svelte.ts";
 export { schedulesStore } from "./lib/manage/schedules.svelte.ts";
 
+// Route path builders (the tagma-centric URL single source).
+export { tagmaChatPath, tagmaDetailsPath } from "./lib/shell/routes.ts";
+
 // App chrome
 export { default as AppShell } from "./components/AppShell.svelte";
 export { default as Banner } from "./components/Banner.svelte";

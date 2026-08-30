@@ -121,19 +121,19 @@ Deno.test("navFor online lists every enrolled tagma under Tagmata", () => {
         smallScreenHidden: false,
         items: [
           {
-            href: "/chat/t/t1",
+            href: "/tagma/t1/chat",
             label: "Laptop",
             icon: false,
             indicator: "live",
           },
           {
-            href: "/chat/t/t2",
+            href: "/tagma/t2/chat",
             label: "Unnamed tagma",
             icon: false,
             indicator: "down",
           },
           {
-            href: "/chat/t/t3",
+            href: "/tagma/t3/chat",
             label: "Phone",
             icon: false,
             indicator: "pending",
@@ -250,10 +250,12 @@ Deno.test("pathMatches uses segment boundaries (no prefix cross-match)", () => {
   assertEquals(pathMatches("/chat/ab", "/chat/a"), false);
   assertEquals(pathMatches("/chat/a", "/chat/a"), true);
   assertEquals(pathMatches("/chat/a/sub", "/chat/a"), true);
-  // The tagma-keyed route /chat/t/{tagmaId} matches itself exactly, and does
-  // not cross-highlight with a sibling /chat/{conversationId} entry.
+  // The tagma-keyed route /tagma/{tagmaId}/chat matches itself exactly, and
+  // does not cross-highlight with a sibling /chat/{conversationId} entry.
   assertEquals(pathMatches("/chat/t/abc", "/chat/t/abc"), true);
   assertEquals(pathMatches("/chat/t/abc", "/chat/abc"), false);
+  assertEquals(pathMatches("/tagma/abc/chat", "/chat/abc"), false);
+  assertEquals(pathMatches("/chat/abc", "/tagma/abc/chat"), false);
   assertEquals(pathMatches("/chat/abc", "/chat/t/abc"), false);
   // A non-matching prefix entirely.
   assertEquals(pathMatches("/approvals", "/tagmata"), false);
