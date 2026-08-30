@@ -26,6 +26,7 @@
   import { roomDraftKey } from "../lib/session/drafts.ts";
   import MemberRow from "../components/rooms/MemberRow.svelte";
   import SenderIdentity from "../components/rooms/SenderIdentity.svelte";
+  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import { roomConversationsStore } from "../lib/session/roomConversations.svelte.ts";
   import { roomsStore } from "../lib/session/rooms.svelte";
   import { agoraSession } from "../lib/session/agora.svelte";
@@ -52,6 +53,7 @@
     room_members,
     room_close_members_aria,
     room_unavailable,
+    nav_rooms,
   } from "../paraglide/messages.js";
 
   let { roomId }: { roomId: string } = $props();
@@ -66,6 +68,14 @@
   const roomLabel = $derived(
     room?.name || room_label_fallback({ id: roomId.slice(0, 8) }),
   );
+
+  // #14 trail: [rooms] + [room name] (operator 05:37:10Z); the room name
+  // stays in the header title too (R5: title = page identity, trail =
+  // location chain -- the duplicate is an accepted trade-off).
+  const roomTrail = $derived([
+    { label: nav_rooms(), href: "/rooms" },
+    { label: roomLabel, current: true },
+  ]);
   // Display labels keyed by participant id. The wire `Participant` on each
   // message carries the sender's kind + server-resolved handle (the lesche
   // derives it fresh at read time, so it is already correct); it does NOT carry
@@ -153,6 +163,9 @@
 
 <div class="flex flex-col h-full">
   <PageHeader>
+    {#snippet breadcrumbs()}
+      <Breadcrumbs segments={roomTrail} />
+    {/snippet}
     {#snippet title()}
       <p class="text-sm font-semibold truncate">{roomLabel}</p>
       <p class="text-xs opacity-50 truncate">

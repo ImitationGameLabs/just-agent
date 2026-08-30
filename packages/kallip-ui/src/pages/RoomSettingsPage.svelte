@@ -24,6 +24,7 @@
   import { roomsStore } from "../lib/session/rooms.svelte";
   import { roomConversationsStore } from "../lib/session/roomConversations.svelte";
   import MemberRow from "../components/rooms/MemberRow.svelte";
+  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import { TONAL_ICON_SURF } from "../lib/classes.ts";
   import { getLocale } from "../paraglide/runtime.js";
@@ -62,6 +63,8 @@
     roomsettings_leave_title,
     roomsettings_leave_desc_named,
     roomsettings_leave_desc,
+    nav_rooms,
+    settings_heading,
     roomsettings_leaving,
     roomsettings_leave_confirm,
     roomsettings_leave_failed,
@@ -80,6 +83,15 @@
     room?.name || room_label_fallback({ id: roomId.slice(0, 8) }),
   );
   const isPublic = $derived(room?.visibility === "public");
+
+  // #15 trail: [rooms] + [room name] + [settings] (the room name is the
+  // middle link back to the conversation; settings_heading is reused for
+  // the current tail -- roomsettings_title carries the brand prefix).
+  const breadcrumbs = $derived([
+    { label: nav_rooms(), href: "/rooms" },
+    { label: roomLabel, href: `/rooms/${roomId}` },
+    { label: settings_heading(), current: true },
+  ]);
 
   // The live roster. Independent of the conversation store (no transcript
   // requirement), refreshed after each mutation below.
@@ -290,6 +302,7 @@
 
   <div class="flex-1 min-h-0 overflow-auto">
     <div class="mx-auto w-full max-w-2xl p-4 flex flex-col gap-4 min-h-full">
+      <Breadcrumbs segments={breadcrumbs} />
       <!-- Room info -->
       <section
         class="card preset-tonal-surface p-4 flex flex-col gap-1 text-sm"

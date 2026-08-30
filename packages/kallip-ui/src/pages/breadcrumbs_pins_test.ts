@@ -16,6 +16,16 @@ const ONLINE_MANAGE_PAGE = new URL(
   "./manage/OnlineManagePage.svelte",
   import.meta.url,
 );
+const ROOMS_PAGE = new URL("./RoomsPage.svelte", import.meta.url);
+const ROOM_CONVERSATION_PAGE = new URL(
+  "./RoomConversationPage.svelte",
+  import.meta.url,
+);
+const ROOM_SETTINGS_PAGE = new URL(
+  "./RoomSettingsPage.svelte",
+  import.meta.url,
+);
+const CHANNEL_CHAT_PAGE = new URL("./ChannelChatPage.svelte", import.meta.url);
 
 function source(url: URL): string {
   return new TextDecoder().decode(Deno.readFileSync(url));
@@ -81,6 +91,81 @@ Deno.test(
     assert(
       src.includes("sectionLabels[page](), current: true"),
       "the section label must be the current tail for every details section",
+    );
+  },
+);
+
+Deno.test(
+  "RoomsPage mounts the Tagmata-root trail with a current rooms tail",
+  { permissions: { read: [ROOMS_PAGE] } },
+  () => {
+    const src = source(ROOMS_PAGE);
+    assert(src.includes("<Breadcrumbs"), "trail must be mounted");
+    assert(
+      src.includes('href: "/tagmata"'),
+      "the root segment must link the tagmata top level",
+    );
+    assert(
+      src.includes("label: nav_rooms(), current: true"),
+      "the rooms segment must be the current tail",
+    );
+  },
+);
+
+Deno.test(
+  "RoomConversationPage trails rooms and the room name through the PageHeader seam",
+  { permissions: { read: [ROOM_CONVERSATION_PAGE] } },
+  () => {
+    const src = source(ROOM_CONVERSATION_PAGE);
+    assert(
+      src.includes("{#snippet breadcrumbs()}"),
+      "the trail must ride the PageHeader breadcrumbs snippet",
+    );
+    assert(
+      src.includes('href: "/rooms"'),
+      "the rooms segment must link the rooms top level",
+    );
+    assert(
+      src.includes("label: roomLabel, current: true"),
+      "the room name must be the current tail",
+    );
+  },
+);
+
+Deno.test(
+  "RoomSettingsPage keeps the room name as a linked middle segment",
+  { permissions: { read: [ROOM_SETTINGS_PAGE] } },
+  () => {
+    const src = source(ROOM_SETTINGS_PAGE);
+    assert(src.includes("<Breadcrumbs"), "trail must be mounted");
+    assert(
+      src.includes("href: `/rooms/${roomId}`"),
+      "the room name segment must link back to the conversation",
+    );
+    assert(
+      src.includes("label: settings_heading(), current: true"),
+      "the settings label must be the current tail",
+    );
+  },
+);
+
+Deno.test(
+  "ChannelChatPage renders its trail only for the withTrail route shells",
+  { permissions: { read: [CHANNEL_CHAT_PAGE] } },
+  () => {
+    const src = source(CHANNEL_CHAT_PAGE);
+    assert(
+      src.includes("withTrail = false"),
+      "embedded hosts must keep the default of no trail",
+    );
+    assert(src.includes("{#if withTrail}"), "the mount must be gated");
+    assert(
+      src.includes('href: "/tagmata"'),
+      "the root segment must link the tagmata top level",
+    );
+    assert(
+      src.includes("label: convLabel, current: true"),
+      "the conversation label must be the current tail",
     );
   },
 );

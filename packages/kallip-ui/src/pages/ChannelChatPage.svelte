@@ -8,6 +8,7 @@
   // the Conversation, so online and offline render identically.
   import ConversationView from "../components/ConversationView.svelte";
   import TagmaStatusHeader from "../components/TagmaStatusHeader.svelte";
+  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import { createComposer } from "../lib/composer.svelte.ts";
   import { bindDraft } from "../lib/session/drafts.svelte.ts";
   import { RelayConversation } from "../lib/session/conversation.svelte.ts";
@@ -27,17 +28,20 @@
     chat_title_channel,
     chat_notice_local,
     chat_notice_offline,
+    nav_tagmata,
   } from "../paraglide/messages.js";
 
   let {
     conversationId,
     statusHeaderMobile = true,
+    withTrail = false,
   }: {
     conversationId: string;
     /** Keep this page's own status header below md. The offline /local/chat
      * route lifts it into the shell's mobile top row instead (RootLayout
      * renders a second instance there) and passes false here. */
     statusHeaderMobile?: boolean;
+    withTrail?: boolean;
   } = $props();
 
   // Resolves to undefined only briefly: online while a channel's key exchange
@@ -45,6 +49,22 @@
   // (the gate routes a failed reconnect to /connect, so this is a short window).
   const conv = $derived(channelsStore.get(conversationId));
   const isLocal = $derived(conversationId === "local");
+
+  // #21 trail tail: the conversation label (the tagma label the channel
+  // was opened with); the static local label or an id prefix while it
+  // resolves. Rendered only when withTrail is set (the /chat/[id]
+  // shells); embedded hosts (the tagma chat page) bring their own trail.
+  const convLabel = $derived(
+    conv instanceof RelayConversation && conv.label !== null
+      ? conv.label
+      : isLocal
+        ? chat_title_local()
+        : conversationId.slice(0, 8),
+  );
+  const breadcrumbs = $derived([
+    { label: nav_tagmata(), href: "/tagmata" },
+    { label: convLabel, current: true },
+  ]);
 
   // The lazy-window pager runs on both transports; each conversation leaf
   // supplies its own page source behind the shared base loadOlder.
@@ -146,108 +166,121 @@
   ><title>{isLocal ? chat_title_local() : chat_title_channel()}</title
   ></svelte:head
 >
-
-{#if !conv}
-  {#if isLocal}
-    <!-- Offline /local/chat before the boot reconnect lands. The gate routes a
-         failed reconnect to /connect; this is the brief resolving window. -->
-    <div class="h-full grid place-items-center p-6">
-      <p class="text-sm opacity-60">{connect_connecting()}</p>
+<div class="h-full flex flex-col">
+  {#if withTrail}
+    <div class="px-4 py-2 shrink-0">
+      <Breadcrumbs segments={breadcrumbs} />
     </div>
-  {:else}
-    <!-- No open channel for this conversation yet. Channels auto-connect at
+  {/if}
+  <div class="flex-1 min-h-0">
+    {#if !conv}
+      {#if isLocal}
+        <!-- Offline /local/chat before the boot reconnect lands. The gate routes a
+         failed reconnect to /connect; this is the brief resolving window. -->
+        <div class="h-full grid place-items-center p-6">
+          <p class="text-sm opacity-60">{connect_connecting()}</p>
+        </div>
+      {:else}
+        <!-- No open channel for this conversation yet. Channels auto-connect at
          boot and on presence transitions, so this is normally brief. The
          conversationId is server-derived and not reverse-resolvable, so if
          auto-connect does not open it (bogus id, revoked, offline tagma) the
          user needs a way out. -->
-    <div class="h-full grid place-items-center p-6">
-      <div class="text-center flex flex-col gap-3 max-w-sm">
-        <p class="text-sm opacity-80">{chat_opening()}</p>
-        <button
-          type="button"
-          class="btn preset-tonal-surface self-center"
-          onclick={() => navigate("/tagmata")}
-        >
-          {chat_go_tagmata()}
-        </button>
-      </div>
-    </div>
-  {/if}
-{:else}
-  <div class={sideLayout ? "flex flex-row h-full" : "flex flex-col h-full"}>
-    <!-- contents keeps the header a direct flex child at md+ (a plain
+        <div class="h-full grid place-items-center p-6">
+          <div class="text-center flex flex-col gap-3 max-w-sm">
+            <p class="text-sm opacity-80">{chat_opening()}</p>
+            <button
+              type="button"
+              class="btn preset-tonal-surface self-center"
+              onclick={() => navigate("/tagmata")}
+            >
+              {chat_go_tagmata()}
+            </button>
+          </div>
+        </div>
+      {/if}
+    {:else}
+      <div class={sideLayout ? "flex flex-row h-full" : "flex flex-col h-full"}>
+        <!-- contents keeps the header a direct flex child at md+ (a plain
          block wrapper would break the side aside's flex-item contract:
          order-last, w-80, h-full); below md the local route hides it
          because the shell top row owns it there. -->
-    <div class={statusHeaderMobile ? "contents" : "hidden md:contents"}>
-      <TagmaStatusHeader
-        status={conv.statusSnapshot}
-        agentRows={{
-          rootRow: statusCardStore.rootRow,
-          subRows: statusCardStore.subRows,
-        }}
-        {sideLayout}
-        onToggleSide={() => {
-          sideWanted = !sideWanted;
-          try {
-            localStorage.setItem("statusLayout", sideWanted ? "side" : "top");
-          } catch {
-            /* storage blocked: the choice lives for this session only */
-          }
-        }}
-      />
-    </div>
-    <!-- The wrapper gives the transcript a flex child whose width can be
+        <div class={statusHeaderMobile ? "contents" : "hidden md:contents"}>
+          <TagmaStatusHeader
+            status={conv.statusSnapshot}
+            agentRows={{
+              rootRow: statusCardStore.rootRow,
+              subRows: statusCardStore.subRows,
+            }}
+            {sideLayout}
+            onToggleSide={() => {
+              sideWanted = !sideWanted;
+              try {
+                localStorage.setItem(
+                  "statusLayout",
+                  sideWanted ? "side" : "top",
+                );
+              } catch {
+                /* storage blocked: the choice lives for this session only */
+              }
+            }}
+          />
+        </div>
+        <!-- The wrapper gives the transcript a flex child whose width can be
          zeroed (min-w-0) in the sidebar state; in the top-bar state it is
          a no-op flex column. -->
-    <div
-      class="flex-1 min-h-0 flex flex-col {sideLayout
-        ? 'min-w-0'
-        : ''} relative"
-    >
-      {#if conv.status === "reconnecting"}
-        <!-- Silent SSE retry in progress (transport-level reconnect): the
+        <div
+          class="flex-1 min-h-0 flex flex-col {sideLayout
+            ? 'min-w-0'
+            : ''} relative"
+        >
+          {#if conv.status === "reconnecting"}
+            <!-- Silent SSE retry in progress (transport-level reconnect): the
              failure itself stays in the console. The overlay ignores pointer
              events so the transcript stays scrollable; the composer is
              disabled via status !== "open". No backdrop by design: the
              transcript stays fully readable while the reconnect runs. -->
-        <div
-          class="absolute inset-0 z-10 grid place-items-center pointer-events-none"
-          aria-busy="true"
-        >
-          <div
-            class="card preset-tonal-surface flex flex-col items-center gap-3 px-8 py-6"
-          >
             <div
-              class="size-10 rounded-full border-4 border-surface-400-600 border-t-transparent animate-spin"
-            ></div>
-            <p class="text-sm opacity-80">{chat_reconnecting()}</p>
-          </div>
-        </div>
-      {/if}
-      <ConversationView
-        lines={conv.transcript.lines}
-        status={conv.transcript.status}
-        error={conv.transcript.error}
-        {composer}
-        {disabled}
-        {pendingCount}
-        {loadOlder}
-        hasMoreOlder={windowStates.hasMoreOlder}
-        loadingOlder={windowStates.loadingOlder}
-      >
-        {#snippet notice()}
-          {#if conv.status === "offline"}
-            <p class="text-xs text-error-500 dark:text-error-400 text-center">
-              {#if isLocal}
-                {chat_notice_local()}
-              {:else}
-                {chat_notice_offline()}
-              {/if}
-            </p>
+              class="absolute inset-0 z-10 grid place-items-center pointer-events-none"
+              aria-busy="true"
+            >
+              <div
+                class="card preset-tonal-surface flex flex-col items-center gap-3 px-8 py-6"
+              >
+                <div
+                  class="size-10 rounded-full border-4 border-surface-400-600 border-t-transparent animate-spin"
+                ></div>
+                <p class="text-sm opacity-80">{chat_reconnecting()}</p>
+              </div>
+            </div>
           {/if}
-        {/snippet}
-      </ConversationView>
-    </div>
+          <ConversationView
+            lines={conv.transcript.lines}
+            status={conv.transcript.status}
+            error={conv.transcript.error}
+            {composer}
+            {disabled}
+            {pendingCount}
+            {loadOlder}
+            hasMoreOlder={windowStates.hasMoreOlder}
+            loadingOlder={windowStates.loadingOlder}
+          >
+            {#snippet notice()}
+              {#if conv.status === "offline"}
+                <p
+                  class="text-xs text-error-500 dark:text-error-400 text-center"
+                >
+                  {#if isLocal}
+                    {chat_notice_local()}
+                  {:else}
+                    {chat_notice_offline()}
+                  {/if}
+                </p>
+              {/if}
+            {/snippet}
+          </ConversationView>
+        </div>
+      </div>
+    {/if}
   </div>
-{/if}
+</div>

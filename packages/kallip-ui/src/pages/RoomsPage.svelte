@@ -4,10 +4,13 @@
   import { roomConversationsStore } from "../lib/session/roomConversations.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import RoomsDashboard from "../components/rooms/RoomsDashboard.svelte";
+  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import {
     rooms_title,
     rooms_retrying,
     common_loading,
+    nav_rooms,
+    nav_tagmata,
   } from "../paraglide/messages.js";
 
   // The registry is fetched by RootLayout's user_id $effect (it must load
@@ -28,38 +31,50 @@
         ? "loaded"
         : "loading",
   );
+
+  // #13 trail: [Tagmata root] + [rooms] (R1a double segment).
+  const breadcrumbs = $derived([
+    { label: nav_tagmata(), href: "/tagmata" },
+    { label: nav_rooms(), current: true },
+  ]);
 </script>
 
 <svelte:head><title>{rooms_title()}</title></svelte:head>
-
-{#if agoraSession.user}
-  <RoomsDashboard
-    rooms={roomsStore.rooms}
-    {roomsPhase}
-    invites={roomsStore.invites}
-    {invitesPhase}
-    busy={roomsStore.creating}
-    onCreate={async (opts) => {
-      const id = await roomConversationsStore.createRoom(opts);
-      navigate(`/rooms/${id}`);
-    }}
-    publicRooms={roomsStore.publicRooms}
-    publicRoomsError={roomsStore.publicRoomsError}
-    onJoinPublic={(roomId) =>
-      roomsStore
-        .joinPublicRoom(roomId)
-        .then(() => navigate(`/rooms/${roomId}`))}
-    onAcceptInvite={(inv) => roomsStore.acceptInvite(inv)}
-    onOpenSettings={(roomId) => navigate(`/rooms/${roomId}/settings`)}
-    onOpen={(roomId) => navigate(`/rooms/${roomId}`)}
-  />
-{:else if agoraSession.authError}
-  <div class="p-4">
-    <p class="text-error-500 dark:text-error-400 text-sm">
-      {agoraSession.authError}
-    </p>
-    <p class="opacity-60 text-sm">{rooms_retrying()}</p>
+<div class="h-full flex flex-col">
+  <div class="mx-auto w-full max-w-2xl px-4 pt-3 shrink-0">
+    <Breadcrumbs segments={breadcrumbs} />
   </div>
-{:else}
-  <div class="p-4"><p class="opacity-60">{common_loading()}</p></div>
-{/if}
+  <div class="flex-1 min-h-0">
+    {#if agoraSession.user}
+      <RoomsDashboard
+        rooms={roomsStore.rooms}
+        {roomsPhase}
+        invites={roomsStore.invites}
+        {invitesPhase}
+        busy={roomsStore.creating}
+        onCreate={async (opts) => {
+          const id = await roomConversationsStore.createRoom(opts);
+          navigate(`/rooms/${id}`);
+        }}
+        publicRooms={roomsStore.publicRooms}
+        publicRoomsError={roomsStore.publicRoomsError}
+        onJoinPublic={(roomId) =>
+          roomsStore
+            .joinPublicRoom(roomId)
+            .then(() => navigate(`/rooms/${roomId}`))}
+        onAcceptInvite={(inv) => roomsStore.acceptInvite(inv)}
+        onOpenSettings={(roomId) => navigate(`/rooms/${roomId}/settings`)}
+        onOpen={(roomId) => navigate(`/rooms/${roomId}`)}
+      />
+    {:else if agoraSession.authError}
+      <div class="p-4">
+        <p class="text-error-500 dark:text-error-400 text-sm">
+          {agoraSession.authError}
+        </p>
+        <p class="opacity-60 text-sm">{rooms_retrying()}</p>
+      </div>
+    {:else}
+      <div class="p-4"><p class="opacity-60">{common_loading()}</p></div>
+    {/if}
+  </div>
+</div>
