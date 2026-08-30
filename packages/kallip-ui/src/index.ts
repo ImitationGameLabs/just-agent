@@ -99,7 +99,12 @@ export { profilesStore } from "./lib/manage/profiles.svelte.ts";
 export { schedulesStore } from "./lib/manage/schedules.svelte.ts";
 
 // Route path builders (the tagma-centric URL single source).
-export { tagmaChatPath, tagmaDetailsPath } from "./lib/shell/routes.ts";
+export {
+  tagmaChatPath,
+  tagmaDetailsPath,
+  tagmaDetailsSectionPath,
+  type TagmaDetailsSection,
+} from "./lib/shell/routes.ts";
 
 // App chrome
 export { default as AppShell } from "./components/AppShell.svelte";

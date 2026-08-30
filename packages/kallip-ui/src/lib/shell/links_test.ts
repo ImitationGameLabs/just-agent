@@ -257,6 +257,28 @@ Deno.test("pathMatches uses segment boundaries (no prefix cross-match)", () => {
   assertEquals(pathMatches("/tagma/abc/chat", "/chat/abc"), false);
   assertEquals(pathMatches("/chat/abc", "/tagma/abc/chat"), false);
   assertEquals(pathMatches("/chat/abc", "/chat/t/abc"), false);
+  // The details tree follows the same rules: hub and sibling sections do
+  // not cross-highlight, and the old /chat/t/... manage shape never
+  // matches the new tree (the shapes coexist only via redirects).
+  assertEquals(pathMatches("/tagma/abc/details", "/tagma/abc/details"), true);
+  assertEquals(
+    pathMatches("/tagma/abc/details/overview", "/tagma/abc/details"),
+    true,
+  );
+  assertEquals(
+    pathMatches("/tagma/abc/details/overview", "/tagma/abc/details/budget"),
+    false,
+  );
+  assertEquals(pathMatches("/tagma/abc/details", "/tagma/abc/chat"), false);
+  assertEquals(pathMatches("/tagma/abc/chat", "/tagma/abc/details"), false);
+  assertEquals(
+    pathMatches("/chat/t/abc/manage/overview", "/tagma/abc/details"),
+    false,
+  );
+  assertEquals(
+    pathMatches("/tagma/abc/details/overview", "/chat/t/abc/manage"),
+    false,
+  );
   // A non-matching prefix entirely.
   assertEquals(pathMatches("/approvals", "/tagmata"), false);
 });

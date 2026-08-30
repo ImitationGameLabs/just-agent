@@ -1,8 +1,8 @@
 <script lang="ts">
   // Online management wrapper: resolves the RelayChannel for the given tagma,
   // creates an OnlineBackend, switches all stores to it, and renders the
-  // management sub-page. The basePath is derived from the tagmaId so all
-  // internal links stay within the /chat/t/{tagmaId}/manage/* tree.
+  // management sub-page. The basePath comes from the path-builder so all
+  // internal links stay within the /tagma/{tagmaId}/details/* tree.
   //
   // The stores share the RelayChannel with the chat — manage_result replies are
   // intercepted in RelayChannel.enqueue() and never reach the chat stream.
@@ -17,6 +17,10 @@
   import { profilesStore } from "../../lib/manage/profiles.svelte.ts";
   import { schedulesStore } from "../../lib/manage/schedules.svelte.ts";
   import { managementBackend } from "../../lib/manage/client.ts";
+  import {
+    tagmaDetailsPath,
+    type TagmaDetailsSection,
+  } from "../../lib/shell/routes.ts";
   import OverviewPage from "./OverviewPage.svelte";
   import BudgetPage from "./BudgetPage.svelte";
   import AgentsPage from "./AgentsPage.svelte";
@@ -34,10 +38,10 @@
     page,
   }: {
     tagmaId: string;
-    page: "overview" | "budget" | "agents" | "profiles" | "schedules";
+    page: TagmaDetailsSection;
   } = $props();
 
-  const basePath = `/chat/t/${tagmaId}/manage`;
+  const basePath = tagmaDetailsPath(tagmaId);
 
   const channelState = $derived(channelsStore.getTagmaChannelState(tagmaId));
   const conversationId = $derived(

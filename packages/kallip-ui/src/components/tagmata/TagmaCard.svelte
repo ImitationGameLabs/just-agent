@@ -27,6 +27,7 @@
   import { DoorOpen, Settings } from "@lucide/svelte";
   import ManageTagmaRoomsDialog from "./ManageTagmaRoomsDialog.svelte";
   import { navigate } from "../../lib/shell/port.ts";
+  import { tagmaDetailsSectionPath } from "../../lib/shell/routes.ts";
   import { TONAL_ICON_PRIM, TONAL_ICON_SURF } from "../../lib/classes.ts";
   import RevokeTagmaDialog from "./RevokeTagmaDialog.svelte";
   import {
@@ -324,7 +325,7 @@
           ) {
             void onStart?.(process.slug);
           } else if (e.value === "manage" && tagma) {
-            navigate(`/chat/t/${tagma.tagmaId}/manage/overview`);
+            navigate(tagmaDetailsSectionPath(tagma.tagmaId, "overview"));
           } else if (e.value === "rooms" && tagma) roomsOpen = true;
           else if (e.value === "rename" && tagma && onRename) startRename();
           else if (e.value === "revoke" && tagma && onRevoke)
