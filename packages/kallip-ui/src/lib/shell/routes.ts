@@ -31,3 +31,8 @@ export function tagmaDetailsSectionPath(
 ): string {
   return `${tagmaDetailsPath(tagmaId)}/${section}`;
 }
+
+/** An agent detail page: `/tagma/<uuid>/details/agents/<agentId>`. */
+export function tagmaAgentPath(tagmaId: string, agentId: string): string {
+  return `${tagmaDetailsSectionPath(tagmaId, "agents")}/${agentId}`;
+}

@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import {
+  tagmaAgentPath,
   tagmaChatPath,
   tagmaDetailsPath,
   tagmaDetailsSectionPath,
@@ -22,6 +23,10 @@ Deno.test("tagmaDetailsSectionPath builds the details sections", () => {
     tagmaDetailsSectionPath("abc", "schedules"),
     "/tagma/abc/details/schedules",
   );
+});
+
+Deno.test("tagmaAgentPath builds the agent detail page route", () => {
+  assertEquals(tagmaAgentPath("abc", "a1"), "/tagma/abc/details/agents/a1");
 });
 
 const DETAILS_PAGES = [

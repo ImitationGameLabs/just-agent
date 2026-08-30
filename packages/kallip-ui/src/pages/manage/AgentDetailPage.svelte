@@ -2,13 +2,18 @@
   import type {
     AgentStatusResponse,
     ProfileConfig,
+    WireAgentManagementSummary,
   } from "@kallipai/kallip-client";
   import { agentStateLabel } from "../../lib/agentState.ts";
   import { MoreVertical, Pencil, Trash } from "@lucide/svelte";
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
   import { managementBackend } from "../../lib/manage/client.ts";
   import { KallipError } from "@kallipai/kallip-common";
-  import { agentsStore } from "../../lib/manage/agents.svelte.ts";
+  import { SvelteSet } from "svelte/reactivity";
+  import type { ManagementBackend } from "../../lib/manage/backend.ts";
+  import Breadcrumbs, {
+    type BreadcrumbSegment,
+  } from "../../components/Breadcrumbs.svelte";
   import { navigate } from "../../lib/shell/port.ts";
   import { TONAL_ICON_SURF } from "../../lib/classes.ts";
   import { startVisibleInterval } from "../../lib/visibleInterval.ts";
@@ -43,14 +48,32 @@
     manage_agent_remove_agent,
     manage_agent_remove_agent_desc_short,
   } from "../../paraglide/messages.js";
-  let { id, basePath = "/local/manage" }: { id: string; basePath?: string } =
-    $props();
+  let {
+    id,
+    basePath = "/local/manage",
+    backend = managementBackend(),
+    breadcrumbs = undefined,
+  }: {
+    id: string;
+    basePath?: string;
+    /** Single injected source (arch M2): local callers fall back to the
+     * offline backend; the online route injects a tagma-resolved
+     * OnlineBackend so a deep link renders without store switching. */
+    backend?: ManagementBackend;
+    /** Trail above this page; the page appends its own current segment. */
+    breadcrumbs?: BreadcrumbSegment[];
+  } = $props();
 
   let status = $state<AgentStatusResponse | null>(null);
   let profileConfig = $state<ProfileConfig | null>(null);
   let statusError = $state<string | null>(null);
   let isLoading = $state(false);
   let stopPoll: (() => void) | null = null;
+
+  // Page-local roster and in-flight bookkeeping: this page owns its data
+  // plane via the injected backend instead of the global agents store.
+  let agents = $state<WireAgentManagementSummary[]>([]);
+  const inFlight = new SvelteSet<string>();
 
   let showRemoveDialog = $state(false);
   let showIdentityDialog = $state(false);
@@ -59,7 +82,7 @@
     isLoading = true;
     statusError = null;
     try {
-      status = await managementBackend().getAgentStatus(id);
+      status = await backend.getAgentStatus(id);
     } catch (e) {
       if (e instanceof KallipError) statusError = e.message;
       else {
@@ -75,21 +98,35 @@
     // Fetched directly (not via profilesStore) on purpose: the store's
     // refresh() clobbers its draft, which would discard unsaved edits
     // made on the profiles page.
-    managementBackend()
+    backend
       .getProfiles()
       .then((cfg) => {
         profileConfig = cfg;
       })
       .catch(() => {});
+    refreshAgents();
     fetchStatus();
-    agentsStore.refresh();
-    stopPoll = startVisibleInterval(fetchStatus, 5000);
+    stopPoll = startVisibleInterval(() => {
+      refreshAgents();
+      fetchStatus();
+    }, 5000);
     return () => {
       if (stopPoll) stopPoll();
     };
   });
 
-  const agent = $derived(agentsStore.agents.find((a) => a.id === id));
+  // Identity comes from the same injected backend as everything else
+  // here: a deep link must render without a prior page having switched
+  // the global agents store to this tagma (arch M2 self-sufficiency).
+  async function refreshAgents() {
+    try {
+      agents = [...(await backend.listAgents()).agents];
+    } catch {
+      /* keep the last roster; statusError covers the visible failure */
+    }
+  }
+
+  const agent = $derived(agents.find((a) => a.id === id));
   // Window occupancy approximation: conversation + pinned turns. This
   // understates what the runtime actually composes (its request estimate
   // also covers the system prompt and tools); cumulative counters are
@@ -111,14 +148,66 @@
     return null;
   });
 
+  function updateRow(
+    fn: (a: WireAgentManagementSummary) => WireAgentManagementSummary,
+  ): void {
+    agents = agents.map((a) => (a.id === id ? fn(a) : a));
+  }
+
   async function onSaveIdentity(role: string, description: string) {
-    await agentsStore.updateMetadata(id, { role, description }).catch(() => {});
+    updateRow((a) => ({ ...a, role, description }));
+    inFlight.add(id);
+    try {
+      await backend.updateAgentMetadata(id, { role, description });
+    } catch {
+      refreshAgents(); // failed mutation: fall back to server truth
+    } finally {
+      inFlight.delete(id);
+    }
     showIdentityDialog = false;
   }
+
   async function onConfirmRemove() {
-    await agentsStore.remove(id).catch(() => {});
-    showRemoveDialog = false;
-    navigate("/local/manage/agents");
+    inFlight.add(id);
+    try {
+      await backend.removeAgent(id);
+      showRemoveDialog = false;
+      navigate(`${basePath}/agents`);
+    } catch {
+      refreshAgents();
+    } finally {
+      inFlight.delete(id);
+    }
+  }
+
+  async function interruptAgent() {
+    // Optimistic: flip busy -> idle, as the agents store does for the list.
+    updateRow((a) =>
+      a.state === "busy" ? { ...a, state: "idle" as const, activity: "" } : a,
+    );
+    inFlight.add(id);
+    try {
+      await backend.interruptAgent(id);
+    } catch {
+      refreshAgents();
+    } finally {
+      inFlight.delete(id);
+    }
+  }
+
+  async function toggleDuty() {
+    const current = agents.find((a) => a.id === id);
+    if (!current) return;
+    const nextDuty = current.duty === "onduty" ? "offduty" : "onduty";
+    updateRow((a) => ({ ...a, duty: nextDuty }));
+    inFlight.add(id);
+    try {
+      await backend.setAgentDuty(id, { status: nextDuty });
+    } catch {
+      refreshAgents();
+    } finally {
+      inFlight.delete(id);
+    }
   }
 </script>
 
@@ -128,6 +217,11 @@
 
 <div class="h-full overflow-y-auto">
   <div class="p-6 max-w-2xl space-y-6">
+    {#if breadcrumbs}
+      <Breadcrumbs
+        segments={[...breadcrumbs, { label: agent?.role || id, current: true }]}
+      />
+    {/if}
     <div>
       <div class="flex items-center gap-3">
         <a
@@ -270,16 +364,14 @@
         {#if agent.state === "busy"}
           <button
             class="btn btn-sm preset-outlined-surface-500 hover:preset-filled-surface-500"
-            disabled={agentsStore.isInFlight(agent.id)}
-            onclick={() => agentsStore.interrupt(agent.id).catch(() => {})}
-            >{manage_agent_interrupt()}</button
+            disabled={inFlight.has(agent.id)}
+            onclick={interruptAgent}>{manage_agent_interrupt()}</button
           >
         {/if}
         <button
           class="btn btn-sm preset-outlined-surface-500 hover:preset-filled-surface-500"
-          disabled={agentsStore.isInFlight(agent.id)}
-          onclick={() => agentsStore.toggleDuty(agent.id).catch(() => {})}
-          >{manage_agent_toggle_duty()}</button
+          disabled={inFlight.has(agent.id)}
+          onclick={toggleDuty}>{manage_agent_toggle_duty()}</button
         >
       </section>
     {/if}
@@ -287,7 +379,7 @@
 </div>
 
 <ConfirmDialog
-  busy={showRemoveDialog && agentsStore.isInFlight(id)}
+  busy={showRemoveDialog && inFlight.has(id)}
   open={showRemoveDialog}
   title={manage_agent_remove_agent()}
   description={manage_agent_remove_agent_desc_short()}
@@ -300,7 +392,7 @@
   open={showIdentityDialog}
   role={agent?.role ?? ""}
   description={agent?.description ?? ""}
-  busy={agentsStore.isInFlight(id)}
+  busy={inFlight.has(id)}
   onSave={onSaveIdentity}
   onCancel={() => (showIdentityDialog = false)}
 />
