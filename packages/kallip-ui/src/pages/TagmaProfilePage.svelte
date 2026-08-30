@@ -10,6 +10,7 @@
   import { ChevronLeft, Cpu, MessageSquare } from "@lucide/svelte";
   import { agoraClientOrFail, agoraSession } from "../lib/session/agora.svelte";
   import { navigate } from "../lib/shell/port.ts";
+  import { tagmaChatPath } from "../lib/shell/routes.ts";
   import { formatDateTime } from "../lib/tagmata.svelte.ts";
   import { TONAL_ICON_SURF } from "../lib/classes.ts";
   import type { PublicTagmaProfile } from "@kallipai/kallip-agora-client";
@@ -139,7 +140,7 @@
           <button
             type="button"
             class="btn btn-sm preset-outlined-surface-500 self-start flex items-center gap-2"
-            onclick={() => navigate(`/chat/t/${tagmaId}`)}
+            onclick={() => navigate(tagmaChatPath(tagmaId))}
           >
             <MessageSquare class="size-4" />
             {tagma_profile_message()}
