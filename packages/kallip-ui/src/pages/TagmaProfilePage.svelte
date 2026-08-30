@@ -13,6 +13,7 @@
   import { tagmaChatPath } from "../lib/shell/routes.ts";
   import { formatDateTime } from "../lib/tagmata.svelte.ts";
   import { TONAL_ICON_SURF } from "../lib/classes.ts";
+  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import type { PublicTagmaProfile } from "@kallipai/kallip-agora-client";
   import {
     common_loading,
@@ -23,6 +24,7 @@
     tagma_profile_unnamed,
     tagma_profile_created,
     tagma_profile_message,
+    nav_tagmata,
   } from "../paraglide/messages.js";
 
   let { tagmaId }: { tagmaId: string } = $props();
@@ -71,6 +73,20 @@
     ),
   );
 
+  // Trail and header share one name source: the profile label once loaded,
+  // the id-prefixed fallback for an unnamed profile, bare "tagma" while
+  // loading.
+  const displayName = $derived(
+    profile?.label ??
+      (profile ? tagma_fallback_label({ id: tagmaId.slice(0, 8) }) : "tagma"),
+  );
+
+  // #2 trail: [Tagmata root] + [profile name] (R1a double segment).
+  const breadcrumbs = $derived([
+    { label: nav_tagmata(), href: "/tagmata" },
+    { label: displayName, current: true },
+  ]);
+
   function back(): void {
     if (history.length > 1) history.back();
     else navigate("/tagmata");
@@ -95,10 +111,7 @@
       class="flex flex-col min-w-0 justify-center px-2 text-center md:flex-1 md:px-0 md:text-left"
     >
       <p class="text-sm font-semibold truncate">
-        {profile?.label ??
-          (profile
-            ? tagma_fallback_label({ id: tagmaId.slice(0, 8) })
-            : "tagma")}
+        {displayName}
       </p>
       <p class="text-xs opacity-50 truncate">{tagma_profile_subtitle()}</p>
     </div>
@@ -108,6 +121,7 @@
 
   <div class="flex-1 min-h-0 overflow-auto">
     <div class="mx-auto w-full max-w-2xl p-4 flex flex-col gap-3">
+      <Breadcrumbs segments={breadcrumbs} />
       {#if loading}
         <p class="text-sm opacity-60">{common_loading()}</p>
       {:else if error}

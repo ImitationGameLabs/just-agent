@@ -18,9 +18,11 @@
   import { schedulesStore } from "../../lib/manage/schedules.svelte.ts";
   import { managementBackend } from "../../lib/manage/client.ts";
   import {
+    tagmaChatPath,
     tagmaDetailsPath,
     type TagmaDetailsSection,
   } from "../../lib/shell/routes.ts";
+  import Breadcrumbs from "../../components/Breadcrumbs.svelte";
   import OverviewPage from "./OverviewPage.svelte";
   import BudgetPage from "./BudgetPage.svelte";
   import AgentsPage from "./AgentsPage.svelte";
@@ -31,6 +33,12 @@
     chat_channel_unavailable,
     manage_opening,
     common_retry,
+    nav_breadcrumb_tagma,
+    nav_breadcrumb_agents,
+    nav_overview,
+    nav_budget,
+    nav_profiles,
+    nav_schedules,
   } from "../../paraglide/messages.js";
 
   let {
@@ -107,44 +115,65 @@
       }
     };
   });
+
+  // #4/#5 trail: the tagma segment links the tagma home surface (chat); the
+  // tail is the current section (R3: current, no href).
+  const sectionLabels: Record<TagmaDetailsSection, () => string> = {
+    overview: nav_overview,
+    budget: nav_budget,
+    agents: nav_breadcrumb_agents,
+    profiles: nav_profiles,
+    schedules: nav_schedules,
+  };
+  const breadcrumbs = $derived([
+    { label: nav_breadcrumb_tagma(), href: tagmaChatPath(tagmaId) },
+    { label: sectionLabels[page](), current: true },
+  ]);
 </script>
 
-{#if stalled}
-  <!-- No conversation and none can come without a retry: absent to a
+<div class="h-full flex flex-col">
+  <div class="px-6 pt-4 shrink-0">
+    <Breadcrumbs segments={breadcrumbs} />
+  </div>
+  <div class="flex-1 min-h-0">
+    {#if stalled}
+      <!-- No conversation and none can come without a retry: absent to a
        presence-confirmed-offline peer, or an open-budget failure (mirror of
        the chat page's unavailable row). -->
-  <div class="h-full grid place-items-center p-6">
-    <div class="text-center flex flex-col gap-3 max-w-sm">
-      <p class="text-sm text-error-500 dark:text-error-400">
-        {chat_channel_unavailable()}
-      </p>
-      <button
-        type="button"
-        class="btn preset-tonal-surface self-center"
-        onclick={() => channelsStore.retryTagma(tagmaId)}
-      >
-        {common_retry()}
-      </button>
-    </div>
+      <div class="h-full grid place-items-center p-6">
+        <div class="text-center flex flex-col gap-3 max-w-sm">
+          <p class="text-sm text-error-500 dark:text-error-400">
+            {chat_channel_unavailable()}
+          </p>
+          <button
+            type="button"
+            class="btn preset-tonal-surface self-center"
+            onclick={() => channelsStore.retryTagma(tagmaId)}
+          >
+            {common_retry()}
+          </button>
+        </div>
+      </div>
+    {:else if !backendReady}
+      <div class="h-full grid place-items-center p-6">
+        <div class="text-center flex flex-col gap-3 max-w-sm">
+          {#if error}
+            <p class="text-error-500 dark:text-error-400 text-sm">{error}</p>
+          {:else}
+            <p class="text-sm opacity-60">{manage_opening()}</p>
+          {/if}
+        </div>
+      </div>
+    {:else if page === "overview"}
+      <OverviewPage {basePath} />
+    {:else if page === "budget"}
+      <BudgetPage {basePath} />
+    {:else if page === "agents"}
+      <AgentsPage {tagmaId} />
+    {:else if page === "profiles"}
+      <ProfilesPage {basePath} />
+    {:else if page === "schedules"}
+      <SchedulesPage {basePath} />
+    {/if}
   </div>
-{:else if !backendReady}
-  <div class="h-full grid place-items-center p-6">
-    <div class="text-center flex flex-col gap-3 max-w-sm">
-      {#if error}
-        <p class="text-error-500 dark:text-error-400 text-sm">{error}</p>
-      {:else}
-        <p class="text-sm opacity-60">{manage_opening()}</p>
-      {/if}
-    </div>
-  </div>
-{:else if page === "overview"}
-  <OverviewPage {basePath} />
-{:else if page === "budget"}
-  <BudgetPage {basePath} />
-{:else if page === "agents"}
-  <AgentsPage {tagmaId} />
-{:else if page === "profiles"}
-  <ProfilesPage {basePath} />
-{:else if page === "schedules"}
-  <SchedulesPage {basePath} />
-{/if}
+</div>

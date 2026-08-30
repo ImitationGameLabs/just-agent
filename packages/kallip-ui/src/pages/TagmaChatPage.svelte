@@ -9,8 +9,10 @@
   // owns), so this page is a thin resolver + opener.
 
   import ChannelChatPage from "./ChannelChatPage.svelte";
+  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import { agoraSession } from "../lib/session/agora.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
+  import { tagmaDetailsPath } from "../lib/shell/routes.ts";
   import { navigate } from "../lib/shell/port.ts";
   import {
     tagma_chat_not_enrolled,
@@ -19,6 +21,8 @@
     common_retry,
     chat_opening,
     chat_go_tagmata,
+    nav_breadcrumb_tagma,
+    nav_chat,
   } from "../paraglide/messages.js";
 
   let { tagmaId }: { tagmaId: string } = $props();
@@ -58,77 +62,91 @@
     if (!agoraSession.user) return;
     if (tagma) void channelsStore.ensureOpen(tagma, { explicit: true });
   });
+
+  // #3 trail: the tagma segment links the tagma details hub; the chat tail
+  // is the current page (R3: current, no href).
+  const breadcrumbs = $derived([
+    { label: nav_breadcrumb_tagma(), href: tagmaDetailsPath(tagmaId) },
+    { label: nav_chat(), current: true },
+  ]);
 </script>
 
-{#if !tagma}
-  <!-- Not enrolled / revoked / unknown id. The registry is authoritative; a
+<div class="h-full flex flex-col">
+  <div class="px-4 py-2 shrink-0">
+    <Breadcrumbs segments={breadcrumbs} />
+  </div>
+  <div class="flex-1 min-h-0 flex flex-col">
+    {#if !tagma}
+      <!-- Not enrolled / revoked / unknown id. The registry is authoritative; a
        revoked tagma falls here on the next refresh. -->
-  <div class="h-full grid place-items-center p-6">
-    <div class="text-center flex flex-col gap-3 max-w-sm">
-      <p class="text-sm opacity-80">{tagma_chat_not_enrolled()}</p>
-      <button
-        type="button"
-        class="btn preset-tonal-surface self-center"
-        onclick={() => navigate("/tagmata")}
-      >
-        {chat_go_tagmata()}
-      </button>
-    </div>
-  </div>
-{:else if conversationId}
-  {#if channelState.kind === "error"}
-    <!-- The channel died after opening (transport error). The transcript
+      <div class="h-full grid place-items-center p-6">
+        <div class="text-center flex flex-col gap-3 max-w-sm">
+          <p class="text-sm opacity-80">{tagma_chat_not_enrolled()}</p>
+          <button
+            type="button"
+            class="btn preset-tonal-surface self-center"
+            onclick={() => navigate("/tagmata")}
+          >
+            {chat_go_tagmata()}
+          </button>
+        </div>
+      </div>
+    {:else if conversationId}
+      {#if channelState.kind === "error"}
+        <!-- The channel died after opening (transport error). The transcript
          stays readable below; this row carries the user-facing retry. -->
-    <div
-      class="border-b border-surface-200-800 px-4 py-2 flex items-center justify-center gap-3"
-    >
-      <p class="text-xs text-error-500 dark:text-error-400">
-        {chat_channel_error()}
-      </p>
-      <button
-        type="button"
-        class="btn btn-sm preset-tonal-surface"
-        onclick={() => channelsStore.retryTagma(tagmaId)}
-      >
-        {common_retry()}
-      </button>
-    </div>
-  {/if}
-  <div class="h-full flex flex-col">
-    <div class="flex-1 min-h-0">
-      <ChannelChatPage {conversationId} />
-    </div>
-  </div>
-{:else if channelsStore.isAutoOpenFailed(tagmaId) && channelState.kind !== "pending"}
-  <!-- The last open attempt failed (budget entry) and none is in flight;
+        <div
+          class="border-b border-surface-200-800 px-4 py-2 flex items-center justify-center gap-3"
+        >
+          <p class="text-xs text-error-500 dark:text-error-400">
+            {chat_channel_error()}
+          </p>
+          <button
+            type="button"
+            class="btn btn-sm preset-tonal-surface"
+            onclick={() => channelsStore.retryTagma(tagmaId)}
+          >
+            {common_retry()}
+          </button>
+        </div>
+      {/if}
+      <div class="flex-1 min-h-0 flex flex-col">
+        <div class="flex-1 min-h-0">
+          <ChannelChatPage {conversationId} />
+        </div>
+      </div>
+    {:else if channelsStore.isAutoOpenFailed(tagmaId) && channelState.kind !== "pending"}
+      <!-- The last open attempt failed (budget entry) and none is in flight;
        without this branch the opening placeholder would spin forever.
        Retry re-arms and opens explicitly. -->
-  <div class="h-full grid place-items-center p-6">
-    <div class="text-center flex flex-col gap-3 max-w-sm">
-      <p class="text-sm text-error-500 dark:text-error-400">
-        {chat_channel_unavailable()}
-      </p>
-      <button
-        type="button"
-        class="btn preset-tonal-surface self-center"
-        onclick={() => channelsStore.retryTagma(tagmaId)}
-      >
-        {common_retry()}
-      </button>
-    </div>
+      <div class="h-full grid place-items-center p-6">
+        <div class="text-center flex flex-col gap-3 max-w-sm">
+          <p class="text-sm text-error-500 dark:text-error-400">
+            {chat_channel_unavailable()}
+          </p>
+          <button
+            type="button"
+            class="btn preset-tonal-surface self-center"
+            onclick={() => channelsStore.retryTagma(tagmaId)}
+          >
+            {common_retry()}
+          </button>
+        </div>
+      </div>
+    {:else}
+      <!-- absent / pending: ensureOpen has been fired by the effect above. -->
+      <div class="h-full grid place-items-center p-6">
+        <div class="text-center flex flex-col gap-3 max-w-sm">
+          <p class="text-sm opacity-60">{chat_opening()}</p>
+          <button
+            type="button"
+            class="btn preset-tonal-surface self-center"
+            onclick={() => navigate("/tagmata")}
+          >
+            {chat_go_tagmata()}
+          </button>
+        </div>
+      </div>
+    {/if}
   </div>
-{:else}
-  <!-- absent / pending: ensureOpen has been fired by the effect above. -->
-  <div class="h-full grid place-items-center p-6">
-    <div class="text-center flex flex-col gap-3 max-w-sm">
-      <p class="text-sm opacity-60">{chat_opening()}</p>
-      <button
-        type="button"
-        class="btn preset-tonal-surface self-center"
-        onclick={() => navigate("/tagmata")}
-      >
-        {chat_go_tagmata()}
-      </button>
-    </div>
-  </div>
-{/if}
+</div>
