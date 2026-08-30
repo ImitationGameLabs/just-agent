@@ -1,8 +1,14 @@
 <script lang="ts">
   import { agentsStore } from "../../lib/manage/agents.svelte.ts";
   import { navigate } from "../../lib/shell/port.ts";
+  import { tagmaAgentPath } from "../../lib/shell/routes.ts";
   import ConfirmDialog from "../../components/ConfirmDialog.svelte";
-  let { basePath = "/local/manage" }: { basePath?: string } = $props();
+  // tagmaId: set by the online manage page so the detail anchor goes
+  // through tagmaAgentPath — single source for the tagma route shape
+  let {
+    basePath = "/local/manage",
+    tagmaId = null,
+  }: { basePath?: string; tagmaId?: string | null } = $props();
   import StateDot from "../../components/manage/StateDot.svelte";
   import {
     common_loading,
@@ -123,7 +129,9 @@
 
           <div class="flex flex-wrap gap-2 mt-3">
             <a
-              href={`${basePath}/agents/${agent.id}`}
+              href={tagmaId
+                ? tagmaAgentPath(tagmaId, agent.id)
+                : `${basePath}/agents/${agent.id}`}
               class="btn btn-sm preset-outlined-surface-500 hover:preset-filled-primary-500"
               >{manage_agents_details()}</a
             >

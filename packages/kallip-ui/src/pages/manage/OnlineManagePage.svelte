@@ -142,7 +142,7 @@
 {:else if page === "budget"}
   <BudgetPage {basePath} />
 {:else if page === "agents"}
-  <AgentsPage {basePath} />
+  <AgentsPage {tagmaId} />
 {:else if page === "profiles"}
   <ProfilesPage {basePath} />
 {:else if page === "schedules"}

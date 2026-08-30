@@ -122,7 +122,9 @@
     try {
       agents = [...(await backend.listAgents()).agents];
     } catch {
-      /* keep the last roster; statusError covers the visible failure */
+      /* keep the last roster; refresh failures stay silent — only
+         the status toggle surfaces errors (statusError), and the
+         5s poll keeps retrying regardless */
     }
   }
 
