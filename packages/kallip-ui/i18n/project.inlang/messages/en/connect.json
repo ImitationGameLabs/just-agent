@@ -8,6 +8,5 @@
   "connect_token_hint": "Operator token accepted by the tagma.",
   "connect_url_invalid": "Tagma URL must be a valid http(s) URL.",
   "connect_connecting": "Connecting…",
-  "connect_submit": "Connect",
-  "connect_online_mode": "Online mode"
+  "connect_submit": "Connect"
 }

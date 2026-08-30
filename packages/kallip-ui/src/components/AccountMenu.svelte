@@ -1,23 +1,13 @@
 <script lang="ts">
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
-  import { ArrowRightLeft, LogOut, Settings, User } from "@lucide/svelte";
+  import { LogOut, Settings, User } from "@lucide/svelte";
   import { agoraSession } from "../lib/session/agora.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { configStore } from "../lib/config/config.svelte";
-  import { modeOf } from "../lib/config/mode.ts";
   import { connectionViewModel } from "../lib/connection.svelte.ts";
-  import { navigate } from "../lib/shell/port.ts";
-  import {
-    logout,
-    switchToOffline,
-    switchToOnline,
-  } from "../lib/session/account-actions.ts";
-  import {
-    account_go_offline,
-    account_go_online,
-    account_logout,
-    settings_heading,
-  } from "../paraglide/messages.js";
+  import { navigate, shellMode } from "../lib/shell/port.ts";
+  import { logout } from "../lib/session/account-actions.ts";
+  import { account_logout, settings_heading } from "../paraglide/messages.js";
 
   // The sidebar-footer account menu: the desktop sidebar's single entry
   // point for identity + mode actions. Small screens replace this dropdown
@@ -29,7 +19,7 @@
   // Branch on mode, not on `user`: the agora session cookie survives offline
   // mode, so `user` can hold a stale MeResponse while offline (see the invariant
   // on `agoraSession.user`). Offline UI must never act on it.
-  const mode = $derived(modeOf(configStore.value));
+  const mode = $derived(shellMode());
   const connection = $derived(
     connectionViewModel({
       connected: channelsStore.localConnected,
@@ -44,12 +34,6 @@
         break;
       case "logout":
         void logout();
-        break;
-      case "switch-online":
-        void switchToOnline();
-        break;
-      case "switch-offline":
-        void switchToOffline();
         break;
     }
   }
@@ -96,22 +80,6 @@
           >
             <LogOut class="size-4" />
             {account_logout()}
-          </Menu.Item>
-          <Menu.Separator class="my-1 border-surface-200-800" />
-          <Menu.Item
-            value="switch-offline"
-            class="flex items-center gap-2 px-3 py-2 rounded-base text-sm hover:preset-filled-surface-500 cursor-pointer"
-          >
-            <ArrowRightLeft class="size-4" />
-            {account_go_offline()}
-          </Menu.Item>
-        {:else}
-          <Menu.Item
-            value="switch-online"
-            class="flex items-center gap-2 px-3 py-2 rounded-base text-sm hover:preset-filled-surface-500 cursor-pointer"
-          >
-            <ArrowRightLeft class="size-4" />
-            {account_go_online()}
           </Menu.Item>
         {/if}
       </Menu.Content>

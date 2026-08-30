@@ -2,8 +2,9 @@
 // <RootLayout> component calls appGateDecision() inside a $effect and acts on
 // the result.
 //
-// Two modes (derived from the persisted config's activeMode via modeOf); only
-// one is active at a time, though both sessions may be retained underneath:
+// Two modes, now a property of the shell (shellMode in port.ts) rather
+// than derived from the persisted config. Only one is active at a time,
+// though both sessions may be retained underneath:
 //
 //   - "online" -- agora passkey auth. `user` is the tri-state from
 //     AgoraSessionStore: `undefined` = unresolved (whoami running / failed),

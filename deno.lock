@@ -2047,6 +2047,28 @@
           ]
         }
       },
+      "packages/kallip-direct": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@fontsource/fira-mono@^5.2.7",
+            "npm:@inlang/paraglide-js@2.20.0",
+            "npm:@lucide/svelte@^1.24.0",
+            "npm:@skeletonlabs/skeleton-svelte@5",
+            "npm:@skeletonlabs/skeleton@5",
+            "npm:@sveltejs/adapter-static@^3.0.10",
+            "npm:@sveltejs/kit@^2.63.0",
+            "npm:@sveltejs/vite-plugin-svelte@^7.1.2",
+            "npm:@tailwindcss/forms@~0.5.11",
+            "npm:@tailwindcss/typography@~0.5.19",
+            "npm:@tailwindcss/vite@^4.3.0",
+            "npm:svelte-check@^4.6.0",
+            "npm:svelte@^5.56.1",
+            "npm:tailwindcss@^4.3.0",
+            "npm:typescript@^6.0.3",
+            "npm:vite@^8.0.16"
+          ]
+        }
+      },
       "packages/kallip-lesche-client": {
         "packageJson": {
           "dependencies": [

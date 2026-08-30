@@ -8,6 +8,5 @@
   "connect_token_hint": "智能体编队接受的操作者令牌。",
   "connect_url_invalid": "智能体编队 URL 必须是有效的 http(s) 地址。",
   "connect_connecting": "连接中…",
-  "connect_submit": "连接",
-  "connect_online_mode": "在线模式"
+  "connect_submit": "连接"
 }

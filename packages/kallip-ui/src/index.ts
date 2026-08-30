@@ -31,6 +31,8 @@ export {
   type GotoOptions,
   initShell,
   navigate,
+  setOfflineOnlyShell,
+  shellMode,
 } from "./lib/shell/port.ts";
 export { initAgora, initLesche } from "./lib/session/agora.svelte.ts";
 export { initInstances } from "./lib/instances/client.ts";
@@ -39,7 +41,7 @@ export {
   type OfflineModeConfig,
   type PersistedConfig,
 } from "./lib/config/config.ts";
-export { type AppMode, modeOf } from "./lib/config/mode.ts";
+export { type AppMode } from "./lib/config/mode.ts";
 export {
   type ConfigStorage,
   localStorageConfigStorage,

@@ -44,7 +44,7 @@ export function initConfigStorage(s: ConfigStorage): void {
  * Load and validate. A blob with a valid `activeMode` passes through unchanged.
  * Anything else -- a legacy pre-redesign shape, a corrupt blob, an
  * manually-edited value -- is cleared and treated as the online default (null),
- * so a stale/corrupt value can never drive `modeOf` astray. Empty storage is
+ * so a stale/corrupt value can never drive the mode astray. Empty storage is
  * the same null, but is NOT cleared (no spurious write on a fresh install).
  */
 export async function loadConfig(): Promise<PersistedConfig | null> {

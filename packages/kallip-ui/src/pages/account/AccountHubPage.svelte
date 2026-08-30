@@ -8,18 +8,12 @@
   // anchor or a button. Icons are imported directly here (not injected via
   // NavIcons) because page components already depend on @lucide/svelte
   // directly (ManageHubPage precedent).
-  import { ArrowRightLeft, LogOut, Settings } from "@lucide/svelte";
+  import { LogOut, Settings } from "@lucide/svelte";
   import HubRow from "../../components/HubRow.svelte";
   import { configStore } from "../../lib/config/config.svelte";
-  import { modeOf } from "../../lib/config/mode.ts";
+  import { shellMode } from "../../lib/shell/port.ts";
+  import { logout } from "../../lib/session/account-actions.ts";
   import {
-    logout,
-    switchToOffline,
-    switchToOnline,
-  } from "../../lib/session/account-actions.ts";
-  import {
-    account_go_offline,
-    account_go_online,
     account_logout,
     account_menu,
     nav_tagmata,
@@ -28,7 +22,7 @@
 
   // Branch on mode, not on `user` (the AccountMenu invariant): offline must
   // never act on a stale agora session, so the row set follows the mode.
-  const mode = $derived(modeOf(configStore.value));
+  const mode = $derived(shellMode());
 </script>
 
 <!-- pt: calc keeps the browser value (1rem) when the inset is 0 and adds the system-bar height under edge-to-edge; these hub pages have no shell top row of their own. -->
@@ -50,17 +44,6 @@
         onclick={() => void logout()}
         Icon={LogOut}
         label={account_logout()}
-      />
-      <HubRow
-        onclick={() => void switchToOffline()}
-        Icon={ArrowRightLeft}
-        label={account_go_offline()}
-      />
-    {:else}
-      <HubRow
-        onclick={() => void switchToOnline()}
-        Icon={ArrowRightLeft}
-        label={account_go_online()}
       />
     {/if}
   </nav>

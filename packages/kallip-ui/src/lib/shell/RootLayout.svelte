@@ -16,7 +16,6 @@
   import { roomConversationsStore } from "../session/roomConversations.svelte";
   import { connectDirect } from "../session/connect.ts";
   import { configStore } from "../config/config.svelte";
-  import { modeOf } from "../config/mode.ts";
   import {
     navFor,
     pathMatches,
@@ -24,7 +23,7 @@
     type NavIcons,
   } from "./links.ts";
   import { appGateDecision, isPublicRoute } from "./gate.ts";
-  import { navigate } from "./port.ts";
+  import { isOfflineOnlyShell, navigate, shellMode } from "./port.ts";
   import {
     manage_agents_heading,
     manage_budget_heading,
@@ -49,15 +48,18 @@
     children: Snippet;
   } = $props();
 
-  // The mode is the single source of "which product are we in", read from the
-  // persisted config's `activeMode` (null config defaults to online).
-  const mode = $derived(modeOf(configStore.value));
+  // The mode is the single source of "which product are we in", derived from
+  // the shell identity (shellMode) rather than the persisted config: a
+  // web/app shell is always online (a stored offline config is clamped away
+  // -- its routes moved to kallip-direct); the direct shell is always
+  // offline.
+  const mode = $derived(shellMode());
 
-  // Boot once the config has loaded. The two modes need different boot:
-  //   - offline: reconnect the tagma straight away (offline's whole point is
-  //     the tagma; on failure surface the error and the connect page will
-  //     prompt);
-  //   - online: resolve the agora session so the gate reads a settled `user`.
+  // Boot once the config has loaded. Two boot shapes:
+  //   - offline-only shell: reconnect the tagma when credentials exist,
+  //     never touch agora (no credentials = nothing to boot);
+  //   - online (web/app, any stored mode): resolve the agora session so
+  //     the gate reads a settled `user`.
   // onMount (not a reactive $effect) so this runs exactly once, with no
   // `booted` flag and no effect read-of-write hazard.
   onMount(() => {
@@ -141,18 +143,21 @@
 
     void configStore.ready.then(() => {
       const cfg = configStore.value;
-      if (cfg?.activeMode === "offline" && cfg.offline) {
-        // Surface a boot-reconnect failure on the banner (the same classifier
-        // the layout uses for mid-session errors) instead of swallowing it --
-        // attachLocal is never reached on failure, so its localError reset does
-        // not apply; setting localError directly is correct here.
-        connectDirect(cfg.offline)
-          .then(({ transport, conversationId }) =>
-            channelsStore.attachLocal(transport, conversationId),
-          )
-          .catch((e) => {
-            channelsStore.localError = e;
-          });
+      if (isOfflineOnlyShell()) {
+        // Offline-only shell (kallip-direct): agora is unreachable by design.
+        // Boot the local transport when connect credentials exist; without
+        // them there is nothing to boot -- the gate parks the user on
+        // /connect, whose submit writes cfg.offline for the next boot. Never
+        // touches agoraSession.
+        if (cfg?.offline) {
+          connectDirect(cfg.offline)
+            .then(({ transport, conversationId }) =>
+              channelsStore.attachLocal(transport, conversationId),
+            )
+            .catch((e) => {
+              channelsStore.localError = e;
+            });
+        }
       } else {
         // Resolve the session; the gate reads the settled `user`. The tagma
         // registry fetch + auto-open are driven by the user_id $effect below
@@ -162,7 +167,9 @@
     });
     // One capability probe at boot (both modes): the tagmata page's
     // create card reads it -- hidden while the service is unreachable.
-    void instancesStore.fetchCapabilities();
+    // Offline-only shells skip it: no route there consumes capabilities, and
+    // the instances service is not part of that shell's world.
+    if (!isOfflineOnlyShell()) void instancesStore.fetchCapabilities();
   });
 
   // Load the tagma registry + auto-open channels for online tagmas. Keyed on

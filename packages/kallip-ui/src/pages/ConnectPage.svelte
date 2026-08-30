@@ -1,10 +1,8 @@
 <script lang="ts">
-  import { agoraSession } from "../lib/session/agora.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { connectDirect } from "../lib/session/connect.ts";
   import { configStore } from "../lib/config/config.svelte";
   import type { OfflineModeConfig } from "../lib/config/config.ts";
-  import { navigate } from "../lib/shell/port.ts";
   import { classifyError } from "../lib/errors.ts";
   import { CONNECT_TOKEN_KEY } from "../lib/instances/client.ts";
   import Brand from "../components/Brand.svelte";
@@ -19,7 +17,6 @@
     connect_url_invalid,
     connect_connecting,
     connect_submit,
-    connect_online_mode,
   } from "../paraglide/messages.js";
 
   // A ?tagmaUrl= from the instances page (the fresh-spawn Chat CTA) wins
@@ -100,17 +97,6 @@
       connecting = false;
     }
   }
-
-  // Abandon offline setup and head back to the online mode: flip the active
-  // mode (retaining offline creds for next time), re-resolve the agora user,
-  // then navigate. The explicit navigate is load-bearing -- the gate renders
-  // /connect for everyone in online mode, so without it the user would stay on
-  // this now-mismatched page.
-  async function useOnline() {
-    await configStore.setActiveMode("online");
-    void agoraSession.whoami();
-    await navigate(agoraSession.user ? "/tagmata" : "/login");
-  }
 </script>
 
 <svelte:head><title>{connect_title()}</title></svelte:head>
@@ -174,14 +160,5 @@
     >
       {connecting ? connect_connecting() : connect_submit()}
     </button>
-
-    <p class="text-center text-sm">
-      <button
-        type="button"
-        onclick={useOnline}
-        class="font-medium text-primary-500 dark:text-primary-400 hover:underline cursor-pointer"
-        >{connect_online_mode()}</button
-      >
-    </p>
   </form>
 </div>

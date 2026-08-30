@@ -2,7 +2,7 @@
   import { agoraSession } from "../lib/session/agora.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { configStore } from "../lib/config/config.svelte";
-  import { modeOf } from "../lib/config/mode.ts";
+  import { shellMode } from "../lib/shell/port.ts";
   import type {
     AddPasskeyResult,
     PasskeySummary,
@@ -45,7 +45,7 @@
   // agora); offline shows the tagma connection (no identity). Offline
   // Disconnect/Reconnect stays here -- it is tagma session management, not an
   // account/mode action.
-  const mode = $derived(modeOf(configStore.value));
+  const mode = $derived(shellMode());
   const offlineUrl = $derived(configStore.value?.offline?.tagmaUrl ?? "");
 
   // Offline: drop the tagma session without abandoning offline mode.

@@ -27,7 +27,5 @@
   "shell_offline": "离线",
   "shell_error": "错误",
   "account_logout": "退出登录",
-  "account_go_offline": "切换到离线",
-  "account_go_online": "切换到在线",
   "account_menu": "账户"
 }

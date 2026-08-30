@@ -27,7 +27,5 @@
   "shell_offline": "offline",
   "shell_error": "error",
   "account_logout": "Log out",
-  "account_go_offline": "Go offline",
-  "account_go_online": "Go online",
   "account_menu": "Account"
 }

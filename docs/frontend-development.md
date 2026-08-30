@@ -2,7 +2,8 @@
 
 This guide covers the JS/TS workspace packages under `packages/`
 (`kallip-common`, `kallip-client`, `kallip-agora-client`,
-`kallip-lesche-client`, `kallip-ui`, `kallip-web`, `kallip-app`). They share a
+`kallip-lesche-client`, `kallip-ui`, `kallip-web`, `kallip-app`,
+`kallip-direct`). They share a
 single toolchain, **Deno**, laid out as an npm-style workspace but never driven
 by npm. The Rust crates under `crates/` are unrelated (cargo).
 
@@ -97,6 +98,24 @@ explicitly. The full toolchain rationale lives in
 Gradle writes through `user.home` (inside the sandbox that is the read-only
 `/root`), so the wrapper lock fails until `GRADLE_USER_HOME` points at a
 writable directory, e.g. `export GRADLE_USER_HOME=$PWD/.gradle`.
+
+## Offline direct shell (`kallip-direct`)
+
+`kallip-direct` is the developer fallback for reaching a tagma when the web
+stack is down: it mounts the offline product (the `/local/*` routes plus the
+`/connect` front door) from the shared `kallip-ui` components, with no Tauri
+and no online/agora surface — the shell declares itself offline-only at
+bootstrap (`setOfflineOnlyShell()`), so the gate, navigation, and account
+chrome never enter the online product. It is a plain SvelteKit web app;
+run it standalone from `packages/kallip-direct`:
+
+```sh
+deno task dev        # http://127.0.0.1:5175 (strict port, loopback)
+```
+
+Port `5175` is reserved for this shell so it can run next to a `kallip-web`
+dev server (5173). First use: open `/connect`, enter the tagma URL and the
+operator token; the session is stored locally and reconnected on boot.
 
 ## Formatting
 
