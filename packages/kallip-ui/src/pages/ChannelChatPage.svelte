@@ -66,9 +66,10 @@
   });
 
   // Draft storage: tagma chats key on the tagma id -- stable across re-KEX
-  // and shared by both entries into this page (the sidebar /chat/t/{tagmaId}
-  // route and a /chat/{conversationId} deep link resolve to the same
-  // conversation). The local chat and the brief window before `conv`
+  // and shared by both entries into this page (the sidebar
+  // /tagma/{tagmaId}/chat route and a /chat/{conversationId} deep link
+  // resolve to the same conversation).
+  // The local chat and the brief window before `conv`
   // resolves key on the conversation id, so no draft leaks across
   // conversations.
   const draftKey = $derived(

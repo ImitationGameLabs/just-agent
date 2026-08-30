@@ -1,5 +1,6 @@
 <script lang="ts">
-  // The tagma-keyed chat page: /chat/t/{tagmaId}. Unlike /chat/{conversationId}
+  // The tagma-keyed chat page: /tagma/{tagmaId}/chat. Unlike
+  // /chat/{conversationId}
   // (where the id is server-derived and only known AFTER a relay channel is
   // open), this route is always navigable for an enrolled tagma -- the channel
   // opens on demand here, mirroring RoomConversationPage's on-mount open. Once

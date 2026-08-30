@@ -101,7 +101,7 @@ export const chatDraftsStore = new ChatDraftsStore();
 
 // Stable draft keys per conversation surface. The bilateral tagma chat is
 // keyed on the tagma id -- stable across re-KEX and shared by both entries
-// into the page (the sidebar /chat/t/{id} route and a /chat/{conversationId}
+// into the page (the sidebar /tagma/{id}/chat route and a /chat/{conversationId}
 // deep link resolve to the same Conversation, hence the same key). Rooms key
 // on the room id. Anything else (the local conversation, or a relay id in
 // the brief window before the Conversation resolves) falls back to the

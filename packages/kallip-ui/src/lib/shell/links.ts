@@ -76,7 +76,8 @@ export interface NavIcons {
 /** One enrolled tagma as a sidebar chat entry. `indicator` is the channel
  * transport status as a nav dot tri-state (the caller derives it from
  * `channelsStore.getTagmaChannelState` via `tagmaNavIndicator`). The entry is
- * always navigable -- the relay channel opens on demand at /chat/t/{tagmaId}. */
+ * always navigable -- the relay channel opens on demand at the
+ * /tagma/{tagmaId}/chat route. */
 export interface NavTagma {
   tagmaId: string;
   label: string | null;

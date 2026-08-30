@@ -181,7 +181,7 @@
   // idempotent, so a transition the sink already handled and the sweep both
   // touch is opened exactly once. NOTE: like the presence sink, this is now a
   // pre-warm convenience, not load-bearing for sidebar visibility (enrolled
-  // tagmas always show; /chat/t/{tagmaId} opens on demand).
+  // tagmas always show; /tagma/{tagmaId}/chat opens on demand).
   $effect(() => {
     const uid = agoraSession.user?.user_id;
     if (mode !== "online" || !uid) return;
@@ -254,7 +254,8 @@
 
   // The online sidebar lists EVERY enrolled tagma (not just open channels):
   // the indicator reflects the channel transport state, and the entry links to
-  // the tagma-keyed route /chat/t/{tagmaId} which opens the channel on demand.
+  // the tagma-keyed route /tagma/{tagmaId}/chat which opens the channel on
+  // demand.
   // Channel transport drives the dot; presence feeds its open and absent
   // arms: once it resolves without the peer the entry reads down (the same
   // safe-default policy as the /tagmata dashboard), so a never-online peer
