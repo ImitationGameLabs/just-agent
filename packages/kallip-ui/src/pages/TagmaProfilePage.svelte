@@ -13,7 +13,6 @@
   import { tagmaChatPath } from "../lib/shell/routes.ts";
   import { formatDateTime } from "../lib/tagmata.svelte.ts";
   import { TONAL_ICON_SURF } from "../lib/classes.ts";
-  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import type { PublicTagmaProfile } from "@kallipai/kallip-agora-client";
   import {
     common_loading,
@@ -81,12 +80,6 @@
       (profile ? tagma_fallback_label({ id: tagmaId.slice(0, 8) }) : "tagma"),
   );
 
-  // #2 trail: [Tagmata root] + [profile name] (R1a double segment).
-  const breadcrumbs = $derived([
-    { label: nav_tagmata(), href: "/tagmata" },
-    { label: displayName, current: true },
-  ]);
-
   function back(): void {
     if (history.length > 1) history.back();
     else navigate("/tagmata");
@@ -121,7 +114,6 @@
 
   <div class="flex-1 min-h-0 overflow-auto">
     <div class="mx-auto w-full max-w-2xl p-4 flex flex-col gap-3">
-      <Breadcrumbs segments={breadcrumbs} />
       {#if loading}
         <p class="text-sm opacity-60">{common_loading()}</p>
       {:else if error}

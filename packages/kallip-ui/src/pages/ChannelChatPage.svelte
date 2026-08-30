@@ -8,7 +8,6 @@
   // the Conversation, so online and offline render identically.
   import ConversationView from "../components/ConversationView.svelte";
   import TagmaStatusHeader from "../components/TagmaStatusHeader.svelte";
-  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import { createComposer } from "../lib/composer.svelte.ts";
   import { bindDraft } from "../lib/session/drafts.svelte.ts";
   import { RelayConversation } from "../lib/session/conversation.svelte.ts";
@@ -28,20 +27,17 @@
     chat_title_channel,
     chat_notice_local,
     chat_notice_offline,
-    nav_tagmata,
   } from "../paraglide/messages.js";
 
   let {
     conversationId,
     statusHeaderMobile = true,
-    withTrail = false,
   }: {
     conversationId: string;
     /** Keep this page's own status header below md. The offline /local/chat
      * route lifts it into the shell's mobile top row instead (RootLayout
      * renders a second instance there) and passes false here. */
     statusHeaderMobile?: boolean;
-    withTrail?: boolean;
   } = $props();
 
   // Resolves to undefined only briefly: online while a channel's key exchange
@@ -49,22 +45,6 @@
   // (the gate routes a failed reconnect to /connect, so this is a short window).
   const conv = $derived(channelsStore.get(conversationId));
   const isLocal = $derived(conversationId === "local");
-
-  // #21 trail tail: the conversation label (the tagma label the channel
-  // was opened with); the static local label or an id prefix while it
-  // resolves. Rendered only when withTrail is set (the /chat/[id]
-  // shells); embedded hosts (the tagma chat page) bring their own trail.
-  const convLabel = $derived(
-    conv instanceof RelayConversation && conv.label !== null
-      ? conv.label
-      : isLocal
-        ? chat_title_local()
-        : conversationId.slice(0, 8),
-  );
-  const breadcrumbs = $derived([
-    { label: nav_tagmata(), href: "/tagmata" },
-    { label: convLabel, current: true },
-  ]);
 
   // The lazy-window pager runs on both transports; each conversation leaf
   // supplies its own page source behind the shared base loadOlder.
@@ -167,11 +147,6 @@
   ></svelte:head
 >
 <div class="h-full flex flex-col">
-  {#if withTrail}
-    <div class="px-4 py-2 shrink-0">
-      <Breadcrumbs segments={breadcrumbs} />
-    </div>
-  {/if}
   <div class="flex-1 min-h-0">
     {#if !conv}
       {#if isLocal}

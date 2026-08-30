@@ -11,16 +11,11 @@
   import { OnlineBackend } from "../../lib/manage/backend.ts";
   import { manageChannelStalled } from "../../lib/manage/channelStalled.ts";
   import AgentDetailPage from "./AgentDetailPage.svelte";
-  import {
-    tagmaDetailsPath,
-    tagmaDetailsSectionPath,
-  } from "../../lib/shell/routes.ts";
+  import { tagmaDetailsPath } from "../../lib/shell/routes.ts";
   import {
     chat_channel_unavailable,
     common_retry,
     manage_opening,
-    nav_breadcrumb_agents,
-    nav_breadcrumb_tagma,
   } from "../../paraglide/messages.js";
 
   let { tagmaId, agentId }: { tagmaId: string; agentId: string } = $props();
@@ -66,17 +61,6 @@
       backend = null;
     }
   });
-
-  // The trail links the tagma segment to the details hub (the stable
-  // overview target every sibling page uses) and jumps straight to the
-  // agents list: a middle details segment would repeat the tagma href.
-  const breadcrumbs = $derived([
-    { label: nav_breadcrumb_tagma(), href: tagmaDetailsPath(tagmaId) },
-    {
-      label: nav_breadcrumb_agents(),
-      href: tagmaDetailsSectionPath(tagmaId, "agents"),
-    },
-  ]);
 </script>
 
 {#if stalled}
@@ -108,6 +92,5 @@
     id={agentId}
     basePath={tagmaDetailsPath(tagmaId)}
     {backend}
-    {breadcrumbs}
   />
 {/if}

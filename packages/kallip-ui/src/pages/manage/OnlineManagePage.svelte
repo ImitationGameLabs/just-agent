@@ -18,11 +18,9 @@
   import { schedulesStore } from "../../lib/manage/schedules.svelte.ts";
   import { managementBackend } from "../../lib/manage/client.ts";
   import {
-    tagmaChatPath,
     tagmaDetailsPath,
     type TagmaDetailsSection,
   } from "../../lib/shell/routes.ts";
-  import Breadcrumbs from "../../components/Breadcrumbs.svelte";
   import OverviewPage from "./OverviewPage.svelte";
   import BudgetPage from "./BudgetPage.svelte";
   import AgentsPage from "./AgentsPage.svelte";
@@ -33,12 +31,6 @@
     chat_channel_unavailable,
     manage_opening,
     common_retry,
-    nav_breadcrumb_tagma,
-    nav_breadcrumb_agents,
-    nav_overview,
-    nav_budget,
-    nav_profiles,
-    nav_schedules,
   } from "../../paraglide/messages.js";
 
   let {
@@ -115,26 +107,9 @@
       }
     };
   });
-
-  // #4/#5 trail: the tagma segment links the tagma home surface (chat); the
-  // tail is the current section (R3: current, no href).
-  const sectionLabels: Record<TagmaDetailsSection, () => string> = {
-    overview: nav_overview,
-    budget: nav_budget,
-    agents: nav_breadcrumb_agents,
-    profiles: nav_profiles,
-    schedules: nav_schedules,
-  };
-  const breadcrumbs = $derived([
-    { label: nav_breadcrumb_tagma(), href: tagmaChatPath(tagmaId) },
-    { label: sectionLabels[page](), current: true },
-  ]);
 </script>
 
 <div class="h-full flex flex-col">
-  <div class="px-6 pt-4 shrink-0">
-    <Breadcrumbs segments={breadcrumbs} />
-  </div>
   <div class="flex-1 min-h-0">
     {#if stalled}
       <!-- No conversation and none can come without a retry: absent to a

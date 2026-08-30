@@ -9,7 +9,6 @@
   // owns), so this page is a thin resolver + opener.
 
   import ChannelChatPage from "./ChannelChatPage.svelte";
-  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import { agoraSession } from "../lib/session/agora.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { tagmaDetailsPath } from "../lib/shell/routes.ts";
@@ -62,19 +61,9 @@
     if (!agoraSession.user) return;
     if (tagma) void channelsStore.ensureOpen(tagma, { explicit: true });
   });
-
-  // #3 trail: the tagma segment links the tagma details hub; the chat tail
-  // is the current page (R3: current, no href).
-  const breadcrumbs = $derived([
-    { label: nav_breadcrumb_tagma(), href: tagmaDetailsPath(tagmaId) },
-    { label: nav_chat(), current: true },
-  ]);
 </script>
 
 <div class="h-full flex flex-col">
-  <div class="px-4 py-2 shrink-0">
-    <Breadcrumbs segments={breadcrumbs} />
-  </div>
   <div class="flex-1 min-h-0 flex flex-col">
     {#if !tagma}
       <!-- Not enrolled / revoked / unknown id. The registry is authoritative; a

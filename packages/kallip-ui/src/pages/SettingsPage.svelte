@@ -16,7 +16,6 @@
   import PasskeyManager from "../components/settings/PasskeyManager.svelte";
   import LinkedAccounts from "../components/settings/LinkedAccounts.svelte";
   import EmailManager from "../components/settings/EmailManager.svelte";
-  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import ProviderVault from "../components/settings/ProviderVault.svelte";
   import LightSwitch from "../components/LightSwitch.svelte";
   import LanguageSwitch from "../components/LanguageSwitch.svelte";
@@ -177,12 +176,6 @@
     await agoraSession.createProvider(req);
     return true;
   }
-
-  // #16 trail: [Tagmata root] + [settings] (R1a double segment).
-  const breadcrumbs = $derived([
-    { label: nav_tagmata(), href: "/tagmata" },
-    { label: settings_heading(), current: true },
-  ]);
 </script>
 
 <svelte:head><title>{settings_title()}</title></svelte:head>
@@ -191,7 +184,6 @@
   <div
     class="px-6 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-6 max-w-md space-y-6"
   >
-    <Breadcrumbs segments={breadcrumbs} />
     <h1 class="text-xl font-semibold text-center md:text-left">
       {settings_heading()}
     </h1>

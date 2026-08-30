@@ -35,7 +35,6 @@
     instanceSlugFor,
   } from "../lib/instances/client.ts";
   import { joinDeviceRows } from "../lib/tagmata.svelte.ts";
-  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
   import CreateInstanceDialog, {
     type AdvancedSpawnFields,
@@ -449,10 +448,6 @@
     await agoraSession.revokeTagma(id);
     channelsStore.closeByTagma(id);
   }
-
-  // #1 trail: tagmata is the trail root itself (R1a exception) -- a single
-  // current segment, no href.
-  const breadcrumbs = $derived([{ label: nav_tagmata(), current: true }]);
 </script>
 
 <svelte:head><title>{tagmata_title()}</title></svelte:head>
@@ -461,7 +456,6 @@
      centered narrow column matches the other manage pages. -->
 <div class="h-full overflow-y-auto">
   <div class="p-6 max-w-2xl mx-auto space-y-6">
-    <Breadcrumbs segments={breadcrumbs} />
     <h1 class="text-xl font-semibold hidden md:block">
       {manage_instances_heading()}
     </h1>

@@ -11,9 +11,6 @@
   import { KallipError } from "@kallipai/kallip-common";
   import { SvelteSet } from "svelte/reactivity";
   import type { ManagementBackend } from "../../lib/manage/backend.ts";
-  import Breadcrumbs, {
-    type BreadcrumbSegment,
-  } from "../../components/Breadcrumbs.svelte";
   import { navigate } from "../../lib/shell/port.ts";
   import { TONAL_ICON_SURF } from "../../lib/classes.ts";
   import { startVisibleInterval } from "../../lib/visibleInterval.ts";
@@ -52,7 +49,6 @@
     id,
     basePath = "/local/manage",
     backend = managementBackend(),
-    breadcrumbs = undefined,
   }: {
     id: string;
     basePath?: string;
@@ -60,8 +56,6 @@
      * offline backend; the online route injects a tagma-resolved
      * OnlineBackend so a deep link renders without store switching. */
     backend?: ManagementBackend;
-    /** Trail above this page; the page appends its own current segment. */
-    breadcrumbs?: BreadcrumbSegment[];
   } = $props();
 
   let status = $state<AgentStatusResponse | null>(null);
@@ -219,11 +213,6 @@
 
 <div class="h-full overflow-y-auto">
   <div class="p-6 max-w-2xl space-y-6">
-    {#if breadcrumbs}
-      <Breadcrumbs
-        segments={[...breadcrumbs, { label: agent?.role || id, current: true }]}
-      />
-    {/if}
     <div>
       <div class="flex items-center gap-3">
         <a

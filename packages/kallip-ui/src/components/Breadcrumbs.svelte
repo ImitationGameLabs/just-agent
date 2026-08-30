@@ -1,11 +1,11 @@
 <script lang="ts" module>
   // One trail segment: `href` makes it a link, and the current segment
   // (normally the tail) renders aria-current="page" instead of a link.
-  export type BreadcrumbSegment = {
-    label: string;
-    href?: string;
-    current?: boolean;
-  };
+  // The type lives in the route table (lib/shell/breadcrumbs.ts), which
+  // owns the trail data; re-exported here for this component's call sites.
+  import type { BreadcrumbSegment } from "../lib/shell/breadcrumbs.ts";
+
+  export type { BreadcrumbSegment };
 </script>
 
 <script lang="ts">

@@ -4,7 +4,6 @@
   import { roomConversationsStore } from "../lib/session/roomConversations.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import RoomsDashboard from "../components/rooms/RoomsDashboard.svelte";
-  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import {
     rooms_title,
     rooms_retrying,
@@ -31,19 +30,10 @@
         ? "loaded"
         : "loading",
   );
-
-  // #13 trail: [Tagmata root] + [rooms] (R1a double segment).
-  const breadcrumbs = $derived([
-    { label: nav_tagmata(), href: "/tagmata" },
-    { label: nav_rooms(), current: true },
-  ]);
 </script>
 
 <svelte:head><title>{rooms_title()}</title></svelte:head>
 <div class="h-full flex flex-col">
-  <div class="mx-auto w-full max-w-2xl px-4 pt-3 shrink-0">
-    <Breadcrumbs segments={breadcrumbs} />
-  </div>
   <div class="flex-1 min-h-0">
     {#if agoraSession.user}
       <RoomsDashboard

@@ -17,6 +17,8 @@
     shell_live,
     shell_offline,
   } from "../paraglide/messages.js";
+  import Breadcrumbs from "./Breadcrumbs.svelte";
+  import { matchTrail } from "../lib/shell/breadcrumbs.ts";
 
   // AppShell owns the indicator visual tokens (mirrors how it owns the icon's
   // `size-4`), so callers only express a domain tri-state, not a class string.
@@ -64,11 +66,16 @@
     back = null,
     topRow = undefined,
     title = undefined,
+    pathname,
     error = null,
     topPanel = undefined,
     children,
   }: {
     links: NavSection[];
+
+    /** The current pathname: the trail table (lib/shell/breadcrumbs.ts)
+     * is keyed on it, so the bar needs no per-page wiring. */
+    pathname: string;
     // Consumer-supplied route matcher ("/" exact, others by prefix). Kept out of
     // the shell so deep links such as `/chat/:id` still resolve.
     isActive: (href: string) => boolean;
@@ -103,6 +110,11 @@
   // arithmetic; both modes stay <= 5 cells incl. More + Account).
   const slots = $derived(navSlots(links));
   const moreActive = $derived(slots.overflow.some((i) => isActive(i.href)));
+
+  // The one chrome bar's content, from the route table. Null off-table
+  // (offline /local/*, public routes) -> no bar, matching the old
+  // per-page mounts by construction rather than by convention.
+  const trail = $derived(matchTrail(pathname));
 
   // The overflow sheet. Backdrop/Escape dismissal comes from the zag
   // Dialog; in-sheet navigation closes it via the menu-level click
@@ -299,6 +311,16 @@
     {/if}
     {#if error}
       <Banner title={error.title} detail={error.detail} hint={error.hint} />
+    {/if}
+    {#if trail}
+      <!-- The single breadcrumb bar: one row, one divider, the same
+           height on every page that has a trail (the table owns the
+           content; the chrome owns the shape). -->
+      <div
+        class="px-4 py-2 border-b border-surface-200-800 flex min-h-9 items-center"
+      >
+        <Breadcrumbs segments={trail} />
+      </div>
     {/if}
     <div class="flex-1 min-h-0 overflow-hidden">
       {@render children()}

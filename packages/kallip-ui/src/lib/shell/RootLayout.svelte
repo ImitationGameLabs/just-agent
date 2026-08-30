@@ -367,6 +367,7 @@
 {:else if decision.kind === "render"}
   <AppShell
     {links}
+    {pathname}
     {isActive}
     {back}
     topRow={back && !manageTitle ? topRowSnippet : undefined}
