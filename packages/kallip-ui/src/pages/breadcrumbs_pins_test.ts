@@ -32,6 +32,10 @@ const ACCOUNT_HUB_PAGE = new URL(
   import.meta.url,
 );
 const USER_PROFILE_PAGE = new URL("./UserProfilePage.svelte", import.meta.url);
+const ONLINE_AGENT_DETAIL_PAGE = new URL(
+  "./manage/OnlineAgentDetailPage.svelte",
+  import.meta.url,
+);
 
 function source(url: URL): string {
   return new TextDecoder().decode(Deno.readFileSync(url));
@@ -223,6 +227,26 @@ Deno.test(
     assert(
       src.includes("label: handle, current: true"),
       "the profile handle must be the current tail",
+    );
+  },
+);
+
+Deno.test(
+  "OnlineAgentDetailPage keeps its tagma segment on the details hub path",
+  { permissions: { read: [ONLINE_AGENT_DETAIL_PAGE] } },
+  () => {
+    const src = source(ONLINE_AGENT_DETAIL_PAGE);
+    assert(
+      src.includes("href: tagmaDetailsPath(tagmaId)"),
+      "the tagma segment must link the details hub (stable overview target)",
+    );
+    assert(
+      !src.includes("tagmaChatPath"),
+      "the chat path must not appear in the trail",
+    );
+    assert(
+      !src.includes("manage_agents_details"),
+      "the middle segment whose href collapsed into the tagma segment stays deleted",
     );
   },
 );
