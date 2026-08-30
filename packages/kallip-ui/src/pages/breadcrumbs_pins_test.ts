@@ -26,6 +26,12 @@ const ROOM_SETTINGS_PAGE = new URL(
   import.meta.url,
 );
 const CHANNEL_CHAT_PAGE = new URL("./ChannelChatPage.svelte", import.meta.url);
+const SETTINGS_PAGE = new URL("./SettingsPage.svelte", import.meta.url);
+const ACCOUNT_HUB_PAGE = new URL(
+  "./account/AccountHubPage.svelte",
+  import.meta.url,
+);
+const USER_PROFILE_PAGE = new URL("./UserProfilePage.svelte", import.meta.url);
 
 function source(url: URL): string {
   return new TextDecoder().decode(Deno.readFileSync(url));
@@ -166,6 +172,57 @@ Deno.test(
     assert(
       src.includes("label: convLabel, current: true"),
       "the conversation label must be the current tail",
+    );
+  },
+);
+
+Deno.test(
+  "SettingsPage mounts the Tagmata-root trail with a current settings tail",
+  { permissions: { read: [SETTINGS_PAGE] } },
+  () => {
+    const src = source(SETTINGS_PAGE);
+    assert(src.includes("<Breadcrumbs"), "trail must be mounted");
+    assert(
+      src.includes('href: "/tagmata"'),
+      "the root segment must link the tagmata top level",
+    );
+    assert(
+      src.includes("label: settings_heading(), current: true"),
+      "the settings segment must be the current tail",
+    );
+  },
+);
+
+Deno.test(
+  "AccountHubPage mounts the Tagmata-root trail with a current account tail",
+  { permissions: { read: [ACCOUNT_HUB_PAGE] } },
+  () => {
+    const src = source(ACCOUNT_HUB_PAGE);
+    assert(src.includes("<Breadcrumbs"), "trail must be mounted");
+    assert(
+      src.includes('href: "/tagmata"'),
+      "the root segment must link the tagmata top level",
+    );
+    assert(
+      src.includes("label: account_menu(), current: true"),
+      "the account segment must be the current tail",
+    );
+  },
+);
+
+Deno.test(
+  "UserProfilePage mounts the Tagmata-root trail with a current handle tail",
+  { permissions: { read: [USER_PROFILE_PAGE] } },
+  () => {
+    const src = source(USER_PROFILE_PAGE);
+    assert(src.includes("<Breadcrumbs"), "trail must be mounted");
+    assert(
+      src.includes('href: "/tagmata"'),
+      "the root segment must link the tagmata top level",
+    );
+    assert(
+      src.includes("label: handle, current: true"),
+      "the profile handle must be the current tail",
     );
   },
 );

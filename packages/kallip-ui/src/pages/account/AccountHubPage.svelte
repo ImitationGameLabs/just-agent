@@ -10,6 +10,7 @@
   // directly (ManageHubPage precedent).
   import { ArrowRightLeft, LogOut, Settings } from "@lucide/svelte";
   import HubRow from "../../components/HubRow.svelte";
+  import Breadcrumbs from "../../components/Breadcrumbs.svelte";
   import { configStore } from "../../lib/config/config.svelte";
   import { modeOf } from "../../lib/config/mode.ts";
   import {
@@ -22,18 +23,26 @@
     account_go_online,
     account_logout,
     account_menu,
+    nav_tagmata,
     settings_heading,
   } from "../../paraglide/messages.js";
 
   // Branch on mode, not on `user` (the AccountMenu invariant): offline must
   // never act on a stale agora session, so the row set follows the mode.
   const mode = $derived(modeOf(configStore.value));
+
+  // #17 trail: [Tagmata root] + [account] (R1a double segment).
+  const breadcrumbs = $derived([
+    { label: nav_tagmata(), href: "/tagmata" },
+    { label: account_menu(), current: true },
+  ]);
 </script>
 
 <!-- pt: calc keeps the browser value (1rem) when the inset is 0 and adds the system-bar height under edge-to-edge; these hub pages have no shell top row of their own. -->
 <div
   class="px-2 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 md:p-6 max-w-2xl space-y-6"
 >
+  <Breadcrumbs segments={breadcrumbs} />
   <h1 class="text-xl font-semibold text-center md:text-left">
     {account_menu()}
   </h1>

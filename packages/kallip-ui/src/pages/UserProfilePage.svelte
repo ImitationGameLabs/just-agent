@@ -10,12 +10,14 @@
   import { formatDateTime } from "../lib/tagmata.svelte.ts";
   import { TONAL_ICON_SURF } from "../lib/classes.ts";
   import type { PublicUserProfile } from "@kallipai/kallip-agora-client";
+  import Breadcrumbs from "../components/Breadcrumbs.svelte";
   import {
     common_loading,
     auth_couldnt_reach,
     common_back_aria,
     user_profile_subtitle,
     user_profile_joined,
+    nav_tagmata,
   } from "../paraglide/messages.js";
 
   let { handle }: { handle: string } = $props();
@@ -61,6 +63,13 @@
     if (history.length > 1) history.back();
     else navigate("/tagmata");
   }
+
+  // #18 trail: [Tagmata root] + [profile handle] (R1a double segment;
+  // the handle is the page identity, runtime string per R4).
+  const breadcrumbs = $derived([
+    { label: nav_tagmata(), href: "/tagmata" },
+    { label: handle, current: true },
+  ]);
 </script>
 
 <svelte:head><title>KallipAI · {handle}</title></svelte:head>
@@ -89,6 +98,7 @@
 
   <div class="flex-1 min-h-0 overflow-auto">
     <div class="mx-auto w-full max-w-2xl p-4">
+      <Breadcrumbs segments={breadcrumbs} />
       {#if loading}
         <p class="text-sm opacity-60">{common_loading()}</p>
       {:else if error}
