@@ -1,13 +1,16 @@
 <script lang="ts">
-  // The unified tagmata page: one card per tagma across its lifecycle -- a
-  // pending enrollment code, an enrolled identity, and (when one backs the
-  // card) its host-side process, joined by the slug prefix convention. The
-  // registry half (codes + identities) is agora-side; the process half is
-  // the local process host, so the page is mode-neutral: offline the
-  // registry is simply absent and the page degrades to the process list.
-  // The page owns every store call; the cards and dialogs stay
-  // presentational (the CreateRoomDialog discipline). The AppShell expects
-  // the page root to scroll itself (h-full overflow-y-auto).
+  // The combined manage page: the Tagmata section is one card per tagma
+  // across its lifecycle -- a pending enrollment code, an enrolled identity,
+  // and (when one backs the card) its host-side process, joined by the slug
+  // prefix convention. The registry half (codes + identities) is agora-side;
+  // the process half is the local process host, so the page is mode-neutral:
+  // offline the registry is simply absent and the page degrades to the
+  // process list. Online, a second section surfaces Rooms management (rows
+  // + the standing /rooms entry); its visibility keys on the shell mode
+  // only, never on the rooms fetch state. The page owns every store call;
+  // the cards and dialogs stay presentational (the CreateRoomDialog
+  // discipline). The AppShell expects the page root to scroll itself
+  // (h-full overflow-y-auto).
   import {
     agoraBaseUrlOrFail,
     agoraClientOrFail,
@@ -16,9 +19,11 @@
     lescheClientOrFail,
   } from "../lib/session/agora.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
+  import { roomsStore } from "../lib/session/rooms.svelte";
   import { openRelayChannel } from "@kallipai/kallip-lesche-client";
   import { type ProviderSummary } from "@kallipai/kallip-agora-client";
   import { OnlineBackend } from "../lib/manage/backend.ts";
+  import { shellMode } from "../lib/shell/port.ts";
   import {
     isLocked,
     providerEndpointKey,
@@ -41,6 +46,8 @@
   } from "../components/instances/CreateInstanceDialog.svelte";
   import EnrollmentCodeCard from "../components/tagmata/EnrollmentCodeCard.svelte";
   import TagmaCard from "../components/tagmata/TagmaCard.svelte";
+  import HubRow from "../components/HubRow.svelte";
+  import { Users } from "@lucide/svelte";
   import {
     manage_instances_create_failed,
     manage_instances_create_mint_failed,
@@ -55,7 +62,6 @@
     manage_instances_error_spawn_timeout,
     manage_instances_error_workspace_overlap,
     manage_instances_forbidden,
-    manage_instances_heading,
     manage_instances_host_forbidden,
     manage_instances_load_failed,
     manage_instances_loading,
@@ -78,8 +84,13 @@
     manage_instances_unauthorized,
     manage_instances_session_required,
     manage_instances_unreachable,
+    common_loading,
+    nav_manage,
+    nav_rooms,
     nav_chat,
     nav_tagmata,
+    tagma_rooms_section_empty,
+    tagma_rooms_section_manage,
     tagmata_load_failed,
     tagmata_new,
     tagmata_new_hint,
@@ -455,9 +466,11 @@
 <!-- Single scroll root (the AppShell overflow-hidden contract); the
      centered narrow column matches the other manage pages. -->
 <div class="h-full overflow-y-auto">
-  <div class="p-6 max-w-2xl mx-auto space-y-6">
+  <div
+    class="px-2 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 md:p-6 max-w-2xl mx-auto space-y-6"
+  >
     <h1 class="text-xl font-semibold hidden md:block">
-      {manage_instances_heading()}
+      {nav_manage()}
     </h1>
 
     {#if spawnResult}
@@ -627,6 +640,46 @@
       </div>
     {/if}
 
+    {#if shellMode() === "online"}
+      <!-- Rooms management section: visibility keys on the shell mode only
+           (C review N-1) -- a transient rooms fetch error must not hide the
+           standing /rooms entry. roomsLoaded only picks rows-vs-empty inside. -->
+      <section class="space-y-3" aria-label={nav_rooms()}>
+        <h2 class="text-sm font-semibold uppercase tracking-wide opacity-60">
+          {nav_rooms()}
+        </h2>
+        <div class="card preset-tonal-surface divide-y divide-surface-200-800">
+          {#if roomsStore.roomsLoaded}
+            {#if roomsStore.rooms.length > 0}
+              {#each roomsStore.rooms as r (r.room_id)}
+                <HubRow
+                  href={`/rooms/${r.room_id}`}
+                  Icon={Users}
+                  label={r.name}
+                />
+              {/each}
+            {:else}
+              <HubRow
+                href="/rooms"
+                Icon={Users}
+                label={tagma_rooms_section_empty()}
+              />
+            {/if}
+          {:else if roomsStore.roomsError}
+            <p class="text-error-500 dark:text-error-400 text-sm px-4 py-3">
+              {roomsStore.roomsError}
+            </p>
+          {:else}
+            <p class="text-sm opacity-70 px-4 py-3">{common_loading()}</p>
+          {/if}
+          <HubRow
+            href="/rooms"
+            Icon={Users}
+            label={tagma_rooms_section_manage()}
+          />
+        </div>
+      </section>
+    {/if}
     <ConfirmDialog
       open={stopTarget !== null}
       title={manage_instances_stop_title()}

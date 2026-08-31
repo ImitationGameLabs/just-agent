@@ -4,6 +4,8 @@
   "connection_connected": "connected",
   "connection_not_connected": "not connected",
   "nav_chat": "Chat",
+  "nav_chats": "Chats",
+  "nav_chats_empty": "No chats yet -- enroll a tagma or join a room to start.",
   "nav_home": "Home",
   "nav_manage": "Manage",
   "nav_more": "More",

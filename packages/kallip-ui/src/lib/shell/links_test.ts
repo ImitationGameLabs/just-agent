@@ -33,31 +33,28 @@ function shape(sections: ReturnType<typeof navFor>): {
   }));
 }
 
-Deno.test(
-  "navFor online -> Tagmata + Rooms sections with a manage gear each",
-  () => {
-    const sections = navFor({ mode: "online", icons });
-    assertEquals(shape(sections), [
-      {
-        title: "Tagmata",
-        manage: "/tagmata",
-        hub: null,
-        smallScreenHidden: false,
-        items: [],
-      },
-      {
-        title: "Rooms",
-        manage: "/rooms",
-        hub: null,
-        smallScreenHidden: false,
-        items: [],
-      },
-    ]);
-  },
-);
+Deno.test("navFor online -> Chats hub section + Manage cell (no gears)", () => {
+  const sections = navFor({ mode: "online", icons });
+  assertEquals(shape(sections), [
+    {
+      title: "Chats",
+      manage: null,
+      hub: "/chats",
+      smallScreenHidden: false,
+      items: [],
+    },
+    {
+      title: "Tagmata",
+      manage: null,
+      hub: null,
+      smallScreenHidden: false,
+      items: ["/tagmata"],
+    },
+  ]);
+});
 
 Deno.test(
-  "navFor online lists each room as a chat entry (management lives in the gear)",
+  "navFor online lists each room in the Chats hub section (rooms icons)",
   () => {
     const sections = navFor({
       mode: "online",
@@ -69,24 +66,24 @@ Deno.test(
     });
     assertEquals(shape(sections), [
       {
-        title: "Tagmata",
-        manage: "/tagmata",
-        hub: null,
-        smallScreenHidden: false,
-        items: [],
-      },
-      {
-        title: "Rooms",
-        manage: "/rooms",
-        hub: null,
+        title: "Chats",
+        manage: null,
+        hub: "/chats",
         smallScreenHidden: false,
         items: ["/rooms/r1", "/rooms/r2"],
+      },
+      {
+        title: "Tagmata",
+        manage: null,
+        hub: null,
+        smallScreenHidden: false,
+        items: ["/tagmata"],
       },
     ]);
   },
 );
 
-Deno.test("navFor online lists every enrolled tagma under Tagmata", () => {
+Deno.test("navFor online lists every enrolled tagma in the hub section", () => {
   const sections = navFor({
     mode: "online",
     icons,
@@ -100,6 +97,7 @@ Deno.test("navFor online lists every enrolled tagma under Tagmata", () => {
   // route (always navigable -- the channel opens on demand there). An entry
   // appears regardless of whether its channel is open: live / down / pending
   // are all present, proving visibility is not gated on an open channel.
+  // The trailing cell is the combined manage page, labeled by the action.
   assertEquals(
     sections.map((s) => ({
       title: s.title,
@@ -115,9 +113,9 @@ Deno.test("navFor online lists every enrolled tagma under Tagmata", () => {
     })),
     [
       {
-        title: "Tagmata",
-        manage: "/tagmata",
-        hub: null,
+        title: "Chats",
+        manage: null,
+        hub: "/chats",
         smallScreenHidden: false,
         items: [
           {
@@ -141,34 +139,46 @@ Deno.test("navFor online lists every enrolled tagma under Tagmata", () => {
         ],
       },
       {
-        title: "Rooms",
-        manage: "/rooms",
+        title: "Tagmata",
+        manage: null,
         hub: null,
         smallScreenHidden: false,
-        items: [],
+        items: [
+          {
+            href: "/tagmata",
+            label: "Manage",
+            icon: true,
+            indicator: null,
+          },
+        ],
       },
     ],
   );
 });
 
 Deno.test(
-  "navFor online Tagmata section is empty when no tagmata passed",
+  "navFor online merged ordering: tagma chats first, rooms after",
   () => {
-    const sections = navFor({ mode: "online", icons });
+    const sections = navFor({
+      mode: "online",
+      icons,
+      tagmata: [{ tagmaId: "t1", label: "Laptop", indicator: "live" }],
+      rooms: [{ roomId: "r1", label: "Design" }],
+    });
     assertEquals(shape(sections), [
       {
-        title: "Tagmata",
-        manage: "/tagmata",
-        hub: null,
+        title: "Chats",
+        manage: null,
+        hub: "/chats",
         smallScreenHidden: false,
-        items: [],
+        items: ["/tagma/t1/chat", "/rooms/r1"],
       },
       {
-        title: "Rooms",
-        manage: "/rooms",
+        title: "Tagmata",
+        manage: null,
         hub: null,
         smallScreenHidden: false,
-        items: [],
+        items: ["/tagmata"],
       },
     ]);
   },

@@ -41,5 +41,7 @@
   "tagma_profile_subtitle": "智能体编队资料",
   "tagma_profile_unnamed": "未命名智能体编队",
   "tagma_profile_created": "创建于 {date}",
-  "tagma_profile_message": "发消息"
+  "tagma_profile_message": "发消息",
+  "tagma_rooms_section_empty": "暂无群聊——创建一个或浏览公开群聊。",
+  "tagma_rooms_section_manage": "管理群聊"
 }

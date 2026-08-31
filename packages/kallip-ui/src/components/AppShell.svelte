@@ -1,62 +1,20 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { Dialog, Navigation, Portal } from "@skeletonlabs/skeleton-svelte";
-  import type { NavIndicator, NavItem } from "../lib/shell.ts";
+  import {
+    navIndicatorDotClass,
+    navIndicatorLabel,
+    type NavItem,
+  } from "../lib/shell.ts";
   import { navSlots } from "../lib/shell/navSlots.ts";
   import { ChevronLeft, Ellipsis, User } from "@lucide/svelte";
   import type { NavSection } from "../lib/shell/links.ts";
   import type { ErrorView } from "../lib/errors.ts";
   import Brand from "./Brand.svelte";
   import Banner from "./Banner.svelte";
-  import {
-    account_menu,
-    shell_connecting,
-    nav_more,
-    nav_home,
-    shell_error,
-    shell_live,
-    shell_offline,
-  } from "../paraglide/messages.js";
+  import { account_menu, nav_more, nav_home } from "../paraglide/messages.js";
   import Breadcrumbs from "./Breadcrumbs.svelte";
   import { matchTrail } from "../lib/shell/breadcrumbs.ts";
-
-  // AppShell owns the indicator visual tokens (mirrors how it owns the icon's
-  // `size-4`), so callers only express a domain tri-state, not a class string.
-  // The `pending` ("connecting") case is rendered as a spinning ring in the
-  // snippet (not here): a filled dot has no visible rotation axis, so a border
-  // ring with a transparent segment reads as motion. This helper covers the
-  // remaining filled-dot states.
-  function navIndicatorDotClass(indicator: NavIndicator): string {
-    switch (indicator) {
-      case "live":
-        return "bg-success-500";
-      case "down":
-        return "bg-surface-400-600";
-      case "error":
-        return "bg-error-500";
-      // Unreachable at runtime: the snippet renders a spinner for "pending"
-      // before reaching here. Kept so the switch stays exhaustive (required for
-      // the return type); do NOT delete without restructuring.
-      case "pending":
-        return "bg-surface-400-600";
-    }
-  }
-
-  // The dot itself is aria-hidden (decorative); this label carries the status
-  // to screen readers so an SR user learns the channel's liveness, not just its
-  // name. Rendered as visually-hidden text inside the anchor.
-  function navIndicatorLabel(indicator: NavIndicator): string {
-    switch (indicator) {
-      case "live":
-        return shell_live();
-      case "pending":
-        return shell_connecting();
-      case "down":
-        return shell_offline();
-      case "error":
-        return shell_error();
-    }
-  }
 
   let {
     links,

@@ -13,7 +13,7 @@
 //     are /settings + /chat/{server-id} (relay conversations) + the mode-neutral
 //     /tagmata (the unified tagmata page: registry cards + local processes). `/`,
 //     /local/* (offline-only routes), and the retired `/chat/local` marker
-//     are not valid online destinations and redirect to /tagmata.
+//     are not valid online destinations and redirect to /chats (the chats hub).
 //   - "offline" -- no auth, no identity. `connected` reflects the local tagma
 //     transport. Offline routes are /local/* (chat + management) + the
 //     mode-neutral /tagmata; the pre-merge /instances route is gone (404).
@@ -106,7 +106,7 @@ export function appGateDecision(args: {
       args.user != null &&
       args.user !== undefined
     ) {
-      return { kind: "redirect", url: "/tagmata" };
+      return { kind: "redirect", url: "/chats" };
     }
     // /connect (the offline entry) renders for everyone -- signed-in or not.
     // Unsigned /login, /register render.
@@ -136,6 +136,8 @@ export function appGateDecision(args: {
     // exist). All collapse to the local home.
     if (
       args.pathname === "/rooms" ||
+      args.pathname === "/chats" ||
+      args.pathname.startsWith("/chats/") ||
       args.pathname === "/" ||
       args.pathname.startsWith("/chat/") ||
       args.pathname.startsWith("/rooms/")
@@ -151,14 +153,14 @@ export function appGateDecision(args: {
   // marker; `/local/*` is the offline-only route tree (chat + management).
   // None are valid online destinations, so go to the online home. Placed
   // above the user checks so it also fires during the whoami-in-flight
-  // window; the next iteration on /tagmata then resolves auth.
+  // window; the next iteration on /chats then resolves auth.
   if (
     args.pathname === "/" ||
     args.pathname === "/local" ||
     args.pathname.startsWith("/local/") ||
     args.pathname === "/chat/local"
   ) {
-    return { kind: "redirect", url: "/tagmata" };
+    return { kind: "redirect", url: "/chats" };
   }
   if (args.user === null) {
     const next = args.pathname + args.search;

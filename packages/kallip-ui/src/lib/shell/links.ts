@@ -1,13 +1,14 @@
 // Derive the nav link sections from the app mode. The two modes are mutually
 // exclusive front-door choices (see lib/config/mode.ts):
-//   - online  -> "Tagmata" and "Rooms" sections. Each section title carries a
-//     settings gear to its management page -- /tagmata for the tagma registry,
-//     /rooms for room management (create / invites / public rooms) -- so the
-//     management surfaces are reached through the section header, not a flat
-//     sibling link. "Tagmata" lists EVERY enrolled tagma (whether or not a
-//     relay channel is currently open -- the link is always navigable and the
-//     channel opens on demand at /tagma/{tagmaId}/chat); "Rooms" lists the caller's
-//     rooms as direct chat entries (`/rooms/{id}`).
+//   - online  -> a merged "Chats" section: every enrolled tagma chat (whether
+//     or not a relay channel is open -- the link is always navigable and the
+//     channel opens on demand at /tagma/{tagmaId}/chat) followed by the
+//     caller's rooms as direct chat entries (/rooms/{id}); the two groups are
+//     told apart by their leading mark (status dot vs rooms icon). The section
+//     declares hub -> /chats, so the bottom bar folds it into one cell and the
+//     /chats hub page carries the grouped view as pure conversation rows. A
+//     second single-item "Manage" section is the combined manage page
+//     (/tagmata: Tagmata registry + Rooms management), reached directly.
 //   - offline -> Chat (the single local conversation at /local/chat), no header.
 // Settings is intentionally NOT a nav link: it lives in the AccountMenu
 // dropdown (footer) alongside the other account/system actions.
@@ -26,10 +27,8 @@ import {
   nav_manage,
   nav_overview,
   nav_profiles,
-  nav_room_management,
-  nav_rooms,
+  nav_chats,
   nav_schedules,
-  nav_tagma_management,
   nav_tagmata,
   tagma_profile_unnamed,
 } from "../../paraglide/messages.js";
@@ -74,7 +73,7 @@ export interface NavIcons {
 }
 
 /** One enrolled tagma as a sidebar chat entry. `indicator` is the channel
- * transport status as a nav dot tri-state (the caller derives it from
+ * transport status as a nav dot four-state (the caller derives it from
  * `channelsStore.getTagmaChannelState` via `tagmaNavIndicator`). The entry is
  * always navigable -- the relay channel opens on demand at the
  * /tagma/{tagmaId}/chat route. */
@@ -189,35 +188,33 @@ export function navFor(args: {
   }
   return [
     {
-      title: nav_tagmata(),
-      manage: {
-        href: "/tagmata",
-        label: nav_tagma_management(),
-        icon: icons.settings,
-      },
-      items: (tagmata ?? []).map((t) => {
-        // Each tagma uses a status dot (no icon) as the leading mark, so each
-        // reads as its own destination under the tagma surface. The link is
-        // always navigable; the channel opens on demand at the tagma route.
-        return {
+      // Merged chats hub: tagma rows (status dots) then room rows (rooms
+      // icons) in one section -- the leading mark tells the groups apart.
+      // `hub` folds it into the small-screen Chats bar cell; /chats lists
+      // both groups as pure conversation rows -- no manage chip. Rooms
+      // management lives on the combined /tagmata page (the withdrawn
+      // chip/AccountMenu ideas were never shipped).
+      title: nav_chats(),
+      hub: { href: "/chats", label: nav_chats(), icon: icons.chat },
+      items: [
+        ...(tagmata ?? []).map((t) => ({
           href: tagmaChatPath(t.tagmaId),
           label: t.label ?? tagma_profile_unnamed(),
           indicator: t.indicator,
-        };
-      }),
+        })),
+        ...(rooms ?? []).map((r) => ({
+          href: `/rooms/${r.roomId}`,
+          label: r.label,
+          icon: icons.rooms,
+        })),
+      ],
     },
     {
-      title: nav_rooms(),
-      manage: {
-        href: "/rooms",
-        label: nav_room_management(),
-        icon: icons.settings,
-      },
-      items: (rooms ?? []).map((r) => ({
-        href: `/rooms/${r.roomId}`,
-        label: r.label,
-        icon: icons.rooms,
-      })),
+      // The combined manage page as a direct bar cell (Tagmata registry +
+      // Rooms management sections); the label names the action, not the
+      // registry.
+      title: nav_tagmata(),
+      items: [{ href: "/tagmata", label: nav_manage(), icon: icons.tagmata }],
     },
   ];
 }

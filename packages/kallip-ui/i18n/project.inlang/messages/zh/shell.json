@@ -4,6 +4,8 @@
   "connection_connected": "已连接",
   "connection_not_connected": "未连接",
   "nav_chat": "聊天",
+  "nav_chats": "会话",
+  "nav_chats_empty": "暂无会话——先注册 tagma 或加入群聊。",
   "nav_home": "主页",
   "nav_manage": "管理",
   "nav_more": "更多",
@@ -27,5 +29,5 @@
   "shell_offline": "离线",
   "shell_error": "错误",
   "account_logout": "退出登录",
-  "account_menu": "账户"
+  "account_menu": "账号"
 }

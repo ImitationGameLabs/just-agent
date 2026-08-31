@@ -2,7 +2,9 @@
 // boundary item counts (0/1/2/3/4/6). Section/manage fixtures mirror the
 // shapes navFor emits (links.ts): offline = an untitled chat section plus a
 // geared-hub manage section (untitled raw-item sections cover the defensive
-// arithmetic); online = two geared sections with N+M items.
+// arithmetic); the geared online sections are HISTORIC SHAPES, retained
+// defensively -- the real online shape (a hub section + a plain manage
+// cell) has its own case below.
 import { assertEquals } from "@std/assert";
 import type { NavItem } from "../shell.ts";
 import type { NavSection } from "./links.ts";
@@ -174,6 +176,26 @@ const cases: {
       },
     ],
     visible: ["/local"],
+    overflow: [],
+    hasMore: false,
+    sheetSections: [],
+  },
+  {
+    name: "online real shape (hub section + plain manage cell) -> 2 cells, no More",
+    links: [
+      {
+        title: "Chats",
+        hub: { href: "/chats", label: "Chats", icon: (() => {}) as never },
+        items: [item("/tagma/t1/chat"), item("/rooms/r1")],
+      },
+      {
+        title: "Tagmata",
+        items: [
+          { href: "/tagmata", label: "Manage", icon: (() => {}) as never },
+        ],
+      },
+    ],
+    visible: ["/chats", "/tagmata"],
     overflow: [],
     hasMore: false,
     sheetSections: [],

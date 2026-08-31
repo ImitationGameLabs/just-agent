@@ -41,5 +41,7 @@
   "tagma_profile_subtitle": "Tagma profile",
   "tagma_profile_unnamed": "Unnamed tagma",
   "tagma_profile_created": "Created {date}",
-  "tagma_profile_message": "Message"
+  "tagma_profile_message": "Message",
+  "tagma_rooms_section_empty": "No rooms yet -- create one or browse public rooms.",
+  "tagma_rooms_section_manage": "Manage rooms"
 }

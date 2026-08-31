@@ -443,6 +443,7 @@ const SYNONYMS: string[][] = [
   ["settings_heading", "rooms_menu_settings"],
   ["connection_connecting", "shell_connecting"],
   ["nav_manage", "tagma_menu_manage"],
+  ["tagma_rooms_section_manage", "tagma_menu_manage_rooms"],
   ["nav_overview", "manage_overview_heading"],
   ["nav_budget", "manage_budget_heading"],
   ["nav_agents", "manage_agents_heading"],
