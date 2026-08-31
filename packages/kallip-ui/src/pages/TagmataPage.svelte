@@ -466,7 +466,7 @@
 <svelte:head><title>{tagmata_title()}</title></svelte:head>
 
 <!-- Single scroll root (the AppShell overflow-hidden contract); the
-     centered narrow column matches the other manage pages. -->
+     left-aligned narrow column matches the other manage pages. -->
 <div class="h-full overflow-y-auto">
   <div
     class="px-2 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 md:p-6 max-w-2xl space-y-6"
