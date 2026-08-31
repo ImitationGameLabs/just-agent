@@ -38,6 +38,23 @@ export interface AuthFinishResponse {
   readonly return_path?: string;
 }
 
+/** The four outcomes of the signup availability probe (`GET
+ * /v1/auth/username-availability`). Always delivered as a 200 body status:
+ * every outcome, invalid shape included, is an answer, not an error path. */
+export type UsernameAvailabilityStatus =
+  | "available"
+  | "taken"
+  | "reserved"
+  | "invalid";
+
+export interface UsernameAvailabilityResponse {
+  /** The canonical (normalized) handle for a valid shape; the raw query
+   * echoed back when the shape is invalid, so the caller can match the
+   * response to the probe that issued it. */
+  readonly username: string;
+  readonly status: UsernameAvailabilityStatus;
+}
+
 /** `GET /v1/auth/oauth/providers` — one enabled OAuth provider, for rendering
  * the login/settings buttons. */
 export interface ProviderInfo {

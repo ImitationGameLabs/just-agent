@@ -67,6 +67,8 @@ export type {
   RenamePasskeyRequest,
   RenameTagmaRequest,
   TagmaState,
+  UsernameAvailabilityResponse,
+  UsernameAvailabilityStatus,
   TagmaView,
   VerifyEmailRequest,
 } from "./types.ts";

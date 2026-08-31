@@ -34,6 +34,7 @@ import type {
   PublicUserProfile,
   RegisterBeginResponse,
   RegisterFinishRequest,
+  UsernameAvailabilityResponse,
   RenamePasskeyRequest,
   RenameTagmaRequest,
   TagmaInfo,
@@ -132,6 +133,18 @@ export class AgoraClient extends BaseClient {
    * where the deployment's boot flag set it; elsewhere this 404s. */
   adminLogin(key: string): Promise<AuthFinishResponse> {
     return this.json("/v1/auth/admin-login", "POST", undefined, key);
+  }
+
+  /** `GET /v1/auth/username-availability` — the signup form's availability
+   * probe. Always a 200 whose body carries the status (available / taken /
+   * reserved / invalid); the server per-IP rate-limits this oracle. */
+  usernameAvailability(
+    username: string,
+  ): Promise<UsernameAvailabilityResponse> {
+    return this.json(
+      `/v1/auth/username-availability?username=${encodeURIComponent(username)}`,
+      "GET",
+    );
   }
 
   /** `POST /v1/auth/login/discoverable/begin` — start a usernameless login. No
