@@ -9,9 +9,16 @@ license.workspace = true
 async-trait = { workspace = true }
 getrandom = { workspace = true }
 hex = { workspace = true }
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util"] }
+time = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+testcontainers = { workspace = true, features = ["reusable-containers"] }
+testcontainers-modules = { workspace = true }

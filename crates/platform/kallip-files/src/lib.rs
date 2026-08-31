@@ -9,12 +9,18 @@
 //! `Arc<dyn BlobStore>`: `put` streams a reader through hashing and to
 //! disk in one pass, `get_range` serves byte windows, and a cloud
 //! object-store backend can arrive later behind the same trait without
-//! touching routes. This crate ships the storage layer only: metadata,
-//! reference counting, and garbage collection live in the metadata
-//! layer; the service binary arrives with the HTTP API.
+//! touching routes. The metadata layer (`metadata`, `migration`) tracks
+//! uploads with reference counts and `gc` reclaims unreferenced blobs;
+//! the service binary arrives with the HTTP API.
 
 pub mod backend;
 pub mod blob;
+pub mod gc;
+pub mod metadata;
+pub mod migration;
+
+#[cfg(test)]
+mod test_helpers;
 
 pub use backend::LocalBackend;
 pub use blob::{BlobId, BlobInfo, BlobStore, Error};
