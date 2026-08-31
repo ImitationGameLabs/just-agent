@@ -11,10 +11,12 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::{
-    AvailabilityQuery, DiscoverableAuthentication, KIND_LOGIN, KIND_LOGIN_DISCOVERABLE,
-    LoginBeginRequest, LoginFinishRequest, PublicKeyCredential, RegisterBeginRequest,
-    UsernameAvailabilityStatus, admin_login, login_begin, login_discoverable_begin,
-    login_discoverable_finish, register_begin, username_availability,
+    AvailabilityQuery, CHALLENGE_TTL, DiscoverableAuthentication, KIND_LOGIN,
+    KIND_LOGIN_DISCOVERABLE, KIND_REGISTER, LoginBeginRequest, LoginFinishRequest,
+    PublicKeyCredential, RegisterBeginRequest, RegisterFinishRequest, RegisterPublicKeyCredential,
+    UsernameAvailabilityStatus, admin_login, discoverable_registration_challenge, login_begin,
+    login_discoverable_begin, login_discoverable_finish, register_begin, register_finish,
+    username_availability,
 };
 use crate::auth::AuthPrincipal;
 use crate::db::entity::{external_identities, sessions, users, webauthn_challenges};
@@ -241,6 +243,66 @@ fn phantom_assertion() -> PublicKeyCredential {
             r#"{"id":"","rawId":"","type":"public-key","response":{"authenticatorData":"","clientDataJSON":"","signature":""}}"#,
         )
         .expect("phantom assertion deserializes")
+}
+
+/// A placeholder registration credential -- contents never matter: the
+/// reserved-name guard below is pre-crypto, before the attestation is
+/// touched (mirror of `phantom_assertion`).
+fn phantom_registration() -> RegisterPublicKeyCredential {
+    serde_json::from_str(
+            r#"{"id":"","rawId":"","type":"public-key","response":{"clientDataJSON":"","attestationObject":"","transports":[]}}"#, 
+        )
+        .expect("phantom registration deserializes")
+}
+
+/// `register_finish` re-checks the reserved list as a defense-in-depth
+/// twin of begin: a ceremony row may predate the list (challenge TTL), so
+/// finish refuses it with 400 before any credential verification. The row
+/// is seeded directly -- begin would never create it.
+#[tokio::test]
+async fn register_finish_rejects_reserved_username() {
+    let state = make_state().await;
+    // A valid registration state, as a pre-list ceremony row would carry.
+    let (_options, reg_state) =
+        discoverable_registration_challenge(&state, Uuid::new_v4(), "admin", "admin", None)
+            .expect("reg challenge");
+    let ceremony_id = Uuid::new_v4();
+    webauthn_challenges::ActiveModel {
+        id: Set(ceremony_id),
+        kind: Set(KIND_REGISTER.to_string()),
+        state: Set(serde_json::to_value(&reg_state).expect("serialize reg state")),
+        pairing_code_hash: Set(None),
+        user_id: Set(Some(Uuid::new_v4().to_string())),
+        // Normalized form: begin stores `username_norm`, so a real pre-list
+        // ceremony row carries the lowercased handle (the guard's contract
+        // is post-normalize input).
+        username: Set(Some("admin".to_string())),
+        expires_at: Set(OffsetDateTime::now_utc() + CHALLENGE_TTL),
+        created_at: Set(OffsetDateTime::now_utc()),
+    }
+    .insert(&state.db)
+    .await
+    .expect("seed ceremony");
+    let err = register_finish(
+        State(state.clone()),
+        Json(RegisterFinishRequest {
+            ceremony_id,
+            credential: phantom_registration(),
+        }),
+    )
+    .await
+    .expect_err("reserved");
+    assert_eq!(err.status, 400);
+    // Discriminates the guard from the crypto-failure fallback (also a
+    // 400, but with a different message).
+    assert!(err.message.contains("reserved"), "{}", err.message);
+    // The ceremony row survives the refusal (a legal retry stays possible).
+    let row = webauthn_challenges::Entity::find_by_id(ceremony_id)
+        .one(&state.db)
+        .await
+        .expect("read challenges")
+        .expect("row survives");
+    assert_eq!(row.username.as_deref(), Some("admin"));
 }
 
 /// `login_discoverable_finish` rejects an unknown ceremony id with 404.
