@@ -117,7 +117,7 @@
 
     <OAuthProviderButtons />
 
-    <UsernameField bind:value={username} />
+    <UsernameField bind:value={username} paused={submitting} />
 
     <label class="block space-y-1">
       <span class="text-sm opacity-70">{register_display_name()}</span>

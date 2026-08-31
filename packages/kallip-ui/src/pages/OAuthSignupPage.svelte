@@ -124,7 +124,7 @@
         </p>
       </div>
 
-      <UsernameField bind:value={username} />
+      <UsernameField bind:value={username} paused={submitting} />
 
       {#if result && !result.ok}
         <p role="alert" class="text-sm text-error-500 dark:text-error-400">
