@@ -169,10 +169,6 @@ pub struct Args {
     /// 32 chars fails at boot (the generated 256-bit token is exempt).
     #[arg(long, env = "KALLIP_AGORA_ADMIN_USER_LOGIN", default_value_t = false)]
     pub admin_user_login: bool,
-    /// Username for the fixed local account the first admin-login creates
-    /// (normalized + validated at boot, same rules as signup handles).
-    #[arg(long, env = "KALLIP_AGORA_ADMIN_USER_NAME", default_value = "admin")]
-    pub admin_user_name: String,
 }
 
 #[cfg(test)]

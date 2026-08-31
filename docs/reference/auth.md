@@ -148,19 +148,20 @@ ever needed.
 
 The fifth auth ceremony, `POST /v1/auth/admin-login`, exists for the
 local-platform deployment: it exchanges the operator's `sk-admin-` token
-for a normal User session on a fixed local account (username from
-`KALLIP_AGORA_ADMIN_USER_NAME`, default `admin`; the account is created on
+for a normal User session on a fixed local account (the username is
+hardcoded `admin` via `LOCAL_ADMIN_USERNAME`; the account is created on
 first use and bound by an `external_identities (local-admin, admin)`
 marker row, so it can never collide with or take over a real signup's
-username -- a collision fails fast and names the env knob). The session
-mints through the same `mint_session_row` path as every other login, so
-the whole user-scoped surface (profiles, tagma mint/enroll) works
-unchanged; the true admin principal keeps `/v1/admin` and the CLI. The
-session also carries instance rights: `verify-session` reports
-`local_admin: true` for the marker account, and the instances service's
-platform mode admits that session on its cookie channel (next section),
-so the admin login IS the instances credential -- no separate token to
-configure or paste.
+username: `admin` is on the signup reserved list, and a legacy row
+holding the name fails fast with a conflict that points at the admin
+surface). The session mints through the same `mint_session_row` path as
+every other login, so the whole user-scoped surface (profiles, tagma
+mint/enroll) works unchanged; the true admin principal keeps
+`/v1/admin` and the CLI. The session also carries instance rights:
+`verify-session` reports `local_admin: true` for the marker account,
+and the instances service's platform mode admits that session on its
+cookie channel (next section), so the admin login IS the instances
+credential -- no separate token to configure or paste.
 
 Security boundary, three sentences: only the admin principal may enter
 (any other credential is a plain 401); the route is not mounted unless

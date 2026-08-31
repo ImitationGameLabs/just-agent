@@ -378,8 +378,8 @@ async fn admin_login_rejects_non_admin_principal() {
     assert_eq!(err.message, "admin token required");
 }
 
-/// A real signup already holding the configured username is a
-/// configuration collision: fail fast and name the env knob.
+/// A legacy row already holding `admin` (a database from before the
+/// reserved list existed) is a collision: fail fast and name the fix.
 #[tokio::test]
 async fn admin_login_username_taken_fails_fast() {
     let state = make_state().await;
@@ -388,7 +388,7 @@ async fn admin_login_username_taken_fails_fast() {
         .await
         .expect_err("collision");
     assert_eq!(err.status, 409);
-    assert!(err.message.contains("KALLIP_AGORA_ADMIN_USER_NAME"));
+    assert!(err.message.contains("legacy account"));
 }
 
 /// A disabled fixed account refuses login (the caller holds the admin

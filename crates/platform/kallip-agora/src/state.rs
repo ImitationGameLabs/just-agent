@@ -101,10 +101,6 @@ pub struct AppState {
     /// The runtime kill switch now that the invite gate is gone. Login and
     /// linking are unaffected.
     pub signup_enabled: bool,
-    /// Username for the fixed local admin account created by
-    /// POST /v1/auth/admin-login (the local-platform login). Only meaningful
-    /// when that route is mounted (`KALLIP_AGORA_ADMIN_USER_LOGIN`).
-    pub admin_user_name: String,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -129,7 +125,6 @@ impl AppState {
         http: reqwest::Client,
         oauth_providers: crate::oauth::ProviderRegistry,
         signup_enabled: bool,
-        admin_user_name: String,
     ) -> Self {
         Self {
             shutdown: CancellationToken::new(),
@@ -146,7 +141,6 @@ impl AppState {
             http,
             oauth_providers,
             signup_enabled,
-            admin_user_name,
         }
     }
 }

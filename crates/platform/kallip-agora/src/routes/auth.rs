@@ -95,7 +95,9 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use kallip_agora_common::control_plane::{LOCAL_ADMIN_PROVIDER, LOCAL_ADMIN_SUBJECT};
+use kallip_agora_common::control_plane::{
+    LOCAL_ADMIN_PROVIDER, LOCAL_ADMIN_SUBJECT, LOCAL_ADMIN_USERNAME,
+};
 use kallip_agora_common::ids::UserId;
 use kallip_agora_common::principal::Principal;
 use kallip_common::authtoken::MintedToken;
@@ -986,10 +988,11 @@ pub(crate) async fn mint_session_row(
 /// Marker-row discriminators binding the fixed local account that
 /// [`admin_login`] creates: `(provider, subject)` is the lookup key, so these
 /// are stable identities like the OAuth provider names -- never rename. The
-/// username the account carries is boot config (`KALLIP_AGORA_ADMIN_USER_NAME`),
-/// NOT the subject; renaming the env var changes only the display handle. The
-/// constants live in `kallip-agora-common` and are shared with
-/// `DbControlPlane::verify_session`'s `local_admin` flag.
+/// username the account carries is the hardcoded `LOCAL_ADMIN_USERNAME`
+/// (`admin`, in `kallip-agora-common`), NOT the subject: the marker pair is
+/// what identifies the account, while the name doubles as a reserved
+/// signup handle. The constants live in `kallip-agora-common` and are
+/// shared with `DbControlPlane::verify_session`'s `local_admin` flag.
 /// The local-platform login route. Mounted only when the boot flag
 /// `KALLIP_AGORA_ADMIN_USER_LOGIN` is set (see `routes::router`); the route
 /// does not exist in the default production surface.
@@ -1020,7 +1023,7 @@ async fn admin_login(
         return Err(ApiError::unauthorized("admin token required"));
     };
 
-    let username = state.admin_user_name.clone();
+    let username = LOCAL_ADMIN_USERNAME.to_string();
     let session_cfg = state.session_cfg.clone();
     let outcome = state
         .db
@@ -1060,19 +1063,19 @@ async fn admin_login(
                     am.update(txn).await?;
                     UserId::from(user.id)
                 } else {
-                    // FIRST LOGIN: create the fixed account. A real signup
-                    // already holding the configured username is a
-                    // configuration collision, not a race to retry: name the
-                    // env knob as the exit.
                     let existing = users::Entity::find()
+                    // FIRST LOGIN: create the fixed account. A real signup
+                    // holding `admin` cannot exist on a fresh deploy (the
+                    // reserved list refuses it at every signup rail); this
+                    // collision only fires on a legacy row from before the
+                    // list, and it is not a race to retry.
                         .filter(users::Column::Username.eq(username.clone()))
                         .lock_exclusive()
                         .one(txn)
                         .await?;
                     if existing.is_some() {
                         return Err(TxnError::Api(ApiError::conflict(
-                            "username for the local admin account is already taken by a real \
-                             account; set KALLIP_AGORA_ADMIN_USER_NAME to a free username",
+                            "username for the local admin account is already taken by a legacy account; disable or remove it via the admin surface",
                         )));
                     }
                     let user_id = UserId::random();

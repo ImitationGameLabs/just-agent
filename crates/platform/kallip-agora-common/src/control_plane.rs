@@ -103,6 +103,11 @@ pub struct VerifiedSession {
 pub const LOCAL_ADMIN_PROVIDER: &str = "local-admin";
 pub const LOCAL_ADMIN_SUBJECT: &str = "admin";
 
+/// The username the fixed local admin account carries. Hardcoded (not a
+/// boot knob): it is a member of the signup reserved list, so no real
+/// signup can take it, and the knob's old escape-hatch role -- renaming
+/// away from a squatted handle -- has no work left to do.
+pub const LOCAL_ADMIN_USERNAME: &str = "admin";
 /// The enrollment facts behind the files service's ACL: which user space a
 /// tagma belongs to and the full set of enrolled, non-revoked tagmas of that
 /// space. The registry resolves the set; the caller derives space membership
