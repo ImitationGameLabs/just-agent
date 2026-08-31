@@ -17,14 +17,14 @@
 use std::time::Duration;
 
 use kallip_agora_common::control_plane::{
-    ControlPlane, ControlPlaneError, TagmaProfile, UserIdentity, VerifiedSession,
+    ControlPlane, ControlPlaneError, EnrollmentLookup, TagmaProfile, UserIdentity, VerifiedSession,
 };
 use kallip_agora_common::ids::{TagmaId, UserId};
 use kallip_agora_common::internal_api::{
-    TagmaProfilesRequest, TagmaProfilesResponse, TunnelProofTsRequest, TunnelProofTsResponse,
-    UserIdentitiesRequest, UserIdentitiesResponse, UserIdentityByUsernameRequest,
-    UserIdentityResponse, VerifyBearerRequest, VerifyBearerResponse, VerifySessionRequest,
-    VerifySessionResponse,
+    EnrollmentLookupRequest, EnrollmentLookupResponse, TagmaProfilesRequest, TagmaProfilesResponse,
+    TunnelProofTsRequest, TunnelProofTsResponse, UserIdentitiesRequest, UserIdentitiesResponse,
+    UserIdentityByUsernameRequest, UserIdentityResponse, VerifyBearerRequest, VerifyBearerResponse,
+    VerifySessionRequest, VerifySessionResponse,
 };
 use kallip_agora_common::principal::Principal;
 
@@ -175,6 +175,26 @@ impl ControlPlane for HttpControlPlane {
                 "/internal/user-identity-by-username",
                 &UserIdentityByUsernameRequest {
                     username: username.to_string(),
+                },
+            )
+            .await?;
+        Ok(resp)
+    }
+
+    async fn enrollment_lookup(
+        &self,
+        tagma_id: &TagmaId,
+    ) -> Result<Option<EnrollmentLookup>, ControlPlaneError> {
+        // The relay itself never calls this (it is the files service's ACL
+        // read), but the trait is the shared internal-API contract, so the
+        // client serves it like any other endpoint. 404 -> None (unknown /
+        // pending / revoked / owner-disabled all collapse on the registry
+        // side); the wire body aliases the trait type -- no field mapping.
+        let resp: Option<EnrollmentLookupResponse> = self
+            .post(
+                "/internal/enrollment-lookup",
+                &EnrollmentLookupRequest {
+                    tagma_id: tagma_id.clone(),
                 },
             )
             .await?;
@@ -400,5 +420,13 @@ mod tests {
             .await;
 
         assert!(cp.verify_session("x").await.is_err());
+    }
+
+    /// The per-call timeout is a cross-service contract value (the files
+    /// service pins the same 10s for its own internal client). Pin it so a
+    /// silent change here surfaces instead of drifting the two services.
+    #[test]
+    fn internal_timeout_is_the_contract_ten_seconds() {
+        assert_eq!(INTERNAL_TIMEOUT, Duration::from_secs(10));
     }
 }

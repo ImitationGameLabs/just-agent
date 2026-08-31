@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use kallip_agora_common::bytes::Ed25519PublicKey;
 use kallip_agora_common::control_plane::{
-    ControlPlane, ControlPlaneError, TagmaProfile, UserIdentity, VerifiedSession,
+    ControlPlane, ControlPlaneError, EnrollmentLookup, TagmaProfile, UserIdentity, VerifiedSession,
 };
 use kallip_agora_common::ids::{TagmaId, UserId};
 use kallip_agora_common::principal::Principal;
@@ -287,6 +287,14 @@ impl ControlPlane for MockControlPlane {
             replay.insert(tagma_id.clone(), ts);
         }
         Ok(fresh)
+    }
+    async fn enrollment_lookup(
+        &self,
+        _tagma_id: &TagmaId,
+    ) -> Result<Option<EnrollmentLookup>, ControlPlaneError> {
+        // The relay never calls this (it is the files service's ACL read);
+        // the mock carries no enrollment data.
+        Ok(None)
     }
 }
 

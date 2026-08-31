@@ -388,6 +388,41 @@ async fn internal_guard_passes_correct_bearer() {
     );
 }
 
+/// `/internal/enrollment-lookup` sits inside the guarded nest: no bearer is
+/// 401, and a correct bearer reaches the handler (404 for an unknown tagma).
+/// Pins the new route to the shared-secret surface rather than the public
+/// one -- a registration outside the nest would fail these.
+#[tokio::test]
+async fn enrollment_lookup_guard_rejects_missing_bearer() {
+    let state = make_state_with(10, 10).await;
+    let app = routes::router(state, Some(TokenHash::of("internal-secret")), false);
+    let request = req(
+        Method::POST,
+        "/internal/enrollment-lookup",
+        r#"{"tagma_id":"tagma-abc"}"#,
+    );
+    assert_eq!(run(app, request).await, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn enrollment_lookup_guard_passes_correct_bearer() {
+    let state = make_state_with(10, 10).await;
+    let app = routes::router(state, Some(TokenHash::of("internal-secret")), false);
+    let mut request = req(
+        Method::POST,
+        "/internal/enrollment-lookup",
+        r#"{"tagma_id":"tagma-abc"}"#,
+    );
+    request.headers_mut().append(
+        axum::http::header::AUTHORIZATION,
+        HeaderValue::from_static("Bearer internal-secret"),
+    );
+    assert_eq!(
+        run(app, request).await,
+        StatusCode::NOT_FOUND,
+        "correct bearer reaches the handler (404 for unknown tagma)"
+    );
+}
 /// The admin-root probe is mounted at the no-trailing-slash path `/v1/admin`:
 /// axum 0.8 serves a `nest` + inner `"/"` route without the trailing slash, and
 /// there is no normalization middleware. Pin both sides of that contract so the

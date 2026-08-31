@@ -5,8 +5,8 @@
 
 use kallip_agora_common::bytes::Ed25519PublicKey;
 use kallip_agora_common::control_plane::{
-    ControlPlane, ControlPlaneError, LOCAL_ADMIN_PROVIDER, LOCAL_ADMIN_SUBJECT, TagmaProfile,
-    UserIdentity, VerifiedSession,
+    ControlPlane, ControlPlaneError, EnrollmentLookup, LOCAL_ADMIN_PROVIDER, LOCAL_ADMIN_SUBJECT,
+    TagmaProfile, UserIdentity, VerifiedSession,
 };
 use kallip_agora_common::ids::{TagmaId, UserId};
 use kallip_agora_common::principal::Principal;
@@ -262,6 +262,52 @@ impl ControlPlane for DbControlPlane {
         }))
     }
 
+    async fn enrollment_lookup(
+        &self,
+        tagma_id: &TagmaId,
+    ) -> Result<Option<EnrollmentLookup>, ControlPlaneError> {
+        let Some(tagma) = tagmata::Entity::find_by_id(tagma_id.to_string())
+            .one(&self.db)
+            .await
+            .map_err(map_err)?
+        else {
+            return Ok(None);
+        };
+        // Fail-closed, mirroring `verify_bearer`'s gates exactly: pending and
+        // revoked tagmas resolve to `None` here, and so does a tagma whose
+        // owner is disabled (or missing -- unreachable via FK RESTRICT,
+        // treated as disabled). A tagma that could not authenticate is also
+        // not addressable as a delivery target.
+        if tagma.enrolled_at.is_none() || tagma.revoked_at.is_some() {
+            return Ok(None);
+        }
+        let owner_disabled = match users::Entity::find_by_id(tagma.owner_user_id.clone())
+            .one(&self.db)
+            .await
+            .map_err(map_err)?
+        {
+            Some(owner) => owner.disabled_at.is_some(),
+            None => true,
+        };
+        if owner_disabled {
+            return Ok(None);
+        }
+        let rows = tagmata::Entity::find()
+            .filter(tagmata::Column::OwnerUserId.eq(tagma.owner_user_id.clone()))
+            .filter(tagmata::Column::EnrolledAt.is_not_null())
+            .filter(tagmata::Column::RevokedAt.is_null())
+            .all(&self.db)
+            .await
+            .map_err(map_err)?;
+        let mut enrolled_tagmas: Vec<TagmaId> =
+            rows.into_iter().map(|t| TagmaId::from(t.id)).collect();
+        enrolled_tagmas.sort();
+        Ok(Some(EnrollmentLookup {
+            user_id: UserId::from(tagma.owner_user_id),
+            enrolled_tagmas,
+        }))
+    }
+
     async fn bump_tunnel_proof_ts(
         &self,
         tagma_id: &TagmaId,
@@ -480,5 +526,105 @@ mod tests {
         am.revoked_at = Set(Some(OffsetDateTime::now_utc()));
         am.update(&state.db).await.unwrap();
         assert!(control.verify_bearer(&token).await.unwrap().is_none());
+    }
+
+    /// The lookup resolves the owning user plus the FULL enrolled set of that
+    /// space (sorted), and never crosses into another user's tagmas.
+    #[tokio::test]
+    async fn enrollment_lookup_resolves_space_and_full_set() {
+        let state = make_state().await;
+        let user_id = seed_user(&state, "owner").await;
+        let (t1, _) = seed_tagma(&state, &user_id, Ed25519PublicKey(vec![0u8; 32])).await;
+        let (t2, _) = seed_tagma(&state, &user_id, Ed25519PublicKey(vec![1u8; 32])).await;
+        let other = seed_user(&state, "other").await;
+        let (foreign, _) = seed_tagma(&state, &other, Ed25519PublicKey(vec![2u8; 32])).await;
+
+        let control = cp(&state);
+        let lookup = control
+            .enrollment_lookup(&t2)
+            .await
+            .unwrap()
+            .expect("enrolled tagma resolves");
+        assert_eq!(lookup.user_id, user_id);
+        let mut expected = vec![t1.clone(), t2.clone()];
+        expected.sort();
+        assert_eq!(lookup.enrolled_tagmas, expected);
+        assert!(!lookup.enrolled_tagmas.contains(&foreign));
+    }
+
+    /// An unknown tagma id collapses to `None` (404 on the wire).
+    #[tokio::test]
+    async fn enrollment_lookup_unknown_tagma_is_none() {
+        let state = make_state().await;
+        let control = cp(&state);
+        assert!(
+            control
+                .enrollment_lookup(&TagmaId::random())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// Pending and revoked tagmas collapse to `None` -- the same population
+    /// `verify_bearer` rejects: a tagma that cannot authenticate is also not
+    /// addressable as a delivery target.
+    #[tokio::test]
+    async fn enrollment_lookup_pending_and_revoked_are_none() {
+        let state = make_state().await;
+        let user_id = seed_user(&state, "owner").await;
+        let (pending, _) = seed_tagma(&state, &user_id, Ed25519PublicKey(vec![0u8; 32])).await;
+        let (revoked, _) = seed_tagma(&state, &user_id, Ed25519PublicKey(vec![1u8; 32])).await;
+
+        // Flip the first tagma back to pending (enrolled_at cleared).
+        let row = tagmata::Entity::find_by_id(pending.to_string())
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut am: tagmata::ActiveModel = row.into();
+        am.enrolled_at = Set(None);
+        am.update(&state.db).await.unwrap();
+
+        // Revoke the second.
+        let row = tagmata::Entity::find_by_id(revoked.to_string())
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut am: tagmata::ActiveModel = row.into();
+        am.revoked_at = Set(Some(OffsetDateTime::now_utc()));
+        am.update(&state.db).await.unwrap();
+
+        let control = cp(&state);
+        assert!(control.enrollment_lookup(&pending).await.unwrap().is_none());
+        assert!(control.enrollment_lookup(&revoked).await.unwrap().is_none());
+    }
+
+    /// A tagma owned by a disabled account resolves to `None` (fail closed),
+    /// matching `verify_bearer`'s owner-disabled arm.
+    #[tokio::test]
+    async fn enrollment_lookup_owner_disabled_is_none() {
+        let state = make_state().await;
+        let user_id = seed_user(&state, "owner").await;
+        let (tagma_id, _) = seed_tagma(&state, &user_id, Ed25519PublicKey(vec![0u8; 32])).await;
+
+        let row = users::Entity::find_by_id(user_id.to_string())
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut am: users::ActiveModel = row.into();
+        am.disabled_at = Set(Some(OffsetDateTime::now_utc()));
+        am.update(&state.db).await.unwrap();
+
+        let control = cp(&state);
+        assert!(
+            control
+                .enrollment_lookup(&tagma_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -14,10 +14,10 @@ use axum::routing::post;
 
 use kallip_agora_common::control_plane::ControlPlane;
 use kallip_agora_common::internal_api::{
-    TagmaProfilesRequest, TagmaProfilesResponse, TunnelProofTsRequest, TunnelProofTsResponse,
-    UserIdentitiesRequest, UserIdentitiesResponse, UserIdentityByUsernameRequest,
-    UserIdentityResponse, VerifyBearerRequest, VerifyBearerResponse, VerifySessionRequest,
-    VerifySessionResponse, WirePrincipal,
+    EnrollmentLookupRequest, EnrollmentLookupResponse, TagmaProfilesRequest, TagmaProfilesResponse,
+    TunnelProofTsRequest, TunnelProofTsResponse, UserIdentitiesRequest, UserIdentitiesResponse,
+    UserIdentityByUsernameRequest, UserIdentityResponse, VerifyBearerRequest, VerifyBearerResponse,
+    VerifySessionRequest, VerifySessionResponse, WirePrincipal,
 };
 
 use crate::control_plane::DbControlPlane;
@@ -33,6 +33,7 @@ pub fn router() -> Router<SharedState> {
             "/user-identity-by-username",
             post(user_identity_by_username),
         )
+        .route("/enrollment-lookup", post(enrollment_lookup))
         .route("/tunnel-proof-ts", post(tunnel_proof_ts))
 }
 
@@ -130,6 +131,20 @@ async fn user_identity_by_username(
         .await
     {
         Ok(Some(u)) => Ok(axum::Json(u)),
+        Ok(None) => Err(NOT_FOUND),
+        Err(e) => Err(backend(e)),
+    }
+}
+
+async fn enrollment_lookup(
+    State(state): State<SharedState>,
+    axum::Json(req): axum::Json<EnrollmentLookupRequest>,
+) -> Result<axum::Json<EnrollmentLookupResponse>, HandlerError> {
+    // `None` (unknown / pending / revoked / owner-disabled) maps to 404 with
+    // an empty body, matching the verify-* None-as-404 convention: the four
+    // cases stay indistinguishable to the caller (no existence leak).
+    match control(&state).enrollment_lookup(&req.tagma_id).await {
+        Ok(Some(lookup)) => Ok(axum::Json(lookup)),
         Ok(None) => Err(NOT_FOUND),
         Err(e) => Err(backend(e)),
     }

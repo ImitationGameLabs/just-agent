@@ -153,6 +153,22 @@ pub struct TunnelProofTsResponse {
     pub fresh: bool,
 }
 
+// --- enrollment-lookup (user-space enrollment set resolve) ---
+
+/// `POST /internal/enrollment-lookup`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollmentLookupRequest {
+    pub tagma_id: TagmaId,
+}
+
+/// `200` body: the tagma's owning user plus every enrolled, non-revoked
+/// tagma in that user's space (the requested tagma included, sorted). (`404`
+/// = no body, maps to `None`: unknown, pending, revoked, and owner-disabled
+/// all collapse here -- the same population `verify-bearer` rejects, so a
+/// tagma that cannot authenticate is also one that cannot be addressed.)
+/// An alias of the trait-side
+/// [`crate::control_plane::EnrollmentLookup`].
+pub type EnrollmentLookupResponse = crate::control_plane::EnrollmentLookup;
 #[cfg(test)]
 mod tests {
     //! Round-trip every wire type so a serde shape change here surfaces as a
@@ -448,5 +464,32 @@ mod tests {
         assert_eq!(json, r#"{"fresh":true}"#);
         let back: TunnelProofTsResponse = serde_json::from_str(&json).unwrap();
         assert!(back.fresh);
+    }
+
+    #[test]
+    fn enrollment_lookup_round_trips() {
+        let req = EnrollmentLookupRequest {
+            tagma_id: TagmaId::from("tagma-abc".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(json, r#"{"tagma_id":"tagma-abc"}"#);
+        let back: EnrollmentLookupRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tagma_id, req.tagma_id);
+
+        let resp = EnrollmentLookupResponse {
+            user_id: UserId::from("user-1".to_string()),
+            enrolled_tagmas: vec![
+                TagmaId::from("tagma-abc".to_string()),
+                TagmaId::from("tagma-xyz".to_string()),
+            ],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(
+            json,
+            r#"{"user_id":"user-1","enrolled_tagmas":["tagma-abc","tagma-xyz"]}"#
+        );
+        let back: EnrollmentLookupResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.user_id, resp.user_id);
+        assert_eq!(back.enrolled_tagmas, resp.enrolled_tagmas);
     }
 }

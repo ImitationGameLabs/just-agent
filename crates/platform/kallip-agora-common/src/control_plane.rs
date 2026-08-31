@@ -103,6 +103,22 @@ pub struct VerifiedSession {
 pub const LOCAL_ADMIN_PROVIDER: &str = "local-admin";
 pub const LOCAL_ADMIN_SUBJECT: &str = "admin";
 
+/// The enrollment facts behind the files service's ACL: which user space a
+/// tagma belongs to and the full set of enrolled, non-revoked tagmas of that
+/// space. The registry resolves the set; the caller derives space membership
+/// and send-target validity from it, per request and without a cache. The
+/// serde form IS the `enrollment-lookup` wire contract --
+/// `EnrollmentLookupResponse` in [`crate::internal_api`] is a type alias of
+/// this struct.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollmentLookup {
+    /// The user space the requested tagma belongs to.
+    pub user_id: UserId,
+    /// Every enrolled, non-revoked tagma of that space, sorted; includes the
+    /// requested tagma.
+    pub enrolled_tagmas: Vec<TagmaId>,
+}
+
 /// Why a [`ControlPlane`] call failed. Surfaces as HTTP 500 at the relay; the
 /// relay maps "not found / unauthorized" outcomes to `Option::None` rather than
 /// to errors so they can become precise 404/401s.
@@ -169,6 +185,17 @@ pub trait ControlPlane: Send + Sync + 'static {
         &self,
         username: &str,
     ) -> Result<Option<UserIdentity>, ControlPlaneError>;
+
+    /// Resolve a tagma's owning user space and the full enrollment set of
+    /// that space: `None` when the tagma is unknown, pending, revoked, or
+    /// owner-disabled -- the same population [`verify_bearer`](Self::verify_bearer)
+    /// rejects, so a tagma that cannot authenticate also cannot be addressed
+    /// as a delivery target (fail-closed on both faces). `enrolled_tagmas` is
+    /// sorted and includes the requested tagma.
+    async fn enrollment_lookup(
+        &self,
+        tagma_id: &TagmaId,
+    ) -> Result<Option<EnrollmentLookup>, ControlPlaneError>;
 
     /// Atomically advance the tagma's tunnel-proof replay high-water-mark to
     /// `ts`. Returns `true` if it advanced (the proof is fresh), `false` if it
