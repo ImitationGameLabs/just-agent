@@ -437,6 +437,29 @@ async fn signup_complete_rejects_when_signup_disabled() {
     );
 }
 
+/// `signup_complete` refuses a reserved handle with 400 -- the only
+/// reserved guard on the OAuth signup rail (passkey pins begin+finish).
+/// Uppercase on purpose: the check runs after normalize. The held state
+/// row survives so a legal retry remains possible.
+#[tokio::test]
+async fn signup_complete_rejects_reserved_username() {
+    let state = state_with().await;
+    let state_plain = "rv".to_string();
+    seed_state(&state, &state_plain, "github", ACTION_SIGNIN).await;
+    let token = finish_needs_username(state.clone(), &state_plain, "rv-subj").await;
+    let err = complete(state.clone(), token, "Admin")
+        .await
+        .expect_err("reserved");
+    assert_eq!(err.status, 400);
+    assert_eq!(
+        oauth_states::Entity::find()
+            .count(&state.db)
+            .await
+            .expect("states"),
+        1
+    );
+}
+
 #[tokio::test]
 async fn finish_rejects_unknown_state() {
     let state = state_with().await;

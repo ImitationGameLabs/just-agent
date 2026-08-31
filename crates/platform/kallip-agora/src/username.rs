@@ -215,4 +215,14 @@ mod tests {
     fn non_member_passes() {
         assert!(!is_reserved("alice-doe"));
     }
+
+    #[test]
+    fn near_miss_names_are_not_reserved() {
+        // Exact equality is the contract: extensions of a listed name are
+        // legitimate handles, so a contains/starts_with regression must
+        // fail here.
+        for name in ["administrator", "admin2", "kallipai-x", "operator1"] {
+            assert!(!is_reserved(name), "{name} must not be reserved");
+        }
+    }
 }

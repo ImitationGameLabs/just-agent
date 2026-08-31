@@ -31,6 +31,9 @@ use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter};
 async fn username_availability_reports_four_states() {
     let state = make_state().await;
     seed_user(&state, "taken-name").await;
+    // A legacy row also holding a reserved name: policy beats the lookup,
+    // and the four-state contract must not degrade to taken here.
+    seed_user(&state, "admin").await;
 
     async fn probe(
         state: &crate::state::SharedState,
