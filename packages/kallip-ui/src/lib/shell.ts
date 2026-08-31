@@ -44,8 +44,9 @@ export function navIndicatorLabel(indicator: NavIndicator): string {
 }
 
 /** A small status indicator AppShell renders as a leading dot instead of an
- * icon (e.g. per-chat liveness in the sidebar). AppShell owns the visual
- * tokens; consumers map their domain state to this tri-state (+ error). */
+ * icon (e.g. per-chat liveness in the sidebar). The visual tokens live in
+ * this module (see above); consumers map their domain state to the four
+ * states. */
 export type NavIndicator = "live" | "pending" | "down" | "error";
 
 // A single navigation entry. Exactly one leading mark: either an `icon`

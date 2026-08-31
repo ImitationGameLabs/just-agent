@@ -32,6 +32,7 @@
     manage_schedules_heading,
     nav_home,
     nav_manage,
+    room_label_fallback,
   } from "../../paraglide/messages.js";
 
   let {
@@ -285,7 +286,7 @@
       tagmata: tagmaNav,
       rooms: roomsStore.rooms.map((r) => ({
         roomId: r.room_id,
-        label: r.name || `room ${r.room_id.slice(0, 8)}`,
+        label: r.name || room_label_fallback({ id: r.room_id.slice(0, 8) }),
       })),
     }),
   );

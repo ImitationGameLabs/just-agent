@@ -91,7 +91,9 @@
     nav_tagmata,
     tagma_rooms_section_empty,
     tagma_rooms_section_manage,
+    room_label_fallback,
     tagmata_load_failed,
+    rooms_retrying,
     tagmata_new,
     tagmata_new_hint,
     tagmata_title,
@@ -467,7 +469,7 @@
      centered narrow column matches the other manage pages. -->
 <div class="h-full overflow-y-auto">
   <div
-    class="px-2 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 md:p-6 max-w-2xl mx-auto space-y-6"
+    class="px-2 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 md:p-6 max-w-2xl space-y-6"
   >
     <h1 class="text-xl font-semibold hidden md:block">
       {nav_manage()}
@@ -655,7 +657,8 @@
                 <HubRow
                   href={`/rooms/${r.room_id}`}
                   Icon={Users}
-                  label={r.name}
+                  label={r.name ||
+                    room_label_fallback({ id: r.room_id.slice(0, 8) })}
                 />
               {/each}
             {:else}
@@ -669,6 +672,7 @@
             <p class="text-error-500 dark:text-error-400 text-sm px-4 py-3">
               {roomsStore.roomsError}
             </p>
+            <p class="opacity-60 text-sm px-4 pb-3">{rooms_retrying()}</p>
           {:else}
             <p class="text-sm opacity-70 px-4 py-3">{common_loading()}</p>
           {/if}

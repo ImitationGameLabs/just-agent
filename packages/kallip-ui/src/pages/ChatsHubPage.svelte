@@ -6,7 +6,7 @@
   // Reached from the bottom bar's Chats cell and the online gate landing;
   // no `back` prop, so the bar stays visible. Rows read the stores the same
   // way RootLayout does; the page owns no fetches of its own.
-  import { Users } from "@lucide/svelte";
+  import { Cpu, Users } from "@lucide/svelte";
   import HubRow from "../components/HubRow.svelte";
   import { agoraSession } from "../lib/session/agora.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
@@ -21,6 +21,7 @@
     nav_rooms,
     nav_tagmata,
     tagma_profile_unnamed,
+    room_label_fallback,
   } from "../paraglide/messages.js";
 
   const tagmaRows = $derived(
@@ -36,7 +37,7 @@
   const roomRows = $derived(
     roomsStore.rooms.map((r) => ({
       href: `/rooms/${r.room_id}`,
-      label: r.name || `room ${r.room_id.slice(0, 8)}`,
+      label: r.name || room_label_fallback({ id: r.room_id.slice(0, 8) }),
     })),
   );
 </script>
@@ -81,7 +82,7 @@
     <div class="card preset-tonal-surface">
       <p class="text-sm opacity-70 px-4 py-4">{nav_chats_empty()}</p>
       <div class="divide-y divide-surface-200-800">
-        <HubRow href="/tagmata" label={nav_manage()} />
+        <HubRow href="/tagmata" Icon={Cpu} label={nav_manage()} />
         <HubRow href="/rooms" Icon={Users} label={nav_rooms()} />
       </div>
     </div>
