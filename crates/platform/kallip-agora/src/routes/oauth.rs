@@ -697,6 +697,12 @@ async fn signup_complete(
                 }
                 let username = username::normalize(&username_raw)
                     .map_err(|e| TxnError::Api(ApiError::from(e)))?;
+                // Reserved check before the uniqueness probe: deterministic
+                // policy, same authority as the passkey register path, so a
+                // reserved handle gets the same refusal on both signup rails.
+                if username::is_reserved(&username) {
+                    return Err(TxnError::Api(ApiError::bad_request("username is reserved")));
+                }
                 // Probe uniqueness; the `uniq_users_username` index backstops a
                 // simultaneous-signup race the probe loses (SELECT FOR UPDATE
                 // gap-locks nothing on a non-existent row).

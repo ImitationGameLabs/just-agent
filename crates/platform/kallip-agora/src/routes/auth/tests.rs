@@ -106,6 +106,26 @@ async fn register_begin_caps_ceremonies_per_username() {
     }
 }
 
+/// `register_begin` refuses a reserved name with 400 before any ceremony
+/// row exists (deterministic policy, not a race -- see `username::RESERVED`).
+#[tokio::test]
+async fn register_begin_rejects_reserved_username() {
+    let state = make_state().await;
+    match register_begin(
+        State(state),
+        Json(RegisterBeginRequest {
+            // Uppercase on purpose: the check runs after normalize.
+            username: "Admin".to_string(),
+            display_name: None,
+        }),
+    )
+    .await
+    {
+        Err(e) => assert_eq!(e.status, 400),
+        Ok(_) => panic!("reserved username must be rejected"),
+    }
+}
+
 /// `register_begin` enrolls a DISCOVERABLE (resident-key) credential: the
 /// persisted state rehydrates to the bare core `RegistrationState` (not the
 /// wrapper `PasskeyRegistration`), so the discoverable login / conditional-UI

@@ -78,9 +78,30 @@ fn is_valid_handle(s: &str) -> bool {
     })
 }
 
+/// The reserved-name registry (operator ruling 2026-08-31, minimal list).
+/// These handles would collide with the platform's own faces: the operator
+/// account (hardcoded `admin`), staff/ops roles a squatter could pose as,
+/// and the service/brand names (`kallip`, `kallipai`, `agora`, `lesche`,
+/// `files`). The list is static by design: the operator-facing knob that
+/// used to parameterize the admin handle is gone, so no runtime state
+/// feeds this check. Signup paths check membership AFTER `normalize`, so
+/// entries are stored pre-normalized (lowercase). `admin-login` is exempt
+/// by construction -- it IS the legitimate owner of `admin`.
+pub const RESERVED: &[&str] = &[
+    "admin", "root", "system", "operator", "support", "kallip", "kallipai", "agora", "lesche",
+    "files",
+];
+
+/// True if the already-normalized name is reserved. Contract: callers pass
+/// the output of [`normalize`] (lowercase, validated shape); raw input must
+/// not reach here.
+pub fn is_reserved(normalized: &str) -> bool {
+    RESERVED.contains(&normalized)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize;
+    use super::{RESERVED, is_reserved, normalize};
 
     // -- happy paths --------------------------------------------------------
 
@@ -170,5 +191,28 @@ mod tests {
     #[test]
     fn rejects_too_long() {
         assert!(normalize(&"a".repeat(33)).is_err());
+    }
+
+    // -- reserved names -----------------------------------------------------
+
+    #[test]
+    fn every_listed_name_is_detected() {
+        for name in RESERVED {
+            assert!(is_reserved(name), "{name} must be reserved");
+        }
+    }
+
+    #[test]
+    fn reserved_check_after_normalize_catches_uppercase() {
+        // The signup paths normalize first; this pins that pipeline, not
+        // is_reserved's raw-input behavior (which is contracted as
+        // pre-normalized).
+        let n = normalize("Admin").unwrap();
+        assert!(is_reserved(&n));
+    }
+
+    #[test]
+    fn non_member_passes() {
+        assert!(!is_reserved("alice-doe"));
     }
 }

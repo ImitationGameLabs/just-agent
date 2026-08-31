@@ -260,6 +260,12 @@ async fn register_begin(
     // transform runs at login_begin so a user can log in with exactly the handle
     // they registered.
     let username_norm = username::normalize(&req.username)?;
+    // Reserved names are a deterministic policy, not a race: reject at begin
+    // so no ceremony row is created and no authenticator prompt is shown.
+    // finish re-checks with the same authority (defense in depth).
+    if username::is_reserved(&username_norm) {
+        return Err(ApiError::bad_request("username is reserved"));
+    }
     // The WebAuthn `displayName` shown in the authenticator prompt MUST be
     // non-empty -- webauthn-rs rejects an empty one -- so when the client omits
     // `display_name` we fall back to the normalized username. Trim and cap the
@@ -361,6 +367,12 @@ async fn register_finish(
     // verification OUTSIDE the transaction so the row locks are not held across
     // crypto.
     let (reg_state, user_id, username) = load_register_state(&state.db, req.ceremony_id).await?;
+    // Defense-in-depth twin of the begin-side reserved check: the ceremony
+    // row may predate this list (challenge TTL) or come from a future code
+    // path. Deterministic, so it needs no transaction.
+    if username::is_reserved(&username) {
+        return Err(ApiError::bad_request("username is reserved"));
+    }
     // Discoverable signup: the begin stored a bare core `RegistrationState`; finish
     // through `WebauthnCore` and wrap the resulting `Credential` as a `Passkey`
     // (mirrors the discoverable add-passkey finish in `routes::passkeys`).
