@@ -1,22 +1,26 @@
 # Arion composition for the prod-agora deploy (the server side): agora +
-# lesche + agora-postgres + lesche-postgres. agora (control plane) runs from
-# packages.kallip-agora-image; lesche (data-plane relay) runs from
-# packages.kallip-lesche-image; each postgres uses the official postgres:17
-# image for production parity and isolation.
+# lesche + files + agora-postgres + lesche-postgres + files-postgres. The
+# agora (control plane) runs from packages.kallip-agora-image; the lesche
+# (data-plane relay) runs from packages.kallip-lesche-image; files (content
+# transfer) runs from packages.kallip-files-image; each postgres uses the
+# official postgres:17.5 image for production parity and isolation.
 #
 # Invoke from the repo root (so .env resolves):
 #   arion -f compose/prod/agora.nix up -d
 #
 # This is a single-purpose file: every service is declared directly, no mode
-# switch or mkIf/mkMerge. ALL deploy env (DB url incl.
-# password, WebAuthn RP, CORS, cookie domain, admin token, the agora/lesche
-# internal shared secret, POSTGRES_PASSWORD) comes from the repo-root .env.
-# Neither the agora nor the lesche is published -- both sit behind the
+# switch or mkIf/mkMerge. Secret-bearing deploy env (DB url incl.
+# password, WebAuthn RP, CORS, cookie domain, admin token, the internal
+# shared secret, POSTGRES_PASSWORD) comes from the repo-root .env; each
+# service's operational env (listen addr, blob root, internal hop URL)
+# is pinned inline and overrides env_file.
+# None of the three services is published -- all sit behind the
 # operator's TLS-terminating edge proxy, which HOST-routes agora.<d> -> agora
-# and lesche.<d> -> lesche (the per-service subdomain topology). The lesche
-# reaches the agora's /internal ControlPlane surface over the private
-# compose network (KALLIP_LESCHE_AGORA_INTERNAL_URL=http://agora:7100); the
-# proxy must NOT route /internal publicly. See docs/reference/container.md.
+# and lesche.<d> -> lesche / files.<d> -> files (the per-service subdomain
+# topology). The lesche and the files service reach the agora's /internal
+# ControlPlane surface over the private compose network (each with its own
+# KALLIP_*_AGORA_INTERNAL_URL=http://agora:7100); the proxy must NOT route
+# /internal publicly. See docs/reference/container.md.
 { lib, ... }:
 let
   # Resolve the workspace flake. `toString ../..` is the repo root (two levels
@@ -27,6 +31,8 @@ let
   agoraImage = flake.packages.x86_64-linux.kallip-agora-image;
   lesche = flake.packages.x86_64-linux.kallip-lesche;
   lescheImage = flake.packages.x86_64-linux.kallip-lesche-image;
+  files = flake.packages.x86_64-linux.kallip-files;
+  filesImage = flake.packages.x86_64-linux.kallip-files-image;
 in
 {
   config = {
@@ -35,11 +41,13 @@ in
     docker-compose.volumes = {
       agora_pgdata = { };
       lesche_pgdata = { };
+      files_pgdata = { };
+      files_blobs = { };
     };
 
-    # POSTGRES_USER/PASSWORD/DB come from .env ONLY and are read by BOTH
-    # services -- do NOT set them in service.environment here (compose
-    # precedence would pin a weak default password on a public DB).
+    # POSTGRES_USER/PASSWORD/DB come from .env ONLY and are read by all
+    # three postgres services -- do NOT set them in service.environment
+    # (compose precedence would pin a weak default password on a public DB).
     services.agora-postgres = {
       service.image = "postgres:17.5";
       service.volumes = [ "agora_pgdata:/var/lib/postgresql/data" ];
@@ -49,6 +57,12 @@ in
     services.lesche-postgres = {
       service.image = "postgres:17.5";
       service.volumes = [ "lesche_pgdata:/var/lib/postgresql/data" ];
+      service.env_file = [ ".env" ];
+    };
+
+    services.files-postgres = {
+      service.image = "postgres:17.5";
+      service.volumes = [ "files_pgdata:/var/lib/postgresql/data" ];
       service.env_file = [ ".env" ];
     };
 
@@ -106,6 +120,37 @@ in
       };
       # No service.ports -- like the agora, the lesche sits behind the
       # TLS-terminating reverse proxy.
+    };
+
+    # Files: the content-transfer service. Content-addressed blobs (local
+    # volume) + record metadata in its own Postgres; identity and enrollment
+    # facts stay in the agora, verified per request through the agora's
+    # /internal ControlPlane surface over the private compose network. Not
+    # published -- the operator's edge host-routes files.<d> here.
+    services.files = {
+      service.depends_on = [
+        "agora"
+        "files-postgres"
+      ];
+      build.image = lib.mkForce filesImage;
+      service.command = [ "${files}/bin/kallip-files" ];
+      service.env_file = [ ".env" ];
+      service.volumes = [ "files_blobs:/data/blobs" ];
+      service.environment = {
+        KALLIP_FILES_ADDR = "0.0.0.0:7400";
+        # The blob root INSIDE the container; must equal the files_blobs
+        # volume mount target above.
+        KALLIP_FILES_BLOB_ROOT = "/data/blobs";
+        # Private compose-network hop to the agora's /internal surface;
+        # never routed through the public edge.
+        KALLIP_FILES_AGORA_INTERNAL_URL = "http://agora:7100";
+        RUST_LOG = "info";
+        # KALLIP_FILES_DATABASE_URL (the metadata schema) and
+        # KALLIP_FILES_AGORA_TOKEN (must equal the agora's
+        # KALLIP_AGORA_INTERNAL_TOKEN) come from .env.
+      };
+      # No service.ports -- like the agora and the lesche, the files service
+      # sits behind the TLS-terminating reverse proxy.
     };
   };
 }

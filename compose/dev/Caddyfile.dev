@@ -1,5 +1,5 @@
 # Dev edge proxy (see arion-compose.nix services.caddy). Terminates TLS with
-# the mkcert leaf cert mounted at /certs and host-routes the three subdomains to
+# the mkcert leaf cert mounted at /certs and host-routes the dev subdomains to
 # the dev services on 127.0.0.1 (caddy runs on the host network). The explicit
 # `tls` directive disables Caddy's internal CA / ACME: the dev domain is a
 # non-public TLD, so automatic issuance cannot succeed and is not wanted.
@@ -69,6 +69,12 @@
 	handle @instances {
 		# local instance management service (published 127.0.0.1:7300)
 		reverse_proxy 127.0.0.1:7300
+	}
+
+	@files host files.{$KALLIP_DOMAIN}
+	handle @files {
+		# files transfer service (published 127.0.0.1:7400)
+		reverse_proxy 127.0.0.1:7400
 	}
 	# Any other *.<devDomain> host (typo, or the bare apex) matched the wildcard
 	# site block's SNI but no route above -- surface it as a real 404 rather than

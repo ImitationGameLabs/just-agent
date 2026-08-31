@@ -1,5 +1,5 @@
-# Dev agora-side composition: caddy + agora + lesche + agora-postgres +
-# lesche-postgres + instances. The default
+# Dev agora-side composition: caddy + agora + lesche + files +
+# agora-postgres + lesche-postgres + files-postgres + instances. The default
 # dev stack -- a plain `arion up` brings it up via the `arion-compose.nix` shim
 # at the repo root (which just re-exports this module); invoke directly with
 # `arion -f compose/dev/agora.nix ...` for the same result.
@@ -7,6 +7,9 @@
 # The dev tagma (compose/dev/tagma.nix) and the integration-test runner
 # (compose/dev/test.nix) are NOT here: each is its own single-purpose
 # composition under compose/dev/, sharing nothing with the agora side.
+# The files service is composed here too, imported from files.nix:
+# it belongs to this stack, reaching the agora's /internal surface
+# over the compose network (the same dependency shape as the lesche).
 # Prod-tagma / prod-agora are standalone under compose/prod/.
 #
 # Consumes the flake's pre-built `packages.default` directly -- arion does no
@@ -41,7 +44,9 @@ let
   # agora service env) so it is shared across the agora/lesche subdomains. agora
   # and lesche still publish 7100/7200 for host-side tooling (kallip-admin,
   # curl) AND for the dev tagma (compose/dev/tagma.nix, host network), which
-  # reaches them at 127.0.0.1:7100 / :7200 rather than via compose DNS.
+  # reaches them at 127.0.0.1:7100 / :7200 rather than via compose DNS. files
+  # publishes 127.0.0.1:7400 for the same host-side tooling (the `kallip
+  # file` CLI).
 
   # The stack shape switch: KALLIP_TLS=on (default) keeps the Caddy-fronted
   # https+domain topology below; KALLIP_TLS=off is the plain-http direct
@@ -131,7 +136,7 @@ let
   # agora2./lesche2. subdomains to the host ports -- so the second stack is
   # reachable exactly where the old inline pair was. Bring up only agora +
   # lesche (plus their deps): caddy would fight the first stack for :80/:443,
-  # and instances owns the loopback-only 7300.
+  # and instances/files own the loopback-only 7300/7400.
   envOrDefault =
     name: default:
     let
@@ -144,6 +149,8 @@ let
   instancesHostPort = envOrDefault "KALLIP_ARION_INSTANCES_PORT" "7300";
 in
 {
+  imports = [ ./files.nix ];
+
   config = {
     project.name = projectName;
 
@@ -195,6 +202,7 @@ in
       service.depends_on = [
         "agora"
         "lesche"
+        "files"
       ];
       service.network_mode = "host";
       service.volumes = [
@@ -244,7 +252,8 @@ in
         # origin is webOrigin (its explicit :5173 port matches exactly;
         # ALLOW_ANY_PORT stays false in both shapes).
         KALLIP_AGORA_WEBAUTHN_RP_ID = if tlsOff && isIpHost then "kallipai.com" else devDomain;
-        KALLIP_AGORA_WEBAUTHN_RP_ORIGIN = if tlsOff && isIpHost then "https://web.kallipai.com" else webOrigin;
+        KALLIP_AGORA_WEBAUTHN_RP_ORIGIN =
+          if tlsOff && isIpHost then "https://web.kallipai.com" else webOrigin;
         KALLIP_AGORA_WEBAUTHN_RP_NAME = "kallipai";
         KALLIP_AGORA_WEBAUTHN_ALLOW_ANY_PORT = "false";
         # Behind Caddy's TLS the session cookie is Secure; the plain-http
@@ -276,7 +285,9 @@ in
         # fixture, paired with the compliant token above; prod leaves it off.
         KALLIP_AGORA_ADMIN_USER_LOGIN = "true";
         RUST_LOG = "info";
-      } // lib.optionalAttrs (!tlsOff) { KALLIP_AGORA_SESSION_COOKIE_DOMAIN = devDomain; } // lib.optionalAttrs tlsOff { KALLIP_AGORA_OAUTH_REDIRECT_BASE = webOrigin; };
+      }
+      // lib.optionalAttrs (!tlsOff) { KALLIP_AGORA_SESSION_COOKIE_DOMAIN = devDomain; }
+      // lib.optionalAttrs tlsOff { KALLIP_AGORA_OAUTH_REDIRECT_BASE = webOrigin; };
     };
 
     # Lesche: the data-plane relay. Owns the chat domain in its own Postgres
@@ -338,7 +349,9 @@ in
       # Caddy); the http shape opens 7300 to the LAN so browsers on other
       # machines reach the instances API directly (token-gated +
       # host-allowlisted; treat the LAN as a trusted surface).
-      service.ports = [ (if tlsOff then "${instancesHostPort}:7300" else "127.0.0.1:${instancesHostPort}:7300") ];
+      service.ports = [
+        (if tlsOff then "${instancesHostPort}:7300" else "127.0.0.1:${instancesHostPort}:7300")
+      ];
       service.env_file = [ ".env" ];
       service.volumes = [
         instancesStateBind

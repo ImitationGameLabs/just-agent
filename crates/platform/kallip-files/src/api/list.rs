@@ -1,7 +1,7 @@
 //! GET /v1/files: the listing face (the CLI `file ls` dependency). The SQL
 //! prefix is derived from the caller's identity alone, matched literally
 //! (the LIKE metacharacters are escaped), and only narrows the candidate
-//! candidate set; authorization itself is the per-row matrix decision -- the
+//! set; authorization itself is the per-row matrix decision -- the
 //! same `user_can` / `tagma_can` functions the single-record routes go
 //! through -- so a listing can never serve a row the record routes would
 //! not. The admin principal is refused up front (row 8: no content face).

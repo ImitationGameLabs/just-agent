@@ -67,7 +67,7 @@ code) and the iteration loop are documented in
 [development.md](../development.md). This section covers the dev-only mechanics.
 
 Dev skips the image bake for the kallip services. `useHostStore` bind-mounts the
-host `/nix/store` read-only into the tagma/agora containers, so they run
+host `/nix/store` read-only into the tagma/agora/files containers, so they run
 straight out of the crane workspace (`packages.default`) and a rebuild is picked
 up without an in-compose bake; postgres uses the official `postgres:17.5` image.
 
@@ -87,10 +87,10 @@ browsers only allow WebAuthn in a secure context, so the previous plain-HTTP
 code default for `KALLIP_DOMAIN` is the prod domain (`kallipai.com`), which
 `.env.example` overrides to `kallipai.lan` for local dev (copied into `.env`,
 loaded into the shell by direnv's `dotenv`) so dev never clashes with
-production. Caddy runs on the host network and proxies the three subdomains to
+production. Caddy runs on the host network and proxies the dev subdomains to
 `127.0.0.1`: `web.kallipai.lan` -> the host vite dev server (`:5173`);
 `agora.kallipai.lan` / `lesche.kallipai.lan` -> the host-published `:7100` /
-`:7200`. The session cookie carries `Domain=kallipai.lan`
+`:7200`; `files.kallipai.lan` -> the loopback-published `:7400` (the `kallip file` CLI face). The session cookie carries `Domain=kallipai.lan`
 (`KALLIP_AGORA_SESSION_COOKIE_DOMAIN`), so the cookie set at login on the agora
 is sent to the lesche too — both subdomains share the registrable domain
 `kallipai.lan` (same-site under `SameSite=Strict`) — and CORS on each service
@@ -138,14 +138,18 @@ on a public host without a firewall / TLS reverse proxy in front.
 ### agora — `arion -f compose/prod/agora.nix up -d`
 
 Brings up the agora (from `packages.kallip-agora-image`) + lesche (from
-`packages.kallip-lesche-image`) + `agora-postgres` / `lesche-postgres` (official
-`postgres:17.5` image) — co-located on one host. **Neither the agora nor the
-lesche is published** — both sit behind the operator's TLS-terminating edge
-proxy, which HOST-routes `agora.<d>` → `agora:7100` and `lesche.<d>` →
-`lesche:7200` (per-service subdomains) and sets `X-Forwarded-For`; configure
-`KALLIP_AGORA_TRUSTED_PROXIES` to the proxy's CIDR. All agora/lesche env (DB
-url, WebAuthn RP, CORS, cookie domain, admin token, the internal shared secret)
-and the postgres credentials come from `.env`.
+`packages.kallip-lesche-image`) + files (from `packages.kallip-files-image`) +
+`agora-postgres` / `lesche-postgres` / `files-postgres` (official
+`postgres:17.5` image) — co-located on one host. **None of the three services
+is published** — all sit behind the operator's TLS-terminating edge
+proxy, which HOST-routes `agora.<d>` → `agora:7100`, `lesche.<d>` →
+`lesche:7200`, and `files.<d>` → `files:7400` (per-service subdomains) and
+sets `X-Forwarded-For`; configure
+`KALLIP_AGORA_TRUSTED_PROXIES` to the proxy's CIDR. Secret-bearing env (DB
+url, WebAuthn RP, CORS, cookie domain, admin token, the internal shared
+secret) and the postgres credentials come from `.env`; each service's
+operational env (listen addr, files blob root, internal hop URL) is
+pinned inline in `service.environment`, which overrides `env_file`.
 
 ```sh
 arion -f compose/prod/agora.nix up -d

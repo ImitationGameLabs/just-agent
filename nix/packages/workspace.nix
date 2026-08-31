@@ -63,6 +63,11 @@ in
   # lesche services deploy independently -- see
   # nix/packages/docker-images/lesche.nix.
   lesche = buildCrate "cargo build --release -p kallip-lesche";
+  # The files transfer service (content-addressed blobs, ACL'd spaces;
+  # pure HTTP/Postgres, no shell-out deps). Its own image so it deploys
+  # independently of the agora/lesche pair -- see
+  # nix/packages/docker-images/files.nix.
+  files = buildCrate "cargo build --release -p kallip-files";
   # The host/"tagma" side: the tagma service (agent host + in-process relay
   # connector) and the `kallip` CLI (whose `lesche send` subcommand the agent
   # invokes to address the user) share most of their closure, so one build

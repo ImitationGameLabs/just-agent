@@ -40,10 +40,16 @@ pub struct FileEntry {
     pub created_at: String,
 }
 
-/// The error body the API serves (`ApiError`): the CLI surfaces the
-/// service's own `message` verbatim rather than a bare status code.
+/// The error body the API serves: an `ApiError` envelope
+/// `{"error":{"message":"..."}}` — the CLI surfaces the service's
+/// own `message` rather than a bare status code.
 #[derive(Debug, Deserialize)]
 struct ApiErrorBody {
+    error: ApiErrorMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiErrorMessage {
     message: String,
 }
 
@@ -184,7 +190,23 @@ async fn check(response: reqwest::Response) -> anyhow::Result<reqwest::Response>
     }
     let body = response.text().await.unwrap_or_default();
     let message = serde_json::from_str::<ApiErrorBody>(&body)
-        .map(|parsed| parsed.message)
+        .map(|parsed| parsed.error.message)
         .unwrap_or(body);
     anyhow::bail!("files service returned {status}: {message}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApiErrorBody;
+
+    /// The API wraps every failure as `{"error":{"message"}}`; the
+    /// parser must reach through the envelope or all errors degrade
+    /// to raw JSON on the terminal.
+    #[test]
+    fn error_body_reaches_through_the_envelope() {
+        let parsed: ApiErrorBody =
+            serde_json::from_str(r#"{"error":{"message":"admin cannot list content"}}"#)
+                .expect("nested error envelope parses");
+        assert_eq!(parsed.error.message, "admin cannot list content");
+    }
 }

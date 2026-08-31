@@ -146,7 +146,7 @@ agents; the lesche message route returns 503).
 ### Agora side
 
 ```sh
-arion up -d                # caddy + agora + lesche + agora-postgres + lesche-postgres (arion builds the workspace via the flake)
+arion up -d                # caddy + agora + lesche + files + agora-postgres + lesche-postgres + files-postgres (arion builds the workspace via the flake)
 ```
 
 Dev is fronted by Caddy (see the one-time setup above): the browser loads the
@@ -161,7 +161,10 @@ so no `.env` override is needed for normal LAN dev.
 
 agora and lesche also publish `7100` / `7200` to the host for plain-HTTP
 tooling — `kallip-admin` and curl keep using `http://localhost:7100` /
-`http://localhost:7200` directly, bypassing Caddy.
+`http://localhost:7200` directly, bypassing Caddy. The files service
+publishes `127.0.0.1:7400` the same way (loopback-only): the `kallip file`
+CLI points `KALLIP_FILES_URL` at `http://127.0.0.1:7400` and presents a
+tagma bearer (`KALLIP_FILES_TOKEN`); see docs/reference/files-api.md.
 
 > **Passkey migration:** changing the WebAuthn RP id from the old `localhost`
 > topology to `kallipai.lan` invalidates every previously registered dev

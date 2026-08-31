@@ -182,6 +182,26 @@ Deny a committed approval with an optional reason.
 $ kallip approval deny "ap_a1b2c3d4..." "too risky"
 ```
 
+### `file` — Content transfer against the files service
+
+Upload, download, deliver, and list records on the files service
+(`kallip-files`; HTTP reference in [files-api.md](files-api.md)). The
+acting principal is the tagma named by the bearer token (the spawn env);
+`--space self` is its own region, `shared` the space's shared region.
+
+```bash
+$ kallip file put <PATH> --file <FILE> [--json]
+$ kallip file get <ID> [--out <FILE>]
+$ kallip file send <ID> (--to-tagma <TAGMA> | --to-user <USER>) [--json]
+$ kallip file ls --space self|shared [--prefix <PREFIX>] [--limit <N>] [--json]
+```
+
+Credentials ride the spawn environment, never flags: `KALLIP_FILES_URL`
+(the service base URL) and `KALLIP_FILES_TOKEN` (the tagma's long-lived
+bearer). `--json` prints successful responses as JSON; `get` buffers the
+content (capped by the service's max body size) and writes it to stdout
+(or `--out`) — content is never JSON-wrapped.
+
 ## Usage patterns
 
 ### Delegate work to a subagent

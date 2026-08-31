@@ -284,6 +284,33 @@ Source:
 [`crates/time/kallip-cron-daemon/src/args.rs`](../../crates/time/kallip-cron-daemon/src/args.rs),
 [`crates/time/kallip-cron-client/src/client.rs`](../../crates/time/kallip-cron-client/src/client.rs).
 
+## Files service
+
+The file transfer service (`kallip-files`) and its `kallip file` CLI
+client. The service owns content-addressed blob storage and record
+metadata in its own Postgres; identity and enrollment facts stay in the
+agora, verified per request through the agora's `/internal/*` surface
+with a shared secret. The CLI reads its credentials from the agent
+shell's spawn env (no flags carry secrets).
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `KALLIP_FILES_ADDR` | no | `127.0.0.1:7400` | Address the service listens on (behind a TLS-terminating reverse proxy). |
+| `KALLIP_FILES_BLOB_ROOT` | yes (service) | _(unset)_ | Root directory of the content-addressed blob store; created on demand. |
+| `KALLIP_FILES_DATABASE_URL` | yes (service) | _(unset)_ | Postgres URL for the metadata store; a missing URL fails fast at boot. |
+| `KALLIP_FILES_AGORA_INTERNAL_URL` | yes (service) | _(unset)_ | Agora internal base URL for `/internal/*` ControlPlane calls. Must NOT be publicly reachable. |
+| `KALLIP_FILES_AGORA_TOKEN` | yes (service) | _(unset)_ | Shared secret bearer for the agora `/internal/*` API; must equal the agora's `KALLIP_AGORA_INTERNAL_TOKEN`. |
+| `KALLIP_FILES_MAX_BODY_SIZE_MB` | no | `100` | Maximum accepted upload body, in megabytes; larger streams are cut off with 413. |
+| `KALLIP_FILES_DEGRADE` | no | `closed` | Agora degrade posture: `closed` fails authorization with 503 when the registry cannot answer; `soft` degrades to deny (403). Neither posture weakens credential verification. |
+| `KALLIP_FILES_GC_INTERVAL_SECS` | no | `60` | Delay between GC passes (sweep + reconcile), in seconds. |
+| `KALLIP_FILES_GC_GRACE_SECS` | no | `60` | How long a zero-refcount row must have been freed before the GC may reclaim it. |
+| `KALLIP_FILES_GC_BATCH` | no | `128` | Maximum catalog rows reclaimed per GC pass. |
+| `KALLIP_FILES_URL` | yes (CLI) | _(unset)_ | Files service base URL for the `kallip file` CLI (spawn env). |
+| `KALLIP_FILES_TOKEN` | yes (CLI) | _(unset)_ | The tagma's bearer token for the `kallip file` CLI (spawn env, `sk-tagma-…`). |
+
+Source:
+[`crates/platform/kallip-files/src/args.rs`](../../crates/platform/kallip-files/src/args.rs).
+
 ## System environment variables
 
 The shell backend reads these from the process environment and passes them into
