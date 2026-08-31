@@ -2652,10 +2652,20 @@ name = "kallip-files"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
+ "clap",
+ "cookie",
+ "futures-util",
  "getrandom 0.4.2",
  "hex",
+ "http-body-util",
+ "kallip-agora-common",
+ "kallip-common",
+ "reqwest",
  "sea-orm",
  "sea-orm-migration",
+ "serde",
+ "serde_json",
  "sha2 0.11.0",
  "tempfile",
  "testcontainers",
@@ -2663,7 +2673,10 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "tokio",
+ "tokio-util",
+ "tower",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

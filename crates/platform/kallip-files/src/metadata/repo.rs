@@ -10,7 +10,8 @@
 //! same-content re-upload racing the removal the whole window to land.
 
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DbErr, Statement, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DbErr, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -152,6 +153,87 @@ pub async fn remove_record(db: &Db, record_id: Uuid) -> Result<Option<Removal>, 
         blob_id,
         blob_freed: freed,
     }))
+}
+
+/// Record one delivery: a new file record on the target path pointing at the
+/// same blob (refcount + 1, zero data copy) plus the delivery event, in one
+/// transaction. This is the send path's whole write -- record, reference,
+/// and audit trail land together or not at all, so a delivered file is
+/// never visible without its event and an event never lands without its
+/// record. The write is the service acting as delivery agent: it does not
+/// pass through ACL checks, because the send handler has already
+/// authorized the source read and validated the target. `size` feeds the
+/// catalog row's insert arm only (a delivery of a live blob always finds
+/// the row present, so the arm is a drifted-state repair); the caller
+/// reads it from the blob store.
+#[allow(clippy::too_many_arguments)]
+pub async fn register_delivery(
+    db: &Db,
+    source_record_id: Uuid,
+    blob_id: &BlobId,
+    size: i64,
+    target_space_path: &str,
+    target_owner: &str,
+    provenance: &str,
+    from_principal: &str,
+    to_principal: &str,
+) -> Result<(Uuid, Uuid), DbErr> {
+    let txn = db.begin().await?;
+    let backend = txn.get_database_backend();
+    let now = OffsetDateTime::now_utc();
+
+    txn.query_one(Statement::from_sql_and_values(
+        backend,
+        "INSERT INTO blob_rows (blob_id, size, refcount, created_at) \
+         VALUES ($1, $2, 1, $3) \
+         ON CONFLICT (blob_id) DO UPDATE SET refcount = blob_rows.refcount + 1, freed_at = NULL \
+         RETURNING refcount",
+        [blob_id.as_str().into(), size.into(), now.into()],
+    ))
+    .await?
+    .ok_or_else(|| DbErr::Custom("refcount upsert returned no row".to_owned()))?;
+
+    let record_id = Uuid::new_v4();
+    file_records::ActiveModel {
+        id: Set(record_id),
+        space_path: Set(target_space_path.to_owned()),
+        owner: Set(target_owner.to_owned()),
+        blob_id: Set(blob_id.as_str().to_owned()),
+        provenance: Set(Some(provenance.to_owned())),
+        created_at: Set(now),
+    }
+    .insert(&txn)
+    .await?;
+
+    let event = crate::metadata::models::delivery_events::ActiveModel {
+        id: Set(Uuid::new_v4()),
+        happened_at: Set(now),
+        from_principal: Set(from_principal.to_owned()),
+        to_principal: Set(to_principal.to_owned()),
+        blob_id: Set(blob_id.as_str().to_owned()),
+        source_record_id: Set(Some(source_record_id)),
+        target_record_id: Set(Some(record_id)),
+    }
+    .insert(&txn)
+    .await?;
+
+    txn.commit().await?;
+    Ok((record_id, event.id))
+}
+
+/// List delivery events for the admin query face, oldest first, optionally
+/// filtered to one blob. Read-only; the admin route caps `limit`.
+pub async fn list_delivery_events(
+    db: &Db,
+    blob_id: Option<&str>,
+    limit: u64,
+) -> Result<Vec<crate::metadata::models::delivery_events::Model>, DbErr> {
+    let mut query = crate::metadata::models::delivery_events::Entity::find()
+        .order_by_asc(crate::metadata::models::delivery_events::Column::HappenedAt);
+    if let Some(blob_id) = blob_id {
+        query = query.filter(crate::metadata::models::delivery_events::Column::BlobId.eq(blob_id));
+    }
+    query.limit(limit).all(db).await
 }
 
 #[cfg(test)]

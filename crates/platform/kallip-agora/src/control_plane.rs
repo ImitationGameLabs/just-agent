@@ -278,6 +278,10 @@ impl ControlPlane for DbControlPlane {
         // owner is disabled (or missing -- unreachable via FK RESTRICT,
         // treated as disabled). A tagma that could not authenticate is also
         // not addressable as a delivery target.
+        // The reads below are independent statements, not one transaction: the
+        // answer is a point-in-time snapshot. Per-request with no cache, a
+        // revoke landing mid-call affects at most the single in-flight
+        // request; there is no cached state to retro-correct.
         if tagma.enrolled_at.is_none() || tagma.revoked_at.is_some() {
             return Ok(None);
         }

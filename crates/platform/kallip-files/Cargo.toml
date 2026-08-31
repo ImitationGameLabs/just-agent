@@ -5,6 +5,10 @@ edition = "2024"
 version.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "kallip-files"
+path = "src/main.rs"
+
 [dependencies]
 async-trait = { workspace = true }
 getrandom = { workspace = true }
@@ -13,12 +17,25 @@ sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio = { workspace = true, features = ["fs", "io-util", "net"] }
 time = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+kallip-agora-common = { workspace = true }
+kallip-common = { workspace = true, features = ["axum"] }
+axum = { workspace = true }
+tokio-util = { workspace = true, features = ["io"] }
+futures-util = { workspace = true }
+http-body-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+cookie = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 testcontainers = { workspace = true, features = ["reusable-containers"] }
 testcontainers-modules = { workspace = true }
+tower = { workspace = true, features = ["util"] }

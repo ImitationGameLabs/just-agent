@@ -24,3 +24,8 @@ mod test_helpers;
 
 pub use backend::LocalBackend;
 pub use blob::{BlobId, BlobInfo, BlobStore, Error};
+
+pub mod acl;
+pub mod api;
+pub mod auth;
+pub mod state;

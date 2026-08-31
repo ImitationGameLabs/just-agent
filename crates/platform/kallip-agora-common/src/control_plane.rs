@@ -110,12 +110,25 @@ pub const LOCAL_ADMIN_SUBJECT: &str = "admin";
 /// serde form IS the `enrollment-lookup` wire contract --
 /// `EnrollmentLookupResponse` in [`crate::internal_api`] is a type alias of
 /// this struct.
+///
+/// The set stays identical to the population
+/// `verify_bearer` accepts by construction, not by
+/// a shared query: tagma tokens are minted only inside the enroll
+/// transaction (which sets `enrolled_at`), and production has no path
+/// that clears `enrolled_at`, so pending and tokenless are the same
+/// state. Minting a token outside that transaction would silently fork
+/// the two populations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrollmentLookup {
     /// The user space the requested tagma belongs to.
     pub user_id: UserId,
-    /// Every enrolled, non-revoked tagma of that space, sorted; includes the
-    /// requested tagma.
+    /// Every enrolled, non-revoked tagma of that space, sorted. In the
+    /// quiescent case the requested tagma is included, but the set is a
+    /// point-in-time snapshot of three independent row reads, not one
+    /// transaction: a revoke racing the call may land between the gate read
+    /// and the set read and drop the requester. Consumers must treat absence
+    /// from the set as denial and must not structurally assume the
+    /// requester's presence.
     pub enrolled_tagmas: Vec<TagmaId>,
 }
 
@@ -191,7 +204,10 @@ pub trait ControlPlane: Send + Sync + 'static {
     /// owner-disabled -- the same population [`verify_bearer`](Self::verify_bearer)
     /// rejects, so a tagma that cannot authenticate also cannot be addressed
     /// as a delivery target (fail-closed on both faces). `enrolled_tagmas` is
-    /// sorted and includes the requested tagma.
+    /// sorted and, in the quiescent case, includes the requested tagma; the
+    /// read is a point-in-time snapshot (no transaction, no cache), so a
+    /// revoke racing one call affects at most that single in-flight request
+    /// and consumers must treat absence from the set as denial.
     async fn enrollment_lookup(
         &self,
         tagma_id: &TagmaId,
