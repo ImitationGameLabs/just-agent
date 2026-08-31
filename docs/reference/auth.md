@@ -173,6 +173,22 @@ resets the account -- the next admin-login recreates both. Mounting the
 route is an explicit operator act that pre-provisions an operator
 account, so `KALLIP_AGORA_SIGNUP_ENABLED` does not gate it.
 
+### Username availability probe (public, pre-release)
+
+`GET /v1/auth/username-availability?username=<handle>` tells a signup
+form whether a handle may be attempted, before any credential exists.
+It is an explicit, full username-enumeration oracle -- accepted
+pre-release for the closed beta -- mounted with the same per-IP
+rate-limit family as the other unauthenticated reads (mirroring
+`GET /v1/users/{username}`'s posture). The probe is always a 200: the
+form's debounce loop is a read protocol, so every outcome is a body
+status, never an HTTP error path. The body carries the canonical
+(normalized) handle and one of four statuses, decided in a fixed
+refusal order: `invalid` (shape/length/charset, or a missing param),
+`reserved` (the static reserved list -- beats the lookup, so a legacy
+row holding the name still reports `reserved`), `taken` (a live or
+disabled user row), `available`.
+
 ### Instances service auth (platform mode)
 
 The instances service mirrors the lesche's dual-channel auth: a bearer
