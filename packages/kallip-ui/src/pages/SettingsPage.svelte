@@ -182,7 +182,7 @@
 
 <div class="h-full overflow-y-auto">
   <div
-    class="px-6 pt-[calc(1.5rem+env(safe-area-inset-top))] pb-6 max-w-md space-y-6"
+    class="px-2 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 md:p-6 max-w-md space-y-6"
   >
     <h1 class="text-xl font-semibold text-center md:text-left">
       {settings_heading()}

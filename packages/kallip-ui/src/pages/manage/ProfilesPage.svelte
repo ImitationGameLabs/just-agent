@@ -466,7 +466,7 @@
 <svelte:head><title>{manage_profiles_title()}</title></svelte:head>
 
 <div class="h-full overflow-y-auto">
-  <div class="p-6 max-w-3xl space-y-6">
+  <div class="px-2 md:p-6 max-w-3xl space-y-6">
     <ProfilesToolbar
       store={profilesStore}
       {applyResult}

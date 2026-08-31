@@ -235,7 +235,7 @@
 <svelte:head><title>{manage_schedules_title()}</title></svelte:head>
 
 <div class="h-full overflow-y-auto">
-  <div class="p-6 max-w-2xl space-y-6">
+  <div class="px-2 md:p-6 max-w-2xl space-y-6">
     <div class="flex items-center justify-between">
       <!-- md+ keeps this h1; below md the shell top row carries the title (AppShell `title`). -->
       <h1 class="text-xl font-semibold hidden md:block">

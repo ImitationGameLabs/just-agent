@@ -212,7 +212,7 @@
 >
 
 <div class="h-full overflow-y-auto">
-  <div class="p-6 max-w-2xl space-y-6">
+  <div class="px-2 md:p-6 max-w-2xl space-y-6">
     <div>
       <div class="flex items-center gap-3">
         <a
@@ -287,7 +287,7 @@
             </Portal>
           </Menu>
         </div>
-        <div class="grid grid-cols-2 gap-3 text-sm">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <div>
             <span class="opacity-60 text-xs uppercase tracking-wide block"
               >{manage_agent_role()}</span
