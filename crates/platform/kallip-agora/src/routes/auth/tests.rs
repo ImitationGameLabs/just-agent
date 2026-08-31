@@ -11,17 +11,59 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::{
-    DiscoverableAuthentication, KIND_LOGIN, KIND_LOGIN_DISCOVERABLE, LoginBeginRequest,
-    LoginFinishRequest, PublicKeyCredential, RegisterBeginRequest, admin_login, login_begin,
-    login_discoverable_begin, login_discoverable_finish, register_begin,
+    AvailabilityQuery, DiscoverableAuthentication, KIND_LOGIN, KIND_LOGIN_DISCOVERABLE,
+    LoginBeginRequest, LoginFinishRequest, PublicKeyCredential, RegisterBeginRequest,
+    UsernameAvailabilityStatus, admin_login, login_begin, login_discoverable_begin,
+    login_discoverable_finish, register_begin, username_availability,
 };
 use crate::auth::AuthPrincipal;
 use crate::db::entity::{external_identities, sessions, users, webauthn_challenges};
 use crate::test_helpers::{make_state, seed_user};
+use axum::extract::Query;
 use kallip_agora_common::principal::Principal;
 use sea_orm::EntityTrait;
 use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter};
 
+/// The availability probe's four outcomes plus the missing-param case, in
+/// refusal order: shape beats everything, reserved beats the DB lookup, and
+/// a live row reports taken.
+#[tokio::test]
+async fn username_availability_reports_four_states() {
+    let state = make_state().await;
+    seed_user(&state, "taken-name").await;
+
+    async fn probe(
+        state: &crate::state::SharedState,
+        username: Option<String>,
+    ) -> UsernameAvailabilityStatus {
+        username_availability(State(state.clone()), Query(AvailabilityQuery { username }))
+            .await
+            .expect("probe is total except DB errors")
+            .0
+            .status
+    }
+
+    assert_eq!(
+        probe(&state, Some("open-handle".to_string())).await,
+        UsernameAvailabilityStatus::Available
+    );
+    assert_eq!(
+        probe(&state, Some("taken-name".to_string())).await,
+        UsernameAvailabilityStatus::Taken
+    );
+    assert_eq!(
+        probe(&state, Some("admin".to_string())).await,
+        UsernameAvailabilityStatus::Reserved
+    );
+    assert_eq!(
+        probe(&state, Some("no underscores!".to_string())).await,
+        UsernameAvailabilityStatus::Invalid
+    );
+    assert_eq!(
+        probe(&state, None).await,
+        UsernameAvailabilityStatus::Invalid
+    );
+}
 /// `login_begin` rejects an unknown username with 401 (accepted enumeration
 /// oracle for closed beta; see the handler doc comment).
 #[tokio::test]

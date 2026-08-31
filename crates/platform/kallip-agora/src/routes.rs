@@ -59,12 +59,15 @@ pub fn router(
         .layer(rate_limit.clone())
         .layer(pair_rate_limit);
     let enroll = tagmata::enroll_router().layer(rate_limit.clone());
-    // The public profile reads (user / tagma-by-id) are unauthenticated, so they
-    // share the per-IP limiter: `GET /v1/users/{username}` is otherwise a free
-    // username-enumeration sweep. The OAuth provider discovery endpoint
-    // (`GET /auth/oauth/providers`) is unauthenticated too and shares it.
+    // The unauthenticated read surfaces share the per-IP limiter:
+    // `GET /v1/users/{username}` is otherwise a free username-enumeration
+    // sweep, the signup availability probe
+    // (`GET /auth/username-availability`) is an even more explicit one, and
+    // the OAuth provider discovery endpoint (`GET /auth/oauth/providers`)
+    // is unauthenticated too.
     let public_profiles = public_profiles::public_router()
         .merge(oauth::public_router())
+        .merge(auth::availability_router())
         .layer(rate_limit.clone());
     // The email surfaces that can drive unbounded work are per-IP rate-limited:
     // `POST /me/emails` triggers an outbound verification mail (an amplifier
