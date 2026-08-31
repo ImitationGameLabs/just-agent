@@ -7,15 +7,18 @@ mod skill;
 use anyhow::Result;
 use args::{
     AgentCommand, AgentDirCommand, ApprovalCommand, BudgetCommand, Cli, Commands, DirlockCommand,
-    InboxCommand, LescheCommand, PolicyCommand, ProfileSetCommand, SkillCommand, SubagentCommand,
+    FileCommand, InboxCommand, LescheCommand, PolicyCommand, ProfileSetCommand, SkillCommand,
+    SubagentCommand,
 };
 use clap::{CommandFactory, Parser};
+use kallip::file::FilesClient;
 use kallip_client::TagmaClient;
 use kallip_common::agentid::AgentId;
 use kallip_common::policy::{ExecDecision, ExecOverride};
 use kallip_common::protocol::{ProfileSetUpdateRequest, SetDefaultRequest};
 use kallip_common::timefmt;
 use kallip_common::tokens::parse_token_amount;
+use uuid::Uuid;
 
 /// Read agent ID from KALLIP_ID env var.
 fn agent_id_from_env() -> anyhow::Result<AgentId> {
@@ -55,6 +58,13 @@ async fn main() -> Result<()> {
         Cli::command().print_help()?;
         return Ok(());
     };
+    // The file family talks to the files service directly (spawn-env
+    // credentials); it needs no tagma daemon connection, so dispatch it
+    // before the tagma client is built.
+    if let Commands::File(cmd) = &command {
+        run_file(cmd).await?;
+        return Ok(());
+    }
     let client = TagmaClient::from_env()?;
 
     match command {
@@ -530,8 +540,80 @@ async fn main() -> Result<()> {
                 println!("Cleared {cleared} message(s).");
             }
         },
+        // Dispatched before the tagma client is built; the compiler
+        // still wants the arm here.
+        Commands::File(_) => unreachable!("file family dispatched above"),
     }
     Ok(())
+}
+
+/// The `kallip file` family: thin rendering over the lib's files client.
+/// Every command reads its credentials from the spawn env, so a missing
+/// variable errors before any request is made.
+async fn run_file(cmd: &FileCommand) -> Result<()> {
+    match cmd {
+        FileCommand::Put(args) => {
+            let client = FilesClient::from_env()?;
+            let response = client.put_file(&args.path, &args.file).await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!("record: {}  blob: {}", response.record_id, response.blob_id);
+            }
+        }
+        FileCommand::Get(args) => {
+            let id = parse_record_id(&args.id)?;
+            let client = FilesClient::from_env()?;
+            let content = client.get_file(id).await?;
+            match &args.out {
+                Some(out) => std::fs::write(out, &content)
+                    .map_err(|e| anyhow::anyhow!("cannot write {out:?}: {e}"))?,
+                // Binary-safe: the raw bytes go to the locked stdout.
+                None => {
+                    use std::io::Write as _;
+                    std::io::stdout().lock().write_all(&content)?;
+                }
+            }
+        }
+        FileCommand::Send(args) => {
+            let id = parse_record_id(&args.id)?;
+            let client = FilesClient::from_env()?;
+            let response = client
+                .send_file(id, args.to_user.as_deref(), args.to_tagma.as_deref())
+                .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!("delivered: {}  to: {}", response.record_id, response.path);
+            }
+        }
+        FileCommand::Ls(args) => {
+            let client = FilesClient::from_env()?;
+            let entries = client
+                .list_files(&args.space, args.prefix.as_deref(), args.limit)
+                .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else if entries.is_empty() {
+                println!("(no files)");
+            } else {
+                for entry in &entries {
+                    println!(
+                        "{}  {}B  {}  {}",
+                        entry.id, entry.size, entry.created_at, entry.path
+                    );
+                }
+                println!("(showing {})", entries.len());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate a record id up front: a malformed uuid is a caller error,
+/// not a round trip the service must 404.
+fn parse_record_id(raw: &str) -> Result<Uuid> {
+    Uuid::parse_str(raw).map_err(|e| anyhow::anyhow!("invalid record id '{raw}': {e}"))
 }
 
 fn resolve_id(id: Option<AgentId>) -> Result<AgentId, anyhow::Error> {
@@ -735,7 +817,7 @@ fn annotate_remove_error(result: anyhow::Result<()>, id: &AgentId) -> anyhow::Re
 
 #[cfg(test)]
 mod tests {
-    use super::prompt_from_stdin_text;
+    use super::*;
 
     #[test]
     fn empty_or_whitespace_stdin_means_no_prompt() {
@@ -749,5 +831,56 @@ mod tests {
             prompt_from_stdin_text(" explore \n".into()).as_deref(),
             Some(" explore \n")
         );
+    }
+
+    #[test]
+    fn file_ls_parses_space_and_flags() {
+        let cli = Cli::try_parse_from([
+            "kallip", "file", "ls", "--space", "shared", "--prefix", "inbox/", "--json",
+        ])
+        .expect("parses");
+        match cli.command.expect("command") {
+            Commands::File(FileCommand::Ls(args)) => {
+                assert_eq!(args.space, "shared");
+                assert_eq!(args.prefix.as_deref(), Some("inbox/"));
+                assert!(args.json);
+                assert!(args.limit.is_none());
+            }
+            _ => panic!("expected file ls"),
+        }
+    }
+
+    #[test]
+    fn file_ls_rejects_an_unknown_space() {
+        let Err(err) = Cli::try_parse_from(["kallip", "file", "ls", "--space", "other"]) else {
+            panic!("invalid space accepted")
+        };
+        assert!(err.to_string().contains("self"), "{err}");
+    }
+
+    #[test]
+    fn file_send_rejects_two_targets_at_once() {
+        let Err(err) = Cli::try_parse_from([
+            "kallip",
+            "file",
+            "send",
+            &uuid::Uuid::new_v4().to_string(),
+            "--to-user",
+            "someone",
+            "--to-tagma",
+            "sometagma",
+        ]) else {
+            panic!("conflicting targets accepted")
+        };
+        assert!(err.to_string().contains("cannot be used with"), "{err}");
+    }
+    #[test]
+    fn file_send_requires_a_target() {
+        let Err(err) =
+            Cli::try_parse_from(["kallip", "file", "send", &uuid::Uuid::new_v4().to_string()])
+        else {
+            panic!("a send without a target accepted")
+        };
+        assert!(err.to_string().contains("required arguments"), "{err}");
     }
 }

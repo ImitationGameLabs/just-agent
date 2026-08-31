@@ -312,6 +312,9 @@ pub struct TestWorld {
     pub t2: TagmaId,
     pub t2_token: String,
     pub t3: TagmaId,
+    /// Read by list_tests (the cross-space pin); unused in api_tests.
+    #[allow(dead_code)]
+    pub t3_token: String,
     pub admin_token: String,
     /// Keeps the blob root alive for the whole test.
     pub blob_dir: TempDir,
@@ -363,7 +366,7 @@ impl TestWorld {
         let (t1, t1_token) = mock.seed_tagma(&user1, &mut members1);
         let (t2, t2_token) = mock.seed_tagma(&user1, &mut members1);
         let mut members2 = Vec::new();
-        let (t3, _t3_token) = mock.seed_tagma(&user2, &mut members2);
+        let (t3, t3_token) = mock.seed_tagma(&user2, &mut members2);
         let admin_token = mock.seed_admin();
         let state = AppState {
             db,
@@ -393,6 +396,7 @@ impl TestWorld {
             t2,
             t2_token,
             t3,
+            t3_token,
             admin_token,
             blob_dir,
         }

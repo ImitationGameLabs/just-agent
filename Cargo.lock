@@ -2398,14 +2398,24 @@ name = "kallip"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "clap",
+ "kallip-agora-common",
  "kallip-client",
  "kallip-common",
+ "kallip-files",
+ "reqwest",
+ "sea-orm",
+ "serde",
  "serde_json",
  "tempfile",
+ "testcontainers",
+ "testcontainers-modules",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

@@ -236,6 +236,68 @@ pub async fn list_delivery_events(
     query.limit(limit).all(db).await
 }
 
+/// Build the LIKE pattern for a literal prefix: escape the metacharacters
+/// (`\`, `%`, `_`) so they match verbatim (Postgres' default LIKE escape is
+/// the backslash), then append the trailing `%` ourselves -- sea-orm's
+/// `starts_with` does no escaping, so it cannot carry this contract.
+fn like_prefix_pattern(prefix: &str) -> String {
+    let mut pattern = String::with_capacity(prefix.len() + 1);
+    for ch in prefix.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
+}
+
+/// List records under a path prefix, path-ascending, capped. The read is
+/// one transaction (records + their blob sizes), so a size always belongs
+/// to the same snapshot as the record row naming it. Prefix matching is
+/// literal: the LIKE metacharacters (`\`, `%`, `_`) are escaped before the
+/// pattern is built, so the caller's narrowing string matches verbatim,
+/// never as a pattern. This is the
+/// query face of the listing route; authorization stays with the caller
+/// (the route's per-row matrix decision), which keeps this function a
+/// pure catalog read.
+pub async fn list_records_with_sizes(
+    db: &Db,
+    path_prefix: &str,
+    limit: u64,
+) -> Result<Vec<(file_records::Model, i64)>, DbErr> {
+    use crate::metadata::models::blob_rows;
+
+    let txn = db.begin().await?;
+    let records = file_records::Entity::find()
+        .filter(file_records::Column::SpacePath.like(like_prefix_pattern(path_prefix)))
+        .order_by_asc(file_records::Column::SpacePath)
+        .limit(limit)
+        .all(&txn)
+        .await?;
+    let blob_ids: Vec<String> = records.iter().map(|r| r.blob_id.clone()).collect();
+    let sizes: std::collections::HashMap<String, i64> = blob_rows::Entity::find()
+        .filter(blob_rows::Column::BlobId.is_in(blob_ids))
+        .all(&txn)
+        .await?
+        .into_iter()
+        .map(|b| (b.blob_id, b.size))
+        .collect();
+    let rows = records
+        .into_iter()
+        .map(|record| {
+            // blob_rows is the RESTRICT parent of file_records.blob_id, so a
+            // record's size is always in the catalog. A miss is corruption:
+            // fail loud (the route's DbErr mapping turns it into a 500),
+            // never a silent 0 pretending the file is empty.
+            let size = sizes.get(&record.blob_id).copied().ok_or_else(|| {
+                DbErr::Custom(format!("blob row missing for record {}", record.id))
+            })?;
+            Ok((record, size))
+        })
+        .collect::<Result<Vec<_>, DbErr>>()?;
+    Ok(rows)
+}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,7 +14,7 @@ use clap::Parser;
 )]
 pub struct Args {
     /// Address to listen on (behind a TLS-terminating reverse proxy).
-    #[arg(long, env = "KALLIP_FILES_ADDR", default_value = "127.0.0.1:7300")]
+    #[arg(long, env = "KALLIP_FILES_ADDR", default_value = "127.0.0.1:7400")]
     pub listen_addr: String,
     /// Root directory of the content-addressed blob store. Created on
     /// demand by the store itself.

@@ -73,7 +73,10 @@ pub struct BootConfig {
 /// health route is the precedent).
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/v1/files", axum::routing::put(api::put::put_file))
+        .route(
+            "/v1/files",
+            axum::routing::put(api::put::put_file).get(api::list::list_files),
+        )
         .route(
             "/v1/files/{id}",
             axum::routing::get(api::get::get_file)
