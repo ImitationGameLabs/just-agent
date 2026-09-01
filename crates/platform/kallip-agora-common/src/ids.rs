@@ -21,9 +21,12 @@ id_type! {
 id_type! {
     /// The envelope routing target: which channel an envelope is addressed
     /// to. A value-domain union, not a new id space -- the inner UUID is a
-    /// [`ConversationId`] (v5, bilateral 1:1) on the conversation path or a
-    /// room id (v4, `RoomId` in `kallip_lesche_common::rooms`) on the room
-    /// path. The UUID version nibble keeps the two domains disjoint; the
+    /// [`ConversationId`] (v5) on the E2E bilateral path, or a plaintext
+    /// member-gated space id (v4: a room id, `RoomId` in
+    /// `kallip_lesche_common::rooms`, or a direct session id,
+    /// `DirectSessionId` in `kallip_lesche_common::direct`) on the
+    /// plaintext paths. The UUID version nibble keeps the E2E bilateral
+    /// domain (v5) disjoint from the plaintext member-set domain (v4); the
     /// relay dispatches on joined-rooms membership, not on a tag field.
     ChannelId
 }

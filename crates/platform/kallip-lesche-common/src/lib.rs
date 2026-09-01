@@ -15,6 +15,7 @@
 //! endpoints. No private-key material ever lives in this crate.
 
 pub mod control;
+pub mod direct;
 pub mod event;
 pub mod message;
 pub mod proof;
