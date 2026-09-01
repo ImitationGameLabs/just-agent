@@ -326,7 +326,16 @@
   // suppresses -- the adjudicated conservative direction). The tag is the
   // conversation key so a room's burst stays one notification.
   function maybeNotifyRoom(env: Envelope): void {
-    const decoded = decodeRoomMessage(decodeB64(env.ciphertext));
+    // Mirror the transcript's warn-drop (deliverLive/renderPublic): one
+    // malformed payload must not throw inside the sink callback -- the
+    // transcript side has already surfaced the decode failure.
+    let decoded;
+    try {
+      decoded = decodeRoomMessage(decodeB64(env.ciphertext));
+    } catch (e) {
+      console.error("[room notify] decode failed:", e);
+      return;
+    }
     if (decoded.op !== "message") return; // warn-drop shape, matches the transcript
     const roomId = env.channel_id;
     const key = roomKey(roomId);

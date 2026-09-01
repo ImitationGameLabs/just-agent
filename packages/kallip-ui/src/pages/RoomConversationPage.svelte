@@ -121,7 +121,7 @@
   });
 
   // The viewing line tick: lines rendered on the open conversation count as
-  // read and coalesce the cursor write into the 3s throttle window (plan:
+  // read and coalesce the cursor write into the 5s throttle window (plan:
   // a busy chat must not POST per line; the leave path flushes).
   $effect(() => {
     void conv?.lines.length;

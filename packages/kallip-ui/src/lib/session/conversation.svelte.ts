@@ -520,10 +520,11 @@ export abstract class ConversationBase {
 
 /** Fire a system notification for an inbound authored message. The guard
  *  chain (window visibility, the user's settings switch, the platform
- *  permission) lives in notify(); this wrapper owns only the 1:1 semantic
- *  gate: authored content frames only -- markers/acks/errors are not
- *  notify-worthy. The tag is the conversation key, so a burst collapses
- *  onto one notification (WHATWG replacement / platform grouping). */
+ *  permission) lives in notify(); this wrapper owns the 1:1 gates: the
+ *  mounted-page view gate (same semantics as the rooms side) and the
+ *  content gate: authored content frames only -- markers/acks/errors are
+ *  not notify-worthy. The tag is the conversation key, so a burst
+ *  collapses onto one notification (WHATWG replacement / grouping). */
 function maybeNotifyBackground(
   tagmaId: string,
   label: string | null,
@@ -531,6 +532,11 @@ function maybeNotifyBackground(
 ): void {
   if (reply.kind !== "event") return;
   if (reply.event.type !== "assistant_content") return;
+  // Same viewing gate as the rooms side: a mounted conversation page is
+  // already reading (its badge is cleared), so a notification here would
+  // contradict the zeroed badge. document.hidden still applies inside
+  // notify(); this check only silences the viewed-conversation case.
+  if (unreadStore.isViewing(tagmaKey(tagmaId))) return;
   void notify({
     tag: tagmaKey(tagmaId),
     title: label ? `Tagma ${label}` : "Tagma",

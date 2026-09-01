@@ -64,7 +64,7 @@ export const UNREAD_CAP = 99;
  *  signal, never a correctness input. */
 export const CATCHUP_PAGE = 200;
 /** While viewing, room cursor writes coalesce into one request per window. */
-export const PUT_THROTTLE_MS = 3000;
+export const PUT_THROTTLE_MS = 5000;
 
 export function roomKey(roomId: string): string {
   return `room:${roomId}`;
