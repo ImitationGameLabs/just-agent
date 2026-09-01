@@ -28,18 +28,18 @@ import {
   cacheLineOf,
   EMPTY_TRANSCRIPT,
   historyEntryLine,
+  isInFlightError,
   markLineSent,
-  replaceLineId,
   mergeHistoryLines,
+  replaceLineId,
+  sendFailed,
   toSender,
   withUserLine,
-  sendFailed,
-  isInFlightError,
 } from "../transcript.ts";
 import type {
+  ConversationLine,
   ConversationSender,
   ConversationTranscript,
-  ConversationLine,
 } from "../transcript.ts";
 import type {
   CachedLine,
@@ -56,7 +56,8 @@ import { DirectTransport, type TransportState } from "./directTransport.ts";
 import { LescheApiError } from "@kallipai/kallip-lesche-client";
 import { KallipError } from "@kallipai/kallip-common";
 import { chat_send_failed } from "../../paraglide/messages.js";
-import { unreadStore } from "./unread.svelte.ts";
+import { tagmaKey, unreadStore } from "./unread.svelte.ts";
+import { notify } from "./notify.ts";
 
 /** The lazy-window page size: how many lines a hydrate, a catch-up batch,
  *  or a scroll-up page brings in at once. Mirrors the server's
@@ -517,19 +518,24 @@ export abstract class ConversationBase {
 // RelayConversation (online)
 // ---------------------------------------------------------------------------
 
-/** Fire an OS notification for an inbound authored message when the app is in
- *  the background. Foreground delivery is the transcript itself. */
-function maybeNotifyBackground(label: string | null, reply: TagmaReply): void {
-  if (typeof Notification === "undefined" || !document.hidden) return;
-  if (Notification.permission !== "granted") return;
+/** Fire a system notification for an inbound authored message. The guard
+ *  chain (window visibility, the user's settings switch, the platform
+ *  permission) lives in notify(); this wrapper owns only the 1:1 semantic
+ *  gate: authored content frames only -- markers/acks/errors are not
+ *  notify-worthy. The tag is the conversation key, so a burst collapses
+ *  onto one notification (WHATWG replacement / platform grouping). */
+function maybeNotifyBackground(
+  tagmaId: string,
+  label: string | null,
+  reply: TagmaReply,
+): void {
   if (reply.kind !== "event") return;
   if (reply.event.type !== "assistant_content") return;
-  const title = label ? `Tagma ${label}` : "Tagma";
-  try {
-    new Notification(title, { body: reply.event.content });
-  } catch {
-    // Some browsers reject construction without a service worker; ignore.
-  }
+  void notify({
+    tag: tagmaKey(tagmaId),
+    title: label ? `Tagma ${label}` : "Tagma",
+    body: reply.event.content,
+  });
 }
 
 /** The background-notification gate for the relay leaf: only a content
@@ -668,7 +674,7 @@ export class RelayConversation extends ConversationBase {
       return;
     }
     if (shouldNotify(this.notifyFloor, reply)) {
-      maybeNotifyBackground(this.label, reply);
+      maybeNotifyBackground(this.tagmaId, this.label, reply);
     }
   }
 

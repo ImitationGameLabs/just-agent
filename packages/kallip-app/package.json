@@ -20,7 +20,8 @@
     "@kallipai/kallip-common": "workspace:*",
     "@kallipai/kallip-ui": "workspace:*",
     "@inlang/paraglide-js": "2.20.0",
-    "@lucide/svelte": "^1.24.0"
+    "@lucide/svelte": "^1.24.0",
+    "@tauri-apps/plugin-notification": "^2"
   },
   "devDependencies": {
     "@fontsource/fira-mono": "^5.2.7",

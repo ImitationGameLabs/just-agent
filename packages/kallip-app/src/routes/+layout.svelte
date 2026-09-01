@@ -7,11 +7,13 @@
     initShell,
     initAgora,
     initConfigStorage,
+    initNotificationBackend,
     initInstances,
     initLesche,
     localStorageConfigStorage,
     type NavIcons,
   } from "@kallipai/kallip-ui";
+  import { tauriNotificationBackend } from "../lib/tauri-notification.ts";
   import {
     Calendar,
     Cpu,
@@ -34,6 +36,7 @@
   initAgora(import.meta.env.VITE_AGORA_URL ?? "http://localhost:7100");
   initLesche(import.meta.env.VITE_LESCHE_URL ?? "http://localhost:7200");
   initConfigStorage(localStorageConfigStorage);
+  initNotificationBackend(tauriNotificationBackend);
   initInstances(
     import.meta.env.VITE_INSTANCES_URL ?? "http://localhost:7300/api/instances",
   );

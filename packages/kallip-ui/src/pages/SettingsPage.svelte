@@ -19,6 +19,12 @@
   import ProviderVault from "../components/settings/ProviderVault.svelte";
   import LightSwitch from "../components/LightSwitch.svelte";
   import LanguageSwitch from "../components/LanguageSwitch.svelte";
+  import { Switch } from "@skeletonlabs/skeleton-svelte";
+  import {
+    notificationPermission,
+    requestNotificationPermission,
+    type PermissionState,
+  } from "../lib/session/notify.ts";
   import {
     nav_tagmata,
     settings_appearance,
@@ -38,6 +44,9 @@
     settings_passkey_duplicate,
     settings_rate_limited,
     settings_error_unknown,
+    chat_notifications_label,
+    chat_notifications_desc,
+    chat_notifications_denied,
   } from "../paraglide/messages.js";
 
   // Settings is now info-only: account actions (logout, mode switch) live in
@@ -48,6 +57,29 @@
   const mode = $derived(shellMode());
   const offlineUrl = $derived(configStore.value?.offline?.tagmaUrl ?? "");
 
+  // -- notifications (all hosts; the plan's web+tauri single switch) ------
+  // The toggle click IS the user gesture: enabling requests permission right
+  // here (MDN: browsers drop prompt-less requests), and only a granted
+  // answer persists the switch. Denied is a browser-level terminal state --
+  // the guidance line (rendered proactively, not only after a failed
+  // request) points at the browser's site settings, the only way back.
+  const notificationsEnabled = $derived(
+    configStore.value?.notificationsEnabled === true,
+  );
+  let notifyPermission = $state<PermissionState>("default");
+  $effect(() => {
+    void notificationPermission().then((s) => (notifyPermission = s));
+  });
+  async function onNotificationsToggle(event: { checked: boolean }) {
+    if (!event.checked) {
+      await configStore.setNotificationsEnabled(false);
+      return;
+    }
+    notifyPermission = await requestNotificationPermission();
+    if (notifyPermission === "granted") {
+      await configStore.setNotificationsEnabled(true);
+    }
+  }
   // Offline: drop the tagma session without abandoning offline mode.
   function disconnect() {
     channelsStore.detachLocal();
@@ -203,6 +235,31 @@
       >
         <div class="text-sm">{settings_language()}</div>
         <LanguageSwitch />
+      </div>
+    </section>
+
+    <section class="space-y-3">
+      <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
+        {chat_notifications_label()}
+      </h2>
+      <div class="card preset-tonal-surface space-y-2 p-4">
+        <div class="flex items-center justify-between gap-3">
+          <p class="text-sm">{chat_notifications_desc()}</p>
+          <Switch
+            checked={notificationsEnabled}
+            onCheckedChange={onNotificationsToggle}
+          >
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
+            <Switch.HiddenInput aria-label={chat_notifications_label()} />
+          </Switch>
+        </div>
+        {#if notifyPermission === "denied"}
+          <p class="text-error-500 dark:text-error-400 text-xs">
+            {chat_notifications_denied()}
+          </p>
+        {/if}
       </div>
     </section>
 

@@ -19,6 +19,7 @@
     "npm:@tailwindcss/typography@~0.5.19": "0.5.20_tailwindcss@4.3.2",
     "npm:@tailwindcss/vite@^4.3.0": "4.3.2_vite@8.1.4__@types+node@26.1.1_@types+node@26.1.1",
     "npm:@tauri-apps/cli@^2.11.4": "2.11.4",
+    "npm:@tauri-apps/plugin-notification@2": "2.3.3",
     "npm:@types/node@^26.1.1": "26.1.1",
     "npm:@types/qrcode@^1.5.5": "1.5.6",
     "npm:@zxing/browser@~0.1.5": "0.1.5_@zxing+library@0.21.3",
@@ -582,6 +583,9 @@
         "vite"
       ]
     },
+    "@tauri-apps/api@2.11.1": {
+      "integrity": "sha512-M2FPuYND2m+wh5hfW9ZpSdxMPdEJovPBWwoHJmwUpysTYNHaOkVFN419m/K0LIgjb/7KU2vBgsUepJWugQCvAA=="
+    },
     "@tauri-apps/cli-darwin-arm64@2.11.4": {
       "integrity": "sha512-1ryOF3ZhpZ/nemHV5zVwBQBz9jDGKmKPvWPADOhc83ig0P4bMc2iER4NbC6r9sjeIZ6RVQ4g3RZIYvezhcl4TQ==",
       "os": ["darwin"],
@@ -653,6 +657,12 @@
         "@tauri-apps/cli-win32-x64-msvc"
       ],
       "bin": true
+    },
+    "@tauri-apps/plugin-notification@2.3.3": {
+      "integrity": "sha512-Zw+ZH18RJb41G4NrfHgIuofJiymusqN+q8fGUIIV7vyCH+5sSn5coqRv/MWB9qETsUs97vmU045q7OyseCV3Qg==",
+      "dependencies": [
+        "@tauri-apps/api"
+      ]
     },
     "@tybys/wasm-util@0.10.3": {
       "integrity": "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==",
@@ -2023,6 +2033,7 @@
             "npm:@tailwindcss/typography@~0.5.19",
             "npm:@tailwindcss/vite@^4.3.0",
             "npm:@tauri-apps/cli@^2.11.4",
+            "npm:@tauri-apps/plugin-notification@2",
             "npm:@types/node@^26.1.1",
             "npm:svelte-check@^4.6.0",
             "npm:svelte@^5.56.1",

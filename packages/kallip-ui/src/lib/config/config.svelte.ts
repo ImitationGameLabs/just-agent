@@ -58,6 +58,20 @@ class ConfigStore {
     this.value = next;
   }
 
+  /**
+   * Flip the notifications switch. Preserves everything else in the persisted
+   * config (mode, offline creds); the write-through keeps the on-disk shape in
+   * sync so a reload restores the toggle.
+   */
+  async setNotificationsEnabled(enabled: boolean): Promise<void> {
+    const next: PersistedConfig = {
+      ...(this.value ?? { activeMode: "online" as const }),
+      notificationsEnabled: enabled,
+    };
+    await saveConfig(next);
+    this.value = next;
+  }
+
   /** Full reset (forget everything). */
   async clearValue(): Promise<void> {
     await clearConfig();

@@ -15,6 +15,10 @@
   import { realtimeStore } from "../session/realtime.svelte";
   import { roomConversationsStore } from "../session/roomConversations.svelte";
   import { roomKey, tagmaKey, unreadStore } from "../session/unread.svelte.ts";
+  import { notify, shouldNotifyRoom } from "../session/notify.ts";
+  import { decodeB64 } from "@kallipai/kallip-common";
+  import { decodeRoomMessage } from "../room-message.ts";
+  import type { Envelope } from "@kallipai/kallip-lesche-client";
   import { connectDirect } from "../session/connect.ts";
   import { configStore } from "../config/config.svelte";
   import {
@@ -82,10 +86,12 @@
         // The transcript renders live; the unread store no-ops while the
         // room is being viewed and pull-counts when open-but-not-viewed.
         unreadStore.noteRoomActivity(env.channel_id);
+        maybeNotifyRoom(env);
       } else if (roomsStore.has(env.channel_id)) {
         // A room envelope with no open conversation: the unread store
         // pull-counts it precisely (live room envelopes carry no seq).
         unreadStore.noteRoomActivity(env.channel_id);
+        maybeNotifyRoom(env);
       } else {
         channelsStore.deliver(env);
       }
@@ -310,6 +316,35 @@
   // Segment-boundary match so sibling /chat/{id} entries do not cross-highlight.
   function isActive(href: string): boolean {
     return pathMatches(pathname, href);
+  }
+
+  // The rooms notification path (plan D4). The envelope demux is the only
+  // point that sees room traffic for conversations nobody is looking at.
+  // The floor is the unread store's watermark count: a viewed room never
+  // notifies (its transcript is the delivery), an own echo never does, and
+  // a zero count means nothing unread (the envelope-before-pull race then
+  // suppresses -- the adjudicated conservative direction). The tag is the
+  // conversation key so a room's burst stays one notification.
+  function maybeNotifyRoom(env: Envelope): void {
+    const decoded = decodeRoomMessage(decodeB64(env.ciphertext));
+    if (decoded.op !== "message") return; // warn-drop shape, matches the transcript
+    const roomId = env.channel_id;
+    const key = roomKey(roomId);
+    if (
+      !shouldNotifyRoom({
+        unreadCount: unreadStore.countOf(key),
+        viewing: unreadStore.isViewing(key),
+        own: env.sender.id === agoraSession.participantId,
+      })
+    ) {
+      return;
+    }
+    const row = roomsStore.rooms.find((r) => r.room_id === roomId);
+    void notify({
+      tag: key,
+      title: row?.name || room_label_fallback({ id: roomId.slice(0, 8) }),
+      body: decoded.text,
+    });
   }
 
   // Offline error: the local conversation's transport-level error (mid-session

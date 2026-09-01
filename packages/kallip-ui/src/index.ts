@@ -59,6 +59,15 @@ export type {
 } from "./lib/session/roomConversations.svelte.ts";
 export { configStore } from "./lib/config/config.svelte.ts";
 export { connectDirect } from "./lib/session/connect.ts";
+export {
+  initNotificationBackend,
+  notify,
+  notificationPermission,
+  requestNotificationPermission,
+  shouldNotifyRoom,
+  type NotificationBackend,
+  type PermissionState,
+} from "./lib/session/notify.ts";
 
 // Shell: shared root layout (auth gate + nav + banner), nav derivation, gate.
 export { default as RootLayout } from "./lib/shell/RootLayout.svelte";

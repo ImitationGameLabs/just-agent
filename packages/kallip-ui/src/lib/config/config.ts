@@ -24,13 +24,16 @@ export interface OfflineModeConfig {
 }
 
 /**
- * The persisted app state: which mode is active, plus retained offline creds.
- * `offline` is optional (first-time online users have none); when present it is
- * reused on every switch back to offline mode without re-entry.
+ * The persisted app state: mode, retained offline creds, and the
+ * notifications switch. `offline` is optional (first-time online users have
+ * none); when present it is reused on every switch back to offline mode
+ * without re-entry. `notificationsEnabled` absent = off, the safe default
+ * for configs written before the switch existed.
  */
 export interface PersistedConfig {
   readonly activeMode: AppMode;
   readonly offline?: OfflineModeConfig;
+  readonly notificationsEnabled?: boolean;
 }
 
 let storage: ConfigStorage = localStorageConfigStorage;
@@ -88,6 +91,11 @@ function isValid(value: unknown): value is PersistedConfig {
     if (typeof o.tagmaUrl !== "string" || typeof o.authToken !== "string") {
       return false;
     }
+  }
+  const notifications = (value as { notificationsEnabled?: unknown })
+    .notificationsEnabled;
+  if (notifications !== undefined && typeof notifications !== "boolean") {
+    return false;
   }
   return true;
 }

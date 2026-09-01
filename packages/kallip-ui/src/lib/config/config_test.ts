@@ -133,3 +133,36 @@ Deno.test(
     assertEquals(fake.cleared, 1);
   },
 );
+
+Deno.test(
+  "loadConfig keeps a config carrying the notifications switch unchanged",
+  async () => {
+    const fake = fakeStorage(
+      JSON.stringify({ activeMode: "online", notificationsEnabled: true }),
+    );
+    initConfigStorage(fake.storage);
+
+    assertEquals(await loadConfig(), {
+      activeMode: "online",
+      notificationsEnabled: true,
+    });
+    // A recognized blob is neither rewritten nor cleared.
+    assertEquals(fake.saved.length, 0);
+    assertEquals(fake.cleared, 0);
+  },
+);
+
+Deno.test(
+  "loadConfig wipes a notifications switch of the wrong type",
+  async () => {
+    // A string where the boolean belongs fails the structural guard and is
+    // wiped with the rest of the blob (the no-legacy-shapes rule).
+    const fake = fakeStorage(
+      JSON.stringify({ activeMode: "online", notificationsEnabled: "yes" }),
+    );
+    initConfigStorage(fake.storage);
+
+    assertEquals(await loadConfig(), null);
+    assertEquals(fake.cleared, 1);
+  },
+);

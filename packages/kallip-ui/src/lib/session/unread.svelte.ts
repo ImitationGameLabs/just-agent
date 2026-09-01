@@ -39,8 +39,8 @@
 // is "viewing" -- boot auto-open never calls enter(), so a login can never
 // silently clear badges. Scope note: viewing keys on the page being mounted,
 // not on document visibility; a background tab with the room page open still
-// counts as reading it (the N3 notification layer owns hidden-window
-// semantics).
+// counts as reading it (the notification layer -- notify.ts -- owns hidden-
+// window semantics).
 //
 // While viewing, the room page's line tick ({@link noteViewedLines}) advances
 // knownSeq and coalesces the cursor write into one request per
@@ -357,6 +357,14 @@ class UnreadStore {
   /** The badge count for one conversation key (0 when absent). */
   countOf(key: string): number {
     return this.entries.get(key)?.count ?? 0;
+  }
+
+  /** Whether the conversation page is explicitly mounted (viewing). The
+   *  notification layer reads this to stay silent for the conversation the
+   *  user is literally looking at; hidden-window semantics are its own
+   *  concern (notify.ts). */
+  isViewing(key: string): boolean {
+    return this.viewing.has(key);
   }
 
   /** The bar badge: the unread total across conversations (rendered through
