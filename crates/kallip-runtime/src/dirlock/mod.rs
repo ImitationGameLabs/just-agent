@@ -3,9 +3,11 @@
 //! Provides **write mutual exclusion** on filesystem directories across agents
 //! running in the same tagma: at most one agent may hold the write-lock on a
 //! given canonical directory at a time. Locks are held at the agent-session
-//! granularity — they persist across many `bash_exec` commands and are released
-//! only explicitly ([`DirLockManager::release`]) or when the agent task dies
-//! ([`DirLockManager::release_all`]).
+//! granularity — they persist across many `bash_exec` commands and are
+//! released only by the tagma's lifecycle paths — removal, reactivation,
+//! shutdown drain, and the fault swap in `watch_agent_task` — via
+//! [`DirLockManager::release_all`], or reassigned on full-workspace
+//! handoff ([`DirLockManager::transfer`]).
 //!
 //! This is the *advisory* coordination layer. Mandatory enforcement — making a
 //! `bash` process physically unable to write a directory its agent has not
@@ -38,12 +40,11 @@
 //! # Contention model
 //!
 //! [`DirLockManager::acquire`] never blocks indefinitely: it returns
-//! [`AcquireOutcome::Busy`] naming the current holder so the caller (typically an
-//! [`AcquireOutcome::Busy`] naming the current holder so the caller (the
-//! lifecycle paths that acquire or re-acquire on an agent's behalf) can
-//! conflict by **inter-agent negotiation** — peer-messaging the holder. There is
-//! deliberately no idle-timeout or max-hold watchdog; a forgotten lock is a
-//! social problem, resolved socially.
+//! [`AcquireOutcome::Busy`] naming the current holder, and the lifecycle
+//! caller surfaces the conflict (a failed or deferred materialization)
+//! instead of waiting. There is deliberately no idle-timeout or max-hold
+//! watchdog: locks track live tasks, so a lock outliving its task is a
+//! lifecycle bug, not a tuning problem.
 //!
 //! # Invariants
 //!
@@ -189,11 +190,25 @@ impl DirLockManager {
         // regardless of `chain`.)
         match dirs.get(&canon) {
             Some(state) if state.writer.as_ref() == Some(agent) => {
+                tracing::info!(
+                    agent = ?agent,
+                    path = %canon.display(),
+                    outcome = "already-held",
+                    "dirlock acquire"
+                );
                 return Ok(AcquireOutcome::AlreadyHeld);
             }
             Some(state) if state.writer.is_some() => {
+                let holder = state.writer.clone().unwrap();
+                tracing::debug!(
+                    agent = ?agent,
+                    path = %canon.display(),
+                    outcome = "busy",
+                    holder = ?holder,
+                    "dirlock acquire"
+                );
                 return Ok(AcquireOutcome::Busy {
-                    holder: state.writer.clone().unwrap(),
+                    holder,
                     conflict: canon.clone(),
                 });
             }
@@ -209,21 +224,49 @@ impl DirLockManager {
         // the registry read lock; this method takes only `self.dirs` and never
         // touches the registry, preserving the registry-before-manager order.
         if let Some(res) = overlap_conflict(&dirs, &canon, agent, chain) {
+            match &res {
+                Ok(_) => tracing::debug!(
+                    agent = ?agent,
+                    path = %canon.display(),
+                    outcome = "busy",
+                    "dirlock acquire: overlap conflict"
+                ),
+                Err(e) => tracing::warn!(
+                    agent = ?agent,
+                    path = %canon.display(),
+                    outcome = "rejected",
+                    error = %e,
+                    "dirlock acquire"
+                ),
+            }
             return res;
         }
 
         // Enforce the per-agent cap before granting a *new* lock (re-acquiring an
         // already-held dir is AlreadyHeld, handled above).
         if count_held(&dirs, agent) >= MAX_LOCKS_PER_AGENT {
-            return Err(io::Error::new(
+            let err = io::Error::new(
                 io::ErrorKind::ResourceBusy,
                 format!(
-                    "lock cap reached: an agent may hold at most {MAX_LOCKS_PER_AGENT} \
-                     directory write-locks; release one before acquiring another"
+                    "lock cap reached: an agent may hold at most {MAX_LOCKS_PER_AGENT} directory write-locks; release one before acquiring another"
                 ),
-            ));
+            );
+            tracing::warn!(
+                agent = ?agent,
+                path = %canon.display(),
+                outcome = "rejected",
+                error = %err,
+                "dirlock acquire"
+            );
+            return Err(err);
         }
 
+        tracing::info!(
+            agent = ?agent,
+            path = %canon.display(),
+            outcome = "acquired",
+            "dirlock acquire"
+        );
         dirs.entry(canon).or_default().writer = Some(agent.clone());
         Ok(AcquireOutcome::Acquired)
     }
@@ -234,16 +277,30 @@ impl DirLockManager {
     /// unable to shed a lock because its directory vanished.
     pub fn release(&self, agent: &AgentId, path: &Path) -> io::Result<()> {
         let Ok(canon) = canonicalize(path) else {
+            tracing::info!(
+                agent = ?agent,
+                path = %path.display(),
+                outcome = "not-held",
+                "dirlock release"
+            );
             return Ok(());
         };
         let mut dirs = locked(&self.dirs);
+        let mut released = false;
         if let Some(state) = dirs.get_mut(&canon)
             && state.writer.as_ref() == Some(agent)
         {
             state.writer = None;
+            released = true;
         }
         // Drop empty entries so `holder`/`status` don't report idle dirs.
         dirs.retain(|_, s| s.writer.is_some());
+        tracing::info!(
+            agent = ?agent,
+            path = %canon.display(),
+            outcome = if released { "released" } else { "not-held" },
+            "dirlock release"
+        );
         Ok(())
     }
 
@@ -267,26 +324,42 @@ impl DirLockManager {
     ) -> io::Result<TransferOutcome> {
         let canon = canonicalize(path)?;
         let mut dirs = locked(&self.dirs);
-        if let Some(state) = dirs.get_mut(&canon)
+        let outcome = if let Some(state) = dirs.get_mut(&canon)
             && state.writer.as_ref() == Some(from)
         {
             state.writer = Some(to.clone());
-            Ok(TransferOutcome::Transferred)
+            TransferOutcome::Transferred
         } else {
-            Ok(TransferOutcome::NotOwner)
-        }
+            TransferOutcome::NotOwner
+        };
+        tracing::info!(
+            agent = ?from,
+            to = ?to,
+            path = %canon.display(),
+            outcome = if outcome == TransferOutcome::Transferred {
+                "transferred"
+            } else {
+                "not-owner"
+            },
+            "dirlock transfer"
+        );
+        Ok(outcome)
     }
 
-    /// Release every lock held by `agent`. Called on task death (reactivation,
-    /// `abort_agent`, shutdown drain) — not only registry removal.
+    /// Release every lock held by `agent`. Called on task death: reactivation,
+    /// `abort_agent`, shutdown drain, and the fault swap in `watch_agent_task`
+    /// — not only registry removal.
     pub fn release_all(&self, agent: &AgentId) {
         let mut dirs = locked(&self.dirs);
+        let mut cleared = 0;
         for state in dirs.values_mut() {
             if state.writer.as_ref() == Some(agent) {
                 state.writer = None;
+                cleared += 1;
             }
         }
         dirs.retain(|_, s| s.writer.is_some());
+        tracing::info!(agent = ?agent, cleared, "dirlock release_all");
     }
 
     /// Snapshot of the canonical directories `agent` currently holds a
@@ -327,6 +400,21 @@ impl DirLockManager {
         let canon = canonicalize(path)?;
         let dirs = locked(&self.dirs);
         Ok(dirs.get(&canon).and_then(|s| s.writer.clone()))
+    }
+
+    /// Whether `agent` holds the write-lock on exactly `path` (after
+    /// canonicalization). A path that cannot be canonicalized — typically
+    /// because it does not exist — is reported as not held rather than an
+    /// error: callers probe expected state, and a vanished directory cannot
+    /// be locked.
+    pub fn holds_exact(&self, agent: &AgentId, path: &Path) -> io::Result<bool> {
+        let Ok(canon) = canonicalize(path) else {
+            return Ok(false);
+        };
+        let dirs = locked(&self.dirs);
+        Ok(dirs
+            .get(&canon)
+            .is_some_and(|s| s.writer.as_ref() == Some(agent)))
     }
 }
 

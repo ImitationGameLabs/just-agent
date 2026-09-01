@@ -16,7 +16,7 @@ Every agent has a `PermissionClass` that controls filesystem access:
 
 | Class      | Read        | Write                            | Secrets                                                            | Notes                 |
 | ---------- | ----------- | -------------------------------- | ------------------------------------------------------------------ | --------------------- |
-| **Normal** | Broad (`/`) | Workspace + dirlocks + `/tmp`    | Readable (no hide-holes)                                           | Default for depth 0–1 |
+| **Normal** | Broad (`/`) | Workspace + `$HOME` + `/tmp`     | Readable (no hide-holes)                                           | Default for depth 0–1 |
 | **Guest**  | Broad (`/`) | Read-only (`/tmp` baseline only) | Hidden (tmpfs overlay on `~/.ssh`, `~/.gnupg`, `~/.aws`, profiles) | Default for depth 2–3 |
 
 Key rules:
@@ -84,8 +84,8 @@ Supervisor workspace: /project
 Directory write-locks are managed by the system for the lifetime of each
 agent's task (its workspace lock is acquired automatically at spawn and
 re-established on restore). There is no agent-facing lock API: if a write
-is denied as read-only, a lock conflict exists — message the holder's
-supervisor or the operator instead of trying to fix it yourself.
+is denied as read-only, a lock conflict exists — report it to the operator
+instead of trying to fix it yourself.
 
 ## Cleanup
 
@@ -135,11 +135,12 @@ messages you when done, and you resolve disagreements as decision points.
 ## Pitfalls
 
 - **`kallip` must be in PATH** for subagents to coordinate. If a subagent
-  reports `kallip: command not found`, it cannot spawn grandchild agents, use
-  dirlock, or send messages.
+  reports `kallip: command not found`, it cannot spawn grandchild agents or
+  send messages.
 - **Workspace must exist** before spawn — `mkdir -p` first.
-- **Tagma restart releases all dirlocks** — workspaces may become writable
-  again until agents are restored.
+- **Tagma restarts re-establish workspace locks automatically** during
+  restore; if writes are briefly denied right after a restart, retry once
+  your agent is restored.
 - **Subagent env** has `KALLIP_ID`, `KALLIP_AUTH_TOKEN`, `KALLIP_TAGMA_URL`,
   `KALLIP_SUPERVISOR_AGENT_ID` (the supervisor), and `KALLIP_ROOT_AGENT_ID`
   (the root) — but NOT `KALLIP_DATA_DIR`. Use the agent's known path
