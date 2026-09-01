@@ -329,6 +329,7 @@ impl TestWorld {
             blob_root,
             1024 * 1024,
             blob_dir,
+            None,
         )
         .await
     }
@@ -342,6 +343,7 @@ impl TestWorld {
             blob_root,
             max_body_bytes,
             blob_dir,
+            None,
         )
         .await
     }
@@ -354,6 +356,7 @@ impl TestWorld {
         blob_root: PathBuf,
         max_body_bytes: u64,
         blob_dir: TempDir,
+        notify: Option<Arc<dyn kallip_files::notify::NotifyPusher>>,
     ) -> Self {
         let db = test_db().await;
         let mock = MockControlPlane::default();
@@ -383,7 +386,7 @@ impl TestWorld {
                     grace: std::time::Duration::from_secs(3600),
                 },
             }),
-            notify: None,
+            notify,
         };
         let router = kallip_files::state::router(state);
         Self {

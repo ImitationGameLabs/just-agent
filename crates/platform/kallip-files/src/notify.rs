@@ -1,4 +1,4 @@
-//! The lesche event-push client: a successful delivery notifies the
+//! The lesche event-push surface: a successful delivery notifies the
 //! recipient's side through the lesche's internal surface, so their UI/agent
 //! learns a file arrived without polling. Mirrors the FilesControlPlane
 //! shape (base URL + shared secret bearer, a bounded timeout) and is
@@ -9,6 +9,23 @@
 use std::time::Duration;
 
 use serde_json::json;
+
+/// The push contract the send transaction depends on, so tests can record
+/// pushes instead of speaking HTTP (the ControlPlane precedent).
+#[async_trait::async_trait]
+pub trait NotifyPusher: Send + Sync {
+    /// Push one file-delivered event. Best-effort by contract: an
+    /// implementation logs its own failures and never retracts a delivery.
+    async fn file_delivered(
+        &self,
+        to_user: &str,
+        record_id: uuid::Uuid,
+        path: &str,
+        from: &str,
+        name: &str,
+        size: u64,
+    );
+}
 
 /// A reqwest-backed client for one configured lesche internal surface.
 #[derive(Clone)]
@@ -40,11 +57,11 @@ impl LescheNotifyClient {
                 .ok()?,
         })
     }
+}
 
-    /// Push a file-delivered event onto the recipient's stream. Best-effort:
-    /// every failure mode (transport, 4xx/5xx, recipient offline) only logs
-    /// -- the delivery itself already succeeded and is never retracted.
-    pub async fn file_delivered(
+#[async_trait::async_trait]
+impl NotifyPusher for LescheNotifyClient {
+    async fn file_delivered(
         &self,
         to_user: &str,
         record_id: uuid::Uuid,

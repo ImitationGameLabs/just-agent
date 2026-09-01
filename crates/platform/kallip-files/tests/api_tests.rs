@@ -831,6 +831,7 @@ async fn streaming_reads_stay_windowed() {
         blob_root,
         1024 * 1024,
         blob_dir,
+        None,
     )
     .await;
 
@@ -857,4 +858,138 @@ async fn streaming_reads_stay_windowed() {
         recorder.windows.load(std::sync::atomic::Ordering::SeqCst) >= 8,
         "a 1 MiB blob must not be served in a single read"
     );
+}
+
+// --- notify push contract (the quality MAJOR from the F0 review) ---
+
+/// Records every push the send transaction hands over.
+type PushLog = std::sync::Arc<std::sync::Mutex<Vec<PushRecord>>>;
+
+/// One recorded push: recipient, record, landing path, sender, name, size.
+type PushRecord = (String, uuid::Uuid, String, String, String, u64);
+#[derive(Default, Clone)]
+struct NotifySpy(PushLog);
+
+#[async_trait::async_trait]
+impl kallip_files::notify::NotifyPusher for NotifySpy {
+    async fn file_delivered(
+        &self,
+        to_user: &str,
+        record_id: uuid::Uuid,
+        path: &str,
+        from: &str,
+        name: &str,
+        size: u64,
+    ) {
+        self.0.lock().unwrap().push((
+            to_user.to_owned(),
+            record_id,
+            path.to_owned(),
+            from.to_owned(),
+            name.to_owned(),
+            size,
+        ));
+    }
+}
+
+/// The disabled posture never builds a client at all: an unset URL/token
+/// yields None (the safe default the fixtures all ride on).
+#[test]
+fn disabled_notify_builds_no_client() {
+    assert!(kallip_files::notify::LescheNotifyClient::new(String::new(), "s".into()).is_none());
+    assert!(
+        kallip_files::notify::LescheNotifyClient::new("http://x".into(), String::new()).is_none()
+    );
+}
+
+/// A successful send must trigger exactly one push carrying the delivery
+/// facts (recipient, record, landing path, sender, name, size). The push
+/// is fire-and-forget, so the test polls briefly for the spawned task.
+#[tokio::test]
+async fn send_pushes_the_delivery_event_once() {
+    let spy = NotifySpy::default();
+    let blob_dir = tempfile::TempDir::new().expect("blob dir");
+    let blob_root = blob_dir.path().to_path_buf();
+    let world = TestWorld::with_parts(
+        kallip_files::LocalBackend::arc(&blob_root),
+        blob_root,
+        1024 * 1024,
+        blob_dir,
+        Some(std::sync::Arc::new(spy.clone()) as _),
+    )
+    .await;
+    let (source, _blob_id) = put_ok(
+        &world,
+        cookie_for(&world, 1),
+        &user1_shared(&world, "hello.txt"),
+        b"for you",
+    )
+    .await;
+    let response = send(
+        &world,
+        cookie_for(&world, 1),
+        &source,
+        serde_json::json!({ "to_user": world.user2.to_string() }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let value = json_of(response).await;
+    for _ in 0..40 {
+        if !spy.0.lock().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let pushes = spy.0.lock().unwrap();
+    assert_eq!(pushes.len(), 1);
+    let (to_user, record_id, path, from, name, size) = &pushes[0];
+    assert_eq!(to_user, &world.user2.to_string());
+    assert_eq!(
+        record_id.to_string(),
+        value["record_id"].as_str().expect("id")
+    );
+    assert_eq!(path, &format!("/users/{}/inbox/hello.txt", world.user2));
+    assert_eq!(from, &world.user1.to_string());
+    assert_eq!(name, "hello.txt");
+    assert_eq!(*size, 7);
+}
+
+/// A lesche that answers `delivered: false` (recipient offline) gets its
+/// single request, and the client returns without error and without a
+/// retry -- the delivery itself is already committed (the compensation
+/// posture: the recipient discovers the file via the listing surface).
+#[tokio::test]
+async fn lesche_delivered_false_answer_is_tolerated() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let hits = std::sync::Arc::new(AtomicUsize::new(0));
+    let counter = hits.clone();
+    let app = axum::Router::new().route(
+        "/internal/file-delivered",
+        axum::routing::post(move || {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                axum::Json(serde_json::json!({ "delivered": false }))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let client =
+        kallip_files::notify::LescheNotifyClient::new(format!("http://{addr}"), "s".into())
+            .unwrap();
+    kallip_files::notify::NotifyPusher::file_delivered(
+        &client,
+        "u2",
+        uuid::Uuid::new_v4(),
+        "/users/u2/inbox/x",
+        "u1",
+        "x",
+        1,
+    )
+    .await;
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
 }

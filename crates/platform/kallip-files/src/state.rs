@@ -55,7 +55,7 @@ pub struct AppState {
     pub config: Arc<FilesConfig>,
     /// Best-effort lesche event-push client; `None` disables the push
     /// (an unset notify URL/token is the documented safe posture).
-    pub notify: Option<crate::notify::LescheNotifyClient>,
+    pub notify: Option<Arc<dyn crate::notify::NotifyPusher>>,
 }
 
 /// Everything the service needs at boot. `main` fills it from CLI/env; the
@@ -161,7 +161,8 @@ pub async fn run(boot: BootConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
             boot.agora_internal_url,
             boot.agora_internal_token,
         )),
-        notify: crate::notify::LescheNotifyClient::new(boot.notify_url, boot.notify_token),
+        notify: crate::notify::LescheNotifyClient::new(boot.notify_url, boot.notify_token)
+            .map(|c| std::sync::Arc::new(c) as _),
         config: Arc::new(boot.files),
     };
     spawn_gc_driver(state.clone());
