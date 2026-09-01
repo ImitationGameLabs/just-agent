@@ -1,8 +1,9 @@
 // The room-message plaintext codec. A room's message payload is a
-// JSON-serialized `RoomMessage { text }` (rooms and the bilateral 1:1 path are
-// disjoint address spaces; a room message is just text -- no `req_id`/ack), per
+// JSON-serialized `RoomMessage` (rooms and the bilateral 1:1 path are
+// disjoint address spaces; text plus an optional attachment -- no
+// `req_id`/ack), per
 // crates/platform/kallip-lesche-common/src/message.rs:
-//   pub struct RoomMessage { pub text: String }
+//   pub struct RoomMessage { pub text: String, pub attachment: Option<RoomAttachment> }
 // The tagma's room inbound (`relay/mod.rs::handle_room_message`) does
 // `serde_json::from_slice::<RoomMessage>`. So a browser sending into a room
 // serializes `{ text }`, and a browser rendering an inbound room frame decodes
@@ -62,6 +63,7 @@ export function decodeRoomMessage(plaintext: Uint8Array): RoomMessage {
     const att = value.attachment as RoomAttachment | undefined;
     if (
       att !== undefined &&
+      att !== null &&
       (typeof att !== "object" ||
         typeof att.record_id !== "string" ||
         typeof att.name !== "string" ||
@@ -69,7 +71,7 @@ export function decodeRoomMessage(plaintext: Uint8Array): RoomMessage {
     ) {
       return { op: "unknown", raw };
     }
-    return att === undefined
+    return att === undefined || att === null
       ? { op: "message", text: value.text }
       : { op: "message", text: value.text, attachment: att };
   }

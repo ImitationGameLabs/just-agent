@@ -89,6 +89,15 @@ Deno.test("encode + decode round-trip a chat line", () => {
   assertEquals(decoded, { op: "message", text });
 });
 
+Deno.test("decodeRoomMessage reads attachment:null as no attachment", () => {
+  // The Rust side's serde Option maps a JSON null to None, so a null
+  // attachment is a valid no-attachment frame -- it must render as
+  // plain text, not leak null into consumers that read record_id.
+  const bytes = new TextEncoder().encode('{"text":"hi","attachment":null}');
+  const out = decodeRoomMessage(bytes);
+  assertEquals(out, { op: "message", text: "hi" });
+});
+
 Deno.test("encodeRoomSendMessage attaches the file when given", () => {
   // With an attachment the JSON carries the structured descriptor; without
   // one the historical { text } shape is preserved byte-for-byte.
