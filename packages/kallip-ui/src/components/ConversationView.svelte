@@ -22,6 +22,7 @@
   } from "../lib/transcript.ts";
   import type { ComposerModel } from "../lib/composer.svelte.ts";
   import type { Snippet } from "svelte";
+  import type { MessageAttachment } from "@kallipai/kallip-lesche-client";
 
   let {
     lines,
@@ -34,6 +35,7 @@
     loadOlder,
     hasMoreOlder,
     loadingOlder,
+    downloadAttachment,
     fileButton,
     attachmentBar,
   }: {
@@ -58,6 +60,9 @@
     /** Optional file-attach affordance, forwarded to the composer verbatim
      *  (omitted = the button never renders). */
     fileButton?: { onFilesPicked: (files: File[]) => void };
+    /** The page-supplied download I/O for message file cards, forwarded
+     *  verbatim (omitted = the cards render without a download button). */
+    downloadAttachment?: (attachment: MessageAttachment) => Promise<void>;
 
     /** Optional page-supplied notice rendered inside the scrollable transcript
      *  (after the inline error), so it scrolls with the messages. Used for the
@@ -200,6 +205,8 @@
             mine={line.role === "user"}
             bare={line.role === "user" && line.status === "sending"}
             pending={line.status === "sending"}
+            attachment={line.attachment}
+            {downloadAttachment}
             pin={togglePin}
           />
           {#if line.role === "user" && line.status === "sending"}

@@ -143,6 +143,21 @@
     attachments = attachments.filter((a) => a.id !== id);
   }
 
+  // The card's download I/O: pull the referenced inbox copy (the user
+  // keeps full read on it, Row1) and hand the bytes to the browser as a
+  // named download. The bubble renders any failure inline.
+  async function downloadAttachment(
+    attachment: MessageAttachment,
+  ): Promise<void> {
+    const bytes = await filesClientOrFail().get(attachment.record_id);
+    const url = URL.createObjectURL(new Blob([bytes]));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = attachment.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
   const composer = createComposer({
     send: (text) => {
       // One message per ready file; the composer text rides the first and
@@ -355,6 +370,7 @@
             fileButton={conv instanceof RelayConversation
               ? { onFilesPicked }
               : undefined}
+            {downloadAttachment}
           >
             {#snippet notice()}
               {#if conv.status === "offline"}
