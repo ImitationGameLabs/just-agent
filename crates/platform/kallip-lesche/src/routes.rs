@@ -1,6 +1,7 @@
 //! Data-plane route mounting.
 
 mod conversations;
+mod direct;
 mod events;
 mod internal;
 mod room_management;
@@ -28,6 +29,7 @@ pub fn router(
     let mut app = Router::new()
         .merge(conversations::router().with_state(state.clone()))
         .merge(rooms::router().with_state(state.clone()))
+        .merge(direct::router().with_state(state.clone()))
         .merge(room_management::router().with_state(state.clone()))
         .merge(events::router().with_state(state.clone()))
         .merge(signal::router().with_state(state.clone()))

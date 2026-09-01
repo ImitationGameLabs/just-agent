@@ -7,6 +7,7 @@
 //! the relay state: `Some` in production, `None` in the mock-state routing
 //! tests.
 
+pub mod direct_store;
 pub mod entity;
 pub mod migration;
 pub mod store;
