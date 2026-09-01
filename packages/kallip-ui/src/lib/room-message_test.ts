@@ -89,6 +89,41 @@ Deno.test("encode + decode round-trip a chat line", () => {
   assertEquals(decoded, { op: "message", text });
 });
 
+Deno.test("encodeRoomSendMessage attaches the file when given", () => {
+  // With an attachment the JSON carries the structured descriptor; without
+  // one the historical { text } shape is preserved byte-for-byte.
+  const att = {
+    record_id: "00000000-0000-0000-0000-000000000000",
+    name: "report.pdf",
+    size: 1234,
+  };
+  assertEquals(
+    encodeRoomSendMessage("see attachment", att),
+    '{"text":"see attachment","attachment":{"record_id":"00000000-0000-0000-0000-000000000000","name":"report.pdf","size":1234}}',
+  );
+  assertEquals(encodeRoomSendMessage("plain"), '{"text":"plain"}');
+});
+
+Deno.test("decodeRoomMessage reads an attachment payload", () => {
+  const bytes = new TextEncoder().encode(
+    '{"text":"see attachment","attachment":{"record_id":"abc","name":"a.zip","size":7}}',
+  );
+  assertEquals(decodeRoomMessage(bytes), {
+    op: "message",
+    text: "see attachment",
+    attachment: { record_id: "abc", name: "a.zip", size: 7 },
+  });
+});
+
+Deno.test("decodeRoomMessage warn-drops a malformed attachment", () => {
+  // A malformed attachment drops the whole frame (same semantics as the
+  // Rust side, where a serde failure loses the frame) rather than
+  // rendering a half-valid file card.
+  const bytes = new TextEncoder().encode(
+    '{"text":"x","attachment":{"record_id":42}}',
+  );
+  assertEquals(decodeRoomMessage(bytes).op, "unknown");
+});
 // `appendRoomLine` is the store's optimistic-send dedup, extracted pure so it
 // is unit-testable without the Svelte runtime (the reactive store itself is
 // verified by svelte-check + the browser integration). The sender identity

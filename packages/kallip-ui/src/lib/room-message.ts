@@ -17,30 +17,61 @@
 /** A decoded inbound room message. A payload that is not a `{ text }` object
  * (malformed JSON, or a future fielded shape) is surfaced as `unknown` so the
  * transcript can warn-drop it rather than mis-render. */
+/** A file the sender attached: where it lives in the files service (the
+ * record the sender uploaded/delivered) plus the display facts a file card
+ * needs without a round trip. Mirrors the Rust `RoomAttachment`
+ * (kallip-lesche-common/src/message.rs) -- same-commit contract. */
+export interface RoomAttachment {
+  readonly record_id: string;
+  readonly name: string;
+  readonly size: number;
+}
+
 export type RoomMessage =
-  | { readonly op: "message"; readonly text: string }
+  | {
+      readonly op: "message";
+      readonly text: string;
+      readonly attachment?: RoomAttachment;
+    }
   | { readonly op: "unknown"; readonly raw: string };
 
 /** Serialize a chat line for the room wire. The result is the plaintext payload
  * the sender base64s into the envelope. */
-export function encodeRoomSendMessage(text: string): string {
-  return JSON.stringify({ text });
+export function encodeRoomSendMessage(
+  text: string,
+  attachment?: RoomAttachment,
+): string {
+  return JSON.stringify(attachment ? { text, attachment } : { text });
 }
 
 /** Decode an inbound room-message plaintext. Tolerant: a payload without a
  * string `text` (malformed JSON, or a future shape) returns
  * `{ op: "unknown", raw }` so the caller can warn-drop it instead of throwing
- * on a single bad frame. */
+ * on a single bad frame. An `attachment` whose fields don't type-check
+ * drops the whole frame too (same warn-drop semantics as the Rust side,
+ * where a serde failure loses the frame). */
 export function decodeRoomMessage(plaintext: Uint8Array): RoomMessage {
   const raw = new TextDecoder().decode(plaintext);
-  let value: { text?: unknown };
+  let value: { text?: unknown; attachment?: unknown };
   try {
     value = JSON.parse(raw);
   } catch {
     return { op: "unknown", raw };
   }
   if (typeof value.text === "string") {
-    return { op: "message", text: value.text };
+    const att = value.attachment as RoomAttachment | undefined;
+    if (
+      att !== undefined &&
+      (typeof att !== "object" ||
+        typeof att.record_id !== "string" ||
+        typeof att.name !== "string" ||
+        typeof att.size !== "number")
+    ) {
+      return { op: "unknown", raw };
+    }
+    return att === undefined
+      ? { op: "message", text: value.text }
+      : { op: "message", text: value.text, attachment: att };
   }
   return { op: "unknown", raw };
 }

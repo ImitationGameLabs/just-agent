@@ -61,6 +61,22 @@ pub struct HistoryEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoomMessage {
     pub text: String,
+    /// A file attached to the message, when the sender shared one. Optional
+    /// with `serde(default)` + `skip_serializing_if` so messages without an
+    /// attachment keep the historical wire shape byte-for-byte and older
+    /// readers (which ignore unknown fields) are none the wiser.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<RoomAttachment>,
+}
+
+/// The structured descriptor of [`RoomMessage::attachment`]: where the file
+/// lives in the files service (the record the sender uploaded/delivered)
+/// plus the display facts a file card needs without a round trip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomAttachment {
+    pub record_id: uuid::Uuid,
+    pub name: String,
+    pub size: u64,
 }
 
 /// App -> tagma: one semantic operation against the tagma, encrypted inside an
@@ -280,6 +296,38 @@ mod tests {
         assert_eq!(parsed["tagma_id"].as_str().unwrap(), "t1");
     }
 
+    /// The attachment field is optional both ways: a message without one
+    /// serializes to the historical `{text}` shape (old readers unaffected)
+    /// and an old `{text}` payload deserializes with `attachment: None`.
+    #[test]
+    fn room_message_attachment_is_optional_both_ways() {
+        // Old wire shape: no attachment key at all.
+        let legacy = serde_json::json!({ "text": "hi" });
+        let msg: RoomMessage = serde_json::from_value(legacy).unwrap();
+        assert_eq!(msg.text, "hi");
+        assert!(msg.attachment.is_none());
+        // And it re-serializes to the same shape (no empty object).
+        let json = serde_json::to_string(&msg).unwrap();
+        assert_eq!(json, r#"{"text":"hi"}"#);
+
+        // With an attachment: the full shape round-trips.
+        let msg = RoomMessage {
+            text: "report".into(),
+            attachment: Some(RoomAttachment {
+                record_id: uuid::Uuid::nil(),
+                name: "report.pdf".into(),
+                size: 1234,
+            }),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"record_id\""));
+        assert!(json.contains("report.pdf"));
+        let back: RoomMessage = serde_json::from_str(&json).unwrap();
+        let att = back.attachment.expect("attachment survives the round trip");
+        assert_eq!(att.name, "report.pdf");
+        assert_eq!(att.size, 1234);
+    }
+
     #[test]
     fn envelope_round_trips() {
         let env = Envelope {
@@ -342,6 +390,7 @@ mod tests {
     fn room_message_round_trips() {
         let msg = RoomMessage {
             text: "hi from a room".into(),
+            attachment: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert_eq!(json, r#"{"text":"hi from a room"}"#);
