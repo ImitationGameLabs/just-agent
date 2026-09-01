@@ -28,5 +28,12 @@
   "chat_unread_badge_aria": "{count} 条未读",
   "chat_notifications_label": "通知",
   "chat_notifications_desc": "应用在后台时，收到新消息显示系统通知。",
-  "chat_notifications_denied": "通知已在浏览器设置中被阻止。请先在浏览器设置中重新启用，再打开此开关。"
+  "chat_notifications_denied": "通知已在浏览器设置中被阻止。请先在浏览器设置中重新启用，再打开此开关。",
+  "chat_attach_file_aria": "附加文件",
+  "chat_attachment_uploading": "正在上传 {name}…",
+  "chat_attachment_failed": "{name} 上传失败。",
+  "chat_attachment_retry": "重试上传",
+  "chat_attachment_too_large": "{name} 超过 {max} 上限。",
+  "chat_file_download_aria": "下载 {name}",
+  "chat_file_unreadable": "该文件无法下载。"
 }

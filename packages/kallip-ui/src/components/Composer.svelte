@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUp } from "@lucide/svelte";
+  import { ArrowUp, Paperclip } from "@lucide/svelte";
   import type { ComposerModel } from "../lib/composer.svelte";
   import {
     composer_placeholder,
@@ -8,6 +8,7 @@
     composer_queued,
     composer_connect_link,
     composer_connect_tail,
+    chat_attach_file_aria,
   } from "../paraglide/messages.js";
 
   let {
@@ -15,6 +16,7 @@
     disabled,
     pendingCount,
     disabledNotice,
+    fileButton,
   }: {
     composer: ComposerModel;
     disabled: boolean;
@@ -24,6 +26,11 @@
     // -- correct for the bilateral (offline-tagma) chat surface, wrong for a
     // room error, so the room page passes a room-appropriate string here.
     disabledNotice?: string;
+    // Optional file-attach affordance. When omitted (the default) the
+    // button never renders -- the room page's shape (zero half-built
+    // semantics where file sending is out of scope). The page owns the
+    // picked files and the upload flow; the composer only opens the picker.
+    fileButton?: { onFilesPicked: (files: File[]) => void };
   } = $props();
 
   let area: HTMLTextAreaElement | undefined = $state();
@@ -104,6 +111,35 @@
   </button>
 {/snippet}
 
+{#snippet fileButtonSnippet()}
+  {#if fileButton}
+    <!-- Hidden input + label button: the label forwards the click, the
+         input resets after each pick so re-selecting the same file
+         re-fires change. -->
+    <input
+      id="composer-file-input"
+      type="file"
+      multiple
+      class="hidden"
+      onchange={(e) => {
+        const input = e.currentTarget;
+        if (input.files?.length) fileButton.onFilesPicked([...input.files]);
+        input.value = "";
+      }}
+    />
+    <button
+      type="button"
+      class="size-10 shrink-0 rounded-full preset-tonal-surface flex items-center justify-center opacity-80 hover:opacity-100"
+      aria-label={chat_attach_file_aria()}
+      onclick={(e) => {
+        e.preventDefault();
+        document.getElementById("composer-file-input")?.click();
+      }}
+    >
+      <Paperclip class="size-5" aria-hidden="true" />
+    </button>
+  {/if}
+{/snippet}
 <!-- Bottom padding: 1.5rem intended breathing room, or the safe-area
      inset when larger -- minus the keyboard inset, because edge-to-edge
      maps the IME into the safe-area env on WebView and resizes-content
@@ -143,13 +179,15 @@
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <label
           for="composer-input"
-          class="hidden md:flex justify-end pt-1"
+          class="hidden md:flex justify-end items-center gap-2 pt-1"
           onmousedown={(e) => e.preventDefault()}
         >
+          {@render fileButtonSnippet()}
           {@render sendButton()}
         </label>
       </div>
-      <div class="md:hidden shrink-0 pb-2">
+      <div class="md:hidden shrink-0 pb-2 flex items-center gap-2">
+        {@render fileButtonSnippet()}
         {@render sendButton()}
       </div>
     </div>

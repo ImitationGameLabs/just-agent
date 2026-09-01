@@ -28,5 +28,12 @@
   "chat_unread_badge_aria": "{count} unread",
   "chat_notifications_label": "Notifications",
   "chat_notifications_desc": "Show a system notification for new messages while the app is in the background.",
-  "chat_notifications_denied": "Notifications are blocked in your browser settings. Re-enable them there, then turn this on again."
+  "chat_notifications_denied": "Notifications are blocked in your browser settings. Re-enable them there, then turn this on again.",
+  "chat_attach_file_aria": "Attach a file",
+  "chat_attachment_uploading": "Uploading {name}…",
+  "chat_attachment_failed": "{name} failed to upload.",
+  "chat_attachment_retry": "Retry upload",
+  "chat_attachment_too_large": "{name} is over the {max} limit.",
+  "chat_file_download_aria": "Download {name}",
+  "chat_file_unreadable": "This file is not available for download."
 }
