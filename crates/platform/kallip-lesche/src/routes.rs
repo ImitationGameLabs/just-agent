@@ -32,8 +32,8 @@ pub fn router(
         .merge(events::router().with_state(state.clone()))
         .merge(signal::router().with_state(state.clone()))
         .merge(status::router().with_state(state.clone()))
-        .merge(tunnel::router().with_state(state.clone()))
         .merge(tunnel::router().with_state(state.clone()));
+
     // The service-to-service `/internal/*` surface: mounted only when the
     // shared secret is configured (same discipline as the agora's internal
     // nest; the files service pushes FileDelivered events here).
@@ -137,5 +137,24 @@ mod tests {
         let mut advertised: Vec<&str> = advertised.split(',').map(str::trim).collect();
         advertised.sort_unstable();
         assert_eq!(advertised, ["DELETE", "GET", "PATCH", "POST", "PUT"]);
+    }
+
+    /// Assembly smoke test: the full router build (every sub-router
+    /// merged, the internal nest conditionally mounted) must not panic.
+    /// axum 0.8 panics on a same-path merge conflict at construction,
+    /// and only the binary's startup path builds the whole router -- the
+    /// per-sub-router tests never exercise this (the quality CRITICAL
+    /// from the F0 review: a duplicated merge line crashed startup while
+    /// the test suite stayed green).
+    #[test]
+    fn full_router_assembly_does_not_panic() {
+        let (state, _control) =
+            crate::test_support::make_state(60, std::time::Duration::from_secs(10));
+        // Both mount states: no internal surface, and with it.
+        let _ = super::router(state.clone(), None);
+        let _ = super::router(
+            state,
+            Some(kallip_common::authtoken::TokenHash::of("secret")),
+        );
     }
 }
