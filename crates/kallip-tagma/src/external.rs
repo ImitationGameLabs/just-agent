@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use kallip_agora_common::ids::{ConversationId, ParticipantId, ParticipantKind, TagmaId};
 use kallip_common::protocol::SseEvent;
-use kallip_lesche_common::message::{HistoryEntry, Participant, TagmaReply};
+use kallip_lesche_common::message::{HistoryEntry, Participant, RoomAttachment, TagmaReply};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
@@ -317,11 +317,16 @@ impl ExternalProjector {
     /// No persist gate: a row is always written when the store is present (the
     /// peer partition is the key, and it is always known at ingest — `None` for
     /// the operator). The only unstamped path is a genuine append failure.
-    pub(crate) async fn record_inbound(&self, partition: Option<Participant>, text: String) {
+    pub(crate) async fn record_inbound(
+        &self,
+        partition: Option<Participant>,
+        text: String,
+        attachment: Option<RoomAttachment>,
+    ) {
         *self.inner.partition.lock().await = partition.clone();
         let sender = partition.clone().unwrap_or_else(operator_sender);
         let Some(db) = self.inner.history.clone() else {
-            self.publish_unstamped_inbound(sender, text);
+            self.publish_unstamped_inbound(sender, text, attachment);
             return;
         };
         let (user_id, username) = peer_fields(&partition);
@@ -331,6 +336,7 @@ impl ExternalProjector {
             username.as_deref(),
             "inbound",
             &text,
+            attachment.as_ref(),
         )
         .await
         {
@@ -339,6 +345,7 @@ impl ExternalProjector {
                     history_id: id,
                     text,
                     created_at: None,
+                    attachment: attachment.clone(),
                 };
                 reply.set_history_id(id);
                 reply.set_created_at(created_at);
@@ -346,20 +353,26 @@ impl ExternalProjector {
             }
             Err(e) => {
                 error!("inbound history append failed: {e:#}");
-                self.publish_unstamped_inbound(sender, text);
+                self.publish_unstamped_inbound(sender, text, attachment);
             }
         }
     }
 
     /// Echo the inbound text unstamped when persistence is unavailable, so live
     /// delivery is not lost (mirrors the outbound graceful-degrade rule).
-    fn publish_unstamped_inbound(&self, sender: Participant, text: String) {
+    fn publish_unstamped_inbound(
+        &self,
+        sender: Participant,
+        text: String,
+        attachment: Option<RoomAttachment>,
+    ) {
         self.publish(ExternalFrame::Authored {
             sender,
             reply: TagmaReply::UserMessage {
                 history_id: 0,
                 text,
                 created_at: None,
+                attachment,
             },
         });
     }
@@ -428,6 +441,7 @@ impl ExternalProjector {
             username.as_deref(),
             "outbound",
             text,
+            None,
         )
         .await
         {

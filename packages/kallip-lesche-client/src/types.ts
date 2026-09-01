@@ -16,11 +16,13 @@ export type {
   AuthoredEvent,
   FailoverChainExhausted,
   HistoryEntry,
+  MessageAttachment,
   Participant,
   SignalEvent,
   TagmaReply,
 } from "@kallipai/kallip-common";
 import type {
+  MessageAttachment,
   Participant,
   ParticipantKind,
   SignalEvent,
@@ -53,6 +55,7 @@ export type TagmaRequest =
       readonly op: "send_message";
       readonly req_id: number;
       readonly text: string;
+      readonly attachment?: MessageAttachment;
     }
   | { readonly op: "interrupt"; readonly req_id: number };
 

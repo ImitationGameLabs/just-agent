@@ -108,14 +108,20 @@ pub(crate) async fn append(
     username: Option<&str>,
     direction: &str,
     text: &str,
+    attachment: Option<&kallip_lesche_common::message::RoomAttachment>,
 ) -> Result<(i64, i64)> {
     let now = unix_secs();
+    let attachment = attachment
+        .map(serde_json::to_string)
+        .transpose()
+        .context("serialize attachment")?;
     let row = ActiveModel {
         user_id: sea_orm::Set(user_id.map(|s| s.to_string())),
         username: sea_orm::Set(username.map(|s| s.to_string())),
         direction: sea_orm::Set(direction.to_string()),
         text: sea_orm::Set(text.to_string()),
         created_at: sea_orm::Set(now),
+        attachment: sea_orm::Set(attachment),
         ..Default::default()
     };
     let res = Entity::insert(row)
@@ -188,6 +194,7 @@ fn history_row_from_model(m: Model) -> HistoryRow {
         direction: m.direction,
         text: m.text,
         created_at: m.created_at,
+        attachment: m.attachment,
     }
 }
 
@@ -289,7 +296,7 @@ mod tests {
     /// `user_id = None` is the direct (operator) partition.
     async fn ap(db: &Db, user_id: Option<&str>, direction: &str, text: &str) -> i64 {
         let username = user_id.map(|_| "peer-handle");
-        append(db, user_id, username, direction, text)
+        append(db, user_id, username, direction, text, None)
             .await
             .unwrap()
             .0
@@ -444,10 +451,10 @@ mod tests {
         // => agent, inbound => peer from user_id/username) and decode_row maps
         // direction + text onto the wire reply shape.
         let (db, _d) = open_tmp().await;
-        append(&db, Some("u1"), Some("Alice"), "outbound", "hello")
+        append(&db, Some("u1"), Some("Alice"), "outbound", "hello", None)
             .await
             .unwrap();
-        append(&db, Some("u1"), Some("Alice"), "inbound", "hi")
+        append(&db, Some("u1"), Some("Alice"), "inbound", "hi", None)
             .await
             .unwrap();
 

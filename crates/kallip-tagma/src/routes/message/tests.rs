@@ -31,6 +31,7 @@ async fn operator_message_stores_envelope_in_inbox() {
         Path(receiver.clone()),
         Json(MessageRequest {
             text: "do the thing".into(),
+            attachment: None,
         }),
     )
     .await
@@ -79,6 +80,7 @@ async fn agent_message_stores_sender_and_relation() {
         Path(parent.clone()),
         Json(MessageRequest {
             text: "results attached".into(),
+            attachment: None,
         }),
     )
     .await
@@ -117,6 +119,7 @@ async fn self_message_stored_in_inbox() {
         Path(me.clone()),
         Json(MessageRequest {
             text: "note to self".into(),
+            attachment: None,
         }),
     )
     .await
@@ -146,7 +149,10 @@ async fn send_message_to_faulted_returns_conflict() {
         State(state),
         AuthIdentity::test_new(Identity::Operator),
         Path(faulted),
-        Json(MessageRequest { text: "hi".into() }),
+        Json(MessageRequest {
+            text: "hi".into(),
+            attachment: None,
+        }),
     )
     .await
     .expect_err("faulted agent rejects messages");
@@ -196,7 +202,10 @@ async fn send_message_to_parked_agent_auto_wakes_with_kick_turn() {
         State(state.clone()),
         AuthIdentity::test_new(Identity::Operator),
         Path(parked.clone()),
-        Json(MessageRequest { text: "hi".into() }),
+        Json(MessageRequest {
+            text: "hi".into(),
+            attachment: None,
+        }),
     )
     .await
     .expect("parked agent accepts the message and auto-wakes");
@@ -250,7 +259,10 @@ async fn send_message_to_parked_agent_without_reason_buffers_with_warning() {
         State(state.clone()),
         AuthIdentity::test_new(Identity::Operator),
         Path(parked.clone()),
-        Json(MessageRequest { text: "hi".into() }),
+        Json(MessageRequest {
+            text: "hi".into(),
+            attachment: None,
+        }),
     )
     .await
     .expect("invariant break must not fail the send");
@@ -299,6 +311,7 @@ async fn off_duty_message_buffers_to_inbox() {
         Path(receiver.clone()),
         Json(MessageRequest {
             text: "urgent task".into(),
+            attachment: None,
         }),
     )
     .await
@@ -345,6 +358,7 @@ async fn on_duty_message_stored_in_inbox() {
         Path(receiver.clone()),
         Json(MessageRequest {
             text: "hello".into(),
+            attachment: None,
         }),
     )
     .await
@@ -388,6 +402,7 @@ async fn duty_toggle_off_then_on() {
         Path(receiver.clone()),
         Json(MessageRequest {
             text: "first".into(),
+            attachment: None,
         }),
     )
     .await
@@ -404,6 +419,7 @@ async fn duty_toggle_off_then_on() {
         Path(receiver.clone()),
         Json(MessageRequest {
             text: "second".into(),
+            attachment: None,
         }),
     )
     .await
@@ -496,7 +512,10 @@ async fn parked_send_records_row_and_frame_exactly_once() {
         State(state.clone()),
         AuthIdentity::test_new(Identity::Operator),
         Path(root.clone()),
-        Json(MessageRequest { text: "hi".into() }),
+        Json(MessageRequest {
+            text: "hi".into(),
+            attachment: None,
+        }),
     )
     .await
     .expect("parked root accepts the message (auto-wake)");
@@ -551,6 +570,7 @@ async fn repeated_parked_sends_each_record_one_row() {
             Path(root.clone()),
             Json(MessageRequest {
                 text: format!("hi {i}"),
+                attachment: None,
             }),
         )
         .await
@@ -600,6 +620,7 @@ async fn off_duty_message_still_recorded() {
         Path(root),
         Json(MessageRequest {
             text: "later".into(),
+            attachment: None,
         }),
     )
     .await

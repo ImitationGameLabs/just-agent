@@ -243,13 +243,18 @@ impl RelayHandle {
             .upgrade()
             .context("tagma shutting down; relay op dropped")?;
         match request {
-            TagmaRequest::SendMessage { req_id, text } => {
+            TagmaRequest::SendMessage {
+                req_id,
+                text,
+                attachment,
+            } => {
                 let resp = crate::delivery::deliver_message(
                     &state,
                     Identity::Operator,
                     Some(sender),
                     &self.inner.root_agent,
                     &text,
+                    attachment.clone(),
                 )
                 .await?;
                 Ok(TagmaReply::MessageAccepted {
@@ -265,6 +270,7 @@ impl RelayHandle {
                     // Absent for the same reason: the pump stamps the row's
                     // created_at when it persists the authored half.
                     created_at: None,
+                    attachment,
                 })
             }
             TagmaRequest::Interrupt { req_id } => {

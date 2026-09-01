@@ -9,7 +9,11 @@
 // `signals()` drain consumes them here -- so the conversation drains replies +
 // signals from one uniform interface regardless of transport.
 
-import type { RelayChannel, SignalEvent } from "@kallipai/kallip-lesche-client";
+import type {
+  MessageAttachment,
+  RelayChannel,
+  SignalEvent,
+} from "@kallipai/kallip-lesche-client";
 import type { TagmaStatusSummary } from "../tagmata.svelte.ts";
 import type { ConversationSender } from "../transcript.ts";
 import { toSender } from "../transcript.ts";
@@ -57,8 +61,8 @@ export class RelayTransport implements Transport {
     this.signalQueue.push(event);
   }
 
-  send(text: string): Promise<number> {
-    return this.channel.send(text);
+  send(text: string, attachment?: MessageAttachment): Promise<number> {
+    return this.channel.send(text, attachment);
   }
 
   /** The underlying E2EE pipe. Exposed for the two non-stream ops the store

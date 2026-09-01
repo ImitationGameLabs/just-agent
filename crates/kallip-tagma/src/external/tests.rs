@@ -116,7 +116,7 @@ async fn record_inbound_persists_and_publishes() {
     let mut rx = projector.subscribe();
     let user = user_sender();
     projector
-        .record_inbound(Some(user.clone()), "hi".into())
+        .record_inbound(Some(user.clone()), "hi".into(), None)
         .await;
 
     let (sender, reply) = match rx.recv().await.unwrap() {
@@ -233,10 +233,10 @@ async fn direct_and_relay_partitions_persist_and_filter() {
     let user = user_sender();
 
     // Direct inbound -> operator (NULL) partition, stamped.
-    projector.record_inbound(None, "op-msg".into()).await;
+    projector.record_inbound(None, "op-msg".into(), None).await;
     // Relay inbound -> this peer's partition, stamped.
     projector
-        .record_inbound(Some(user.clone()), "user-msg".into())
+        .record_inbound(Some(user.clone()), "user-msg".into(), None)
         .await;
 
     // read_history(None) sees only the operator partition; the relay row is

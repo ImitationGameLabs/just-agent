@@ -9,6 +9,7 @@ use super::MessageRequest;
 use crate::sse::sse_stream;
 use crate::state::SharedState;
 use kallip_common::agentid::AgentId;
+use kallip_lesche_common::message::RoomAttachment;
 
 /// Any authenticated agent may send a message to any other agent.
 /// This is intentional: inter-agent communication should not require a
@@ -28,9 +29,22 @@ pub async fn send_message(
     // user, so the inbound is recorded under the operator partition (`NULL`) —
     // `deliver_message` receives `sender = None` for that. The relay path
     // passes the envelope `Participant` explicitly.
-    let response =
-        crate::delivery::deliver_message(&state, auth.identity().clone(), None, &id, &req.text)
-            .await?;
+    // The REST DTO's attachment type mirrors the relay wire's `RoomAttachment`
+    // (kallip-common cannot see the platform crate); convert at this boundary.
+    let attachment = req.attachment.map(|a| RoomAttachment {
+        record_id: a.record_id,
+        name: a.name,
+        size: a.size,
+    });
+    let response = crate::delivery::deliver_message(
+        &state,
+        auth.identity().clone(),
+        None,
+        &id,
+        &req.text,
+        attachment,
+    )
+    .await?;
     Ok((StatusCode::ACCEPTED, Json(response)))
 }
 

@@ -47,6 +47,7 @@ impl TagmaClient {
                     .post(self.url(&format!("/agents/{id}/message")))
                     .json(&MessageRequest {
                         text: text.to_owned(),
+                        attachment: None,
                     }),
             )
             .send()

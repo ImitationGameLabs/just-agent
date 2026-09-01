@@ -9,7 +9,7 @@
 //! or the operator for `NULL`) — and passes it here. This module only maps
 //! `direction` + `text` onto the wire reply shape.
 
-use kallip_lesche_common::message::{HistoryEntry, Participant};
+use kallip_lesche_common::message::{HistoryEntry, Participant, RoomAttachment};
 
 /// One row returned for re-encryption + emit by the history pull paths.
 /// `direction` tells the replay loop which wire reply shape to reconstruct from
@@ -29,6 +29,9 @@ pub(crate) struct HistoryRow {
     /// Unix seconds the row was appended. Surfaced to the wire as the frame's
     /// `created_at` so replayed history shows its original send time.
     pub(crate) created_at: i64,
+    /// The JSON blob from the row's `attachment` column (`None` = no file;
+    /// deserialized here so a corrupt blob degrades to no file, not a lost row).
+    pub(crate) attachment: Option<String>,
 }
 
 /// Decode one stored [`HistoryRow`] into a [`HistoryEntry`] (`sender` + the
@@ -50,10 +53,24 @@ pub(crate) fn decode_row(row: HistoryRow, sender: Participant) -> Option<History
             r
         }
         "inbound" => {
+            let attachment =
+                row.attachment.as_deref().and_then(|json| {
+                    match serde_json::from_str::<RoomAttachment>(json) {
+                        Ok(att) => Some(att),
+                        Err(e) => {
+                            tracing::warn!(
+                                id = row.id,
+                                "corrupt attachment blob; replaying without it: {e}"
+                            );
+                            None
+                        }
+                    }
+                });
             let mut r = TagmaReply::UserMessage {
                 history_id: row.id,
                 text: row.text,
                 created_at: None,
+                attachment,
             };
             r.set_created_at(row.created_at);
             r

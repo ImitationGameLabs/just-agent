@@ -47,6 +47,11 @@ pub struct Model {
     /// this. i64 (not OffsetDateTime) to avoid time-format drift in SQLite
     /// and keep GC a plain integer compare.
     pub created_at: i64,
+    /// The JSON-serialized `RoomAttachment` an inbound message carried, or
+    /// `NULL`. Outbound rows never carry one. Deserialized at read by the
+    /// decode path; `NULL` (older rows, no attachment) replays as `None`.
+    #[sea_orm(column_type = "Text", nullable)]
+    pub attachment: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

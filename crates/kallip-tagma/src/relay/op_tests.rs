@@ -20,7 +20,9 @@ use kallip_e2ee::{
     DIR_INITIATOR_TO_RESPONDER, DIR_RESPONDER_TO_INITIATOR, DeviceKey, SessionKey, nonce,
 };
 use kallip_lesche_common::control::KeyExchangeInit;
-use kallip_lesche_common::message::{Envelope, Participant, RoomMessage, TagmaReply, TagmaRequest};
+use kallip_lesche_common::message::{
+    Envelope, Participant, RoomAttachment, RoomMessage, TagmaReply, TagmaRequest,
+};
 use kallip_lesche_common::rooms::RoomId;
 use std::sync::Arc;
 use std::time::Duration;
@@ -305,6 +307,7 @@ async fn send_message_round_trips() {
             TagmaRequest::SendMessage {
                 req_id: 10,
                 text: "hello".into(),
+                attachment: None,
             },
         ))
         .await;
@@ -369,6 +372,7 @@ async fn op_before_key_exchange_is_dropped() {
             TagmaRequest::SendMessage {
                 req_id: 1,
                 text: "x".into(),
+                attachment: None,
             },
         ))
         .await;
@@ -391,6 +395,7 @@ async fn first_inbound_seq_zero_of_an_epoch_is_accepted() {
             TagmaRequest::SendMessage {
                 req_id: 1,
                 text: "first of epoch".into(),
+                attachment: None,
             },
         ))
         .await;
@@ -413,6 +418,7 @@ async fn replayed_inbound_envelope_is_dropped() {
         TagmaRequest::SendMessage {
             req_id: 1,
             text: "first".into(),
+            attachment: None,
         },
     );
     handle.handle_user_op(env.clone()).await;
@@ -457,6 +463,7 @@ async fn garbage_ciphertext_does_not_advance_replay_window() {
             TagmaRequest::SendMessage {
                 req_id: 1,
                 text: "after forge".into(),
+                attachment: None,
             },
         ))
         .await;
@@ -598,6 +605,7 @@ async fn send_message_persists_inbound_and_forwards_usermessage() {
             TagmaRequest::SendMessage {
                 req_id: 10,
                 text: "hi".into(),
+                attachment: None,
             },
         ))
         .await;
@@ -657,6 +665,72 @@ async fn send_message_persists_inbound_and_forwards_usermessage() {
     );
 }
 
+#[tokio::test]
+async fn send_message_attachment_persists_and_replays() {
+    let (handle, key, capture, _prompt_rx, _root_id, _state, db, _dir) =
+        setup_with_history(8).await;
+    let conv = conv_of(&handle);
+    let att = RoomAttachment {
+        record_id: uuid::Uuid::nil(),
+        name: "report.pdf".into(),
+        size: 1234,
+    };
+    handle
+        .handle_user_op(user_envelope(
+            &key,
+            &conv,
+            1,
+            TagmaRequest::SendMessage {
+                req_id: 10,
+                text: "see attached".into(),
+                attachment: Some(att),
+            },
+        ))
+        .await;
+    let replies = drain_replies(&capture, &key).await;
+    // The ack echoes the request's attachment.
+    let ack = replies.iter().find_map(|r| match r {
+        TagmaReply::MessageAccepted { attachment, .. } => attachment.as_ref(),
+        _ => None,
+    });
+    assert_eq!(
+        ack.map(|a| a.name.as_str()),
+        Some("report.pdf"),
+        "MessageAccepted echoes the attachment"
+    );
+
+    // The inbound row carries the attachment (JSON-blob column).
+    let user = peer();
+    let rows = chat_history::read_last_n(&db, Some(user.id.as_ref()), 10)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let blob = rows[0].attachment.as_deref().expect("attachment persisted");
+    let stored: RoomAttachment = serde_json::from_str(blob).unwrap();
+    assert_eq!(stored.size, 1234);
+
+    // It replays as a UserMessage carrying the attachment.
+    capture.lock().await.clear();
+    let trace = TraceId::from("h".to_string());
+    handle
+        .handle_history(&trace, 1, &user, None, None, 50)
+        .await;
+    let replies = drain_replies(&capture, &key).await;
+    let um = replies.iter().find_map(|r| match r {
+        TagmaReply::UserMessage {
+            history_id,
+            attachment,
+            ..
+        } if *history_id == rows[0].id => attachment.as_ref(),
+        _ => None,
+    });
+    assert_eq!(
+        um.map(|a| a.name.as_str()),
+        Some("report.pdf"),
+        "replayed UserMessage carries the attachment"
+    );
+}
+
 /// `handle_history` (latest mode) replays both outbound and inbound rows in
 /// id order: outbound as its stored `Event` reply, inbound as a `UserMessage`
 /// echo, each stamped with its row id, then a `HistoryBatchEnd` marker.
@@ -675,6 +749,7 @@ async fn handle_history_latest_replays_both_directions_in_order() {
         Some(user.handle.as_str()),
         "outbound",
         "o0",
+        None,
     )
     .await
     .unwrap();
@@ -684,6 +759,7 @@ async fn handle_history_latest_replays_both_directions_in_order() {
         Some(user.handle.as_str()),
         "inbound",
         "u0",
+        None,
     )
     .await
     .unwrap();
@@ -693,6 +769,7 @@ async fn handle_history_latest_replays_both_directions_in_order() {
         Some(user.handle.as_str()),
         "outbound",
         "o1",
+        None,
     )
     .await
     .unwrap();
@@ -771,6 +848,7 @@ async fn handle_history_latest_more_is_false_even_at_full_page() {
             Some(user.handle.as_str()),
             "outbound",
             &format!("e{i}"),
+            None,
         )
         .await
         .unwrap();
@@ -810,6 +888,7 @@ async fn handle_history_after_and_before_windows() {
                 Some(user.handle.as_str()),
                 "outbound",
                 &format!("e{i}"),
+                None,
             )
             .await
             .unwrap()

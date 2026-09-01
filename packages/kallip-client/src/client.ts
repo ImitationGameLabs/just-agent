@@ -4,7 +4,7 @@ import {
   parseSseStream,
   readApiError,
 } from "@kallipai/kallip-common";
-import type { AgentId } from "@kallipai/kallip-common";
+import type { AgentId, MessageAttachment } from "@kallipai/kallip-common";
 import type {
   AgentStatusResponse,
   BudgetResponse,
@@ -86,10 +86,16 @@ export class TagmaClient {
 
   // --- agent surface ---
 
-  postMessage(id: AgentId, text: string): Promise<MessageResponse> {
+  postMessage(
+    id: AgentId,
+    text: string,
+    attachment?: MessageAttachment,
+  ): Promise<MessageResponse> {
     return this.json<MessageResponse>(`/agents/${id}/message`, {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: attachment
+        ? JSON.stringify({ text, attachment })
+        : JSON.stringify({ text }),
     });
   }
 

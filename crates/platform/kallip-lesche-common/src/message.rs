@@ -86,7 +86,16 @@ pub struct RoomAttachment {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum TagmaRequest {
     /// Send a user message to the tagma's root agent.
-    SendMessage { req_id: u64, text: String },
+    SendMessage {
+        req_id: u64,
+        text: String,
+        /// A file attached to the message, when the sender shared one. Optional
+        /// with `serde(default)` + `skip_serializing_if` (the `RoomMessage`
+        /// pattern): sends without an attachment keep the historical wire shape
+        /// byte-for-byte, and older readers ignore the unknown field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachment: Option<RoomAttachment>,
+    },
     /// Interrupt the tagma's in-flight turn.
     Interrupt { req_id: u64 },
 }
@@ -157,6 +166,11 @@ pub enum TagmaReply {
         /// field existed. The authoritative send time for the user's line.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         created_at: Option<String>,
+        /// The request's attachment, echoed so the app can stamp its optimistic
+        /// user line with the authoritative reference. Absent on un-attached
+        /// sends and on acks serialized before the field existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachment: Option<RoomAttachment>,
     },
     /// `Interrupt` was delivered.
     Interrupted { req_id: u64 },
@@ -198,6 +212,10 @@ pub enum TagmaReply {
         /// payloads serialized before the field existed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         created_at: Option<String>,
+        /// The row's attachment, when the inbound message carried one. Absent
+        /// on rows persisted before the field existed (replayed as no file).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attachment: Option<RoomAttachment>,
     },
     /// The sole completion signal for a `TagmaControl::History` batch. The
     /// relay emits the batch's rows (each as `Event` or `UserMessage`) and then
@@ -328,6 +346,56 @@ mod tests {
         assert_eq!(att.size, 1234);
     }
 
+    /// The bilateral send attachment mirrors the room contract's optional-both-
+    /// ways rule: a send without one serializes to the historical shape (no
+    /// `attachment` key) and an old payload deserializes with `attachment: None`.
+    #[test]
+    fn send_message_attachment_is_optional_both_ways() {
+        // Old wire shape: no attachment key at all.
+        let legacy = r#"{"op":"send_message","req_id":1,"text":"hi"}"#;
+        let req: TagmaRequest = serde_json::from_str(legacy).unwrap();
+        assert!(matches!(
+            req,
+            TagmaRequest::SendMessage {
+                attachment: None,
+                ..
+            }
+        ));
+        // And it re-serializes to the same shape.
+        let json = serde_json::to_string(&TagmaRequest::SendMessage {
+            req_id: 1,
+            text: "hi".into(),
+            attachment: None,
+        })
+        .unwrap();
+        assert_eq!(json, legacy);
+
+        // With an attachment: the full shape round-trips.
+        let json = serde_json::to_string(&TagmaRequest::SendMessage {
+            req_id: 2,
+            text: "hi".into(),
+            attachment: Some(RoomAttachment {
+                record_id: uuid::Uuid::nil(),
+                name: "report.pdf".into(),
+                size: 1234,
+            }),
+        })
+        .unwrap();
+        let back: TagmaRequest = serde_json::from_str(&json).unwrap();
+        match back {
+            TagmaRequest::SendMessage {
+                req_id,
+                attachment: Some(att),
+                ..
+            } => {
+                assert_eq!(req_id, 2);
+                assert_eq!(att.name, "report.pdf");
+                assert_eq!(att.size, 1234);
+            }
+            _ => panic!("expected SendMessage carrying the attachment"),
+        }
+    }
+
     #[test]
     fn envelope_round_trips() {
         let env = Envelope {
@@ -403,12 +471,17 @@ mod tests {
         let req = TagmaRequest::SendMessage {
             req_id: 7,
             text: "hi".into(),
+            attachment: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"op\":\"send_message\""));
         let back: TagmaRequest = serde_json::from_str(&json).unwrap();
         match back {
-            TagmaRequest::SendMessage { req_id, text } => {
+            TagmaRequest::SendMessage {
+                req_id,
+                text,
+                attachment: _,
+            } => {
                 assert_eq!(req_id, 7);
                 assert_eq!(text, "hi");
             }
@@ -425,6 +498,7 @@ mod tests {
                 warning: None,
                 history_id: 0,
                 created_at: None,
+                attachment: None,
             })
             .unwrap(),
             serde_json::to_string(&TagmaReply::MessageAccepted {
@@ -433,6 +507,7 @@ mod tests {
                 warning: Some("queue growing".into()),
                 history_id: 7,
                 created_at: None,
+                attachment: None,
             })
             .unwrap(),
             serde_json::to_string(&TagmaReply::Interrupted { req_id: 9 }).unwrap(),
@@ -462,6 +537,7 @@ mod tests {
                 history_id: 11,
                 text: "hi".into(),
                 created_at: None,
+                attachment: None,
             })
             .unwrap(),
             serde_json::to_string(&TagmaReply::HistoryBatchEnd {
@@ -481,6 +557,7 @@ mod tests {
             warning: None,
             history_id: 0,
             created_at: None,
+            attachment: None,
         })
         .unwrap();
         assert!(!none_json.contains("warning"));
@@ -517,6 +594,7 @@ mod tests {
             history_id: 11,
             text: "hi".into(),
             created_at: None,
+            attachment: None,
         })
         .unwrap();
         assert_eq!(um, r#"{"kind":"user_message","history_id":11,"text":"hi"}"#);
@@ -546,6 +624,7 @@ mod tests {
             warning: None,
             history_id: 0,
             created_at: None,
+            attachment: None,
         };
         ack.set_history_id(99);
         assert!(matches!(
@@ -580,6 +659,7 @@ mod tests {
             warning: None,
             history_id: 0,
             created_at: None,
+            attachment: None,
         };
         ack.set_created_at(1_785_069_296);
         assert!(matches!(
@@ -592,6 +672,7 @@ mod tests {
             history_id: 11,
             text: "hi".into(),
             created_at: None,
+            attachment: None,
         };
         um.set_created_at(1_785_069_296);
         assert!(matches!(
@@ -678,6 +759,7 @@ mod tests {
         let send = serde_json::to_string(&TagmaRequest::SendMessage {
             req_id: 1,
             text: "x".into(),
+            attachment: None,
         })
         .unwrap();
         assert!(
@@ -691,6 +773,7 @@ mod tests {
         let req = serde_json::to_string(&TagmaRequest::SendMessage {
             req_id: 1,
             text: "hi".into(),
+            attachment: None,
         })
         .unwrap();
         assert!(req.contains("\"op\":\"send_message\""));

@@ -12,6 +12,7 @@
 // no `history_id`, so the store renders the optimistic user line as sent once
 // the POST resolves.
 import { KallipError, TransportError } from "@kallipai/kallip-common";
+import type { MessageAttachment } from "@kallipai/kallip-common";
 
 import type { TagmaClient } from "@kallipai/kallip-client";
 import type {
@@ -163,8 +164,8 @@ export class DirectTransport implements Transport {
     }
   }
 
-  async send(text: string): Promise<void> {
-    await this.client.postMessage(this.agentId, text);
+  async send(text: string, attachment?: MessageAttachment): Promise<void> {
+    await this.client.postMessage(this.agentId, text, attachment);
   }
 
   /** Pull a cursor-driven history batch DIRECTLY (no queue interleave).

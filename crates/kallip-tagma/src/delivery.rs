@@ -35,6 +35,7 @@ pub async fn deliver_message(
     sender: Option<Participant>,
     id: &AgentId,
     text: &str,
+    attachment: Option<kallip_lesche_common::message::RoomAttachment>,
 ) -> Result<MessageResponse, ApiError> {
     // Sanitize the wire sender's handle once, at ingest, so the persisted row
     // and the prompt header both see a clean value (format_incoming sanitizes
@@ -95,7 +96,7 @@ pub async fn deliver_message(
         && let Some(projector) = state.external.get()
     {
         projector
-            .record_inbound(sender.clone(), text.to_string())
+            .record_inbound(sender.clone(), text.to_string(), attachment)
             .await;
     }
 
