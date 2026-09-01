@@ -150,11 +150,10 @@ async fn readyz(State(state): State<SharedState>) -> impl IntoResponse {
 /// (the app's origin) via `KALLIP_AGORA_CORS_ORIGINS`. Never wildcard the
 /// origin on a public deploy.
 ///
-/// Methods and headers stay permissive (`Any`): the origin allowlist is the
-/// real gate, and `tower-http`'s `CorsLayer::new()` defaults *everything* to
-/// denied, so leaving these unset would make the browser reject every preflight
-/// (`Authorization` + `application/json` always trigger one) even when the
-/// origin matches.
+/// Methods and headers are explicit lists, not `Any` (the Fetch spec and
+/// `tower-http` rationale lives at the `allow_methods` call below); the
+/// origin allowlist is the real gate, and leaving either unset would
+/// default them to denied and reject every preflight.
 pub(crate) fn cors_layer(origins: &str) -> CorsLayer {
     let allowed: Vec<HeaderValue> = origins
         .split(',')
@@ -173,7 +172,16 @@ pub(crate) fn cors_layer(origins: &str) -> CorsLayer {
         // `Access-Control-Allow-Credentials: true` together with a wildcard
         // (`Allow-Methods: *`), and tower-http panics at layer construction if
         // they're combined. Listed are exactly the methods the agora routes use.
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+        // PUT is the provider-vault replace (`PUT /v1/me/providers/{id}`, the
+        // web app's rename/key-rotation write); without it the browser
+        // rejects the preflight and the write never lands.
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+        ])
         // Allow credentialed (cookie-bearing) cross-origin requests so the web
         // app -- served from a different origin than the agora (e.g. the app at
         // http://localhost:5173 calling the agora at http://localhost:7100 in
@@ -197,4 +205,42 @@ pub(crate) fn cors_layer(origins: &str) -> CorsLayer {
             // same-origin / after a passing preflight, so allow it explicitly.
             HeaderName::from_static("x-requested-with"),
         ])
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::http::header::{ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    /// Pin the preflight method table. A missing method is invisible to the
+    /// compiler -- the route works, the browser just rejects its preflight --
+    /// so assert the exact advertised set: adding or removing a method must
+    /// update this test consciously.
+    #[tokio::test]
+    async fn preflight_advertises_exactly_the_route_methods() {
+        let app = Router::new()
+            .route("/healthz", get(healthz))
+            .layer(cors_layer("https://app.example"));
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .header(ORIGIN, "https://app.example")
+            .header(ACCESS_CONTROL_REQUEST_METHOD, "PUT")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let advertised = response
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_METHODS)
+            .expect("allowed preflight advertises the method list")
+            .to_str()
+            .unwrap();
+        let mut advertised: Vec<&str> = advertised.split(',').map(str::trim).collect();
+        advertised.sort_unstable();
+        assert_eq!(advertised, ["DELETE", "GET", "PATCH", "POST", "PUT"]);
+    }
 }

@@ -83,3 +83,44 @@ pub fn cors_layer(origins: &str) -> CorsLayer {
             HeaderName::from_static("x-requested-with"),
         ])
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::header::{ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN};
+    use axum::http::{Method, Request, StatusCode};
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    use super::cors_layer;
+    use axum::Router;
+
+    /// Same pin as the agora's: the advertised preflight set must equal the
+    /// table exactly, so dropping a method (the omission that broke the
+    /// agora's provider vault) fails here instead of in a live session.
+    /// The advertised PATCH has no patch route yet; removing it is deferred
+    /// to a future CORS cleanup on purpose.
+    #[tokio::test]
+    async fn preflight_advertises_exactly_the_route_methods() {
+        let app = Router::new()
+            .route("/ping", get(|| async { "ok" }))
+            .layer(cors_layer("https://app.example"));
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .header(ORIGIN, "https://app.example")
+            .header(ACCESS_CONTROL_REQUEST_METHOD, "PUT")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let advertised = response
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_METHODS)
+            .expect("allowed preflight advertises the method list")
+            .to_str()
+            .unwrap();
+        let mut advertised: Vec<&str> = advertised.split(',').map(str::trim).collect();
+        advertised.sort_unstable();
+        assert_eq!(advertised, ["DELETE", "GET", "PATCH", "POST", "PUT"]);
+    }
+}
