@@ -40,9 +40,6 @@ pub enum Commands {
     /// Manage this agent's direct subagents
     #[command(subcommand)]
     Subagent(SubagentCommand),
-    /// Manage directory write-locks (mutual exclusion across agents)
-    #[command(subcommand)]
-    Dirlock(DirlockCommand),
     /// Deliver messages to the user via the relay (the lesche data-plane).
     #[command(subcommand)]
     Lesche(LescheCommand),
@@ -539,39 +536,4 @@ pub enum SubagentCommand {
     Interrupt(IdArgs),
     /// Update a direct subagent's role and/or description
     Metadata(MetadataArgs),
-}
-
-// ---------------------------------------------------------------------------
-// Dirlock commands — directory write-locks (self-scoped via KALLIP_ID)
-// ---------------------------------------------------------------------------
-
-/// Manage this agent's directory write-locks. The acting agent is taken from
-/// the `KALLIP_ID` env var (self-only acquire/release/status); `who` is a
-/// global lookup. Agents drive these through `bash_exec`.
-#[derive(Subcommand)]
-pub enum DirlockCommand {
-    /// Acquire the write-lock on a directory (self). On conflict the tagma
-    /// returns the holder so you can peer-message it to coordinate.
-    Acquire(DirlockPathArgs),
-    /// Release the write-lock on a directory (self). Idempotent.
-    Release(DirlockPathArgs),
-    /// List the directories this agent currently holds write-locks on.
-    Status,
-    /// Show which agent holds the write-lock on a directory (or "unlocked").
-    Who(DirlockDirArgs),
-}
-
-#[derive(Args)]
-pub struct DirlockPathArgs {
-    /// Directory to lock/unlock (absolute or relative to cwd).
-    pub path: String,
-    /// How long (seconds) to retry on conflict before returning the holder.
-    #[arg(long)]
-    pub timeout_secs: Option<u64>,
-}
-
-#[derive(Args)]
-pub struct DirlockDirArgs {
-    /// Directory to query.
-    pub dir: String,
 }

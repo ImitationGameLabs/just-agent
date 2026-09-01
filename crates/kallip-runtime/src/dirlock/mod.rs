@@ -39,7 +39,8 @@
 //!
 //! [`DirLockManager::acquire`] never blocks indefinitely: it returns
 //! [`AcquireOutcome::Busy`] naming the current holder so the caller (typically an
-//! agent running `kallip dirlock acquire` through `bash_exec`) can resolve the
+//! [`AcquireOutcome::Busy`] naming the current holder so the caller (the
+//! lifecycle paths that acquire or re-acquire on an agent's behalf) can
 //! conflict by **inter-agent negotiation** — peer-messaging the holder. There is
 //! deliberately no idle-timeout or max-hold watchdog; a forgotten lock is a
 //! social problem, resolved socially.

@@ -6,12 +6,9 @@ use kallip_common::protocol::ApiError;
 mod agents;
 mod approvals;
 mod budget;
-mod dirlock;
 mod inbox;
 mod lesche;
 mod status;
-
-pub use dirlock::{DirLockAcquireResponse, DirLockWhoResponse};
 
 struct Inner {
     base_url: String,

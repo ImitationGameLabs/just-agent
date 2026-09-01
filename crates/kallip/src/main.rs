@@ -6,9 +6,8 @@ mod skill;
 
 use anyhow::Result;
 use args::{
-    AgentCommand, AgentDirCommand, ApprovalCommand, BudgetCommand, Cli, Commands, DirlockCommand,
-    FileCommand, InboxCommand, LescheCommand, PolicyCommand, ProfileSetCommand, SkillCommand,
-    SubagentCommand,
+    AgentCommand, AgentDirCommand, ApprovalCommand, BudgetCommand, Cli, Commands, FileCommand,
+    InboxCommand, LescheCommand, PolicyCommand, ProfileSetCommand, SkillCommand, SubagentCommand,
 };
 use clap::{CommandFactory, Parser};
 use kallip::file::FilesClient;
@@ -270,39 +269,6 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Dirlock(cmd) => match cmd {
-            DirlockCommand::Acquire(args) => {
-                let id = agent_id_from_env()?;
-                let resp = client
-                    .dirlock_acquire(&id, &args.path, args.timeout_secs)
-                    .await?;
-                if resp.already_held {
-                    println!("Already held.");
-                } else {
-                    println!("Acquired.");
-                }
-            }
-            DirlockCommand::Release(args) => {
-                let id = agent_id_from_env()?;
-                client.dirlock_release(&id, &args.path).await?;
-                println!("Released.");
-            }
-            DirlockCommand::Status => {
-                let id = agent_id_from_env()?;
-                let paths = client.dirlock_status(&id).await?;
-                if paths.is_empty() {
-                    println!("(no locks held)");
-                } else {
-                    for p in paths {
-                        println!("{p}");
-                    }
-                }
-            }
-            DirlockCommand::Who(args) => match client.dirlock_who(&args.dir).await? {
-                Some(holder) => println!("held by {holder}"),
-                None => println!("unlocked"),
-            },
-        },
         Commands::Approval(cmd) => match cmd {
             ApprovalCommand::List(args) => {
                 let status = if args.all {

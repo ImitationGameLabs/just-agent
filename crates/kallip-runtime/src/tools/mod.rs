@@ -83,7 +83,7 @@ pub async fn build_tool_dispatch(inputs: ToolDispatchInputs<'_>) -> Result<ToolD
     // (Linux + `landlock`). The closure composes the decision fresh per spawn.
     // Both classes read broadly; the class distinction is on WRITE and secret
     // visibility:
-    // - **Normal**: writable = its write-locks (held dirlocks) plus `$HOME`
+    // - **Normal**: writable = its task workspace write-lock plus `$HOME`
     //   (home broad-write) and `/dev/shm` (Chromium and similar need writable
     //   POSIX shared memory); secrets readable (a secret-proxy mitigation is
     //   planned in docs/roadmap.md, not yet built). See `normal_extra_writable`
@@ -159,8 +159,8 @@ pub async fn build_tool_dispatch(inputs: ToolDispatchInputs<'_>) -> Result<ToolD
     Ok(dispatch)
 }
 
-/// Extra writable paths granted to **Normal** agents on top of their held
-/// dirlocks — `$HOME` (home broad-write, so `~/.cargo`, `~/.rustup`, ... stay
+/// Extra writable paths granted to **Normal** agents on top of their
+/// task workspace lock — `$HOME` (home broad-write, so `~/.cargo`, `~/.rustup`, ... stay
 /// populatable for build tools) and `/dev/shm`, which tools like
 /// Chromium-backed renderers require (they write well-known prefixes such as
 /// `/dev/shm/.org.chromium.*` directly, so per-agent namespacing would break

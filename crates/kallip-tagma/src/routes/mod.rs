@@ -1,6 +1,5 @@
 pub(crate) mod agent;
 pub(crate) mod budget;
-mod dirlock;
 pub(crate) use agent::ensure_root_agent;
 #[cfg(test)]
 pub(crate) mod approval;
@@ -121,13 +120,6 @@ pub fn router() -> Router<SharedState> {
             "/agents/{id}/inbox/{msg_id}",
             axum::routing::get(inbox::read_inbox_message).put(inbox::mark_done),
         )
-        .route(
-            "/agents/{id}/dirlocks",
-            axum::routing::post(dirlock::acquire)
-                .delete(dirlock::release)
-                .get(dirlock::status),
-        )
-        .route("/dirlocks", axum::routing::get(dirlock::who))
         .route(
             "/budget",
             axum::routing::get(budget::get_budget).post(budget::update_budget),

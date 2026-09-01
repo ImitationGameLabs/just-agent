@@ -8,8 +8,7 @@ description: How to spawn, coordinate, message, and clean up subagents — inclu
 Subagents are the primary way to parallelize work, delegate tasks, and test
 sandboxed environments. This skill covers the full lifecycle: spawn, message,
 monitor, and clean up. For command flags and value types, run
-`kallip --reference` (the `subagent`, `message`, `status`, and `dirlock`
-sections).
+`kallip --reference` (the `subagent`, `message`, and `status` sections).
 
 ## Permission Classes
 
@@ -82,9 +81,11 @@ Supervisor workspace: /project
     └── supervisor CANNOT write /project/other/* (sibling child holds the lock)
 ```
 
-If you need to write to a shared directory, take an explicit dirlock
-(`kallip dirlock acquire` / `release`). On conflict, `acquire` returns the
-holder's agent ID — message it to coordinate.
+Directory write-locks are managed by the system for the lifetime of each
+agent's task (its workspace lock is acquired automatically at spawn and
+re-established on restore). There is no agent-facing lock API: if a write
+is denied as read-only, a lock conflict exists — message the holder's
+supervisor or the operator instead of trying to fix it yourself.
 
 ## Cleanup
 

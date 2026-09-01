@@ -199,11 +199,6 @@ mod tests {
             "kallip subagent remove",
             "kallip subagent interrupt",
             "kallip subagent metadata",
-            // dirlock
-            "kallip dirlock acquire",
-            "kallip dirlock release",
-            "kallip dirlock status",
-            "kallip dirlock who",
             // lesche
             "kallip lesche send",
             // inbox

@@ -135,7 +135,7 @@ impl World {
 
 /// Write a two-set `profiles.toml`: the default set `parent` -> `parent_url`, `subagent`
 /// (subagents) -> `child_url`. Routing a subagent's LLM traffic to a separate
-/// mock server is what makes the dirlock scenario deterministic (parent and
+/// mock server is what makes the scenarios deterministic (parent and
 /// child never contend for the same scripted replies).
 fn write_profiles(world: &World, parent_url: &str, child_url: &str) {
     let toml = format!(
@@ -384,7 +384,7 @@ fn resolve_bin(name: &str) -> PathBuf {
 
 /// The dir holding the workspace binaries -- prepended to the tagma's PATH so
 /// the agent's bash can invoke the `kallip` CLI (used by the normal/dirlock
-/// scenarios via `dirlock`/`subagent`). Derived from the tagma binary's location.
+/// scenarios via `subagent`). Derived from the tagma binary's location.
 fn bin_dir() -> PathBuf {
     resolve_bin("kallip-tagma")
         .parent()

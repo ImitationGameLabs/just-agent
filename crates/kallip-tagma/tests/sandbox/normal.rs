@@ -1,6 +1,6 @@
 //! Scenario 2 -- Normal root agent.
 //!
-//! `$HOME` broad-write, workspace and held dirlocks writable; `/tmp`
+//! `$HOME` broad-write, workspace and home writable; `/tmp`
 //! baseline-writable and `/dev/shm` Normal-extra writable; tagma data tree
 //! read-only (write denied, read ok); `.ssh` and `profiles.toml` readable
 //! (Normal has no hide-holes -- secret protection is Guest-side; this asserts
@@ -25,18 +25,16 @@ async fn scenario2_normal() {
     let agent_data = "$KALLIP_DATA_DIR/agents/$KALLIP_ID";
     let mut script = vec![
         Reply::Tool(format!("echo hello > {}/test.txt", ws.display())), // 0: workspace writable
-        Reply::Tool("kallip dirlock acquire $HOME/writable_subdir".into()), // 1: lock home subdir
-        Reply::Tool("echo y > $HOME/writable_subdir/x".into()),         // 2: now writable
-        Reply::Tool("echo hb > $HOME/scenario2_home.txt".into()), // 3: home broad-write (no lock needed)
-        Reply::Tool("echo t > /tmp/scenario2_tmp".into()),        // 4: /tmp baseline-writable
-        Reply::Tool(format!("echo x >> {agent_data}/meta.json")), // 5: data tree RO
-        Reply::Tool(format!("cat {agent_data}/meta.json")),       // 6: read ok
-        Reply::Tool("ls -A $HOME/.ssh".into()),                   // 7: Normal reads .ssh
-        Reply::Tool("cat $HOME/.ssh/id_testkey".into()),          // 8: contents readable
-        Reply::Tool("cat $KALLIP_DATA_DIR/profiles/profiles.toml".into()), // 9: Normal reads profiles
+        Reply::Tool("echo hb > $HOME/scenario2_home.txt".into()),       // 1: home broad-write
+        Reply::Tool("echo t > /tmp/scenario2_tmp".into()),              // 2: /tmp baseline-writable
+        Reply::Tool(format!("echo x >> {agent_data}/meta.json")),       // 3: data tree RO
+        Reply::Tool(format!("cat {agent_data}/meta.json")),             // 4: read ok
+        Reply::Tool("ls -A $HOME/.ssh".into()),                         // 5: Normal reads .ssh
+        Reply::Tool("cat $HOME/.ssh/id_testkey".into()),                // 6: contents readable
+        Reply::Tool("cat $KALLIP_DATA_DIR/profiles/profiles.toml".into()), // 7: Normal reads profiles
     ];
     if have_shm {
-        script.push(Reply::Tool("echo s > /dev/shm/scenario2_shm".into())); // 10: /dev/shm writable
+        script.push(Reply::Tool("echo s > /dev/shm/scenario2_shm".into())); // 8: /dev/shm writable
     }
     script.push(Reply::End("done"));
 
@@ -50,38 +48,33 @@ async fn scenario2_normal() {
 
     assert_eq!(run.exit, "success", "{}", fx.tagma.diagnostics());
     assert!(
-        results.len() >= 10,
-        "expected >=10 bash results, got {}",
+        results.len() >= 8,
+        "expected >=8 bash results, got {}",
         results.len()
     );
 
     expect(&results, 0, "workspace write", true);
-    // The dirlock on $HOME/writable_subdir is now redundant for the write at
-    // step 2 -- home is broadly writable without it -- but this still asserts
-    // that lock acquire succeeds, which is its own contract.
-    expect(&results, 1, "dirlock acquire home subdir", true);
-    expect(&results, 2, "home subdir write after lock", true);
-    expect(&results, 3, "home broad-write (no lock)", true);
-    expect(&results, 4, "/tmp write", true);
-    expect(&results, 5, "data-tree write denied", false);
-    expect(&results, 6, "data-tree read ok", true);
-    expect(&results, 7, ".ssh ls", true);
+    expect(&results, 1, "home broad-write", true);
+    expect(&results, 2, "/tmp write", true);
+    expect(&results, 3, "data-tree write denied", false);
+    expect(&results, 4, "data-tree read ok", true);
+    expect(&results, 5, ".ssh ls", true);
     // The LLM picks bash_exec's `capture` mode, so read via `text()` (merged /
     // stdout / stderr, whichever the mode surfaced) and match with `contains`.
     assert!(
-        results[7].text().trim().contains("id_testkey"),
+        results[5].text().trim().contains("id_testkey"),
         ".ssh should list id_testkey for Normal, got: {:?}",
-        results[7].text()
+        results[5].text()
     );
-    expect(&results, 8, ".ssh read", true);
+    expect(&results, 6, ".ssh read", true);
     assert!(
-        results[8].text().contains(SECRET_KEY),
+        results[6].text().contains(SECRET_KEY),
         "Normal can read the ssh key (no hide-hole); got: {:?}",
-        results[8].text()
+        results[6].text()
     );
-    expect(&results, 9, "profiles read", true);
+    expect(&results, 7, "profiles read", true);
     if have_shm {
-        expect(&results, 10, "/dev/shm write", true);
+        expect(&results, 8, "/dev/shm write", true);
     }
 
     // FS corroboration.

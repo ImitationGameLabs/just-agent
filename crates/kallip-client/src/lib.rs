@@ -1,7 +1,7 @@
 pub mod client;
 pub mod types;
 
-pub use client::{DirLockAcquireResponse, DirLockWhoResponse, TagmaClient, TagmaClientBuilder};
+pub use client::{TagmaClient, TagmaClientBuilder};
 pub use kallip_common::agentid::AgentId;
 pub use kallip_common::approval::{ApprovalStatus, ToolCallContent};
 pub use kallip_common::policy::{ExecDecision, ExecOverride, ExecPolicy, PolicyPreset};

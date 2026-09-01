@@ -46,9 +46,10 @@ reference pinned:
   defaults to **committed** (awaiting your decision); `--all` for every status.
 - **Budget is tagma-wide, not per-agent.** `kallip budget set 0` pauses **all**
   agents.
-- **Dirlock is cross-agent mutual exclusion.** On `acquire` conflict the tagma
-  returns the holder's agent ID — message it to coordinate. `release` is
-  idempotent.
+- **Workspace write-locks are system-managed.** The tagma grants each agent a
+  task-lifetime lock on its workspace automatically (spawn, restore, and
+  shutdown all handle it); there is no agent-facing lock API. If a write is
+  denied as read-only, report it to the operator.
 - **Subagent scoping (server-enforced):** `spawn` / `metadata` are restricted
   to the **direct supervisor**; `remove` / `interrupt` are open to any
   **ancestor**. `spawn --role` is **required at runtime by the tagma** even

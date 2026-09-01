@@ -1,8 +1,8 @@
-//! Scenario 3 -- Subagent + nested dirlock + mutual exclusion.
+//! Scenario 3 -- Subagent + nested workspace + mutual exclusion.
 //!
 //! A child's nested workspace becomes a readonly hole to the parent via the
 //! delegation carve, while the parent keeps writing its own workspace; a second
-//! subagent locking an overlapping path is rejected (409).
+//! subagent claiming an overlapping workspace path is rejected (409).
 
 use super::harness::*;
 

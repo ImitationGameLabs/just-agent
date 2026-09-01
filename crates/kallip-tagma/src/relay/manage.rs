@@ -251,8 +251,8 @@ mod tests {
     #[tokio::test]
     async fn manage_router_exposes_operator_subset_only() {
         // Real tagma routes the management plane deliberately does NOT relay:
-        // agent creation, approvals, dirlocks, and per-agent inbox/
-        // exec-policy/permissions surfaces. Each must 404 — the subset
+        // agent creation, approvals, and per-agent inbox/exec-policy/permissions
+        // surfaces (the dirlock routes no longer exist). Each must 404 — the subset
         // boundary is a contract, not an accident of the route table.
         let state = make_state();
         let id = "00000000-0000-0000-0000-000000000000";

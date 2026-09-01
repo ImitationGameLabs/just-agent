@@ -14,17 +14,17 @@
 //! - [`harness`] -- shared machinery (on-disk world, wiremock scripting, tagma
 //!   + runner subprocess control, history/assertion helpers).
 //! - [`guest`] / [`normal`] / [`dirlock`] / [`guest_spawn`] -- the scenario
-//!   bodies, one per permission/dirlock concern.
+//!   bodies, one per permission/workspace-isolation concern.
 //!
 //!  1. **Guest** root agent -- secrets hidden (`.ssh` empty tmpfs), writes
 //!     denied everywhere (Guest is read-only).
-//!  2. **Normal** root agent -- workspace/home-lock/`/tmp` writable; tagma data
+//!  2. **Normal** root agent -- workspace/home/`/tmp` writable; tagma data
 //!     tree read-only (read ok, write denied); `.ssh` and `profiles.toml`
 //!     readable (Normal has no hide-holes).
-//!  3. **Subagent + dirlock** -- a child's nested workspace becomes a readonly
-//!     hole to the parent (delegation carve), while the parent keeps writing its
-//!     own workspace; a second subagent locking an overlapping path is rejected
-//!     (409).
+//!  3. **Subagent + nested workspace** -- a child's nested workspace becomes a
+//!     readonly hole to the parent (delegation carve), while the parent keeps
+//!     writing its own workspace; a second subagent claiming an overlapping
+//!     workspace path is rejected (409).
 //!  4. **Guest subagent spawn** -- a Normal parent explicitly downgrades a
 //!     subagent to `guest` via `--permission-class`; the granted class is
 //!     persisted, and a bad spelling is rejected by the CLI.

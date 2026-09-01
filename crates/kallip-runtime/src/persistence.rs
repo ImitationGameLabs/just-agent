@@ -1019,10 +1019,9 @@ const RESTART_MESSAGE: &str = concat!(
     "Agent restored from a previous state. Shell sessions have been reset \u{2014}\n",
     "environment variables, working directory, and background processes are no\n",
     "longer available. Review the current state of the project and re-establish\n",
-    "any necessary conditions before continuing.\n",
-    "Directory write-locks do not survive a tagma restart: all locks were\n",
-    "released. Re-acquire any locks you still need (`kallip dirlock acquire\n",
-    "<dir>`) before writing shared directories."
+    "any necessary conditions before continuing. Directory write-locks are managed by\n",
+    "the system for the lifetime of your task and were re-established on restore; they\n",
+    "need no action from you.\n"
 );
 
 #[cfg(test)]
