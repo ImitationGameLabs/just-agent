@@ -944,7 +944,8 @@ async fn handle_user_op_skips_room_path_for_non_joined_room() {
 /// human peer, and `ciphertext` is the RAW `RoomMessage` JSON (the room path
 /// treats `ciphertext.0` as plaintext -- no bilateral decrypt).
 fn room_envelope(room: &RoomId, text: &str, handle: &str) -> Envelope {
-    let plaintext = serde_json::to_vec(&RoomMessage { text: text.into() }).unwrap();
+    let plaintext =
+        serde_json::to_vec(&RoomMessage { text: text.into(), attachment: None }).unwrap();
     Envelope {
         channel_id: ChannelId::from(room.as_ref().to_string()),
         sender: Participant {

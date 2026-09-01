@@ -36,7 +36,7 @@ impl RelayHandle {
                 return;
             }
         };
-        let RoomMessage { text } = request;
+        let RoomMessage { text, .. } = request;
         // The sender identity is non-forgeable: it is the relay-authenticated
         // `envelope.sender.id` (the lesche validates id + kind against the
         // authed principal before stamping the row), decoded here as the
