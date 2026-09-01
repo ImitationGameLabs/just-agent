@@ -35,5 +35,8 @@
   "chat_attachment_retry": "Retry upload",
   "chat_attachment_too_large": "{name} is over the {max} limit.",
   "chat_file_download_aria": "Download {name}",
-  "chat_file_unreadable": "This file is not available for download."
+  "chat_file_unreadable": "This file is not available for download.",
+  "chat_attachments_aria": "Attachments",
+  "chat_attachment_remove": "Remove {name}",
+  "chat_file_size_bytes": "{size} bytes"
 }

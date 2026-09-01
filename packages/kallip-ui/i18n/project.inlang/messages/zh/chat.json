@@ -35,5 +35,8 @@
   "chat_attachment_retry": "重试上传",
   "chat_attachment_too_large": "{name} 超过 {max} 上限。",
   "chat_file_download_aria": "下载 {name}",
-  "chat_file_unreadable": "该文件无法下载。"
+  "chat_file_unreadable": "该文件无法下载。",
+  "chat_attachments_aria": "附件",
+  "chat_attachment_remove": "移除 {name}",
+  "chat_file_size_bytes": "{size} 字节"
 }

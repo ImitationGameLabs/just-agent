@@ -19,6 +19,7 @@
   import {
     chat_file_download_aria,
     chat_file_unreadable,
+    chat_file_size_bytes,
   } from "../paraglide/messages.js";
 
   let {
@@ -62,7 +63,6 @@
   function toggleRaw(): void {
     raw = !raw;
     if (box && actions) pin?.(box, actions);
-    if (box && actions) pin?.(box, actions);
   }
 
   // A failed download renders inline (unavailable) -- never a dialog or a
@@ -71,6 +71,7 @@
 
   async function download(): Promise<void> {
     if (!attachment || !downloadAttachment) return;
+    downloadFailed = false;
     try {
       await downloadAttachment(attachment);
     } catch {
@@ -93,7 +94,9 @@
     >
       <File class="size-4 shrink-0 opacity-70" aria-hidden="true" />
       <span class="min-w-0 flex-1 truncate">{attachment.name}</span>
-      <span class="shrink-0 text-xs opacity-60">{attachment.size} bytes</span>
+      <span class="shrink-0 text-xs opacity-60"
+        >{chat_file_size_bytes({ size: attachment.size })}</span
+      >
       {#if downloadAttachment}
         <button
           type="button"

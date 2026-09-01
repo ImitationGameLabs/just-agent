@@ -5,6 +5,9 @@
     chat_attachment_retry,
     chat_attachment_too_large,
     chat_attachment_uploading,
+    chat_attachments_aria,
+    chat_attachment_remove,
+    chat_file_size_bytes,
   } from "../paraglide/messages.js";
   import type { AttachmentItem } from "../lib/attachments";
 
@@ -23,7 +26,7 @@
   <!-- Below the input card, above the notice row: one row per picked file,
        so multi-select stays scannable and each item carries its own state
        (the composer spec's per-item status machine). -->
-  <ul class="mt-1.5 space-y-1" aria-label="attachments">
+  <ul class="mt-1.5 space-y-1" aria-label={chat_attachments_aria()}>
     {#each items as item (item.id)}
       <li
         class="flex items-center gap-2 rounded-xl border border-surface-300-700 px-2.5 py-1.5 text-sm"
@@ -36,7 +39,9 @@
             {chat_attachment_uploading({ name: item.name })}
           </span>
         {:else if item.status === "ready"}
-          <span class="text-xs opacity-60">{item.size} bytes</span>
+          <span class="text-xs opacity-60"
+            >{chat_file_size_bytes({ size: item.size })}</span
+          >
         {:else if item.status === "too_large"}
           <span class="text-xs text-error-500">
             {chat_attachment_too_large({ name: item.name, max: "100 MB" })}
@@ -57,7 +62,7 @@
         <button
           type="button"
           class="shrink-0 opacity-60 hover:opacity-100 cursor-pointer"
-          aria-label="remove {item.name}"
+          aria-label={chat_attachment_remove({ name: item.name })}
           onclick={() => onRemove(item.id)}
         >
           <X class="size-4" aria-hidden="true" />
