@@ -29,6 +29,7 @@
     isLocked,
     type PushCandidate,
   } from "../../lib/instances/credentialPush.ts";
+  import { copyText } from "../../lib/clipboard.ts";
   import {
     common_cancel,
     common_copy,
@@ -162,13 +163,11 @@
 
   async function copy(): Promise<void> {
     if (!minted) return;
-    try {
-      await navigator.clipboard.writeText(minted.code);
+    if (await copyText(minted.code)) {
       copied = true;
       setTimeout(() => (copied = false), 2000);
-    } catch {
-      // Clipboard may be unavailable; the plaintext stays selectable.
     }
+    // On copy failure the minted code stays selectable as a manual fallback.
   }
 
   function submit(): void {

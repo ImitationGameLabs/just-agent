@@ -10,6 +10,7 @@
     pairSecondsRemaining,
     type PairingCodeView,
   } from "../../lib/passkeys.svelte.ts";
+  import { copyText } from "../../lib/clipboard.ts";
   import {
     settings_pair_qr_alt,
     settings_pair_show,
@@ -76,12 +77,9 @@
 
   async function copy() {
     if (!view) return;
-    try {
-      await navigator.clipboard.writeText(view.code);
+    if (await copyText(view.code)) {
       copied = true;
       setTimeout(() => (copied = false), 2000);
-    } catch {
-      // Clipboard may be unavailable; ignore.
     }
   }
 </script>

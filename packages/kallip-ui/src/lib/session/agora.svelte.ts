@@ -17,6 +17,7 @@
 // package does not read import.meta.env (which is only typed in a SvelteKit
 // app, not a library).
 
+import { copyText } from "../clipboard.ts";
 import {
   addPasskey,
   adminLoginWithKey,
@@ -911,15 +912,11 @@ class AgoraSessionStore {
   }
   /** Copy a just-minted secret to the clipboard and flash the card's "Copied". */
   async copySecret(id: string, secret: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(secret);
-      this.copiedCodeId = id;
-      setTimeout(() => {
-        if (this.copiedCodeId === id) this.copiedCodeId = null;
-      }, 2000);
-    } catch {
-      // Clipboard may be unavailable (permissions, non-secure context); ignore.
-    }
+    if (!(await copyText(secret))) return;
+    this.copiedCodeId = id;
+    setTimeout(() => {
+      if (this.copiedCodeId === id) this.copiedCodeId = null;
+    }, 2000);
   }
 
   /** Drop all local state (logout). */
