@@ -12,7 +12,7 @@
   // scroll is the shared `createAutoScroll`. A poll pump refreshes the history
   // + roster on a slow cadence (the room_membership_changed SSE nudge is the
   // fast path; the poll is the dropped-frame backstop).
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { Settings, Users, X } from "@lucide/svelte";
   import Composer from "../components/Composer.svelte";
   import MessageBubble from "../components/MessageBubble.svelte";
@@ -85,16 +85,25 @@
   // and bakes wrong `mine` flags into the rendered lines. open() is idempotent
   // and re-opens from an error state, so re-firing once ready recovers it.
   // Refresh the roster alongside for an at-once member count.
+  //
+  // The store calls are commands keyed on the participant id, not reactive
+  // derivations, so they run inside `untrack`: enter() reads the very entry
+  // fields it resets, and the cleanup's leaveRoom() advances them -- tracked,
+  // every unread-store write re-fired this effect, and with two instances of
+  // the page mounted the interleaved cleanup writes drove the knownSeq
+  // ping-pong into effect_update_depth_exceeded (operator live log 2026-09-01).
   $effect(() => {
     if (!agoraSession.participantId) return;
-    void roomConversationsStore.open(roomId);
-    // Viewing (plan q-M4): an explicitly opened room page clears its badge
-    // and starts the cursor-write schedule; the cleanup (unmount or a
-    // participantId re-fire) syncs the watermark to the conversation's live
-    // cursor and flushes the write.
-    unreadStore.enter(roomKey(roomId));
-    void roomConversationsStore.refreshRoster(roomId);
-    return () => unreadStore.leaveRoom(roomId, conv?.lastSeq);
+    untrack(() => {
+      void roomConversationsStore.open(roomId);
+      // Viewing (plan q-M4): an explicitly opened room page clears its badge
+      // and starts the cursor-write schedule; the cleanup (unmount or a
+      // participantId re-fire) syncs the watermark to the conversation's live
+      // cursor and flushes the write.
+      unreadStore.enter(roomKey(roomId));
+      void roomConversationsStore.refreshRoster(roomId);
+    });
+    return () => untrack(() => unreadStore.leaveRoom(roomId, conv?.lastSeq));
   });
 
   // Slow poll: the dropped-frame backstop for the room_membership_changed
@@ -123,9 +132,18 @@
   // The viewing line tick: lines rendered on the open conversation count as
   // read and coalesce the cursor write into the 5s throttle window (plan:
   // a busy chat must not POST per line; the leave path flushes).
+  //
+  // Only the rendered-line count is the trigger. noteViewedLines runs inside
+  // `untrack`: its internal knownSeq fence reads the same entry field the
+  // call may write, and a tracked read there let store writes re-invoke this
+  // effect mid-flush (the write/read ping-pong with the mount effect's
+  // cleanup above). Lines and lastSeq advance together, so the count alone
+  // is a sound tick.
   $effect(() => {
-    void conv?.lines.length;
-    unreadStore.noteViewedLines(roomId, conv?.lastSeq ?? null);
+    if (conv?.lines.length === undefined) return;
+    untrack(() => {
+      unreadStore.noteViewedLines(roomId, conv?.lastSeq ?? null);
+    });
   });
 
   // One scroll-pin controller for the whole room transcript (a single active

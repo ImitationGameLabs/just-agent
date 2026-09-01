@@ -53,7 +53,16 @@ pub fn cors_layer(origins: &str) -> CorsLayer {
         // `Access-Control-Allow-Credentials: true` together with a wildcard
         // (`Allow-Methods: *`), and tower-http panics at layer construction if
         // they're combined.
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+        // PUT is the room read-cursor write (the web app's unread sync);
+        // without it the browser rejects the preflight and the cursor write
+        // never lands.
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+        ])
         // Allow credentialed (cookie-bearing) cross-origin requests so the web
         // app -- served from a different origin than the lesche -- can send the
         // `kallip_session` cookie with `credentials: "include"`. Safe because
