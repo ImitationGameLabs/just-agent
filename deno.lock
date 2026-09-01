@@ -2080,6 +2080,13 @@
           ]
         }
       },
+      "packages/kallip-files-client": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@jsr/std__assert@^1.0.19"
+          ]
+        }
+      },
       "packages/kallip-lesche-client": {
         "packageJson": {
           "dependencies": [

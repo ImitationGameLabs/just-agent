@@ -15,9 +15,6 @@
 // wire shape is a coordinated Rust+TS contract: a Rust change is a same-commit
 // change on both sides.
 
-/** A decoded inbound room message. A payload that is not a `{ text }` object
- * (malformed JSON, or a future fielded shape) is surfaced as `unknown` so the
- * transcript can warn-drop it rather than mis-render. */
 /** A file the sender attached: where it lives in the files service (the
  * record the sender uploaded/delivered) plus the display facts a file card
  * needs without a round trip. Mirrors the Rust `RoomAttachment`
@@ -28,6 +25,9 @@ export interface RoomAttachment {
   readonly size: number;
 }
 
+/** A decoded inbound room message. A payload that is not a `{ text }` object
+ * (malformed JSON, or a future fielded shape) is surfaced as `unknown` so the
+ * transcript can warn-drop it rather than mis-render. */
 export type RoomMessage =
   | {
       readonly op: "message";
