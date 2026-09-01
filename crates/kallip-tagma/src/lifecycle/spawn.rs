@@ -386,6 +386,11 @@ pub(crate) async fn watch_agent_task(
             *registry.get_mut(&agent_id).expect("entry borrowed above") =
                 RegistryEntry::Faulted(faulted);
             tracing::error!(id = %agent_id, reason = %detail, "agent task panicked, entry marked faulted");
+            // The dead task's directory write-locks must not outlive the Live
+            // entry: a Faulted agent holds nothing (mirroring
+            // remove/reactivation), else ghost locks block peers and keep
+            // carving readonly holes into their views forever.
+            state.lock_manager.release_all(&agent_id);
         }
     }
 }
@@ -701,6 +706,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn panicking_agent_task_releases_directory_locks_on_fault() {
+        let state = make_state();
+        let id = AgentId::from("panic-2".to_owned());
+        let ws = tempfile::tempdir().expect("scratch workspace dir");
+        {
+            let mut registry = state.registry.write().await;
+            registry.register(id.clone(), RegistryEntry::Live(live_entry_with_child()));
+        }
+        state
+            .lock_manager
+            .acquire(&id, ws.path(), &[])
+            .expect("pre-fault workspace lock");
+        let task = tokio::spawn(async {
+            panic!("boom");
+        });
+        watch_agent_task(state.clone(), id.clone(), task).await;
+        let holder = state.lock_manager.holder(ws.path()).expect("lock table");
+        assert!(
+            holder.is_none(),
+            "a faulted agent must hold no directory locks, found {holder:?}"
+        );
+        assert!(
+            state
+                .lock_manager
+                .write_paths(&id)
+                .expect("lock table")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn panicking_agent_task_becomes_faulted_in_place() {
         let state = make_state();
         let id = AgentId::from("panic-1".to_owned());
@@ -727,6 +763,11 @@ mod tests {
     async fn clean_exit_and_abort_leave_the_live_entry_untouched() {
         let state = make_state();
         let id = AgentId::from("clean-1".to_owned());
+        let ws = tempfile::tempdir().expect("scratch workspace dir");
+        state
+            .lock_manager
+            .acquire(&id, ws.path(), &[])
+            .expect("task-lifetime workspace lock");
         {
             let mut registry = state.registry.write().await;
             registry.register(id.clone(), RegistryEntry::Live(live_entry_with_child()));
@@ -744,6 +785,12 @@ mod tests {
         assert!(
             matches!(registry.get(&id), Some(RegistryEntry::Live(_))),
             "intentional stops must not fault the agent"
+        );
+        let holder = state.lock_manager.holder(ws.path()).expect("lock table");
+        assert_eq!(
+            holder.as_ref(),
+            Some(&id),
+            "clean exit and abort must not release the task-lifetime lock"
         );
     }
 }
