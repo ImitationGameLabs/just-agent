@@ -44,6 +44,7 @@ import type {
 import type {
   CachedLine,
   HistoryEntry,
+  MessageAttachment,
   Participant,
   TagmaReply,
 } from "@kallipai/kallip-lesche-client";
@@ -76,6 +77,7 @@ export function cachedLineToLine(c: CachedLine): ConversationLine {
     text: c.text,
     sender: c.sender,
     createdAt: c.createdAt,
+    attachment: c.attachment,
   };
 }
 /** Transport-status surface: the sidebar dot + the chat-page disabled gate. */
@@ -121,7 +123,9 @@ export abstract class ConversationBase {
   /** Rendered optimistic user lines awaiting their POST. Each entry's line is
    *  already in `transcript` (status "sending"); the single-in-flight send pump
    *  drains this one ack at a time. */
-  pending = $state<{ localId: number; text: string }[]>([]);
+  pending = $state<
+    { localId: number; text: string; attachment?: MessageAttachment }[]
+  >([]);
   /** The ONE in-flight POST (its `user_message` frame has not landed): its
    *  synthetic id + sent text, or null when the pump is idle. The text lets the
    *  promotion branch correlate the echo to this exact send, so a history-replay
@@ -180,17 +184,19 @@ export abstract class ConversationBase {
   /** Send a user message. Renders the optimistic line and hands off to the
    *  shared single-in-flight send pump (the in-flight POST's `user_message` frame
    *  promotes the line via `applyReplyCore`). */
-  send(text: string): void {
+  send(text: string, attachment?: MessageAttachment): void {
     const trimmed = text.trim();
-    if (!this.transport || trimmed === "") return;
+    if (!this.transport) return;
+    if (trimmed === "" && attachment === undefined) return;
     const localId = (this.syntheticSeq -= 1);
     this.transcript = withUserLine(
       this.transcript,
       trimmed,
       localId,
       this.localSender,
+      attachment,
     );
-    this.pending = [...this.pending, { localId, text: trimmed }];
+    this.pending = [...this.pending, { localId, text: trimmed, attachment }];
     void this.pumpPending();
   }
 
@@ -276,6 +282,7 @@ export abstract class ConversationBase {
             text: confirmed.text,
             sender: wireSender,
             createdAt: confirmed.createdAt,
+            attachment: confirmed.attachment,
           });
         }
         if (ackId > this.maxRendered) this.maxRendered = ackId;
@@ -311,6 +318,7 @@ export abstract class ConversationBase {
         text: cl.text,
         sender: cl.sender,
         createdAt: cl.createdAt,
+        attachment: cl.attachment,
       });
       if (cl.historyId > this.maxRendered) this.maxRendered = cl.historyId;
     }
@@ -327,7 +335,7 @@ export abstract class ConversationBase {
     if (next === undefined) return;
     this.pendingInFlight = { localId: next.localId, text: next.text };
     try {
-      const reqId = await this.transport!.send(next.text);
+      const reqId = await this.transport!.send(next.text, next.attachment);
       // The channel stamps this send's req_id on accept; the reply-side
       // error correlation (applyReplyCore) closes the line on it.
       if (this.pendingInFlight) {

@@ -297,6 +297,7 @@ Deno.test(
       "  hi there  ",
       -1,
       userS,
+      undefined,
       new Date("2026-08-22T05:10:23.456Z"),
     );
     assertEquals(t.status, "busy");
@@ -615,3 +616,96 @@ Deno.test("historyEntryLine skips non-content and unstamped rows", () => {
     null,
   );
 });
+
+Deno.test("attachment-only sends keep their optimistic line", () => {
+  const att = { record_id: "rec-1", name: "notes.txt", size: 3 };
+  const t = withUserLine(
+    EMPTY_TRANSCRIPT,
+    "",
+    -1,
+    userS,
+    att,
+    new Date("2026-08-22T05:10:23.456Z"),
+  );
+  assertEquals(t.status, "busy");
+  assertEquals(t.lines, [
+    {
+      historyId: -1,
+      role: "user",
+      text: "",
+      sender: userS,
+      createdAt: "2026-08-22T05:10:23.456Z",
+      status: "sending",
+      attachment: att,
+    },
+  ]);
+  // Whitespace-only without an attachment is still a no-op.
+  assertEquals(
+    withUserLine(EMPTY_TRANSCRIPT, "   ", -2, userS),
+    EMPTY_TRANSCRIPT,
+  );
+});
+
+Deno.test("user_message replay with an attachment and no text is kept", () => {
+  const att = { record_id: "rec-2", name: "data.bin", size: 7 };
+  const t = applyTagmaReply(
+    EMPTY_TRANSCRIPT,
+    {
+      kind: "user_message",
+      history_id: 9,
+      text: "",
+      created_at: "2026-09-01T10:00:00Z",
+      attachment: att,
+    },
+    userP,
+    9,
+  );
+  assertEquals(t.lines, [
+    {
+      historyId: 9,
+      role: "user",
+      text: "",
+      sender: userS,
+      createdAt: "2026-09-01T10:00:00Z",
+      attachment: att,
+    },
+  ]);
+});
+
+Deno.test(
+  "historyEntryLine keeps an attachment-only row, drops bare empties",
+  () => {
+    const att = { record_id: "rec-3", name: "a.png", size: 1 };
+    const kept = historyEntryLine({
+      sender: userP,
+      reply: {
+        kind: "user_message",
+        history_id: 11,
+        text: " ",
+        created_at: "2026-09-01T10:00:00Z",
+        attachment: att,
+      },
+    });
+    assertEquals(kept, {
+      historyId: 11,
+      role: "user",
+      text: "",
+      sender: userS,
+      createdAt: "2026-09-01T10:00:00Z",
+      attachment: att,
+    });
+    // An empty row without an attachment stays non-content.
+    assertEquals(
+      historyEntryLine({
+        sender: userP,
+        reply: {
+          kind: "user_message",
+          history_id: 12,
+          text: " ",
+          created_at: "2026-09-01T10:00:00Z",
+        },
+      }),
+      null,
+    );
+  },
+);

@@ -25,6 +25,7 @@
 import type {
   AuthoredEvent,
   HistoryEntry,
+  MessageAttachment,
   Participant,
   SignalEvent,
   TagmaReply,
@@ -91,6 +92,10 @@ export interface ConversationLine {
    * for confirmed/replayed lines and for all non-user lines; `"sending"` from
    * the moment the line is rendered until its `MessageAccepted` ack lands. */
   readonly status?: "sending" | "sent";
+  /** The file attached to this message, when the sender shared one (an
+   *  optimistic user line that carries it, or a replayed user row). Rendered
+   *  as a file card; absent on plain-text lines and system/error lines. */
+  readonly attachment?: MessageAttachment;
 }
 
 type ConversationStatus = "idle" | "busy" | "error";
@@ -109,7 +114,7 @@ export const EMPTY_TRANSCRIPT: ConversationTranscript = {
 };
 
 /** Append one line with an explicit `historyId`, preserving status + error.
- * No-op for empty/whitespace text. */
+ * No-op for empty/whitespace text unless an attachment rides along. */
 function line(
   state: ConversationTranscript,
   historyId: number,
@@ -117,14 +122,22 @@ function line(
   text: string,
   sender: ConversationSender | undefined,
   createdAt?: string,
+  attachment?: MessageAttachment,
 ): ConversationTranscript {
   const trimmed = text.trim();
-  if (trimmed === "") return state;
+  if (trimmed === "" && attachment === undefined) return state;
   return {
     ...state,
     lines: [
       ...state.lines,
-      { historyId, role, text: trimmed, sender, createdAt },
+      {
+        historyId,
+        role,
+        text: trimmed,
+        sender,
+        createdAt,
+        ...(attachment !== undefined ? { attachment } : {}),
+      },
     ],
   };
 }
@@ -171,6 +184,7 @@ export function applyTagmaReply(
         reply.text,
         cs,
         reply.created_at,
+        reply.attachment,
       );
     case "event":
       return applyAuthored(state, reply.event, cs, lineId, reply.created_at);
@@ -215,13 +229,16 @@ export function historyEntryLine(entry: HistoryEntry): ConversationLine | null {
     const historyId = reply.history_id ?? 0;
     if (historyId <= 0) return null;
     const text = reply.text.trim();
-    if (text === "") return null;
+    if (text === "" && reply.attachment === undefined) return null;
     return {
       historyId,
       role: "user",
       text,
       sender: cs,
       createdAt: reply.created_at,
+      ...(reply.attachment !== undefined
+        ? { attachment: reply.attachment }
+        : {}),
     };
   }
   return null;
@@ -343,10 +360,11 @@ export function withUserLine(
   text: string,
   localId: number,
   sender: ConversationSender,
+  attachment?: MessageAttachment,
   now: Date = new Date(),
 ): ConversationTranscript {
   const trimmed = text.trim();
-  if (trimmed === "") return state;
+  if (trimmed === "" && attachment === undefined) return state;
   return {
     ...state,
     lines: [
@@ -361,6 +379,7 @@ export function withUserLine(
         // precision gap is invisible to the minute-granularity formatter.
         createdAt: now.toISOString(),
         status: "sending",
+        ...(attachment !== undefined ? { attachment } : {}),
       },
     ],
     status: "busy",
@@ -474,6 +493,7 @@ export function cacheLineOf(
   text: string;
   sender?: ConversationSender;
   createdAt?: string;
+  attachment?: MessageAttachment;
 } | null {
   const cs = sender ? toSender(sender) : undefined;
   if (reply.kind === "user_message") {
@@ -484,6 +504,9 @@ export function cacheLineOf(
           text: reply.text,
           sender: cs,
           createdAt: reply.created_at,
+          ...(reply.attachment !== undefined
+            ? { attachment: reply.attachment }
+            : {}),
         }
       : null;
   }

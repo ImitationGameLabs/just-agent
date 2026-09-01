@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ArrowUp, Paperclip } from "@lucide/svelte";
+  import type { Snippet } from "svelte";
   import type { ComposerModel } from "../lib/composer.svelte";
   import {
     composer_placeholder,
@@ -17,6 +18,7 @@
     pendingCount,
     disabledNotice,
     fileButton,
+    attachmentBar,
   }: {
     composer: ComposerModel;
     disabled: boolean;
@@ -26,6 +28,10 @@
     // -- correct for the bilateral (offline-tagma) chat surface, wrong for a
     // room error, so the room page passes a room-appropriate string here.
     disabledNotice?: string;
+    // Optional snippet rendered just under the input card (the attachment
+    // bar). The page owns the items and handlers; the composer only
+    // places it.
+    attachmentBar?: Snippet;
     // Optional file-attach affordance. When omitted (the default) the
     // button never renders -- the room page's shape (zero half-built
     // semantics where file sending is out of scope). The page owns the
@@ -191,6 +197,7 @@
         {@render sendButton()}
       </div>
     </div>
+    {#if attachmentBar}{@render attachmentBar()}{/if}
 
     {#if pendingCount > 0}
       <div class="mt-1.5 text-xs opacity-60">

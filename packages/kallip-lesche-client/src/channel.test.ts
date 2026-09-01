@@ -409,3 +409,34 @@ Deno.test("close() rejects pending manage() promises", async () => {
     );
   }
 });
+
+Deno.test("send carries the attachment on the send_message op", async () => {
+  const { lesche, pinnedKeyB64, setChannel, lastRequest } = makeMock(
+    ed25519.utils.randomSecretKey(),
+    "tagma-att",
+    "conv-att",
+  );
+  const channel = await openRelayChannel(
+    lesche as unknown as LescheClient,
+    "tagma-att",
+    "u",
+    "Alice",
+    pinnedKeyB64,
+  );
+  setChannel(channel);
+
+  // Attachment-only send: empty text, the file reference rides along.
+  await channel.send("", { record_id: "rec-1", name: "notes.txt", size: 3 });
+
+  const req = lastRequest();
+  if (req?.op !== "send_message") {
+    throw new Error(`expected send_message, got ${req?.op}`);
+  }
+  assertEquals(req.text, "");
+  assertEquals(req.attachment, {
+    record_id: "rec-1",
+    name: "notes.txt",
+    size: 3,
+  });
+  channel.close();
+});

@@ -9,6 +9,10 @@ export interface ComposerOptions {
   readonly send: (text: string) => void | Promise<void>;
   /** Whether submission is currently permitted (connected, not busy). */
   readonly canSubmit: () => boolean;
+  /** Allow submission with an empty draft (an attachment-only send,
+   * gated on all uploads being ready by the page's predicate). Omitted,
+   * the non-empty draft rule holds. */
+  readonly allowEmpty?: () => boolean;
 }
 
 export interface ComposerModel {
@@ -43,14 +47,20 @@ export function createComposer(options: ComposerOptions): ComposerModel {
       return sending;
     },
     get canSend() {
-      return options.canSubmit() && draft.trim().length > 0;
+      return (
+        options.canSubmit() &&
+        (draft.trim().length > 0 || (options.allowEmpty?.() ?? false))
+      );
     },
     requestFocus() {
       focusToken += 1;
     },
     async submit() {
       const value = draft.trim();
-      if (!value || !options.canSubmit() || sending) return;
+      // allowEmpty lifts the non-empty rule (attachment-only sends once
+      // every upload is ready); the default keeps the historical gate.
+      const emptyOk = options.allowEmpty?.() ?? false;
+      if ((!value && !emptyOk) || !options.canSubmit() || sending) return;
       sending = true;
       draft = "";
       try {

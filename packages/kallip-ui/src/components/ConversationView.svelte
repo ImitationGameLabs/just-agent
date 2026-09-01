@@ -34,6 +34,8 @@
     loadOlder,
     hasMoreOlder,
     loadingOlder,
+    fileButton,
+    attachmentBar,
   }: {
     lines: ConversationLine[];
     status: ConversationTranscript["status"];
@@ -50,6 +52,12 @@
     hasMoreOlder?: boolean;
     /** True while a page is in flight (single-flight lives in the store). */
     loadingOlder?: boolean;
+    /** Optional attachment bar snippet, placed under the composer's input
+     *  card (page-owned items/handlers; forwarded verbatim). */
+    attachmentBar?: Snippet;
+    /** Optional file-attach affordance, forwarded to the composer verbatim
+     *  (omitted = the button never renders). */
+    fileButton?: { onFilesPicked: (files: File[]) => void };
 
     /** Optional page-supplied notice rendered inside the scrollable transcript
      *  (after the inline error), so it scrolls with the messages. Used for the
@@ -211,4 +219,4 @@
     {@render notice?.()}
   </div>
 </div>
-<Composer {composer} {disabled} {pendingCount} />
+<Composer {composer} {disabled} {pendingCount} {attachmentBar} {fileButton} />

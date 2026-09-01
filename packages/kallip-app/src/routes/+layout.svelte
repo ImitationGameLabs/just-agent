@@ -7,6 +7,7 @@
     initShell,
     initAgora,
     initConfigStorage,
+    initFiles,
     initNotificationBackend,
     initInstances,
     initLesche,
@@ -35,6 +36,7 @@
   initShell(goto);
   initAgora(import.meta.env.VITE_AGORA_URL ?? "http://localhost:7100");
   initLesche(import.meta.env.VITE_LESCHE_URL ?? "http://localhost:7200");
+  initFiles(import.meta.env.VITE_FILES_URL ?? "http://localhost:7400");
   initConfigStorage(localStorageConfigStorage);
   initNotificationBackend(tauriNotificationBackend);
   initInstances(

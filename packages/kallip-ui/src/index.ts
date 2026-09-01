@@ -34,7 +34,11 @@ export {
   setOfflineOnlyShell,
   shellMode,
 } from "./lib/shell/port.ts";
-export { initAgora, initLesche } from "./lib/session/agora.svelte.ts";
+export {
+  initAgora,
+  initFiles,
+  initLesche,
+} from "./lib/session/agora.svelte.ts";
 export { initInstances } from "./lib/instances/client.ts";
 export {
   initConfigStorage,

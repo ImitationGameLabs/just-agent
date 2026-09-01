@@ -8,6 +8,7 @@
   // the Conversation, so online and offline render identically.
   import ConversationView from "../components/ConversationView.svelte";
   import TagmaStatusHeader from "../components/TagmaStatusHeader.svelte";
+  import AttachmentBar from "../components/AttachmentBar.svelte";
   import { createComposer } from "../lib/composer.svelte.ts";
   import { bindDraft } from "../lib/session/drafts.svelte.ts";
   import { RelayConversation } from "../lib/session/conversation.svelte.ts";
@@ -16,6 +17,17 @@
   import { managementBackend } from "../lib/manage/client.ts";
   import { convDraftKey, tagmaDraftKey } from "../lib/session/drafts.ts";
   import { channelsStore } from "../lib/session/channels.svelte";
+  import {
+    filesClientOrFail,
+    agoraSession,
+  } from "../lib/session/agora.svelte.ts";
+  import {
+    allReady,
+    isTooLarge,
+    newAttachment,
+    type AttachmentItem,
+  } from "../lib/attachments.ts";
+  import type { MessageAttachment } from "@kallipai/kallip-lesche-client";
   import { ConversationBase } from "../lib/session/conversation.svelte.ts";
   import { unreadStore, tagmaKey } from "../lib/session/unread.svelte.ts";
   import { navigate } from "../lib/shell/port.ts";
@@ -68,12 +80,102 @@
       : {},
   );
 
+  // --- attachments (relay 1:1 only; the file button stays off otherwise) ---
+  // Picked files upload at once (shared-space put, then inbox delivery);
+  // the send gate holds until every item is ready, and one submit fans out
+  // one message per file with the composer text riding the first.
+  let attachments = $state<AttachmentItem[]>([]);
+  let attachSeq = 0;
+
+  function setAttachment(id: string, patch: Partial<AttachmentItem>): void {
+    attachments = attachments.map((a) =>
+      a.id === id ? { ...a, ...patch } : a,
+    );
+  }
+
+  async function uploadOne(
+    item: AttachmentItem,
+    tagmaId: string,
+  ): Promise<void> {
+    const username = agoraSession.user?.username;
+    if (!username) {
+      setAttachment(item.id, { status: "failed" });
+      return;
+    }
+    try {
+      const client = filesClientOrFail();
+      const put = await client.put(
+        `/users/${username}/shared/${item.name}`,
+        item.file,
+      );
+      // The message references the recipient's inbox copy -- the send
+      // response's record id -- which the user keeps full read on (Row1).
+      const sent = await client.send(put.record_id, { toTagma: tagmaId });
+      setAttachment(item.id, { status: "ready", recordId: sent.record_id });
+    } catch {
+      setAttachment(item.id, { status: "failed" });
+    }
+  }
+
+  function onFilesPicked(files: File[]): void {
+    if (!(conv instanceof RelayConversation)) return;
+    for (const file of files) {
+      const item = newAttachment(attachSeq++, file);
+      attachments = [...attachments, item];
+      // Over the client-side cap: no wire traffic, straight to too_large
+      // (the server 413 remains the authority for tighter limits).
+      if (isTooLarge(item)) {
+        setAttachment(item.id, { status: "too_large" });
+      } else {
+        void uploadOne(item, conv.tagmaId);
+      }
+    }
+  }
+
+  function retryAttachment(id: string): void {
+    const item = attachments.find((a) => a.id === id);
+    if (!item || !(conv instanceof RelayConversation)) return;
+    setAttachment(id, { status: "uploading" });
+    void uploadOne(item, conv.tagmaId);
+  }
+
+  function removeAttachment(id: string): void {
+    attachments = attachments.filter((a) => a.id !== id);
+  }
+
   const composer = createComposer({
-    send: (text) => channelsStore.send(conversationId, text),
+    send: (text) => {
+      // One message per ready file; the composer text rides the first and
+      // the rest go out attachment-only (an empty text with an attachment
+      // is a real line on the wire and in the transcript).
+      const ready: MessageAttachment[] = [];
+      for (const item of attachments) {
+        if (item.recordId !== undefined) {
+          ready.push({
+            record_id: item.recordId,
+            name: item.name,
+            size: item.size,
+          });
+        }
+      }
+      const first = ready.shift();
+      if (first === undefined) {
+        channelsStore.send(conversationId, text);
+        return;
+      }
+      channelsStore.send(conversationId, text, first);
+      for (const att of ready) {
+        channelsStore.send(conversationId, "", att);
+      }
+      attachments = [];
+    },
     // Busy is not a gate: send renders the optimistic line at once and POSTs as
     // soon as the previous POST's user_message frame lands (single-in-flight
     // pump, shared by both transports).
-    canSubmit: () => conv?.status === "open",
+    canSubmit: () => conv?.status === "open" && allReady(attachments),
+    // An attachment-only submit (empty draft) is allowed once every
+    // upload is ready; with no attachments the non-empty rule holds.
+    allowEmpty: () => attachments.length > 0 && allReady(attachments),
   });
 
   // Draft storage: tagma chats key on the tagma id -- stable across re-KEX
@@ -250,6 +352,9 @@
             {loadOlder}
             hasMoreOlder={windowStates.hasMoreOlder}
             loadingOlder={windowStates.loadingOlder}
+            fileButton={conv instanceof RelayConversation
+              ? { onFilesPicked }
+              : undefined}
           >
             {#snippet notice()}
               {#if conv.status === "offline"}
@@ -263,6 +368,13 @@
                   {/if}
                 </p>
               {/if}
+            {/snippet}
+            {#snippet attachmentBar()}
+              <AttachmentBar
+                items={attachments}
+                onRetry={retryAttachment}
+                onRemove={removeAttachment}
+              />
             {/snippet}
           </ConversationView>
         </div>

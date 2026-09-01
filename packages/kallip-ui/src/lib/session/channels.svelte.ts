@@ -13,6 +13,7 @@ import { type TagmaView } from "@kallipai/kallip-agora-client";
 import {
   type Envelope,
   LescheApiError,
+  type MessageAttachment,
   openRelayChannel,
   type SignalEvent,
 } from "@kallipai/kallip-lesche-client";
@@ -464,10 +465,14 @@ export class ChannelsStore {
   /** Send a prompt to a conversation. Renders the optimistic line and hands off
    *  to the conversation's send path (single-in-flight pump for relay; inline
    *  POST for local). */
-  send(conversationId: string, text: string): void {
+  send(
+    conversationId: string,
+    text: string,
+    attachment?: MessageAttachment,
+  ): void {
     const conv = this.conversations.get(conversationId);
     if (!conv || !conv.connected) return;
-    void conv.send(text);
+    void conv.send(text, attachment);
   }
 
   /** Close + drop a conversation by tagma id (revoke path: no plaintext left

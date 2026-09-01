@@ -7,6 +7,7 @@
     initShell,
     initAgora,
     initConfigStorage,
+    initFiles,
     initInstances,
     initLesche,
     localStorageConfigStorage,
@@ -41,6 +42,10 @@
   initLesche(
     import.meta.env.VITE_LESCHE_URL ??
       (tlsOff ? `http://${devDomain}:7200` : `https://lesche.${devDomain}`),
+  );
+  initFiles(
+    import.meta.env.VITE_FILES_URL ??
+      (tlsOff ? `http://${devDomain}:7400` : `https://files.${devDomain}`),
   );
   initInstances(
     import.meta.env.VITE_INSTANCES_URL ??

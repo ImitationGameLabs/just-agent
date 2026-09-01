@@ -154,10 +154,11 @@ web app at `https://web.kallipai.lan` and reaches the agora at
 `https://agora.kallipai.lan` and the lesche at `https://lesche.kallipai.lan`,
 all TLS-terminated by Caddy. The session cookie carries `Domain=kallipai.lan`
 so it is shared across the agora/lesche subdomains. The web app (`deno task dev`
-from `packages/kallip-web`) reads its two API origins from `VITE_AGORA_URL`
-(default `https://agora.kallipai.lan`) and `VITE_LESCHE_URL` (default
-`https://lesche.kallipai.lan`); the defaults already match the Caddy topology,
-so no `.env` override is needed for normal LAN dev.
+from `packages/kallip-web`) reads its API origins from `VITE_AGORA_URL`
+(default `https://agora.kallipai.lan`), `VITE_LESCHE_URL` (default
+`https://lesche.kallipai.lan`), and `VITE_FILES_URL` (default
+`https://files.kallipai.lan`); the defaults already match the Caddy
+topology, so no `.env` override is needed for normal LAN dev.
 
 agora and lesche also publish `7100` / `7200` to the host for plain-HTTP
 tooling — `kallip-admin` and curl keep using `http://localhost:7100` /

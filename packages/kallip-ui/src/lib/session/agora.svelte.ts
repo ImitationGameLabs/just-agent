@@ -46,6 +46,7 @@ import {
 import type { PairingCodeView } from "../passkeys.svelte.ts";
 import { INSTANCES_TOKEN_KEY } from "../instances/client.ts";
 import { LescheClient } from "@kallipai/kallip-lesche-client";
+import { FilesClient } from "@kallipai/kallip-files-client";
 import {
   auth_couldnt_reach,
   auth_no_signed_in_user,
@@ -115,6 +116,27 @@ export function lescheClientOrFail(): LescheClient {
     throw new Error("initLesche(url) must be called at app bootstrap");
   }
   return lescheClient;
+}
+
+// The files (transfer-plane) client lives on its own origin too; its URL is
+// injected the same way (no import.meta.env in this library). The session
+// cookie is shared cross-subdomain, so the same credentialed fetch works.
+let filesClient: FilesClient | null = null;
+
+/** Inject the files base URL and construct the transfer client. Called once
+ * at bootstrap alongside initAgora/initLesche. */
+export function initFiles(url: string): void {
+  filesClient = new FilesClient(url);
+}
+
+/** The files (transfer-plane) client; throws if initFiles has not been
+ * called. Consumed by the chat page's attachment orchestration (shared
+ * upload -> inbox delivery -> message reference). */
+export function filesClientOrFail(): FilesClient {
+  if (!filesClient) {
+    throw new Error("initFiles(url) must be called at app bootstrap");
+  }
+  return filesClient;
 }
 /** The injected lesche base URL; same relay purpose as the agora one. */
 export function lescheBaseUrlOrFail(): string {
