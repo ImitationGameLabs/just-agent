@@ -53,6 +53,9 @@ pub struct AppState {
     pub control: Arc<dyn ControlPlane>,
     /// Static configuration.
     pub config: Arc<FilesConfig>,
+    /// Best-effort lesche event-push client; `None` disables the push
+    /// (an unset notify URL/token is the documented safe posture).
+    pub notify: Option<crate::notify::LescheNotifyClient>,
 }
 
 /// Everything the service needs at boot. `main` fills it from CLI/env; the
@@ -66,6 +69,10 @@ pub struct BootConfig {
     pub agora_internal_url: String,
     /// Shared secret bearer for the agora internal API.
     pub agora_internal_token: String,
+    /// Lesche internal base URL + shared secret for the file-delivered
+    /// event push; an empty URL disables the push.
+    pub notify_url: String,
+    pub notify_token: String,
     /// Root directory of the blob store (the reconciler walks it; the
     /// store trait itself has no directory listing).
     pub blob_root: std::path::PathBuf,
@@ -154,6 +161,7 @@ pub async fn run(boot: BootConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
             boot.agora_internal_url,
             boot.agora_internal_token,
         )),
+        notify: crate::notify::LescheNotifyClient::new(boot.notify_url, boot.notify_token),
         config: Arc::new(boot.files),
     };
     spawn_gc_driver(state.clone());

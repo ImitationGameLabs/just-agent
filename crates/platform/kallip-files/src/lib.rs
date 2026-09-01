@@ -18,6 +18,7 @@ pub mod blob;
 pub mod gc;
 pub mod metadata;
 pub mod migration;
+pub mod notify;
 
 #[cfg(test)]
 mod test_helpers;

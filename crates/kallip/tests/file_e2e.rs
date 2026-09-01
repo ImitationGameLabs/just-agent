@@ -180,9 +180,11 @@ async fn spawn_world() -> World {
             agora_url,
             "sk-internal-e2e".to_owned(),
         )),
+        notify: None,
         config: Arc::new(FilesConfig {
             max_body_bytes: 1024 * 1024,
             degrade_fail_soft: false,
+            cors_origins: String::new(),
             gc: GcConfig {
                 batch: 128,
                 interval: std::time::Duration::from_secs(3600),

@@ -383,6 +383,7 @@ impl TestWorld {
                     grace: std::time::Duration::from_secs(3600),
                 },
             }),
+            notify: None,
         };
         let router = kallip_files::state::router(state);
         Self {

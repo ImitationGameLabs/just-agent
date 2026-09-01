@@ -46,6 +46,14 @@ pub struct Args {
     /// `KALLIP_AGORA_CORS_ORIGINS`.
     #[arg(long, env = "KALLIP_FILES_CORS_ORIGINS", default_value = "")]
     pub cors_origins: String,
+    /// Lesche internal base URL for the file-delivered event push (e.g.
+    /// `http://lesche:7200`). Empty disables the push entirely.
+    #[arg(long, env = "KALLIP_FILES_NOTIFY_URL", default_value = "")]
+    pub notify_url: String,
+    /// Shared secret bearer for the lesche internal API. Must equal the
+    /// lesche's `KALLIP_LESCHE_INTERNAL_TOKEN`.
+    #[arg(long, env = "KALLIP_FILES_NOTIFY_TOKEN", default_value = "")]
+    pub notify_token: String,
     /// Agora degrade posture (seventh approved default). `closed` (the
     /// default) fails every authorization decision with 503 when the
     /// registry cannot answer; `soft` degrades the enrollment lookup to an

@@ -109,6 +109,21 @@ pub async fn send_file(
     .await
     .map_err(ApiError::internal)?;
 
+    // Best-effort event push (fire-and-forget): the delivery itself is
+    // committed; a failed push only logs, because the file is safely in
+    // the recipient's space and discoverable via the listing surface.
+    if let Some(notify) = &state.notify {
+        let notify = notify.clone();
+        let to_user = landing.owner.clone();
+        let path = landing.path.clone();
+        let from = landing.from.clone();
+        let name = filename.clone();
+        tokio::spawn(async move {
+            notify
+                .file_delivered(&to_user, record_id, &path, &from, &name, size as u64)
+                .await;
+        });
+    }
     Ok((
         StatusCode::CREATED,
         axum::Json(SendResponse {

@@ -690,6 +690,8 @@ async fn service_boots_and_answers_health() {
         database_url: db_url,
         agora_internal_url: "http://127.0.0.1:1".to_owned(),
         agora_internal_token: "unused".to_owned(),
+        notify_url: String::new(),
+        notify_token: String::new(),
         blob_root: std::path::PathBuf::from(blob.path()),
         files: kallip_files::state::FilesConfig {
             max_body_bytes: 1024 * 1024,

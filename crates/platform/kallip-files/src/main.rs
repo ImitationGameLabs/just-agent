@@ -42,6 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         agora_internal_token: args.agora_internal_token,
         blob_root: args.blob_root.into(),
         files: config,
+        notify_url: args.notify_url,
+        notify_token: args.notify_token,
     };
 
     tracing::info!("starting kallip-files");
