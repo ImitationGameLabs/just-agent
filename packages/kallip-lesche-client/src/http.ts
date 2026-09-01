@@ -202,6 +202,20 @@ export class LescheClient extends BaseClient {
     return this.json(`/v1/rooms/${encodeURIComponent(roomId)}/join`, "POST");
   }
 
+  /** `PUT /v1/rooms/{id}/read-cursor` -- clamp-advance the caller's read
+   * watermark in a room (the unread backbone). Member-only; 204 on success
+   * (the server fans a room_read_cursor_changed echo to the caller's other
+   * live sessions). */
+  setRoomReadCursor(roomId: string, lastReadSeq: number): Promise<void> {
+    return this.json(
+      `/v1/rooms/${encodeURIComponent(roomId)}/read-cursor`,
+      "PUT",
+      {
+        last_read_seq: lastReadSeq,
+      },
+    );
+  }
+
   /** `GET /v1/rooms/{id}` — a room's live roster (member-only). */
   fetchRoomRoster(roomId: string): Promise<RoomRosterView> {
     return this.json(`/v1/rooms/${encodeURIComponent(roomId)}`, "GET");

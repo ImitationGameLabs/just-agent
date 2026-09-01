@@ -105,6 +105,23 @@ pub enum LescheEvent {
         /// the client.
         member_id: MemberId,
     },
+
+    /// A member's read cursor in a room advanced (the unread watermark).
+    /// Fanned to the cursor owner's live app stream when their client PUTs the
+    /// new `last_read_seq`, so the owner's OTHER live sessions (tabs, devices)
+    /// converge their unread state in real time. No actor exclusion (the app
+    /// stream is one broadcast channel per user): the initiating session also
+    /// receives its own write and must treat the event as idempotent --
+    /// advance the read watermark, re-derive the count between the known and
+    /// read watermarks, never blindly zero (an out-of-order or own-echo event
+    /// must not resurrect counted messages or lose unread ones). Transient --
+    /// not buffered for offline viewers; the room list's `last_read_seq` field
+    /// is the fetch-time ground truth that resyncs.
+    RoomReadCursorChanged {
+        room_id: RoomId,
+        /// The new read watermark (`seq <= last_read_seq` is read).
+        last_read_seq: i64,
+    },
 }
 
 /// `POST /v1/tagmata/{tagma_id}/status` request body — the tagma's periodic

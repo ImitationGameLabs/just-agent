@@ -154,6 +154,10 @@ export interface RoomView {
   readonly name: string;
   readonly description: string;
   readonly visibility: Visibility;
+  /** The caller's per-room read watermark (the unread backbone). 0 for a
+   * room never read. Present on list-rooms responses; the public discovery
+   * listing always carries 0 (the caller is not a member). */
+  readonly last_read_seq: number;
 }
 
 /** `GET /v1/rooms/{id}` -- a single room's live membership snapshot (member-only;
@@ -265,6 +269,18 @@ export type LescheEvent =
       readonly type: "room_member_offline";
       readonly room_id: string;
       readonly member_id: string;
+    }
+  | {
+      // The caller's own read cursor in a room advanced (a PUT echo fanned to
+      // the user's other live sessions; the initiating session receives its
+      // own write too). Idempotent: advance the read watermark and re-derive
+      // the unread count between the known and read watermarks -- never
+      // blindly zero (an out-of-order or own-echo event must not resurrect
+      // counted messages or lose unread ones). Transient: the room list's
+      // last_read_seq field is the fetch-time ground truth.
+      readonly type: "room_read_cursor_changed";
+      readonly room_id: string;
+      readonly last_read_seq: number;
     };
 
 /**

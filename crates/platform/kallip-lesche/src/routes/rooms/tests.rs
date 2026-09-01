@@ -505,3 +505,160 @@ async fn history_resolves_a_departed_sender_via_revocations() {
         "departed sender resolved via revocations, not degraded to a prefix"
     );
 }
+
+/// The read-cursor surface: PUT is member-only with the same uniform-404
+/// existence oracle as the envelope surface, the stored watermark comes back
+/// on the room list, and the write fans a `RoomReadCursorChanged` event to
+/// the writer's live app stream (their other sessions converge; the
+/// initiating session receives its own echo too -- the app stream is one
+/// broadcast channel per user, so there is no per-session exclusion).
+#[tokio::test]
+async fn put_read_cursor_roundtrip_lists_and_fans() {
+    let (state, _control) = db_state().await;
+    let alice = uid("alice");
+    let t1 = TagmaId::from("t1".to_string());
+    seed_room(state.db.as_ref().unwrap(), "room-1", &alice, &[], &[&t1]).await;
+
+    // The writer's live app stream: the fan lands on it (including the
+    // writer's own session -- an idempotent echo, not a distinct channel).
+    let mut alice_rx = app_rx(&state, &alice);
+
+    let status = put_read_cursor(
+        State(state.clone()),
+        participant("alice"),
+        Path("room-1".to_string()),
+        Json(ReadCursorRequest { last_read_seq: 5 }),
+    )
+    .await
+    .expect("accepted");
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // The fan: the stored (clamped) watermark, room-scoped.
+    let ev = alice_rx.recv().await.expect("alice's stream got the event");
+    let kallip_lesche_common::event::LescheEvent::RoomReadCursorChanged {
+        room_id,
+        last_read_seq,
+    } = ev
+    else {
+        panic!("expected RoomReadCursorChanged, got {ev:?}");
+    };
+    assert_eq!(room_id.as_ref(), "room-1");
+    assert_eq!(last_read_seq, 5);
+
+    // The watermark is stored under the writer's member id (the room-list
+    // field itself is asserted in room_management's list tests, which can
+    // call list_rooms directly).
+    let stored = store::read_cursors_for_member(
+        state.db.as_ref().unwrap(),
+        &MemberId::from(ParticipantId::for_user(&alice)),
+        &["room-1".to_string()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored.get("room-1"), Some(&5));
+
+    // A stale write never moves the watermark back (clamp at the API layer
+    // too, not only in the store tests).
+    let status = put_read_cursor(
+        State(state.clone()),
+        participant("alice"),
+        Path("room-1".to_string()),
+        Json(ReadCursorRequest { last_read_seq: 3 }),
+    )
+    .await
+    .expect("accepted");
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let stored = store::read_cursors_for_member(
+        state.db.as_ref().unwrap(),
+        &MemberId::from(ParticipantId::for_user(&alice)),
+        &["room-1".to_string()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored.get("room-1"), Some(&5), "stale write clamped");
+}
+
+/// The AuthZ gate: unknown room, non-member, and Admin all collapse to one
+/// uniform 404 (existence oracle), mirroring the envelope surface.
+#[tokio::test]
+async fn put_read_cursor_is_member_only_404_existence_oracle() {
+    let (state, _control) = db_state().await;
+    let alice = uid("alice");
+    let t1 = TagmaId::from("t1".to_string());
+    seed_room(state.db.as_ref().unwrap(), "room-1", &alice, &[], &[&t1]).await;
+
+    // Unknown room.
+    let err = put_read_cursor(
+        State(state.clone()),
+        participant("alice"),
+        Path("room-none".to_string()),
+        Json(ReadCursorRequest { last_read_seq: 1 }),
+    )
+    .await
+    .expect_err("unknown room rejected");
+    assert_eq!(err.status, 404);
+
+    // Non-member (bob has no membership in room-1).
+    let err = put_read_cursor(
+        State(state.clone()),
+        participant("bob"),
+        Path("room-1".to_string()),
+        Json(ReadCursorRequest { last_read_seq: 1 }),
+    )
+    .await
+    .expect_err("non-member rejected");
+    assert_eq!(err.status, 404);
+
+    // Admin: never a room participant, same 404 as an unknown room.
+    let err = put_read_cursor(
+        State(state.clone()),
+        AuthPrincipal(Principal::Admin),
+        Path("room-1".to_string()),
+        Json(ReadCursorRequest { last_read_seq: 1 }),
+    )
+    .await
+    .expect_err("admin rejected");
+    assert_eq!(err.status, 404);
+
+    // Negative seq is a 400 (a negative watermark is meaningless; the clamp
+    // would make it a silent no-op, which would just confuse the caller).
+    let err = put_read_cursor(
+        State(state.clone()),
+        participant("alice"),
+        Path("room-1".to_string()),
+        Json(ReadCursorRequest { last_read_seq: -1 }),
+    )
+    .await
+    .expect_err("negative seq rejected");
+    assert_eq!(err.status, 400);
+}
+
+/// A tagma member may advance its own cursor (agents read rooms too); no fan
+/// happens (a tagma has no app stream) and the write still lands.
+#[tokio::test]
+async fn put_read_cursor_accepts_tagma_member_without_fan() {
+    let (state, _control) = db_state().await;
+    let alice = uid("alice");
+    let t1 = TagmaId::from("t1".to_string());
+    seed_room(state.db.as_ref().unwrap(), "room-1", &alice, &[], &[&t1]).await;
+
+    let status = put_read_cursor(
+        State(state.clone()),
+        AuthPrincipal(Principal::Tagma(t1.clone())),
+        Path("room-1".to_string()),
+        Json(ReadCursorRequest { last_read_seq: 9 }),
+    )
+    .await
+    .expect("accepted");
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Stored under the tagma's derived member id.
+    let stored = store::read_cursors_for_member(
+        state.db.as_ref().unwrap(),
+        &MemberId::for_tagma(&t1),
+        &["room-1".to_string()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored.get("room-1"), Some(&9));
+}

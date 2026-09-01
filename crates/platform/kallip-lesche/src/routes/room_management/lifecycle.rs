@@ -5,13 +5,13 @@
 
 use crate::auth::{AuthPrincipal, require_user};
 use crate::db::entity::{room_members, rooms};
-use crate::db::{TxnError, flatten_txn, map_db_err};
+use crate::db::{TxnError, flatten_txn, map_db_err, store};
 use crate::state::SharedConvState;
 use axum::Json;
 use axum::extract::State;
 use kallip_agora_common::ids::{ParticipantId, ParticipantKind};
 use kallip_common::protocol::ApiError;
-use kallip_lesche_common::rooms::{RoomId, Visibility};
+use kallip_lesche_common::rooms::{MemberId, RoomId, Visibility};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
     TransactionTrait,
@@ -28,16 +28,24 @@ pub(super) struct RoomView {
     pub(super) name: String,
     pub(super) description: String,
     pub(super) visibility: Visibility,
+    /// The caller's read watermark in this room (0 for a room with no cursor
+    /// row -- never read, or a public listing where the caller is not a
+    /// member). Caller-scoped: only meaningfully populated by [`list_rooms`].
+    pub(super) last_read_seq: i64,
 }
 
-impl From<&rooms::Model> for RoomView {
-    fn from(r: &rooms::Model) -> Self {
+impl RoomView {
+    /// Build the wire view of a room row. `last_read_seq` is supplied by the
+    /// caller (the batch cursor read is keyed by the requesting member, not a
+    /// property of the room row).
+    pub(super) fn new(r: &rooms::Model, last_read_seq: i64) -> Self {
         Self {
             room_id: r.id.clone(),
             created_at: r.created_at,
             name: r.name.clone(),
             description: r.description.clone(),
             visibility: Visibility::from_db(&r.visibility),
+            last_read_seq,
         }
     }
 }
@@ -115,6 +123,7 @@ pub(super) async fn create_room(
         name,
         description,
         visibility: req.visibility,
+        last_read_seq: 0,
     }))
 }
 
@@ -141,6 +150,14 @@ pub(super) async fn list_rooms(
         return Ok(Json(Vec::new()));
     }
     let room_ids: Vec<String> = memberships.iter().map(|m| m.room_id.clone()).collect();
+
+    // One batched cursor read for the whole list, keyed by the caller's
+    // member id: the unread watermark travels with the list it belongs to
+    // (zero extra requests at startup). Rooms with no cursor row read as 0.
+    let cursors =
+        store::read_cursors_for_member(db, &MemberId::from(participant_id.clone()), &room_ids)
+            .await
+            .map_err(map_db_err)?;
     let rows = rooms::Entity::find()
         .filter(rooms::Column::Id.is_in(room_ids))
         .all(db)
@@ -150,7 +167,11 @@ pub(super) async fn list_rooms(
         rows.iter().map(|r| (r.id.as_str(), r)).collect();
     let items = memberships
         .iter()
-        .filter_map(|m| by_id.get(m.room_id.as_str()).map(|r| RoomView::from(*r)))
+        .filter_map(|m| {
+            by_id
+                .get(m.room_id.as_str())
+                .map(|r| RoomView::new(r, cursors.get(m.room_id.as_str()).copied().unwrap_or(0)))
+        })
         .collect();
     Ok(Json(items))
 }
@@ -172,6 +193,6 @@ pub(super) async fn list_public_rooms(
         .all(db)
         .await
         .map_err(map_db_err)?;
-    let items = rows.iter().map(RoomView::from).collect();
+    let items = rows.iter().map(|r| RoomView::new(r, 0)).collect();
     Ok(Json(items))
 }

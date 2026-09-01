@@ -382,6 +382,13 @@ class RealtimeStore {
         // so a missed frame self-heals on the next roster re-fetch.
         this.roomMemberPresenceSink?.(ev.room_id, ev.member_id, false);
         break;
+      case "room_read_cursor_changed":
+        // The caller's own read cursor advanced (an echo of this session's own
+        // PUT, fanned for the user's OTHER live sessions). No-op here for now:
+        // the unread store (N2) will consume it. Idempotent by watermark --
+        // dropping the frame only delays convergence to the next room-list
+        // fetch, which remains the resync ground truth.
+        break;
       default: {
         // Exhaustiveness guard: a new LescheEvent variant without a dispatch
         // case fails the build here rather than silently dropping.

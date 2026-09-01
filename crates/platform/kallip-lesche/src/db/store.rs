@@ -23,7 +23,9 @@ use sea_orm::{
 use time::OffsetDateTime;
 
 use super::Db;
-use super::entity::{room_member_revocations, room_members, room_messages, rooms};
+use super::entity::{
+    room_member_revocations, room_members, room_messages, room_read_cursors, rooms,
+};
 
 /// One stored message, as read back for a history pull. Carries the sender's
 /// STABLE identity (`sender_id` + `sender_kind`) only; the display handle is
@@ -206,6 +208,56 @@ pub async fn room_membership(
         members,
         membership_epoch: room_row.membership_epoch,
     }))
+}
+
+/// Clamp-advance a member's read cursor in a room. The
+/// `INSERT ... ON CONFLICT DO UPDATE ... GREATEST` is a single statement: the
+/// row lock the upsert takes serializes concurrent writers, and `GREATEST`
+/// makes the watermark monotonic -- a stale write (a lagging device replaying
+/// an old cursor) can never move it backwards. Returns the watermark as
+/// stored (the clamped value).
+pub async fn set_read_cursor(
+    db: &Db,
+    room: &str,
+    member: &MemberId,
+    last_read_seq: i64,
+) -> Result<i64, sea_orm::DbErr> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO room_read_cursors (room_id, member_id, last_read_seq, updated_at) \
+             VALUES ($1, $2, $3, NOW()) \
+             ON CONFLICT (room_id, member_id) DO UPDATE SET \
+             last_read_seq = GREATEST(room_read_cursors.last_read_seq, EXCLUDED.last_read_seq), \
+             updated_at = NOW() \
+             RETURNING last_read_seq",
+            [room.into(), member.as_ref().into(), last_read_seq.into()],
+        ))
+        .await?
+        .ok_or_else(|| sea_orm::DbErr::Custom("room_read_cursors upsert returned no row".into()))?;
+    row.try_get("", "last_read_seq")
+}
+
+/// Read one member's cursors for a batch of rooms (the room-list read).
+/// Rooms with no cursor row are simply absent from the map; the caller treats
+/// absence as 0. One indexed scan on `idx_room_read_cursors_member`.
+pub async fn read_cursors_for_member(
+    db: &Db,
+    member: &MemberId,
+    room_ids: &[String],
+) -> Result<HashMap<String, i64>, sea_orm::DbErr> {
+    if room_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = room_read_cursors::Entity::find()
+        .filter(room_read_cursors::Column::MemberId.eq(member.as_ref().to_string()))
+        .filter(room_read_cursors::Column::RoomId.is_in(room_ids.to_vec()))
+        .all(db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.room_id, r.last_read_seq))
+        .collect())
 }
 
 #[cfg(test)]
@@ -420,5 +472,90 @@ mod tests {
             seq.is_none(),
             "the seq row should have been cascaded away with the room"
         );
+    }
+
+    /// A stale cursor write (a lagging device replaying an old watermark)
+    /// never moves the cursor backwards: `set_read_cursor` clamps on
+    /// `GREATEST`, so the stored watermark is the max ever written.
+    #[tokio::test]
+    async fn set_read_cursor_clamps_stale_writes() {
+        let db = fresh_db().await;
+        seed_room(&db, "room-cursor").await;
+        let (alice, _) = user("alice");
+        let v = set_read_cursor(&db, "room-cursor", &alice, 5)
+            .await
+            .unwrap();
+        assert_eq!(v, 5);
+        // A stale write (older watermark) is a no-op...
+        let v = set_read_cursor(&db, "room-cursor", &alice, 3)
+            .await
+            .unwrap();
+        assert_eq!(v, 5, "a stale write must not move the watermark back");
+        // ...and a fresh write still advances it.
+        let v = set_read_cursor(&db, "room-cursor", &alice, 7)
+            .await
+            .unwrap();
+        assert_eq!(v, 7);
+    }
+
+    /// Concurrent writes to the same (room, member) cursor serialize on the
+    /// upsert row lock and land on the max -- no lost update, no PK-violation
+    /// loser. (4 tasks to stay under the default pool size under
+    /// full-suite parallel-test container load.)
+    #[tokio::test]
+    async fn concurrent_set_read_cursor_lands_on_max() {
+        let db = fresh_db().await;
+        seed_room(&db, "room-race").await;
+        let db = std::sync::Arc::new(db);
+        let (alice, _) = user("alice");
+        let alice = std::sync::Arc::new(alice);
+        let mut handles = Vec::new();
+        for seq in [3i64, 7, 5, 9] {
+            let db = db.clone();
+            let alice = alice.clone();
+            handles.push(tokio::spawn(async move {
+                set_read_cursor(&db, "room-race", &alice, seq)
+                    .await
+                    .unwrap()
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+        let stored = read_cursors_for_member(&db, &alice, &["room-race".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(stored.get("room-race"), Some(&9), "max wins under race");
+    }
+
+    /// The batch cursor read is scoped to ONE member and ONLY the requested
+    /// rooms; rooms with no cursor row are absent from the map (the caller
+    /// reads absence as 0).
+    #[tokio::test]
+    async fn read_cursors_for_member_scopes_to_member_and_rooms() {
+        let db = fresh_db().await;
+        seed_room(&db, "room-a").await;
+        seed_room(&db, "room-b").await;
+        seed_room(&db, "room-c").await;
+        let (alice, _) = user("alice");
+        let (bob, _) = user("bob");
+        set_read_cursor(&db, "room-a", &alice, 4).await.unwrap();
+        set_read_cursor(&db, "room-b", &alice, 2).await.unwrap();
+        set_read_cursor(&db, "room-a", &bob, 6).await.unwrap();
+        let rooms = vec![
+            "room-a".to_string(),
+            "room-b".to_string(),
+            "room-c".to_string(),
+        ];
+        let alice_map = read_cursors_for_member(&db, &alice, &rooms).await.unwrap();
+        assert_eq!(alice_map.len(), 2);
+        assert_eq!(alice_map.get("room-a"), Some(&4));
+        assert_eq!(alice_map.get("room-b"), Some(&2));
+        assert!(!alice_map.contains_key("room-c"), "no row = absent, not 0");
+        // Bob's cursors are independent of Alice's.
+        let bob_map = read_cursors_for_member(&db, &bob, &["room-a".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(bob_map.get("room-a"), Some(&6));
     }
 }

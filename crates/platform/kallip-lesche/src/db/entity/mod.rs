@@ -4,4 +4,5 @@ pub mod room_invites;
 pub mod room_member_revocations;
 pub mod room_members;
 pub mod room_messages;
+pub mod room_read_cursors;
 pub mod rooms;

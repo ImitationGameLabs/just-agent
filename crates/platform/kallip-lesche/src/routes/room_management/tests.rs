@@ -13,7 +13,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use kallip_agora_common::bytes::Ed25519PublicKey;
 use kallip_agora_common::ids::{ParticipantId, ParticipantKind, TagmaId, UserId};
-use kallip_lesche_common::rooms::{RoomMemberProfile, RoomRosterView, Visibility};
+use kallip_lesche_common::rooms::{MemberId, RoomMemberProfile, RoomRosterView, Visibility};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use time::OffsetDateTime;
 
@@ -1677,4 +1677,40 @@ async fn accept_invite_at_cap_lets_existing_member_re_accept() {
     )
     .await
     .expect("re-accept at cap stamps invite");
+}
+
+/// The room list carries the caller's read watermark (the unread backbone's
+/// startup read): a PUT-written value round-trips onto the list row, and a
+/// room with no cursor row reads as 0. (The write side is covered in
+/// rooms::tests, which can call the handler directly; this side asserts the
+/// list field, which needs `list_rooms`.)
+#[tokio::test]
+async fn list_rooms_carries_the_caller_read_cursor() {
+    let (state, _control) = db_state().await;
+    let alice = UserId::from("alice".to_string());
+    let t1 = TagmaId::from("t1".to_string());
+    seed_room(state.db.as_ref().unwrap(), "room-1", &alice, &[], &[&t1]).await;
+    seed_room(state.db.as_ref().unwrap(), "room-2", &alice, &[], &[]).await;
+
+    // Advance the cursor in room-1 only (via the store; the route's write
+    // side is asserted in rooms::tests).
+    crate::db::store::set_read_cursor(
+        state.db.as_ref().unwrap(),
+        "room-1",
+        &MemberId::from(ParticipantId::for_user(&alice)),
+        7,
+    )
+    .await
+    .unwrap();
+
+    let Json(rooms_view) = list_rooms(State(state), as_user(&alice))
+        .await
+        .expect("list");
+    assert_eq!(rooms_view.len(), 2);
+    let by_room: std::collections::HashMap<&str, i64> = rooms_view
+        .iter()
+        .map(|r| (r.room_id.as_str(), r.last_read_seq))
+        .collect();
+    assert_eq!(by_room.get("room-1"), Some(&7));
+    assert_eq!(by_room.get("room-2"), Some(&0), "no cursor row reads as 0");
 }

@@ -154,6 +154,7 @@ Deno.test("createRoom POSTs /v1/rooms and decodes RoomView", async () => {
           name: "General",
           description: "",
           visibility: "private",
+          last_read_seq: 0,
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
@@ -168,6 +169,7 @@ Deno.test("createRoom POSTs /v1/rooms and decodes RoomView", async () => {
       name: "General",
       description: "",
       visibility: "private",
+      last_read_seq: 0,
     });
   });
   assertEquals(captured[0]!.url, "https://lesche.test/v1/rooms");
@@ -255,6 +257,37 @@ Deno.test("joinRoom POSTs /v1/rooms/{id}/join", async () => {
   assertEquals(captured[0]!.url, "https://lesche.test/v1/rooms/room-pub/join");
   assertEquals(captured[0]!.method, "POST");
 });
+
+Deno.test(
+  "setRoomReadCursor PUTs /v1/rooms/{id}/read-cursor with the CSRF marker",
+  async () => {
+    const captured: {
+      url: string;
+      method: string;
+      headers: Record<string, string>;
+      body: unknown;
+    }[] = [];
+    const stub: typeof fetch = (input, init) => {
+      captured.push({
+        url: typeof input === "string" ? input : input.toString(),
+        method: init?.method ?? "GET",
+        headers: (init?.headers as Record<string, string>) ?? {},
+        body: init?.body ? JSON.parse(init.body as string) : null,
+      });
+      return Promise.resolve(new Response(null, { status: 204 }));
+    };
+    await withFetch(stub, async () => {
+      await new LescheClient(BASE).setRoomReadCursor("room-1", 42);
+    });
+    assertEquals(
+      captured[0]!.url,
+      "https://lesche.test/v1/rooms/room-1/read-cursor",
+    );
+    assertEquals(captured[0]!.method, "PUT");
+    assertEquals(captured[0]!.body, { last_read_seq: 42 });
+    assertEquals(captured[0]!.headers["X-Requested-With"], "kallip");
+  },
+);
 
 Deno.test("listRooms GETs /v1/rooms with no CSRF marker", async () => {
   const captured: string[] = [];

@@ -17,11 +17,12 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use kallip_agora_common::bytes::Ciphertext;
 use kallip_agora_common::ids::ParticipantKind;
 use kallip_agora_common::principal::Principal;
 use kallip_common::protocol::ApiError;
+use kallip_lesche_common::event::LescheEvent;
 use kallip_lesche_common::message::{Envelope, Participant};
 use kallip_lesche_common::rooms::{MemberId, RoomId};
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,7 @@ pub fn router() -> Router<SharedConvState> {
     Router::new()
         .route("/rooms/{room_id}/envelopes", post(post_room_envelope))
         .route("/rooms/{room_id}/messages", get(room_history))
+        .route("/rooms/{room_id}/read-cursor", put(put_read_cursor))
 }
 
 async fn post_room_envelope(
@@ -202,6 +204,75 @@ struct StoredMessageView {
     created_at: OffsetDateTime,
 }
 
+/// Body of `PUT /v1/rooms/{id}/read-cursor`.
+#[derive(Debug, Deserialize)]
+pub struct ReadCursorRequest {
+    pub last_read_seq: i64,
+}
+
+/// Advance the caller's read cursor in a room (the unread watermark).
+/// Member-only, same existence-oracle as the envelope surface: a non-member
+/// (and an Admin, and an unknown room) gets one uniform 404. The write is a
+/// single-statement clamp upsert -- a stale write never moves the watermark
+/// backwards. On success the new watermark is fanned to the caller's live
+/// app stream so their OTHER sessions converge their unread state without a
+/// refresh. The initiating session also receives its own echo and must treat
+/// the event as idempotent: the app stream is one broadcast channel per
+/// user, so there is no per-session exclusion (see
+/// `LescheEvent::RoomReadCursorChanged`). A tagma principal has no app
+/// stream; its own room poll converges its view.
+async fn put_read_cursor(
+    State(state): State<SharedConvState>,
+    AuthPrincipal(principal): AuthPrincipal,
+    Path(room_id): Path<String>,
+    Json(req): Json<ReadCursorRequest>,
+) -> Result<StatusCode, ApiError> {
+    if req.last_read_seq < 0 {
+        return Err(ApiError::bad_request("last_read_seq must be >= 0"));
+    }
+    let room = RoomId::from(room_id);
+    // Membership is read from the lesche-local graph (one SQL read, strongly
+    // consistent with mutations in this DB). Unknown room -> 404.
+    let db = state.require_db()?;
+    let membership = store::room_membership(db, room.as_ref())
+        .await
+        .map_err(map_db_err)?
+        .ok_or_else(|| ApiError::not_found("unknown room"))?;
+
+    // Same gate shape as the envelope surface: the principal must be a room
+    // participant (id + kind). Everything else -- unknown room, non-member,
+    // Admin -- collapses to one 404 that confirms nothing.
+    let (authed_pid, authed_kind) = match (principal.participant_id(), principal.participant_kind())
+    {
+        (Some(pid), Some(kind)) => (pid, kind),
+        _ => return Err(ApiError::not_found("unknown room")), // Admin
+    };
+    let authed_mid = MemberId::from(authed_pid.clone());
+    if !is_member(&membership, &authed_mid, authed_kind) {
+        return Err(ApiError::not_found("unknown room"));
+    }
+
+    let stored = store::set_read_cursor(db, room.as_ref(), &authed_mid, req.last_read_seq)
+        .await
+        .map_err(|e| ApiError::internal(format_args!("store error: {e}")))?;
+
+    // Fan the stored (clamped) watermark to the caller's live app stream:
+    // best-effort, under the registry read lock, no await (the fan-out
+    // discipline shared with `fan_envelope`). A failed send is a lagged or
+    // absent stream -- the next room-list fetch resyncs, so it is not a
+    // write failure.
+    if let Principal::User(user_id) = &principal {
+        let reg = state.read()?;
+        if let Some(tx) = reg.app_stream(user_id) {
+            let _ = tx.send(LescheEvent::RoomReadCursorChanged {
+                room_id: room,
+                last_read_seq: stored,
+            });
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
 /// Pull a room's message history. Member-only (user or tagma principal must
 /// belong to the room). Returns stored rows whose payload is the plaintext
 /// `RoomMessage` JSON (the lesche is the room's store of record and is trusted
