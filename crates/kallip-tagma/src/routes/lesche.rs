@@ -261,8 +261,11 @@ async fn send_room_message(
     // disjoint address spaces; a room message is just text, no `req_id`/ack).
     // The lesche stores + relays it opaquely and member-gates the envelope
     // route, so the payload here is the plaintext itself.
-    let plain = serde_json::to_vec(&RoomMessage { text, attachment: None })
-        .map_err(|e| ApiError::bad_gateway(format!("encode room message: {e:#}")))?;
+    let plain = serde_json::to_vec(&RoomMessage {
+        text,
+        attachment: None,
+    })
+    .map_err(|e| ApiError::bad_gateway(format!("encode room message: {e:#}")))?;
     // post_room_envelope overwrites channel_id from `room`, so the value
     // set here is irrelevant; mirror the room id for clarity.
     let envelope = Envelope {
