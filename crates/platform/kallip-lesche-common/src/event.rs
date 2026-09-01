@@ -45,7 +45,24 @@ pub enum LescheEvent {
     TagmaOnline { tagma_id: TagmaId },
     /// A tagma went offline (tunnel dropped, past the reconnect grace window).
     TagmaOffline { tagma_id: TagmaId },
-    /// A tagma's live runtime state, snapshotted by the tagma and rebroadcast
+    /// A file was delivered into this user's files space (the delivery side
+    /// of the files service's `POST /v1/files/{id}/send`), pushed by the
+    /// files service via the lesche's internal surface. Plaintext operator
+    /// metadata like the presence pair: where the file landed and who sent
+    /// it are not conversation content. The recipient fetches the content
+    /// itself via `GET /v1/files/{record_id}`.
+    FileDelivered {
+        /// The recipient's own record (the landing copy's id).
+        record_id: uuid::Uuid,
+        /// Where the copy landed in the recipient's space.
+        path: String,
+        /// The sender's principal string (user handle or tagma id).
+        from: String,
+        /// The file's display name (the source record's filename).
+        name: String,
+        /// Blob size in bytes.
+        size: u64,
+    },
     /// by the lesche. Plaintext and user-scoped like the presence pair (the
     /// lesche can read it): agent state and token budget are operator
     /// metadata, not conversation content. Emitted on a periodic snapshot, so

@@ -25,6 +25,13 @@ pub struct Args {
     /// agora's `KALLIP_AGORA_INTERNAL_TOKEN`.
     #[arg(long, env = "KALLIP_LESCHE_AGORA_TOKEN")]
     pub agora_internal_token: String,
+    /// Shared secret bearer for THIS service's internal surface, consumed
+    /// by the files service to push file-delivery events. Must equal the
+    /// files service's KALLIP_FILES_NOTIFY_TOKEN. Empty (the default)
+    /// leaves the internal surface unmounted -- the event push is then
+    /// disabled, which is the safe posture for a standalone lesche.
+    #[arg(default_value = "", long, env = "KALLIP_LESCHE_INTERNAL_TOKEN")]
+    pub internal_token: String,
     /// Acceptable clock skew (both directions) on a tagma tunnel reconnect
     /// proof's timestamp, in seconds.
     #[arg(long, env = "KALLIP_LESCHE_PROOF_SKEW_SECS", default_value = "60")]

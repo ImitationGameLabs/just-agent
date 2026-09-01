@@ -328,6 +328,7 @@ in
         KALLIP_LESCHE_AGORA_INTERNAL_URL = "http://agora:7100";
         # Must equal the agora's KALLIP_AGORA_INTERNAL_TOKEN above.
         KALLIP_LESCHE_AGORA_TOKEN = "dev-internal-secret";
+        KALLIP_LESCHE_INTERNAL_TOKEN = "dev-internal-secret";
         # Allow the web app origin (https://web.<devDomain> via Caddy) to
         # make credentialed cross-origin calls to lesche.<devDomain>.
         KALLIP_LESCHE_CORS_ORIGINS = webOrigin;

@@ -10,11 +10,12 @@
 //! carrying BOTH a session cookie and a valid bearer is exempt: the bearer
 //! header is itself proof of intent.
 
+use crate::auth::read_session_cookie;
+use axum::extract::State;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-
-use crate::auth::read_session_cookie;
+use kallip_common::authtoken::TokenHash;
 
 /// The custom-header CSRF marker name. Lowercase: HTTP headers are
 /// case-insensitive, and axum canonicalises on read.
@@ -45,6 +46,31 @@ pub async fn csrf_guard(
         if !has_marker {
             return (StatusCode::FORBIDDEN, "missing CSRF marker").into_response();
         }
+    }
+    next.run(request).await
+}
+
+/// Guard for the `/internal/*` service-to-service surface (consumed by the
+/// files service for file-delivery event pushes). Runs as
+/// `from_fn_with_state(expected_hash, internal_guard)` so the expected hash
+/// is baked into the layer. Rejects any request whose `Authorization:
+/// Bearer` token does not hash to the expected shared secret; the
+/// comparison is constant-time (high-value service-to-service secret).
+/// A missing or non-matching bearer is 401; the internal nest is mounted
+/// only when the token is configured. Same shape as the agora's twin
+/// guard.
+pub async fn internal_guard(
+    State(expected): State<TokenHash>,
+    headers: HeaderMap,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let token = match kallip_common::auth_header::extract_bearer_token(&headers) {
+        Ok(t) => t,
+        Err(_) => return (StatusCode::UNAUTHORIZED, "missing bearer").into_response(),
+    };
+    if !expected.ct_eq(&TokenHash::of(token)) {
+        return (StatusCode::UNAUTHORIZED, "invalid internal token").into_response();
     }
     next.run(request).await
 }

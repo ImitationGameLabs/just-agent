@@ -81,6 +81,10 @@ in
         # Must equal the agora's KALLIP_AGORA_INTERNAL_TOKEN (dev
         # fixture, same discipline as the lesche's KALLIP_LESCHE_AGORA_TOKEN).
         KALLIP_FILES_AGORA_TOKEN = "dev-internal-secret";
+        KALLIP_FILES_NOTIFY_URL = "http://lesche:7200";
+        # Same dev shared secret discipline: must equal the lesche's
+        # KALLIP_LESCHE_INTERNAL_TOKEN.
+        KALLIP_FILES_NOTIFY_TOKEN = "dev-internal-secret";
         RUST_LOG = "info";
       };
       service.volumes = [ "files_blobs:/data/blobs" ];

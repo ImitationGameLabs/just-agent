@@ -81,8 +81,10 @@ async fn main() -> Result<()> {
     // `/v1` so the data-plane paths keep their `/v1/...` contract, and apply the
     // CSRF guard to the whole v1 surface (it gates the cookie-bearing
     // `POST /conversations` and is a no-op for bearer/machine requests).
-    let v1 =
-        routes::router(conv_state.clone()).layer(axum::middleware::from_fn(middleware::csrf_guard));
+    let internal_token_hash = (!args.internal_token.is_empty())
+        .then(|| kallip_common::authtoken::TokenHash::of(&args.internal_token));
+    let v1 = routes::router(conv_state.clone(), internal_token_hash)
+        .layer(axum::middleware::from_fn(middleware::csrf_guard));
 
     // Outermost layers: body limit, then CORS (explicit allowlist, never Any),
     // then request tracing. Mirrors the agora's layer order.

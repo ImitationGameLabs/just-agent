@@ -2,6 +2,7 @@
 
 mod conversations;
 mod events;
+mod internal;
 mod room_management;
 mod rooms;
 mod signal;
@@ -20,8 +21,11 @@ use crate::state::SharedConvState;
 
 /// Data-plane routes, state-injected (`Router<()>`): `/conversations*`,
 /// `/me/events`, `/tagmata/{id}/status`, `/tagmata/{id}/signal`, and `/tunnel`.
-pub fn router(state: SharedConvState) -> Router<()> {
-    Router::new()
+pub fn router(
+    state: SharedConvState,
+    internal_token_hash: Option<kallip_common::authtoken::TokenHash>,
+) -> Router<()> {
+    let mut app = Router::new()
         .merge(conversations::router().with_state(state.clone()))
         .merge(rooms::router().with_state(state.clone()))
         .merge(room_management::router().with_state(state.clone()))
@@ -29,8 +33,19 @@ pub fn router(state: SharedConvState) -> Router<()> {
         .merge(signal::router().with_state(state.clone()))
         .merge(status::router().with_state(state.clone()))
         .merge(tunnel::router().with_state(state.clone()))
+        .merge(tunnel::router().with_state(state.clone()));
+    // The service-to-service `/internal/*` surface: mounted only when the
+    // shared secret is configured (same discipline as the agora's internal
+    // nest; the files service pushes FileDelivered events here).
+    if let Some(hash) = internal_token_hash {
+        let internal = internal::router(state.clone()).layer(axum::middleware::from_fn_with_state(
+            hash,
+            crate::middleware::internal_guard,
+        ));
+        app = app.nest("/internal", internal);
+    }
+    app
 }
-
 /// Build a CORS layer from a comma-separated allowlist. Mirrors the agora's
 /// `cors_layer` (credentials-aware, explicit method list, never a wildcard
 /// origin). The tagma has a separate permissive `cors_layer` -- do NOT copy
