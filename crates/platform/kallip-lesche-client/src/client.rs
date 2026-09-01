@@ -30,6 +30,7 @@ use futures_util::StreamExt;
 use kallip_agora_common::ids::{ChannelId, ConversationId, TagmaId};
 use kallip_e2ee::DeviceKey;
 use kallip_lesche_common::control::KeyExchangeResponse;
+use kallip_lesche_common::direct::{DirectMessageView, DirectSessionId, DirectSessionView};
 use kallip_lesche_common::event::{SignalEvent, TagmaStatusPayload};
 use kallip_lesche_common::message::Envelope;
 use kallip_lesche_common::proof::tunnel_transcript;
@@ -362,6 +363,181 @@ impl LescheClient {
             anyhow::bail!("tunnel GET returned {}", resp.status());
         }
         Ok(tunnel_stream(resp))
+    }
+    // ------------------------------------------------------------------
+    // Direct sessions (T↔T plaintext 1v1). Same wire discipline as the
+    // room surface: opaque plaintext payload bytes, a sync 202 ack, and
+    // member-gated 404s that never distinguish "unknown session" from
+    // "not a member".
+
+    /// Create-or-get the direct session between the calling tagma and
+    /// `peer` (`POST /v1/direct-sessions`). Idempotent: the same pair lands
+    /// on the same derived session whichever side calls. A 404 means
+    /// unknown / cross-owner / not-usable peer -- the existence-oracle, so
+    /// the caller cannot tell which.
+    pub async fn create_direct_session(&self, peer: &TagmaId) -> Result<DirectSessionView> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            peer: &'a str,
+        }
+        let resp = self
+            .inner
+            .http_post
+            .post(self.url("/v1/direct-sessions"))
+            .bearer_auth(&self.inner.tagma_token)
+            .json(&Body {
+                peer: peer.as_ref(),
+            })
+            .send()
+            .await
+            .context("lesche direct-session POST failed")?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(LescheHttpError {
+                op: "direct-session POST",
+                status,
+            }
+            .into());
+        }
+        resp.json().await.context("decode direct-session view")
+    }
+
+    /// List the calling tagma's direct sessions
+    /// (`GET /v1/direct-sessions`), each with the peer's identity.
+    pub async fn list_direct_sessions(&self) -> Result<Vec<DirectSessionView>> {
+        let resp = self
+            .inner
+            .http_post
+            .get(self.url("/v1/direct-sessions"))
+            .bearer_auth(&self.inner.tagma_token)
+            .send()
+            .await
+            .context("lesche direct-session list GET failed")?;
+        let status = resp.status();
+        if !status.is_success() {
+            anyhow::bail!("lesche direct-session list returned {status}");
+        }
+        resp.json().await.context("decode direct-session list")
+    }
+
+    /// Send a plaintext `DirectMessage` envelope into the session
+    /// (`POST /v1/direct-sessions/{id}/messages`), retrying on 503 with the
+    /// room surface's bounded backoff. The channel is stamped from
+    /// `session_id` here so no caller can address a session with a
+    /// mismatched id (the route rejects any mismatch with a 400 anyway).
+    pub async fn post_direct_session_envelope(
+        &self,
+        session_id: &DirectSessionId,
+        envelope: &Envelope,
+    ) -> Result<()> {
+        const BACKOFF: [Duration; 6] = [
+            Duration::from_millis(500),
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(4),
+            Duration::from_secs(8),
+            Duration::from_secs(16),
+        ];
+        let mut envelope = envelope.clone();
+        envelope.channel_id = ChannelId::from(session_id.as_ref().to_string());
+        let url = self.url(&format!("/v1/direct-sessions/{session_id}/messages"));
+        for wait in BACKOFF {
+            let resp = self
+                .inner
+                .http_post
+                .post(&url)
+                .bearer_auth(&self.inner.tagma_token)
+                .json(&envelope)
+                .send()
+                .await
+                .context("lesche direct-session message POST failed")?;
+            let status = resp.status();
+            if status.is_success() {
+                return Ok(());
+            }
+            // Retry only on 503 (lesche transiently unavailable); a 202
+            // always returns on success, so anything else is a hard failure.
+            if status.as_u16() != 503 {
+                return Err(LescheHttpError {
+                    op: "direct-session message POST",
+                    status,
+                }
+                .into());
+            }
+            tokio::time::sleep(wait).await;
+        }
+        anyhow::bail!("lesche direct-session POST exhausted retries (lesche unavailable)")
+    }
+
+    /// Pull the session's message history
+    /// (`GET /v1/direct-sessions/{id}/messages?after_seq=&limit=`).
+    /// Member-only on the relay; rows carry the plaintext `DirectMessage`
+    /// JSON as opaque bytes. A non-member / unknown session is a
+    /// [`LescheHttpError`] with status 404. Not retried: a history pull is a
+    /// fresh read, the next call supersedes a dropped one.
+    pub async fn fetch_direct_messages(
+        &self,
+        session_id: &DirectSessionId,
+        after_seq: Option<i64>,
+        limit: Option<u64>,
+    ) -> Result<Vec<DirectMessageView>> {
+        let mut query = Vec::new();
+        if let Some(a) = after_seq {
+            query.push(("after_seq", a.to_string()));
+        }
+        if let Some(l) = limit {
+            query.push(("limit", l.to_string()));
+        }
+        let resp = self
+            .inner
+            .http_post
+            .get(self.url(&format!("/v1/direct-sessions/{session_id}/messages")))
+            .query(&query)
+            .bearer_auth(&self.inner.tagma_token)
+            .send()
+            .await
+            .context("lesche direct-session history GET failed")?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(LescheHttpError {
+                op: "direct-session history GET",
+                status,
+            }
+            .into());
+        }
+        resp.json().await.context("decode direct-session history")
+    }
+
+    /// Advance the calling tagma's read cursor in the session
+    /// (`PUT /v1/direct-sessions/{id}/read-cursor`). Clamp-on-write
+    /// server-side: a stale write never moves the watermark backwards.
+    pub async fn put_direct_read_cursor(
+        &self,
+        session_id: &DirectSessionId,
+        last_read_seq: i64,
+    ) -> Result<()> {
+        #[derive(serde::Serialize)]
+        struct Body {
+            last_read_seq: i64,
+        }
+        let resp = self
+            .inner
+            .http_post
+            .put(self.url(&format!("/v1/direct-sessions/{session_id}/read-cursor")))
+            .bearer_auth(&self.inner.tagma_token)
+            .json(&Body { last_read_seq })
+            .send()
+            .await
+            .context("lesche direct-session cursor PUT failed")?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(LescheHttpError {
+                op: "direct-session cursor PUT",
+                status,
+            }
+            .into());
+        }
+        Ok(())
     }
 }
 
