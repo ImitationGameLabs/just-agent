@@ -54,6 +54,28 @@ export type NavIndicator = "live" | "pending" | "down" | "error";
 // `indicator` (a status dot). The discriminated union enforces mutual
 // exclusivity at the type level; a third arm allows text-only entries.
 export type NavItem =
-  | { href: string; label: string; icon: Component; indicator?: never }
-  | { href: string; label: string; icon?: never; indicator: NavIndicator }
-  | { href: string; label: string; icon?: never; indicator?: never };
+  | {
+      href: string;
+      label: string;
+      icon: Component;
+      indicator?: never;
+      badge?: number;
+    }
+  | {
+      href: string;
+      label: string;
+      icon?: never;
+      indicator: NavIndicator;
+      badge?: number;
+    }
+  | {
+      href: string;
+      label: string;
+      icon?: never;
+      indicator?: never;
+      badge?: number;
+    };
+
+// `badge` is the unread count for the entry (0 = absent; rendered through
+// `badgeLabel` in AppShell, so the display caps at "99+"). Purely additive:
+// the three leading-mark arms stay mutually exclusive.

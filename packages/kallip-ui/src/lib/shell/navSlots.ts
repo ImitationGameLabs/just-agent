@@ -43,7 +43,14 @@ export function navSlots(links: NavSection[]): NavSlotPlan {
   // because `folded` holds no items for a hub section.
   const flat = shown.flatMap((s) =>
     s.hub
-      ? [{ href: s.hub.href, label: s.hub.label, icon: s.hub.icon }]
+      ? [
+          {
+            href: s.hub.href,
+            label: s.hub.label,
+            icon: s.hub.icon,
+            badge: s.hub.badge,
+          },
+        ]
       : s.items,
   );
   const hasManage = shown.some((s) => s.manage);

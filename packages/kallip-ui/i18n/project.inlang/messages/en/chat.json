@@ -24,5 +24,9 @@
   "composer_connect_link": "Connect a tagma",
   "composer_connect_tail": "to send.",
   "chat_send_failed": "Could not send the message.",
-  "chat_reconnecting": "Reconnecting…"
+  "chat_reconnecting": "Reconnecting…",
+  "chat_unread_badge_aria": "{count} unread",
+  "chat_notifications_label": "Notifications",
+  "chat_notifications_desc": "Show a system notification for new messages while the app is in the background.",
+  "chat_notifications_denied": "Notifications are blocked in your browser settings. Re-enable them there, then turn this on again."
 }

@@ -17,6 +17,7 @@ import {
   type RoomView,
   type Visibility,
 } from "@kallipai/kallip-lesche-client";
+import { unreadStore } from "./unread.svelte.ts";
 import { participantIdForTagma } from "@kallipai/kallip-common";
 import { agoraSession, lescheClientOrFail } from "./agora.svelte.ts";
 import { rooms_public_failed } from "../../paraglide/messages.js";
@@ -61,6 +62,14 @@ class RoomsStore {
       this.rooms = roomsRes.value;
       this.roomsLoaded = true;
       this.roomsError = null;
+      // Hand the fresh list (with the caller-scoped read cursors) to the
+      // unread store: it seeds room entries + schedules the counting pulls.
+      unreadStore.initRooms(
+        roomsRes.value.map((r) => ({
+          roomId: r.room_id,
+          lastReadSeq: r.last_read_seq,
+        })),
+      );
     } else {
       this.roomsError = messageOf(roomsRes.reason);
     }
@@ -153,6 +162,13 @@ class RoomsStore {
    * await + throw. THROWS on error. */
   async addTagma(roomId: string, tagmaId: string): Promise<void> {
     await lescheClientOrFail().addRoomTagma(roomId, tagmaId);
+  }
+
+  /** Whether `roomId` is one of the caller's current rooms. The RootLayout
+   *  envelope demux uses this to route a room-addressed envelope whose room
+   *  has no open conversation (the unread store counts it via a pull). */
+  has(roomId: string): boolean {
+    return this.rooms.some((r) => r.room_id === roomId);
   }
 
   /** Drop all registry state (logout). Cleared so the next user's login never

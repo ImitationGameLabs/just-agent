@@ -17,6 +17,7 @@
   import { convDraftKey, tagmaDraftKey } from "../lib/session/drafts.ts";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { ConversationBase } from "../lib/session/conversation.svelte.ts";
+  import { unreadStore, tagmaKey } from "../lib/session/unread.svelte.ts";
   import { navigate } from "../lib/shell/port.ts";
   import {
     connect_connecting,
@@ -46,6 +47,16 @@
   const conv = $derived(channelsStore.get(conversationId));
   const isLocal = $derived(conversationId === "local");
 
+  // Viewing (plan q-M4): the open chat page clears the badge for the tagma's
+  // 1:1 conversation; the line-entry hook (RelayConversation.onLineLanded)
+  // keeps the local watermark fresh while viewing, and cleanup only ends the
+  // viewing flag (the watermark persists per line). Local conversations
+  // (the offline shell) carry no unread badge.
+  $effect(() => {
+    if (!(conv instanceof RelayConversation)) return;
+    unreadStore.enter(tagmaKey(conv.tagmaId));
+    return () => unreadStore.leaveTagma(conv.tagmaId);
+  });
   // The lazy-window pager runs on both transports; each conversation leaf
   // supplies its own page source behind the shared base loadOlder.
   const loadOlder = $derived(

@@ -1,5 +1,5 @@
 //! `room_read_cursors` -- a member's per-room read watermark (the unread
-//! backbone). One row per (room, member); rows are bounded by membership and
+//! backbone). One row per (room, member); rows persist across membership
 //! cascade away with the room. `last_read_seq` is a clamp-on-write watermark:
 //! a stale write never moves it backwards (see the store's single-statement
 //! upsert). Introduced 2026-09-01 for the unread-badge feature.

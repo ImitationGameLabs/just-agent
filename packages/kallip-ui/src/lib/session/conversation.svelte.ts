@@ -56,6 +56,7 @@ import { DirectTransport, type TransportState } from "./directTransport.ts";
 import { LescheApiError } from "@kallipai/kallip-lesche-client";
 import { KallipError } from "@kallipai/kallip-common";
 import { chat_send_failed } from "../../paraglide/messages.js";
+import { unreadStore } from "./unread.svelte.ts";
 
 /** The lazy-window page size: how many lines a hydrate, a catch-up batch,
  *  or a scroll-up page brings in at once. Mirrors the server's
@@ -196,6 +197,12 @@ export abstract class ConversationBase {
    *  flips `live` on `history_batch_end` and fires background notifications). */
   protected onReply(_reply: TagmaReply): void {}
 
+  /** Line-entry hook: one NEW line landed through the reducer (a live frame
+   *  or a catch-up row, post-dedup). `realId` is the durable id (0 for a
+   *  synthetic line). The relay leaf counts unread from here so both paths
+   *  pass the same point; the base no-op keeps the offline leaf unhooked. */
+  protected onLineLanded(_reply: TagmaReply, _realId: number): void {}
+
   /** Apply one authored reply through the shared core: dedup by `history_id`,
    *  promote an optimistic line on a stamped `user_message`, reduce, cache, and
    *  advance the cursor. `sender` is the wire participant who authored the
@@ -293,6 +300,7 @@ export abstract class ConversationBase {
     }
     const lineId = realId > 0 ? realId : (this.syntheticSeq -= 1);
     this.transcript = applyTagmaReply(this.transcript, reply, sender, lineId);
+    this.onLineLanded(reply, realId);
     const cl = cacheLineOf(reply, sender);
     if (cl) {
       void cachePut({
@@ -629,6 +637,19 @@ export class RelayConversation extends ConversationBase {
       }
     }
     super.applyReplyCore(reply, sender);
+  }
+
+  /** Unread counting at the unified line-entry point (plan D2): the reducer
+   *  path carries both live frames and catch-up/refresh rows, so offline-
+   *  window replay lines are counted exactly once by the store's watermark
+   *  fence. Only the peer's authored content counts: `event` frames are the
+   *  tagma's lines; `user_message` replays are my own echo (never unread);
+   *  errors/markers land with synthetic ids and are skipped by the id test. */
+  protected override onLineLanded(reply: TagmaReply, realId: number): void {
+    super.onLineLanded(reply, realId);
+    if (reply.kind === "event" && realId > 0) {
+      unreadStore.observeTagmaLine(this.tagmaId, realId);
+    }
   }
 
   protected override onReply(reply: TagmaReply): void {

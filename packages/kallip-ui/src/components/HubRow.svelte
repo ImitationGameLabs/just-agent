@@ -10,8 +10,13 @@
   // drops `onclick`. Purely presentational: `label` arrives already evaluated,
   // Leading mark: `Icon` (size-7) or a four-state `indicator` dot.
   import type { Component } from "svelte";
-  import type { NavIndicator } from "../lib/shell.ts";
-  import { navIndicatorDotClass, navIndicatorLabel } from "../lib/shell.ts";
+  import {
+    navIndicatorDotClass,
+    navIndicatorLabel,
+    type NavIndicator,
+  } from "../lib/shell.ts";
+  import { badgeLabel } from "../lib/session/unread.svelte.ts";
+  import { chat_unread_badge_aria } from "../paraglide/messages.js";
 
   let {
     href = undefined,
@@ -19,12 +24,15 @@
     Icon = undefined,
     label,
     indicator,
+    badge = 0,
   }: {
     href?: string;
     onclick?: () => void;
     Icon?: Component;
     label: string;
     indicator?: NavIndicator;
+    /** The unread count (rendered through badgeLabel; 0 renders nothing). */
+    badge?: number;
   } = $props();
 </script>
 
@@ -49,6 +57,16 @@
   <span class="text-lg font-medium">{label}</span>
   {#if indicator}
     <span class="sr-only">{navIndicatorLabel(indicator)}</span>
+  {/if}
+  {#if badge > 0}
+    <span
+      class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[11px] leading-none font-semibold preset-filled-primary-500"
+    >
+      {badgeLabel(badge)}
+    </span>
+    <span class="sr-only"
+      >{chat_unread_badge_aria({ count: badgeLabel(badge) })}</span
+    >
   {/if}
 {/snippet}
 

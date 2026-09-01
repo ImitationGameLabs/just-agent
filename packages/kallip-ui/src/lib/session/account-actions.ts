@@ -9,6 +9,7 @@ import { channelsStore } from "./channels.svelte";
 import { roomsStore } from "./rooms.svelte";
 import { roomConversationsStore } from "./roomConversations.svelte";
 import { chatDraftsStore } from "./drafts.ts";
+import { unreadStore } from "./unread.svelte.ts";
 
 // Online: end the agora session (destroys the cookie -- distinct from
 // switching, which keeps it). Drop open channels here; the realtime SSE that
@@ -22,6 +23,9 @@ export async function logout() {
   // next session on a shared device.
   roomsStore.reset();
   roomConversationsStore.reset();
+  // Drop the unread state + the persisted 1:1 read watermarks (the store
+  // clears them; same shared-device privacy contract as the transcripts).
+  unreadStore.reset();
   await agoraSession.logout();
   // Drop any held composer drafts AFTER the logout round-trip: the page
   // stays mounted (and typable) until the gate redirects, so an earlier

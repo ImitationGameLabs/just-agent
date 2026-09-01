@@ -20,6 +20,9 @@ export {
   put,
   readTail,
   readTailBefore,
+  clearReadWatermarks,
+  getReadWatermark,
+  putReadWatermark,
 } from "./cache.ts";
 
 // Data-plane wire types the UI consumes. The remaining wire types

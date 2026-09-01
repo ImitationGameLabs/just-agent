@@ -44,7 +44,7 @@ export interface NavSection {
   title?: string;
   /** Small-screen single entry for this section's items; the bar renders it
    * as one cell instead of the items (which the hub page lists). */
-  hub?: { href: string; label: string; icon: Component };
+  hub?: { href: string; label: string; icon: Component; badge?: number };
   /** The section's management page, reached via a settings gear beside the
    * title. `icon` is injected by the caller (mirrors NavItem). */
   manage?: { href: string; label: string; icon: Component };
@@ -81,6 +81,8 @@ export interface NavTagma {
   tagmaId: string;
   label: string | null;
   indicator: NavIndicator;
+  /** The unread count for this chat (rendered through badgeLabel). */
+  badge?: number;
 }
 
 /** One room as a sidebar chat entry (`/rooms/{id}`). Rooms have no live
@@ -88,6 +90,8 @@ export interface NavTagma {
 export interface NavRoom {
   roomId: string;
   label: string;
+  /** The unread count for this room (rendered through badgeLabel). */
+  badge?: number;
 }
 
 /** Derive a sidebar NavIndicator from OUR channel transport state.
@@ -139,6 +143,8 @@ export function navFor(args: {
   icons: NavIcons;
   tagmata?: NavTagma[];
   rooms?: NavRoom[];
+  /** The chats total for the small-screen hub cell (the Chats bar badge). */
+  chatsBadge?: number;
 }): NavSection[] {
   const { mode, icons, tagmata, rooms } = args;
   if (mode === "offline") {
@@ -195,16 +201,23 @@ export function navFor(args: {
       // management lives on the combined /tagmata page (the withdrawn
       // chip/AccountMenu ideas were never shipped).
       title: nav_chats(),
-      hub: { href: "/chats", label: nav_chats(), icon: icons.chat },
+      hub: {
+        href: "/chats",
+        label: nav_chats(),
+        icon: icons.chat,
+        badge: args.chatsBadge,
+      },
       items: [
         ...(tagmata ?? []).map((t) => ({
           href: tagmaChatPath(t.tagmaId),
           label: t.label ?? tagma_profile_unnamed(),
           indicator: t.indicator,
+          badge: t.badge,
         })),
         ...(rooms ?? []).map((r) => ({
           href: `/rooms/${r.roomId}`,
           label: r.label,
+          badge: r.badge,
           icon: icons.rooms,
         })),
       ],

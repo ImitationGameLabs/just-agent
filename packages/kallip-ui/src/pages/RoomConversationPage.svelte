@@ -29,6 +29,7 @@
   import { roomConversationsStore } from "../lib/session/roomConversations.svelte.ts";
   import { roomsStore } from "../lib/session/rooms.svelte";
   import { agoraSession } from "../lib/session/agora.svelte";
+  import { unreadStore, roomKey } from "../lib/session/unread.svelte.ts";
   import { navigate } from "../lib/shell/port.ts";
   import { profileHref } from "../lib/room-message.ts";
   import { startVisibleInterval } from "../lib/visibleInterval.ts";
@@ -87,7 +88,13 @@
   $effect(() => {
     if (!agoraSession.participantId) return;
     void roomConversationsStore.open(roomId);
+    // Viewing (plan q-M4): an explicitly opened room page clears its badge
+    // and starts the cursor-write schedule; the cleanup (unmount or a
+    // participantId re-fire) syncs the watermark to the conversation's live
+    // cursor and flushes the write.
+    unreadStore.enter(roomKey(roomId));
     void roomConversationsStore.refreshRoster(roomId);
+    return () => unreadStore.leaveRoom(roomId, conv?.lastSeq);
   });
 
   // Slow poll: the dropped-frame backstop for the room_membership_changed
@@ -111,6 +118,14 @@
   $effect(() => {
     void conv?.lines.length;
     scroll.stick();
+  });
+
+  // The viewing line tick: lines rendered on the open conversation count as
+  // read and coalesce the cursor write into the 3s throttle window (plan:
+  // a busy chat must not POST per line; the leave path flushes).
+  $effect(() => {
+    void conv?.lines.length;
+    unreadStore.noteViewedLines(roomId, conv?.lastSeq ?? null);
   });
 
   // One scroll-pin controller for the whole room transcript (a single active

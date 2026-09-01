@@ -14,6 +14,7 @@
   import { instancesStore } from "../instances/instances.svelte.ts";
   import { realtimeStore } from "../session/realtime.svelte";
   import { roomConversationsStore } from "../session/roomConversations.svelte";
+  import { roomKey, tagmaKey, unreadStore } from "../session/unread.svelte.ts";
   import { connectDirect } from "../session/connect.ts";
   import { configStore } from "../config/config.svelte";
   import {
@@ -78,6 +79,13 @@
           env.ciphertext,
           env.sender,
         );
+        // The transcript renders live; the unread store no-ops while the
+        // room is being viewed and pull-counts when open-but-not-viewed.
+        unreadStore.noteRoomActivity(env.channel_id);
+      } else if (roomsStore.has(env.channel_id)) {
+        // A room envelope with no open conversation: the unread store
+        // pull-counts it precisely (live room envelopes carry no seq).
+        unreadStore.noteRoomActivity(env.channel_id);
       } else {
         channelsStore.deliver(env);
       }
@@ -140,6 +148,11 @@
     // a peer's connect/disconnect mutates the set between roster re-fetches.
     realtimeStore.setRoomMemberPresenceSink((roomId, memberId, online) => {
       roomConversationsStore.applyMemberPresence(roomId, memberId, online);
+    });
+    // Wire read-cursor echoes into the unread store: another session's PUT
+    // converges this session's badge in real time (multi-device read state).
+    realtimeStore.setRoomReadCursorChangedSink((roomId, lastReadSeq) => {
+      unreadStore.applyServerRead(roomId, lastReadSeq);
     });
 
     void configStore.ready.then(() => {
@@ -276,6 +289,7 @@
         channelsStore.getTagmaChannelState(c.tagmaId),
         realtimeStore.resolved && !realtimeStore.has(c.tagmaId),
       ),
+      badge: unreadStore.countOf(tagmaKey(c.tagmaId)),
     })),
   );
 
@@ -287,7 +301,9 @@
       rooms: roomsStore.rooms.map((r) => ({
         roomId: r.room_id,
         label: r.name || room_label_fallback({ id: r.room_id.slice(0, 8) }),
+        badge: unreadStore.countOf(roomKey(r.room_id)),
       })),
+      chatsBadge: unreadStore.total(),
     }),
   );
 

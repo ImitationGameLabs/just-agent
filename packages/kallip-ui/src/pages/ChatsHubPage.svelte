@@ -13,6 +13,11 @@
   import { realtimeStore } from "../lib/session/realtime.svelte.ts";
   import { roomsStore } from "../lib/session/rooms.svelte";
   import { tagmaChatPath } from "../lib/shell/routes.ts";
+  import {
+    unreadStore,
+    roomKey,
+    tagmaKey,
+  } from "../lib/session/unread.svelte.ts";
   import { tagmaNavIndicator } from "../lib/shell/links.ts";
   import {
     nav_chats,
@@ -32,12 +37,14 @@
         channelsStore.getTagmaChannelState(c.tagmaId),
         realtimeStore.resolved && !realtimeStore.has(c.tagmaId),
       ),
+      badge: unreadStore.countOf(tagmaKey(c.tagmaId)),
     })),
   );
   const roomRows = $derived(
     roomsStore.rooms.map((r) => ({
       href: `/rooms/${r.room_id}`,
       label: r.name || room_label_fallback({ id: r.room_id.slice(0, 8) }),
+      badge: unreadStore.countOf(roomKey(r.room_id)),
     })),
   );
 </script>
@@ -57,7 +64,12 @@
       </h2>
       <div class="card preset-tonal-surface divide-y divide-surface-200-800">
         {#each tagmaRows as row (row.href)}
-          <HubRow href={row.href} label={row.label} indicator={row.indicator} />
+          <HubRow
+            href={row.href}
+            label={row.label}
+            indicator={row.indicator}
+            badge={row.badge}
+          />
         {/each}
       </div>
     </section>
@@ -70,7 +82,12 @@
       </h2>
       <div class="card preset-tonal-surface divide-y divide-surface-200-800">
         {#each roomRows as row (row.href)}
-          <HubRow href={row.href} Icon={Users} label={row.label} />
+          <HubRow
+            href={row.href}
+            Icon={Users}
+            label={row.label}
+            badge={row.badge}
+          />
         {/each}
       </div>
     </section>

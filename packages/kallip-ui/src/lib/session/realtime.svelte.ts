@@ -62,6 +62,12 @@ type StatusSink = (
  * drops. */
 type RoomMembershipChangedSink = (roomId: string) => void;
 
+/** Sink for `room_read_cursor_changed` echoes (the N1 read-cursor fan). Bound
+ * by the shell to `unreadStore.applyServerRead` so another session's cursor
+ * advance converges this session's badge in real time. `null` (the default)
+ * drops -- safe only in that the next room-list fetch resyncs anyway. */
+type RoomReadCursorChangedSink = (roomId: string, lastReadSeq: number) => void;
+
 /** Sink for `room_member_online` / `room_member_offline` deltas. Bound by the
  * shell to `roomConversationsStore.applyMemberPresence` so a peer's room
  * presence transition mutates that room's online-member set live, between
@@ -114,6 +120,7 @@ class RealtimeStore {
   private statusSink: StatusSink | null = null;
   private roomMembershipChangedSink: RoomMembershipChangedSink | null = null;
   private roomMemberPresenceSink: RoomMemberPresenceSink | null = null;
+  private roomReadCursorChangedSink: RoomReadCursorChangedSink | null = null;
   // One-shot per session; force-resolves presence after the deadline so the
   // "checking" placeholder is bounded regardless of SSE connection health.
   private resolveDeadline: ReturnType<typeof setTimeout> | null = null;
@@ -179,6 +186,13 @@ class RealtimeStore {
    * that room's live online-member set. */
   setRoomMemberPresenceSink(sink: RoomMemberPresenceSink | null): void {
     this.roomMemberPresenceSink = sink;
+  }
+
+  /** Bind the room-read-cursor-changed handler. Called once by the shell at
+   * boot; routes cursor echoes into `unreadStore.applyServerRead` so a
+   * sibling session's read position converges the badge live. */
+  setRoomReadCursorChangedSink(sink: RoomReadCursorChangedSink | null): void {
+    this.roomReadCursorChangedSink = sink;
   }
 
   /** Start the SSE subscriber, idempotently. Safe to call repeatedly. Clears
@@ -384,10 +398,11 @@ class RealtimeStore {
         break;
       case "room_read_cursor_changed":
         // The caller's own read cursor advanced (an echo of this session's own
-        // PUT, fanned for the user's OTHER live sessions). No-op here for now:
-        // the unread store (N2) will consume it. Idempotent by watermark --
-        // dropping the frame only delays convergence to the next room-list
-        // fetch, which remains the resync ground truth.
+        // PUT, fanned for the user's OTHER live sessions). The unread store
+        // reduces the badge by the watermark advance (order-safe); a dropped
+        // frame only delays convergence to the next room-list fetch, which
+        // remains the resync ground truth.
+        this.roomReadCursorChangedSink?.(ev.room_id, ev.last_read_seq);
         break;
       default: {
         // Exhaustiveness guard: a new LescheEvent variant without a dispatch

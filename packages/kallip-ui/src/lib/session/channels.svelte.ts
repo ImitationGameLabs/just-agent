@@ -22,6 +22,7 @@ import {
   agoraSession,
   lescheClientOrFail,
 } from "./agora.svelte.ts";
+import { unreadStore } from "./unread.svelte.ts";
 import type { DirectTransport } from "./directTransport.ts";
 import { RelayTransport } from "./relayTransport.ts";
 import {
@@ -31,7 +32,11 @@ import {
   RelayConversation,
   WINDOW_PAGE,
 } from "./conversation.svelte.ts";
-import { clearConvCache, readTail } from "@kallipai/kallip-lesche-client";
+import {
+  clearConvCache,
+  getReadWatermark,
+  readTail,
+} from "@kallipai/kallip-lesche-client";
 import { configStore } from "../config/config.svelte.ts";
 import type { ConversationLine } from "../transcript.ts";
 
@@ -304,6 +309,16 @@ export class ChannelsStore {
       // IndexedDB unavailable (e.g. private mode): proceed empty; the
       // catch-up pull lands one recent batch.
     }
+
+    // Rehydrate the unread watermark before the drain starts: the store's
+    // per-observe persists only help if the baseline landed first, and the
+    // cache read above is already openRelay's serialization point. A fresh
+    // device (null) arms the store's seed-pending (first observed line
+    // becomes the watermark instead of counting the backlog).
+    unreadStore.hydrateTagma(
+      tagma.tagma_id,
+      await getReadWatermark(tagma.tagma_id),
+    );
     // Race guard: a teardown (logout / mode switch) during the KEX or cache
     // awaits cleared the map; drop the channel we built instead of
     // resurrecting the conversation. The return value is unused by callers;

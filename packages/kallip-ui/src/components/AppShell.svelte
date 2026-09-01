@@ -6,7 +6,9 @@
     navIndicatorLabel,
     type NavItem,
   } from "../lib/shell.ts";
+  import { badgeLabel } from "../lib/session/unread.svelte.ts";
   import { navSlots } from "../lib/shell/navSlots.ts";
+  import { chat_unread_badge_aria } from "../paraglide/messages.js";
   import { ChevronLeft, Ellipsis, User } from "@lucide/svelte";
   import type { NavSection } from "../lib/shell/links.ts";
   import type { ErrorView } from "../lib/errors.ts";
@@ -119,6 +121,18 @@
     <Navigation.TriggerText>{item.label}</Navigation.TriggerText>
     {#if indicator}
       <span class="sr-only">{navIndicatorLabel(indicator)}</span>
+    {/if}
+    {#if (item.badge ?? 0) > 0}
+      <!-- The unread pill: the count (capped at 99+ by badgeLabel). One
+           render point covers sidebar, bar and sheet -- all use navLink. -->
+      <span
+        class="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[11px] leading-none font-semibold preset-filled-primary-500"
+      >
+        {badgeLabel(item.badge ?? 0)}
+      </span>
+      <span class="sr-only">
+        {chat_unread_badge_aria({ count: badgeLabel(item.badge ?? 0) })}
+      </span>
     {/if}
   </Navigation.TriggerAnchor>
 {/snippet}

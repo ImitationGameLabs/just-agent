@@ -37,11 +37,13 @@ export interface CachedLine {
 
 const DB_NAME = "kallip-relay";
 // v2: the keyPath field was renamed `convId` -> `conversationId`. v3: the row
-// gained an optional `sender`. The store is a disposable derived cache
+// gained an optional `sender`. v4: added the `read_watermarks` store (the 1:1
+// unread high-water). The messages store is a disposable derived cache
 // (re-pulled from the tagma), so on upgrade we drop+recreate it rather than
-// migrate rows.
-const DB_VERSION = 3;
+// migrate rows; the watermark store is created once and never dropped.
+const DB_VERSION = 4;
 const STORE = "messages";
+const WATERMARK_STORE = "read_watermarks";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -70,6 +72,12 @@ function db(): Promise<IDBDatabase> {
           keyPath: ["conversationId", "historyId"],
         });
       }
+      if (!d.objectStoreNames.contains(WATERMARK_STORE)) {
+        // v4: the per-tagma unread high-water, one row per tagma. Never
+        // dropped on upgrade: recreating it empty would re-count every
+        // delivered line as unread once the catch-up pull lands.
+        d.createObjectStore(WATERMARK_STORE, { keyPath: "tagmaId" });
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error ?? new Error("indexedDB open failed"));
@@ -94,15 +102,16 @@ function conversationRange(conversationId: string): IDBKeyRange {
   );
 }
 
-/** Run a single request on the `messages` store. */
+/** Run a single request on one store (default: the messages cache). */
 function run<T>(
   mode: IDBTransactionMode,
   fn: (store: IDBObjectStore) => IDBRequest<T>,
+  store: string = STORE,
 ): Promise<T> {
   return db().then(
     (d) =>
       new Promise<T>((resolve, reject) => {
-        const req = fn(d.transaction(STORE, mode).objectStore(STORE));
+        const req = fn(d.transaction(store, mode).objectStore(store));
         req.onsuccess = () => resolve(req.result);
         req.onerror = () =>
           reject(req.error ?? new Error("idb request failed"));
@@ -199,6 +208,63 @@ export async function put(line: CachedLine): Promise<void> {
 export async function clear(conversationId: string): Promise<void> {
   try {
     await run("readwrite", (s) => s.delete(conversationRange(conversationId)));
+  } catch {
+    // best-effort
+  }
+}
+
+/** -- 1:1 unread high-water ---------------------------------------------------
+ *
+ *  The per-tagma watermark behind the unread badge (kallip-ui's unread
+ *  store): the largest `chat_history.id` this device has counted or seen
+ *  while viewing the tagma's channel. Persisted so a reload/restore keeps
+ *  the count stable, and cleared on logout (shared-device privacy, same
+ *  contract as the message cache). Same degrade-quietly contract: a failed
+ *  read returns null (the store re-seeds from its first observed line); a
+ *  failed write only means the next observe re-persists. */
+
+interface ReadWatermarkRow {
+  tagmaId: string;
+  knownSeq: number;
+}
+
+/** The stored high-water for a tagma, or null when none / on any IndexedDB
+ *  failure (private mode etc. -- the unread store then re-seeds). */
+export async function getReadWatermark(
+  tagmaId: string,
+): Promise<number | null> {
+  try {
+    const row = await run<ReadWatermarkRow | undefined>(
+      "readonly",
+      (s) => s.get(tagmaId),
+      WATERMARK_STORE,
+    );
+    return typeof row?.knownSeq === "number" ? row.knownSeq : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the high-water for a tagma (upsert). Best-effort. */
+export async function putReadWatermark(
+  tagmaId: string,
+  knownSeq: number,
+): Promise<void> {
+  try {
+    await run(
+      "readwrite",
+      (s) => s.put({ tagmaId, knownSeq }),
+      WATERMARK_STORE,
+    );
+  } catch {
+    // best-effort; the next observe re-persists
+  }
+}
+
+/** Drop every read watermark (logout). Best-effort. */
+export async function clearReadWatermarks(): Promise<void> {
+  try {
+    await run("readwrite", (s) => s.clear(), WATERMARK_STORE);
   } catch {
     // best-effort
   }
