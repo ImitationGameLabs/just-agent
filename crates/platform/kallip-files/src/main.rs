@@ -28,6 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = FilesConfig {
         max_body_bytes: args.max_body_size_mb * 1024 * 1024,
         degrade_fail_soft: args.degrade == "soft",
+        cors_origins: args.cors_origins,
         gc: gc::GcConfig {
             batch: args.gc_batch,
             interval: Duration::from_secs(args.gc_interval_secs),

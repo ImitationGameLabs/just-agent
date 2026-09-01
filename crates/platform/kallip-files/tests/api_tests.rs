@@ -693,6 +693,7 @@ async fn service_boots_and_answers_health() {
         blob_root: std::path::PathBuf::from(blob.path()),
         files: kallip_files::state::FilesConfig {
             max_body_bytes: 1024 * 1024,
+            cors_origins: String::new(),
             degrade_fail_soft: false,
             gc: kallip_files::gc::GcConfig::default(),
         },

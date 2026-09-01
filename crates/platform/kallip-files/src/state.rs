@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::metadata::{self, Db};
 use axum::Router;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::api;
 use crate::auth::FilesControlPlane;
@@ -22,6 +23,10 @@ pub struct FilesConfig {
     /// with 413. The value is a size ceiling only (Q1 default 100 MB; the
     /// operator may tune it), never a chunking boundary.
     pub max_body_bytes: u64,
+    /// Comma-separated CORS allowed origins (the app's origin). Empty = no
+    /// cross-origin allowed (the allowlist is `AllowOrigin::list`, never
+    /// `Any`); see `Args::cors_origins`.
+    pub cors_origins: String,
     /// Agora degrade posture (seventh approved default). `false` (default)
     /// is fail-closed: a registry that cannot answer produces 503 and no
     /// decision. `true` is fail-soft: the enrollment lookup degrading to an
@@ -72,6 +77,7 @@ pub struct BootConfig {
 /// (compose healthcheck / Caddy and baseline acceptance; the instances'
 /// health route is the precedent).
 pub fn router(state: AppState) -> Router {
+    let cors = cors_layer(&state.config.cors_origins);
     Router::new()
         .route(
             "/v1/files",
@@ -93,6 +99,45 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/health", axum::routing::get(api::health))
         .with_state(state)
+        .layer(cors)
+}
+
+/// The CORS gate for browser callers: the web app lives on a different
+/// origin than this service (e.g. `files.<domain>` vs `app.<domain>`), so
+/// uploads/downloads from the browser are cross-origin and preflighted.
+/// Same shape as the agora's layer (the twin implementation): origins are
+/// an explicit comma-separated allowlist (an empty config yields an empty
+/// allowlist, never a wildcard), methods are enumerated because
+/// `allow_credentials(true)` + `Any` is forbidden by the Fetch spec, and
+/// the headers list carries the ones the web client actually sends.
+fn cors_layer(origins: &str) -> CorsLayer {
+    let allowed: Vec<axum::http::HeaderValue> = origins
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    let origin = if allowed.is_empty() {
+        AllowOrigin::list(Vec::new())
+    } else {
+        AllowOrigin::list(allowed)
+    };
+    CorsLayer::new()
+        .allow_origin(origin)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::PUT,
+            axum::http::Method::POST,
+            axum::http::Method::DELETE,
+            axum::http::Method::HEAD,
+        ])
+        .allow_credentials(true)
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::ACCEPT,
+            axum::http::HeaderName::from_static("x-requested-with"),
+        ])
 }
 
 /// Boot sequence: connect and migrate the metadata store, build the state,
@@ -150,4 +195,69 @@ pub fn spawn_gc_driver(state: AppState) -> tokio::task::JoinHandle<()> {
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::http::header::{
+        ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_REQUEST_METHOD,
+        ORIGIN,
+    };
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    use super::*;
+
+    /// The preflight surface: an allowed origin gets the method list back,
+    /// mirroring the agora's pinned preflight test (the twin layer).
+    #[tokio::test]
+    async fn preflight_from_an_allowed_origin_advertises_methods() {
+        let app = Router::new()
+            .route("/health", get(api::health))
+            .layer(cors_layer("https://app.example"));
+        let request = Request::builder()
+            .method(axum::http::Method::OPTIONS)
+            .header(ORIGIN, "https://app.example")
+            .header(ACCESS_CONTROL_REQUEST_METHOD, "PUT")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let advertised = response
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_METHODS)
+            .expect("allowed preflight advertises the method list")
+            .to_str()
+            .unwrap();
+        let mut advertised: Vec<&str> = advertised.split(',').map(str::trim).collect();
+        advertised.sort_unstable();
+        assert_eq!(advertised, vec!["DELETE", "GET", "HEAD", "POST", "PUT"]);
+    }
+
+    /// An empty allowlist is the safe default: a request from any origin
+    /// gets no ACAO header, so the browser rejects the response. This pins
+    /// the misconfigured-`*`-yields-empty behavior rather than an open
+    /// cross-origin hole.
+    #[tokio::test]
+    async fn an_empty_allowlist_denies_every_origin() {
+        let app = Router::new()
+            .route("/health", get(api::health))
+            .layer(cors_layer(""));
+        let request = Request::builder()
+            .method(axum::http::Method::OPTIONS)
+            .header(ORIGIN, "https://app.example")
+            .header(ACCESS_CONTROL_REQUEST_METHOD, "PUT")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+    }
 }

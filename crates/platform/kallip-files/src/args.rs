@@ -39,6 +39,13 @@ pub struct Args {
     /// operator may tune it (structure is unaffected).
     #[arg(long, env = "KALLIP_FILES_MAX_BODY_SIZE_MB", default_value_t = 100)]
     pub max_body_size_mb: u64,
+    /// Comma-separated CORS allowed origins (the app's origin). Empty (the
+    /// default) = no cross-origin allowed at all: the allowlist is
+    /// `AllowOrigin::list` (never `Any`), so a misconfigured `*` yields an
+    /// empty allowlist rather than an open hole. Same shape as the agora's
+    /// `KALLIP_AGORA_CORS_ORIGINS`.
+    #[arg(long, env = "KALLIP_FILES_CORS_ORIGINS", default_value = "")]
+    pub cors_origins: String,
     /// Agora degrade posture (seventh approved default). `closed` (the
     /// default) fails every authorization decision with 503 when the
     /// registry cannot answer; `soft` degrades the enrollment lookup to an

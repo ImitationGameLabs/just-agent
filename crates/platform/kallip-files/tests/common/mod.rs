@@ -375,6 +375,7 @@ impl TestWorld {
             control: Arc::new(mock.clone()),
             config: Arc::new(FilesConfig {
                 max_body_bytes,
+                cors_origins: String::new(),
                 degrade_fail_soft: false,
                 gc: GcConfig {
                     batch: 128,

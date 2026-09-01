@@ -154,6 +154,11 @@ in
   config = {
     project.name = projectName;
 
+    # The files service's CORS gate: the browser (web origin) talks to
+    # files.<devDomain> cross-origin for uploads/downloads; allowlist the
+    # same app origin the agora uses. Set here (not in files.nix) so
+    # webOrigin stays defined in one place.
+    services.files.environment.KALLIP_FILES_CORS_ORIGINS = webOrigin;
     # Named volumes must be declared at the compose top level (compose rejects
     # a reference to an undeclared named volume). The project name
     # (`kallipai-dev` by default) prefixes every volume, so the internal
