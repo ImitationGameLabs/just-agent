@@ -12,10 +12,10 @@ pub use kallip_common::protocol::AgentState;
 pub use kallip_common::protocol::AgentSummary;
 use kallip_common::protocol::ApiError;
 use kallip_common::protocol::SseEvent;
-use kallip_common::protocol::{ParkedReason, TransientRetryInfo};
+use kallip_common::protocol::{LockState, ParkedReason, TransientRetryInfo};
 use kallip_runtime::agent_task::RoundToken;
 use kallip_runtime::approval::ApprovalStore;
-use kallip_runtime::config::AgentConfig;
+use kallip_runtime::config::{AgentConfig, PermissionClass};
 use kallip_runtime::context::ContextStore;
 use kallip_runtime::profile::{ProfileConfig, ProfileRegistry};
 use tokio::sync::{Mutex, Notify, RwLock, broadcast, mpsc};
@@ -510,6 +510,7 @@ impl RegistryEntry {
             profile_set: identity.config.profile_set.clone(),
             activity,
             duty: Default::default(),
+            lock: None,
             parked_reason,
             retrying,
             faulted_reason,
@@ -522,6 +523,37 @@ impl RegistryEntry {
 }
 
 impl AppState {
+    /// Build the wire summary for `entry` with the runtime joins applied:
+    /// the duty-board reading and the workspace lock-visibility probe. The
+    /// single summary-exit shape for every route returning an
+    /// [`AgentSummary`] — keeping both joins in one place means no outlet
+    /// can forget one half when a new field ships.
+    pub fn summarize(&self, id: &AgentId, entry: &RegistryEntry) -> AgentSummary {
+        let mut summary = entry.summary(id);
+        summary.duty = self.duty.get(id);
+        summary.lock = self.lock_visibility(id, entry);
+        summary
+    }
+
+    /// Probe whether a live Normal-class agent holds the write-lock on its
+    /// workspace root. Guests never lock and faulted agents hold nothing,
+    /// so both report `None` (absence is normal there); any other live
+    /// agent probing `missing` is the lock-evaporation red flag.
+    fn lock_visibility(&self, id: &AgentId, entry: &RegistryEntry) -> Option<LockState> {
+        if entry.state_for_summary() == AgentState::Faulted
+            || entry.identity().config.permissions_class != PermissionClass::Normal
+        {
+            return None;
+        }
+        let ws = &entry.identity().config.workspace_root;
+        let held = self.lock_manager.holds_exact(id, ws).unwrap_or(false);
+        Some(if held {
+            LockState::Held
+        } else {
+            LockState::Missing
+        })
+    }
+
     /// Test-only constructor with generous resource limits.
     #[cfg(test)]
     pub fn new(operator_token_hash: TokenHash, profiles: Arc<ArcSwap<ProfileBundle>>) -> Self {

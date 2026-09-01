@@ -14,7 +14,7 @@ pub mod sse;
 pub use agent::{
     ActiveProfile, AgentPermissionsResponse, AgentState, AgentStatusResponse, AgentSummary,
     CreateAgentRequest, CreateAgentResponse, DELEGATION_CARVE_OUT, DELEGATION_FULL_HANDOFF,
-    DeleteSetResponse, DutyStatus, ListAgentsQuery, ListAgentsResponse, MaxToolRounds,
+    DeleteSetResponse, DutyStatus, ListAgentsQuery, ListAgentsResponse, LockState, MaxToolRounds,
     MessageRequest, MessageResponse, ParkedReason, ProfileSetUpdateRequest, SetDefaultRequest,
     SetReference, UpdateActivityRequest, UpdateAgentMetadataRequest,
 };

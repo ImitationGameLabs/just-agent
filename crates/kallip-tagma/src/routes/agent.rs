@@ -243,9 +243,8 @@ pub async fn get_root_agent(
     let (id, entry) = registry
         .root_agent()
         .ok_or_else(|| ApiError::internal("root agent missing — startup invariant violated"))?;
-    let mut summary = entry.summary(id);
+    let mut summary = state.summarize(id, entry);
     summary.conversation_id = conversation_id;
-    summary.duty = state.duty.get(id);
     Ok(Json(summary))
 }
 
@@ -285,11 +284,7 @@ pub async fn list_agents(
                 .as_ref()
                 .is_none_or(|sup| entry.identity().config.created_by.as_ref() == Some(sup))
         })
-        .map(|(id, entry)| {
-            let mut s = entry.summary(id);
-            s.duty = state.duty.get(&s.id);
-            s
-        })
+        .map(|(id, entry)| state.summarize(id, entry))
         .collect();
     Json(ListAgentsResponse { agents: summaries })
 }
@@ -363,8 +358,7 @@ pub async fn update_metadata(
     if let Some(desc) = &body.description {
         entry.identity_mut().config.description = desc.clone();
     }
-    let mut summary = entry.summary(&id);
-    summary.duty = state.duty.get(&id);
+    let summary = state.summarize(&id, entry);
     Ok(Json(summary))
 }
 
@@ -430,7 +424,7 @@ pub async fn update_duty(
         let entry = registry
             .get(&id)
             .ok_or_else(|| ApiError::not_found("agent not found"))?;
-        let mut s = entry.summary(&id);
+        let mut s = state.summarize(&id, entry);
         s.duty = duty_status;
         s
     };
@@ -696,7 +690,7 @@ pub async fn update_profile_set(
     // path keeps the same separation). Parked/faulted agents resolve the
     // new binding at restore.
     let mut signal = None;
-    let mut summary = entry.summary(&id);
+    let summary = state.summarize(&id, entry);
     if let Some(live) = entry.as_live() {
         signal = Some((
             kallip_runtime::ProfileReset {
@@ -711,7 +705,6 @@ pub async fn update_profile_set(
     if let Some((reset, cell, notify)) = signal {
         super::profiles::signal_profile_reset(reset, &cell, &notify);
     }
-    summary.duty = state.duty.get(&id);
     info!(agent = %id, set = %body.profile_set, "agent rebound to profile set");
     Ok(Json(summary))
 }

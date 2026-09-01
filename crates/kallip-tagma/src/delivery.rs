@@ -291,6 +291,24 @@ pub(crate) async fn enqueue_prompt(
             ))
         })?;
         if !live.agent.prompt_tx.is_closed() {
+            // F2-B observe: a live Normal-class agent must hold the write-lock
+            // on its workspace at every delivery; absence here is the
+            // lock-evaporation signature. Log-only probe — the delivery
+            // itself is unaffected.
+            if entry.state_for_summary() != crate::state::AgentState::Faulted
+                && entry.identity().config.permissions_class
+                    == kallip_runtime::config::PermissionClass::Normal
+                && !state
+                    .lock_manager
+                    .holds_exact(id, &entry.identity().config.workspace_root)
+                    .unwrap_or(false)
+            {
+                warn!(
+                    id = %id,
+                    ws = %entry.identity().config.workspace_root.display(),
+                    "live normal-class agent is missing its workspace lock at delivery"
+                );
+            }
             live.agent.notify.notify_one();
             return Ok(MessageResponse {
                 queue_depth: 0,

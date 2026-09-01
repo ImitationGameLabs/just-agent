@@ -53,6 +53,48 @@ fn acquire_then_busy_then_release() {
 }
 
 #[test]
+fn holds_exact_reports_true_only_for_the_exact_holder() {
+    let mgr = DirLockManager::new();
+    let a = agent("a");
+    let b = agent("b");
+    let dir = tmp_dir();
+    let other = tmp_dir();
+
+    // No lock yet: the probe is false for everyone.
+    assert!(!mgr.holds_exact(&a, &dir).unwrap());
+
+    mgr.acquire(&a, &dir, &[]).unwrap();
+    assert!(mgr.holds_exact(&a, &dir).unwrap());
+    assert!(
+        !mgr.holds_exact(&b, &dir).unwrap(),
+        "another agent is not the holder"
+    );
+    assert!(
+        !mgr.holds_exact(&a, &other).unwrap(),
+        "a lock on one path is not a lock on a sibling path"
+    );
+
+    mgr.release(&a, &dir).unwrap();
+    assert!(
+        !mgr.holds_exact(&a, &dir).unwrap(),
+        "release clears the probe"
+    );
+}
+
+#[test]
+fn holds_exact_reports_a_vanished_path_as_not_held() {
+    let mgr = DirLockManager::new();
+    let a = agent("a");
+    let dir = tmp_dir();
+
+    // A path that cannot be canonicalized — typically a vanished workspace
+    // — is reported as not held rather than an error: callers probe
+    // expected state, and a missing directory cannot be locked.
+    let gone = dir.join("deleted-subdir");
+    assert!(!mgr.holds_exact(&a, &gone).unwrap());
+}
+
+#[test]
 fn release_all_drops_every_lock_for_agent() {
     let mgr = DirLockManager::new();
     let a = agent("a");

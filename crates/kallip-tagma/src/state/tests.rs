@@ -693,3 +693,52 @@ async fn summary_carries_state_since_and_transition_advances_it() {
         "transition restamps the pair"
     );
 }
+
+#[tokio::test]
+async fn summary_lock_visibility_follows_class_and_lifecycle() {
+    let state = make_state();
+    let id = AgentId::random();
+    let tmp = tempfile::TempDir::new_in("/dev/shm").unwrap();
+    let ws = tmp.path().join("lock-vis");
+    std::fs::create_dir_all(&ws).unwrap();
+    let (mut entry, _rx) = make_entry_with_rx(None, "token".to_string());
+    entry.identity.config.workspace_root = ws.clone();
+    let wrapped = RegistryEntry::Live(entry);
+
+    // Before any acquire the live Normal agent probes `missing` — that is
+    // the red flag the field exists to surface.
+    assert_eq!(
+        state.summarize(&id, &wrapped).lock,
+        Some(kallip_common::protocol::LockState::Missing),
+        "no lock acquired yet"
+    );
+    state.lock_manager.acquire(&id, &ws, &[]).unwrap();
+    assert_eq!(
+        state.summarize(&id, &wrapped).lock,
+        Some(kallip_common::protocol::LockState::Held),
+        "the acquired workspace lock is visible in the summary"
+    );
+
+    // A Guest never locks: the field is absent regardless of manager state.
+    let gid = AgentId::random();
+    let (mut guest, _rx) = make_entry_with_rx(None, "guest-token".to_string());
+    guest.identity.config.permissions_class = kallip_runtime::config::PermissionClass::Guest;
+    guest.identity.config.workspace_root = ws.clone();
+    let guest = RegistryEntry::Live(guest);
+    assert_eq!(
+        state.summarize(&gid, &guest).lock,
+        None,
+        "Guests never acquire workspace locks"
+    );
+
+    // A faulted agent holds nothing: the field is absent there too.
+    let fid = AgentId::random();
+    let mut faulted = make_faulted_entry(None, "restore failed");
+    faulted.identity.config.workspace_root = ws.clone();
+    let faulted = RegistryEntry::Faulted(faulted);
+    assert_eq!(
+        state.summarize(&fid, &faulted).lock,
+        None,
+        "faulted agents hold no locks by definition"
+    );
+}

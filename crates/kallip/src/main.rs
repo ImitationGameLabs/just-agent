@@ -743,6 +743,15 @@ fn print_agent_list(agents: &[kallip_common::protocol::AgentSummary], empty_msg:
             line.push_str("  faulted: ");
             line.push_str(reason);
         }
+        match a.lock {
+            Some(kallip_common::protocol::LockState::Missing) => {
+                // A live Normal-class agent without its workspace lock is the
+                // lock-evaporation signature — make it unmissable.
+                line.push_str("  !! lock=missing");
+            }
+            Some(kallip_common::protocol::LockState::Held) => line.push_str("  lock=held"),
+            None => {}
+        }
         println!("{line}");
     }
 }

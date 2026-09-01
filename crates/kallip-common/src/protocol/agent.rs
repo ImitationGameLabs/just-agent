@@ -185,6 +185,20 @@ pub enum DutyStatus {
     OffDuty,
 }
 
+/// Workspace write-lock visibility for a live agent, joined from the lock
+/// manager when a summary is built (`held` = the agent owns the write-lock
+/// on its workspace root; `missing` = it does not). Only live Normal-class
+/// agents carry a `lock` value: a Guest never acquires a workspace lock and
+/// a faulted agent holds nothing by definition, so `None` there is the norm,
+/// not a signal. `Some(Missing)` under that contract is the red flag the
+/// fleet view exists to surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LockState {
+    Held,
+    Missing,
+}
+
 /// Summary of an agent instance returned in list responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSummary {
@@ -206,6 +220,11 @@ pub struct AgentSummary {
     /// Whether the agent is on-duty or off-duty (off-duty agents buffer messages).
     #[serde(default)]
     pub duty: DutyStatus,
+    /// Workspace lock visibility, present only for live Normal-class agents
+    /// — see [`LockState`]. Joined from the lock manager at summary build
+    /// time, so a summary is a point-in-time probe, not a guarantee.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<LockState>,
     /// Present only when `state == Faulted`: why the agent could not be brought up
     /// (e.g. "restore failed: workspace ... not found"). Absent for live agents.
     #[serde(default, skip_serializing_if = "Option::is_none")]

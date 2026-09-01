@@ -62,6 +62,10 @@ export interface WireAgentSummary {
   /** Present only when `state == "retrying"`: armed backoff counters. */
   readonly retrying?: WireTransientRetryInfo | null;
   readonly conversation_id?: string;
+  /** Workspace write-lock visibility (`held`/`missing`), present only for a
+   * live normal-class agent (serde skips `None`): `missing` there is the
+   * lock-evaporation red flag. */
+  readonly lock?: "held" | "missing" | null;
 }
 
 /** `POST /agents/{id}/message` -- queue-depth feedback for an inbound user
