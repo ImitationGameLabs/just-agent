@@ -72,6 +72,12 @@ collision with Agora.io along the way. Four wire-protocol tags keep the old
 spelling on purpose (`kallip-agora-aead-v1` and siblings): they are
 domain-separation strings that client SDKs match byte-for-byte and must never
 be re-versioned.
+Runtime/state migration steps live in
+`docs/reference/archeion-rename-migration.md`. Two whitelist notes for
+future residual scans: `skills/code/commit-messages.md` keeps one
+`agora` in a fictional message-shape example (a mirror of the upstream
+skills library - fix it there, not here), and this section itself
+quotes the old names as historical record.
 
 | Before | After |
 | --- | --- |
@@ -81,6 +87,8 @@ be re-versioned.
 | `KALLIP_AGORA_*` / `KALLIP_*_AGORA_*` | `KALLIP_ARCHEION_*` / `KALLIP_*_ARCHEION_*` |
 | `agora.<domain>` / `agora.kallipai.lan` | `archeion.<domain>` / `archeion.kallipai.lan` |
 | `agora_pgdata` volume | `archeion_pgdata` (migrate old data manually) |
+| `--agora-url` / `--relay-agora-url` CLI flags | `--archeion-url` / `--relay-archeion-url` |
+| `agora.url` credentials file | `archeion.url` (absent old file backfills) |
 
 ### The two-stem rule
 
