@@ -220,4 +220,30 @@ mod tests {
         std::fs::write(dir.path().join("a/tagma.id"), "tid-2").unwrap();
         assert!(migrate_legacy_layout(dir.path(), &["a".to_string()]).is_err());
     }
+
+    #[test]
+    fn pre_rename_origin_file_reads_none_then_backfills_new_name() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("tagma.id"), "tid-1").unwrap();
+        write_secret(&dir.path().join("tagma.token"), b"sk-test").unwrap();
+        // Credentials written before the rename keep the old origin
+        // file name; the loader must treat the origin as absent.
+        std::fs::write(dir.path().join("agora.url"), "https://agora.example.com").unwrap();
+        let stored = load_tagma(dir.path()).unwrap();
+        assert!(stored.archeion_url.is_none());
+        // The next stored boot backfills the origin under the new
+        // name and leaves the stale old file untouched.
+        backfill_archeion_url(dir.path(), "https://archeion.example.com");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("archeion.url")).unwrap(),
+            "https://archeion.example.com"
+        );
+        assert!(dir.path().join("agora.url").exists());
+        // The other form: an existing new-name file is read back.
+        let stored = load_tagma(dir.path()).unwrap();
+        assert_eq!(
+            stored.archeion_url.as_deref(),
+            Some("https://archeion.example.com")
+        );
+    }
 }
