@@ -17,7 +17,7 @@
   "files_upload_title": "上传文件",
   "files_upload_name_label": "文件",
   "files_upload_prefix_label": "存放前缀",
-  "files_upload_prefix_hint": "默认存入 shared/（也可用 inbox/ 或已注册编队的 tagmas/{id}/）。",
+  "files_upload_prefix_hint": "默认存入 shared/（也可用 inbox/ 或已注册编队的 tagmas/<id>/）。",
   "files_upload_failed": "上传失败",
   "files_download_aria": "下载 {name}",
   "files_download_failed": "下载失败",
