@@ -205,16 +205,12 @@ export function matchTrail(pathname: string) {
  * the bar with no exclusion needed. The tagma details sections return
  * null and keep the bar (the manage cell lights via RootLayout
  * isActive); the agent detail below them stays a drill (back = its
- * agents section), and so does the tagma hub itself. */
+ * agents section), and so does the tagma's own hub (/tagma/{id}). */
 export function mobileBack(
   pathname: string,
 ): { href: string; label: string } | null {
   if (pathname === "/account" || pathname === "/tagmata") return null;
   const segs = pathname.split("/").filter(Boolean);
-  // The tagma details sections are manage-domain: they keep the bottom
-  // bar (with the manage cell lit, see RootLayout isActive) instead of
-  // a back row. The agent detail below them stays a drill (back = its
-  // agents section), and so does the tagma hub itself.
   if (segs.length === 4 && segs[0] === "tagma" && segs[2] === "details") {
     return null;
   }

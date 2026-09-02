@@ -5,8 +5,6 @@
 // breadcrumbs_mobileback_test: the module under test pulls rune-bearing
 // stores and compiled paraglide messages, so the passthrough shims
 // precede the dynamic import.
-// under test pulls rune-bearing stores and compiled paraglide messages,
-// so the passthrough shims precede the dynamic import.
 
 declare global {
   function $state<T>(initial: T): T;
@@ -67,6 +65,8 @@ Deno.test("drill chains extend their list chain (shape continuity)", () => {
 
 Deno.test("every entry opens with the home segment", () => {
   for (const { pattern } of trailTable) {
+    // Synthesized concrete paths: ':section' pins to 'overview' (a valid
+    // enumerated member); other params get a placeholder 'x-1'.
     const path = pattern
       .split("/")
       .map((seg) =>
