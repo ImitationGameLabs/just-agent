@@ -1041,3 +1041,97 @@ fn room_envelope(room: &RoomId, text: &str, handle: &str) -> Envelope {
         ciphertext: Ciphertext(plaintext),
     }
 }
+
+/// A direct-session envelope (channel_id is a warmed direct session) routes
+/// to the direct path, NOT the bilateral path: the ciphertext is the raw
+/// `DirectMessage` JSON, the root agent's prompt carries the direct-surface
+/// header (`[From: agent <handle> (<id>) | direct <session>]`), and NO
+/// bilateral `MessageAccepted` reply is emitted. The direct mirror of the
+/// room routing fork above.
+#[tokio::test]
+async fn handle_user_op_routes_direct_session_to_the_direct_path() {
+    let (handle, _key, capture, _signals, _prompt_rx, root_id, state, _history) =
+        setup_inner(8, None).await;
+    // Seed the direct-session cache so the fork recognizes the session.
+    let session = DirectSessionId::from("00000000-0000-4000-8000-000000000cc3".to_string());
+    state
+        .direct_sessions
+        .set_direct_sessions("test", [session.clone()])
+        .await;
+
+    let envelope = direct_envelope(&session, "hi direct", "Bob");
+    handle.handle_user_op(envelope).await;
+
+    let delivered = state
+        .inboxes
+        .get()
+        .unwrap()
+        .pull_undelivered(&root_id)
+        .await
+        .unwrap();
+    // The direct header names the sender kind + handle + session id.
+    assert!(
+        delivered.contains(&format!("| direct {session}")),
+        "expected direct header, got: {delivered}"
+    );
+    assert!(
+        delivered.contains("[From: agent Bob"),
+        "delivered: {delivered}"
+    );
+    assert!(delivered.contains("hi direct"), "delivered: {delivered}");
+    // The direct path skips the bilateral ACK, like the room path.
+    assert!(
+        capture.lock().await.is_empty(),
+        "direct path must not bilateral-emit a MessageAccepted"
+    );
+}
+
+/// A conversation_id that is NOT a warmed direct session skips the direct
+/// path (and, the joined-rooms cache being cold here, the room path too):
+/// the bilateral fallthrough cannot decrypt the raw-JSON ciphertext, so no
+/// prompt is delivered -- an unknown session can never masquerade as a
+/// user op.
+#[tokio::test]
+async fn handle_user_op_skips_direct_path_for_unknown_session() {
+    let (handle, _key, _capture, _signals, _prompt_rx, root_id, state, _history) =
+        setup_inner(8, None).await;
+    let not_mine = DirectSessionId::from("00000000-0000-4000-8000-000000000dd4".to_string());
+    let envelope = direct_envelope(&not_mine, "hi direct", "Bob");
+    handle.handle_user_op(envelope).await;
+    let leaked = state
+        .inboxes
+        .get()
+        .unwrap()
+        .pull_undelivered(&root_id)
+        .await;
+    assert!(
+        leaked.is_none(),
+        "no inbox message expected on the bilateral fallthrough"
+    );
+}
+
+/// Build a direct-path envelope: `conversation_id` is the session, the
+/// sender is an agent peer (a tagma), and `ciphertext` is the RAW
+/// `DirectMessage` JSON (the direct path treats `ciphertext.0` as
+/// plaintext, like rooms).
+fn direct_envelope(session: &DirectSessionId, text: &str, handle: &str) -> Envelope {
+    let plaintext = serde_json::to_vec(&DirectMessage {
+        text: text.into(),
+        attachment: None,
+    })
+    .unwrap();
+    let peer = TagmaId::from("peer-tagma".to_string());
+    Envelope {
+        channel_id: ChannelId::from(session.as_ref().to_string()),
+        sender: Participant {
+            id: ParticipantId::for_tagma(&peer),
+            kind: ParticipantKind::Agent,
+            handle: handle.into(),
+            tagma_id: Some(peer),
+        },
+        sequence_n: 1,
+        trace_id: TraceId::from("t".to_string()),
+        timestamp: OffsetDateTime::now_utc(),
+        ciphertext: Ciphertext(plaintext),
+    }
+}

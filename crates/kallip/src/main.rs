@@ -12,6 +12,7 @@ use args::{
 use clap::{CommandFactory, Parser};
 use kallip::file::FilesClient;
 use kallip_client::TagmaClient;
+use kallip_client::types::LescheSessionEntry;
 use kallip_common::agentid::AgentId;
 use kallip_common::policy::{ExecDecision, ExecOverride};
 use kallip_common::protocol::{ProfileSetUpdateRequest, SetDefaultRequest};
@@ -219,19 +220,7 @@ async fn main() -> Result<()> {
                     println!("(no sessions)");
                 }
                 for entry in entries {
-                    match entry.kind.as_str() {
-                        "room" => match &entry.name {
-                            Some(name) => println!("room {} ({name})", entry.id),
-                            None => println!("room {}", entry.id),
-                        },
-                        "direct" => println!(
-                            "direct {} peer={} \"{}\"",
-                            entry.id,
-                            entry.peer_tagma.as_deref().unwrap_or(""),
-                            entry.peer_handle.as_deref().unwrap_or(""),
-                        ),
-                        kind => println!("{kind} {}", entry.id),
-                    }
+                    println!("{}", render_session_line(&entry));
                 }
             }
         },
@@ -829,6 +818,24 @@ fn annotate_remove_error(result: anyhow::Result<()>, id: &AgentId) -> anyhow::Re
     result
 }
 
+/// One presentation line per addressable surface, shaped so the ids can be
+/// copy-pasted straight into `send --room` / `send --tagma` / `read --tagma`.
+fn render_session_line(entry: &LescheSessionEntry) -> String {
+    match entry.kind.as_str() {
+        "room" => match &entry.name {
+            Some(name) => format!("room {} ({name})", entry.id),
+            None => format!("room {}", entry.id),
+        },
+        "direct" => format!(
+            "direct {} peer={} \"{}\"",
+            entry.id,
+            entry.peer_tagma.as_deref().unwrap_or(""),
+            entry.peer_handle.as_deref().unwrap_or(""),
+        ),
+        kind => format!("{kind} {}", entry.id),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -896,5 +903,78 @@ mod tests {
             panic!("a send without a target accepted")
         };
         assert!(err.to_string().contains("required arguments"), "{err}");
+    }
+
+    #[test]
+    fn lesche_send_rejects_room_and_tagma_together() {
+        let Err(err) = Cli::try_parse_from([
+            "kallip",
+            "lesche",
+            "send",
+            "--room",
+            "room-1",
+            "--tagma",
+            "tagma-peer",
+        ]) else {
+            panic!("conflicting targets accepted")
+        };
+        assert!(err.to_string().contains("cannot be used with"), "{err}");
+    }
+
+    #[test]
+    fn lesche_read_requires_a_target() {
+        let Err(err) = Cli::try_parse_from(["kallip", "lesche", "read"]) else {
+            panic!("a read without a target accepted")
+        };
+        assert!(err.to_string().contains("required arguments"), "{err}");
+    }
+
+    #[test]
+    fn lesche_read_rejects_room_and_tagma_together() {
+        let Err(err) = Cli::try_parse_from([
+            "kallip",
+            "lesche",
+            "read",
+            "--room",
+            "room-1",
+            "--tagma",
+            "tagma-peer",
+        ]) else {
+            panic!("conflicting targets accepted")
+        };
+        assert!(err.to_string().contains("cannot be used with"), "{err}");
+    }
+
+    #[test]
+    fn render_session_line_covers_bilateral_room_and_direct_shapes() {
+        let bilateral = LescheSessionEntry {
+            kind: "bilateral".into(),
+            id: "conv-1".into(),
+            name: None,
+            peer_tagma: None,
+            peer_handle: None,
+        };
+        assert_eq!(render_session_line(&bilateral), "bilateral conv-1");
+
+        let room = LescheSessionEntry {
+            kind: "room".into(),
+            id: "room-1".into(),
+            name: Some("ops".into()),
+            peer_tagma: None,
+            peer_handle: None,
+        };
+        assert_eq!(render_session_line(&room), "room room-1 (ops)");
+
+        let direct = LescheSessionEntry {
+            kind: "direct".into(),
+            id: "sess-1".into(),
+            name: None,
+            peer_tagma: Some("tagma-peer".into()),
+            peer_handle: Some("Peer".into()),
+        };
+        assert_eq!(
+            render_session_line(&direct),
+            "direct sess-1 peer=tagma-peer \"Peer\""
+        );
     }
 }

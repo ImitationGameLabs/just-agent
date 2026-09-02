@@ -67,7 +67,7 @@ impl RelayHandle {
     /// One pump tick: both routing-cache sweeps (rooms + direct sessions),
     /// cancel-selected as a unit so a tunnel-down aborts an in-flight sweep
     /// instead of waiting out its HTTP timeout.
-    async fn poll_sweep(&self) {
+    pub(super) async fn poll_sweep(&self) {
         self.poll_rooms().await;
         self.poll_direct_sessions().await;
     }

@@ -235,4 +235,101 @@ mod tests {
             .expect("history renders");
         assert_eq!(text, "[alice] hello");
     }
+
+    #[tokio::test]
+    async fn read_direct_session_messages_returns_text_body_on_success() {
+        let server = MockServer::start().await;
+        let id = AgentId::random();
+        let peer = "tagma-peer";
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/agents/{id}/lesche/direct-sessions/{peer}/messages"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[peer] hi"))
+            .mount(&server)
+            .await;
+        let text = client_for(&server)
+            .read_direct_session_messages(&id, peer, None, None)
+            .await
+            .expect("history renders");
+        assert_eq!(text, "[peer] hi");
+    }
+
+    #[tokio::test]
+    async fn read_direct_session_messages_extracts_envelope_message_from_error_body() {
+        let server = MockServer::start().await;
+        let id = AgentId::random();
+        let peer = "tagma-peer";
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "/agents/{id}/lesche/direct-sessions/{peer}/messages"
+            )))
+            .respond_with(
+                ResponseTemplate::new(503)
+                    .set_body_string(r#"{"error":{"message":"session offline"}}"#),
+            )
+            .mount(&server)
+            .await;
+        let err = client_for(&server)
+            .read_direct_session_messages(&id, peer, None, None)
+            .await
+            .expect_err("503");
+        let api = as_api_error(&err);
+        assert_eq!(api.status, 503);
+        assert_eq!(api.message, "session offline");
+    }
+
+    #[tokio::test]
+    async fn list_lesche_sessions_decodes_bilateral_room_and_direct_entries() {
+        let server = MockServer::start().await;
+        let id = AgentId::random();
+        Mock::given(method("GET"))
+            .and(path(format!("/agents/{id}/lesche/sessions")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "kind": "bilateral", "id": "conv-1" },
+                { "kind": "room", "id": "room-1", "name": "ops" },
+                {
+                    "kind": "direct",
+                    "id": "sess-1",
+                    "peer_tagma": "tagma-peer",
+                    "peer_handle": "Peer"
+                }
+            ])))
+            .mount(&server)
+            .await;
+        let sessions = client_for(&server)
+            .list_lesche_sessions(&id)
+            .await
+            .expect("sessions decode");
+        assert_eq!(sessions.len(), 3);
+        assert_eq!(sessions[0].kind, "bilateral");
+        assert_eq!(sessions[0].name, None);
+        assert_eq!(sessions[1].name.as_deref(), Some("ops"));
+        assert_eq!(sessions[1].peer_tagma, None);
+        assert_eq!(sessions[2].peer_tagma.as_deref(), Some("tagma-peer"));
+        assert_eq!(sessions[2].peer_handle.as_deref(), Some("Peer"));
+    }
+
+    #[tokio::test]
+    async fn post_message_delivery_sends_tagma_field_for_direct_send() {
+        let server = MockServer::start().await;
+        let id = AgentId::random();
+        use wiremock::matchers::body_partial_json;
+        Mock::given(method("POST"))
+            .and(path(format!("/agents/{id}/lesche/messages")))
+            .and(body_partial_json(serde_json::json!({
+                "text": "ping",
+                "tagma": "tagma-peer"
+            })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "ok": true })),
+            )
+            .mount(&server)
+            .await;
+        let verdict = client_for(&server)
+            .post_message_delivery(&id, "ping", None, Some("tagma-peer"))
+            .await
+            .expect("delivery accepted");
+        assert!(verdict.ok);
+    }
 }

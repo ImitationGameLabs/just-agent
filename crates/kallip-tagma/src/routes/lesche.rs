@@ -569,6 +569,8 @@ fn map_lesche_error(context: &str, e: &anyhow::Error) -> ApiError {
 mod tests {
     use super::*;
     use crate::auth::{AuthIdentity, Identity};
+    use crate::external::ExternalProjector;
+    use crate::relay::MessageLimits;
     use crate::state::RegistryEntry;
     use crate::test_helpers::{make_entry, make_state};
     use axum::Json;
@@ -922,5 +924,51 @@ mod tests {
         .await
         .expect("cold state -> empty list, not 503");
         assert!(entries.is_empty());
+    }
+
+    /// The direct-send branch shares the per-tagma burst cap with the
+    /// bilateral path: a projector configured with a zero-size budget makes
+    /// the very first `--tagma` send a 429 before any relay is contacted
+    /// (the create-or-get never runs). Pins the shared-cap wiring the
+    /// direct branch relies on.
+    #[tokio::test]
+    async fn direct_send_hits_the_burst_cap_before_any_relay_contact() {
+        let state = make_state();
+        let id = AgentId::random();
+        let entry = make_entry(None, "tok".to_string());
+        state
+            .registry
+            .write()
+            .await
+            .register(id.clone(), RegistryEntry::Live(entry));
+        state
+            .external
+            .set(ExternalProjector::new(
+                std::sync::Arc::downgrade(&state),
+                None,
+                None,
+                None,
+                None,
+                MessageLimits {
+                    max: 0,
+                    window: std::time::Duration::from_secs(60),
+                },
+            ))
+            .ok()
+            .expect("projector set once");
+
+        let err = post_message(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: id.clone() }),
+            Path(id),
+            Json(LescheMessageRequest {
+                text: "hi".into(),
+                room: None,
+                tagma: Some("tagma-peer".into()),
+            }),
+        )
+        .await
+        .expect_err("max:0 budget -> 429");
+        assert_eq!(err.status, 429, "expected 429, got {}", err.status);
     }
 }
