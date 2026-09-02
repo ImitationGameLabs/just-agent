@@ -109,9 +109,13 @@ export const trailTable: TrailEntry[] = [
     { label: nav_tagmata(), href: "/tagmata" },
     { label: nav_rooms(), current: true },
   ]),
+  // Drill chains extend the list page's chain verbatim and append:
+  // following a crumb must not reshape the bar (the /rooms/:id drill
+  // dropped the tagmata root its own list page shows).
   entry("/rooms/:id", ({ id }: With<"id">) => {
     const name = roomsStore.rooms.find((r) => r.room_id === id)?.name;
     return [
+      { label: nav_tagmata(), href: "/tagmata" },
       { label: nav_rooms(), href: "/rooms" },
       {
         label: name || room_label_fallback({ id: id.slice(0, 8) }),
@@ -122,6 +126,7 @@ export const trailTable: TrailEntry[] = [
   entry("/rooms/:id/settings", ({ id }: With<"id">) => {
     const name = roomsStore.rooms.find((r) => r.room_id === id)?.name;
     return [
+      { label: nav_tagmata(), href: "/tagmata" },
       { label: nav_rooms(), href: "/rooms" },
       {
         label: name || room_label_fallback({ id: id.slice(0, 8) }),
