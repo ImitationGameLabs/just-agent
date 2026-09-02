@@ -6,8 +6,8 @@ of its binaries (glibc, the CA bundle, and every runtime dep come from the
 closure). Only `x86_64-linux` images are published. There are two
 purpose-built images for the split production deploy:
 
-- `packages.kallip-agora-image` — the agora control-plane server. Minimal:
-  just the `kallip-agora` binary + the CA bundle (agora is a pure HTTP/Postgres
+- `packages.kallip-archeion-image` — the archeion control-plane server. Minimal:
+  just the `kallip-archeion` binary + the CA bundle (archeion is a pure HTTP/Postgres
   server with no shell-out deps).
 - `packages.kallip-tagma-image` — the host/"tagma" side: the `kallip-tagma`
   binary (agent host + in-process relay connector) + the `kallip` CLI (whose
@@ -20,12 +20,12 @@ The recommended way to run them is [Arion](https://docs.hercules-ci.com/arion/)
 (a Nix-native docker-compose). Each composition is a flat, single-purpose file
 under `compose/` (dev: `compose/dev/`, prod: `compose/prod/`); the repo-root
 `arion-compose.nix` is just a one-line shim that re-exports
-`compose/dev/agora.nix`, so arion's auto-discovery still makes a plain
-`arion up` bring up the dev agora side. The others are invoked with `arion -f`:
+`compose/dev/archeion.nix`, so arion's auto-discovery still makes a plain
+`arion up` bring up the dev archeion side. The others are invoked with `arion -f`:
 
 | Composition   | Command                                      | Services                          | Image source                                    |
 | ------------- | -------------------------------------------- | --------------------------------- | ----------------------------------------------- |
-| **dev**       | `arion up -d` (default)                      | caddy + agora + lesche + agora-postgres + lesche-postgres | `packages.default`, run via `useHostStore`      |
+| **dev**       | `arion up -d` (default)                      | caddy + archeion + lesche + archeion-postgres + lesche-postgres | `packages.default`, run via `useHostStore`      |
 | **dev** tagma | `arion -f compose/dev/tagma.nix up -d`       | tagma                             | `packages.default`, run via `useHostStore`      |
 | **test**      | `arion -f compose/dev/test.nix up`           | tagma (integration suite)         | `packages.kallip-integration-tests`, host store |
 
@@ -36,13 +36,13 @@ Production is split into two **standalone compositions** under
 | Composition | Command                                      | Services         | Image source                                    |
 | ----------- | -------------------------------------------- | ---------------- | ----------------------------------------------- |
 | **tagma**   | `arion -f compose/prod/tagma.nix up -d` | tagma            | `packages.kallip-tagma-image` (pre-built)       |
-| **agora**   | `arion -f compose/prod/agora.nix up -d` | agora + lesche + agora-postgres + lesche-postgres | `packages.kallip-agora-image` + `packages.kallip-lesche-image` + `postgres:17.5` |
+| **archeion**   | `arion -f compose/prod/archeion.nix up -d` | archeion + lesche + archeion-postgres + lesche-postgres | `packages.kallip-archeion-image` + `packages.kallip-lesche-image` + `postgres:17.5` |
 
-The two prod halves run on **separate hosts** (the tagma host and the agora
+The two prod halves run on **separate hosts** (the tagma host and the archeion
 server) and carry distinct compose project names (`kallipai-tagma` /
-`kallipai-agora`) so their containers/volumes are unambiguous in
+`kallipai-archeion`) so their containers/volumes are unambiguous in
 `docker ps` / `docker volume ls`. The tagma's in-process relay connector reaches
-the agora over its public HTTPS URL.
+the archeion over its public HTTPS URL.
 
 `dev` is a **two-phase** flow (the tagma's relay connector cannot enroll until a
 user signs up and mints a code); see [development.md](../development.md) for the
@@ -67,14 +67,14 @@ code) and the iteration loop are documented in
 [development.md](../development.md). This section covers the dev-only mechanics.
 
 Dev skips the image bake for the kallip services. `useHostStore` bind-mounts the
-host `/nix/store` read-only into the tagma/agora/files containers, so they run
+host `/nix/store` read-only into the tagma/archeion/files containers, so they run
 straight out of the crane workspace (`packages.default`) and a rebuild is picked
 up without an in-compose bake; postgres uses the official `postgres:17.5` image.
 
 The dev tagma lives in a separate composition (`compose/dev/tagma.nix`), so a
-plain `arion up` brings up only the agora side; bring the tagma up with
+plain `arion up` brings up only the archeion side; bring the tagma up with
 `arion -f compose/dev/tagma.nix up -d`. It runs on the host network and reaches
-agora/lesche at `127.0.0.1:7100` / `:7200`. Its relay connector enrolls on first
+archeion/lesche at `127.0.0.1:7100` / `:7200`. Its relay connector enrolls on first
 boot and needs a code that cannot exist until a user signs up — with
 `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` unset it degrades to local-only (logs an
 error, keeps serving local agents; see [Relay bootstrap](#relay-bootstrap)).
@@ -89,15 +89,15 @@ code default for `KALLIP_DOMAIN` is the prod domain (`kallipai.com`), which
 loaded into the shell by direnv's `dotenv`) so dev never clashes with
 production. Caddy runs on the host network and proxies the dev subdomains to
 `127.0.0.1`: `web.kallipai.lan` -> the host vite dev server (`:5173`);
-`agora.kallipai.lan` / `lesche.kallipai.lan` -> the host-published `:7100` /
+`archeion.kallipai.lan` / `lesche.kallipai.lan` -> the host-published `:7100` /
 `:7200`; `files.kallipai.lan` -> the host-published `:7400` (browser-direct, the lesche pattern). The session cookie carries `Domain=kallipai.lan`
-(`KALLIP_AGORA_SESSION_COOKIE_DOMAIN`), so the cookie set at login on the agora
+(`KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN`), so the cookie set at login on the archeion
 is sent to the lesche too — both subdomains share the registrable domain
 `kallipai.lan` (same-site under `SameSite=Strict`) — and CORS on each service
 allows the `https://web.kallipai.lan` origin with credentials. One-time host
 setup (mkcert cert + LAN DNS) and client CA trust are covered in
 [development.md](../development.md). The tagma container reaches the two
-services via compose DNS (`http://agora:7100`, `http://lesche:7200`), not via
+services via compose DNS (`http://archeion:7100`, `http://lesche:7200`), not via
 Caddy.
 
 ## Production
@@ -110,8 +110,8 @@ resolves):
 
 Brings up the tagma (agent host + in-process relay connector) from
 `packages.kallip-tagma-image`. The relay connector talks to the prod-deployed
-services over the public internet: the agora subdomain
-(`KALLIP_TAGMA_RELAY_AGORA_URL`, e.g. `https://agora.kallipai.com`) for
+services over the public internet: the archeion subdomain
+(`KALLIP_TAGMA_RELAY_ARCHEION_URL`, e.g. `https://archeion.kallipai.com`) for
 enrollment only — the stored tagma token is reused thereafter — and the lesche
 subdomain (`KALLIP_TAGMA_RELAY_LESCHE_URL`, e.g. `https://lesche.kallipai.com`)
 for its tunnel,
@@ -119,11 +119,11 @@ envelope POSTs, and key-exchange responses (the per-service subdomain
 topology).
 
 > **Note**: the data-plane relay (`kallip-lesche`) is a separate service from
-> the agora, reached over its `/internal/*` ControlPlane API guarded by a shared
-> secret (`KALLIP_AGORA_INTERNAL_TOKEN` on the agora, `KALLIP_LESCHE_AGORA_TOKEN`
+> the archeion, reached over its `/internal/*` ControlPlane API guarded by a shared
+> secret (`KALLIP_ARCHEION_INTERNAL_TOKEN` on the archeion, `KALLIP_LESCHE_ARCHEION_TOKEN`
 > on the lesche). The operator's edge HOST-routes the two subdomains to the two
 > services and the session cookie carries `Domain=<parent>`
-> (`KALLIP_AGORA_SESSION_COOKIE_DOMAIN`) so login on `agora.<d>` is recognized on
+> (`KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN`) so login on `archeion.<d>` is recognized on
 > `lesche.<d>`. `/internal` is reached by the lesche over the private network,
 > never via the public edge.
 
@@ -135,25 +135,25 @@ arion -f compose/prod/tagma.nix logs -f
 Secure the tagma's published `3000` port (the operator API) — do not expose it
 on a public host without a firewall / TLS reverse proxy in front.
 
-### agora — `arion -f compose/prod/agora.nix up -d`
+### archeion — `arion -f compose/prod/archeion.nix up -d`
 
-Brings up the agora (from `packages.kallip-agora-image`) + lesche (from
+Brings up the archeion (from `packages.kallip-archeion-image`) + lesche (from
 `packages.kallip-lesche-image`) + files (from `packages.kallip-files-image`) +
-`agora-postgres` / `lesche-postgres` / `files-postgres` (official
+`archeion-postgres` / `lesche-postgres` / `files-postgres` (official
 `postgres:17.5` image) — co-located on one host. **None of the three services
 is published** — all sit behind the operator's TLS-terminating edge
-proxy, which HOST-routes `agora.<d>` → `agora:7100`, `lesche.<d>` →
+proxy, which HOST-routes `archeion.<d>` → `archeion:7100`, `lesche.<d>` →
 `lesche:7200`, and `files.<d>` → `files:7400` (per-service subdomains) and
 sets `X-Forwarded-For`; configure
-`KALLIP_AGORA_TRUSTED_PROXIES` to the proxy's CIDR. Secret-bearing env (DB
+`KALLIP_ARCHEION_TRUSTED_PROXIES` to the proxy's CIDR. Secret-bearing env (DB
 url, WebAuthn RP, CORS, cookie domain, admin token, the internal shared
 secret) and the postgres credentials come from `.env`; each service's
 operational env (listen addr, files blob root, internal hop URL) is
 pinned inline in `service.environment`, which overrides `env_file`.
 
 ```sh
-arion -f compose/prod/agora.nix up -d
-arion -f compose/prod/agora.nix logs -f
+arion -f compose/prod/archeion.nix up -d
+arion -f compose/prod/archeion.nix logs -f
 ```
 
 ## Relay bootstrap
@@ -161,14 +161,14 @@ arion -f compose/prod/agora.nix logs -f
 Applies to both dev and the prod-tagma composition (the only compositions that
 run the tagma with a relay configured). The tagma's relay connector enrolls on
 its **first** boot using `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` (a single-use
-`sk-enroll-...` minted via the agora dashboard after a user signs up). After
+`sk-enroll-...` minted via the archeion dashboard after a user signs up). After
 that it persists the tagma token under `KALLIP_DATA_DIR/credentials/` (i.e. inside the
 `data` volume) and reuses it. Leave the code unset on subsequent boots. The
-first-boot `enroll()` is not retried in code: on a missing/unreachable agora it
+first-boot `enroll()` is not retried in code: on a missing/unreachable archeion it
 logs an error, leaves the relay unset, and keeps serving local agents (the
 lesche message route returns 503). The tagma service is
 `restart: unless-stopped`, so it comes
-back once the code is supplied / the agora is reachable (check
+back once the code is supplied / the archeion is reachable (check
 `arion logs tagma`).
 
 ## Integration tests: `arion -f compose/dev/test.nix up`
@@ -222,7 +222,7 @@ on the `tagma` service only:
 - `service.capabilities.SYS_ADMIN = true` (→ `cap_add: [SYS_ADMIN]`)
 - `out.service.security_opt = [ "seccomp=unconfined" ]`
 
-The agora and both postgres services need no special privileges.
+The archeion and both postgres services need no special privileges.
 
 ## Volumes and workspaces
 
@@ -230,15 +230,15 @@ In dev and the prod-tagma composition, tagma data and the agent workspace are
 **docker named volumes** — no host directories are created and the project tree
 stays clean. Shared skills live inside the `data` volume's `skills/` subdir, and
 the tagma credentials (device key + tagma token) live under
-`/var/lib/kallip/credentials/` inside the `data` volume. The agora and each
+`/var/lib/kallip/credentials/` inside the `data` volume. The archeion and each
 postgres service add their own volumes in the compositions that run them. The
 test composition mounts none (its scratch tree is an ephemeral `/testdata`
 tmpfs).
 
 - `data` named volume → `/var/lib/kallip` — agent state, logs, skills, and the tagma credentials (persistent; survives `arion down`, removed by `arion down -v`).
 - `workspace` named volume → `/workspace` — the agent workspace root.
-- `agora_pgdata` named volume → `/var/lib/postgresql/data` — the agora's Postgres store (dev + the prod-agora composition).
-- `lesche_pgdata` named volume → `/var/lib/postgresql/data` — the lesche's Postgres chat store (dev + the prod-agora composition).
+- `archeion_pgdata` named volume → `/var/lib/postgresql/data` — the archeion's Postgres store (dev + the prod-archeion composition).
+- `lesche_pgdata` named volume → `/var/lib/postgresql/data` — the lesche's Postgres chat store (dev + the prod-archeion composition).
 
 **In dev only**, data and workspace can be bind-mounted to a host path via
 their env vars, when you want the files on the host (e.g. inspect/persist tagma
@@ -269,8 +269,8 @@ workspace that contains or is contained by the data dir.
 ## Environment
 
 The compose sets the per-service defaults (the tagma's `KALLIP_TAGMA_ADDR`,
-`HOME`, `PATH`, `RUST_LOG`, `KALLIP_WORKSPACE_ROOT`; the dev agora's WebAuthn
-RP/CORS/cookie values). Provider credentials, tokens, and the prod-agora deploy
+`HOME`, `PATH`, `RUST_LOG`, `KALLIP_WORKSPACE_ROOT`; the dev archeion's WebAuthn
+RP/CORS/cookie values). Provider credentials, tokens, and the prod-archeion deploy
 secrets come from `.env` (compose precedence: `service.environment` wins over
 `env_file`, so anything the compose hardcodes for dev is NOT overridable via
 `.env` in that mode — prod reads everything from `.env` instead).
@@ -288,29 +288,29 @@ Relay connector (dev / the prod-tagma composition) — activate + enroll via `.e
 
 | Variable                             | Required             | Notes                                                                                                                                                        |
 | ------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `KALLIP_TAGMA_RELAY_AGORA_URL`       | **yes** (prod-tagma) | The prod-agora deploy's public HTTPS URL, for enrollment only. Setting any value activates the relay. (Dev hardcodes `http://agora:7100`.)                   |
-| `KALLIP_TAGMA_RELAY_LESCHE_URL`      | no                   | The prod-lesche deploy's public HTTPS URL (tunnel + envelopes + KEX). Defaults to the `KALLIP_TAGMA_RELAY_AGORA_URL` origin; set it for the subdomain split. |
-| `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` | first boot only      | A `sk-enroll-...` minted via the agora dashboard. Remove after the first successful enroll.                                                                  |
+| `KALLIP_TAGMA_RELAY_ARCHEION_URL`       | **yes** (prod-tagma) | The prod-archeion deploy's public HTTPS URL, for enrollment only. Setting any value activates the relay. (Dev hardcodes `http://archeion:7100`.)                   |
+| `KALLIP_TAGMA_RELAY_LESCHE_URL`      | no                   | The prod-lesche deploy's public HTTPS URL (tunnel + envelopes + KEX). Defaults to the `KALLIP_TAGMA_RELAY_ARCHEION_URL` origin; set it for the subdomain split. |
+| `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` | first boot only      | A `sk-enroll-...` minted via the archeion dashboard. Remove after the first successful enroll.                                                                  |
 
-Agora + lesche + their two postgres services (the prod-agora composition) —
+Archeion + lesche + their two postgres services (the prod-archeion composition) —
 `.env` only (dev derives these from `KALLIP_DOMAIN`, set to `kallipai.lan`
 in `.env` via `.env.example`; the code default is the prod `kallipai.com`):
 
 | Variable                          | Required                      | Notes                                                                                                                                  |
 | --------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `KALLIP_AGORA_DATABASE_URL`       | **yes** (prod-agora)          | `postgres://<USER>:<POSTGRES_PASSWORD>@agora-postgres:5432/<DB>` — user/db/password must match the `POSTGRES_*` vars. The agora's identity store. |
-| `KALLIP_LESCHE_DATABASE_URL`      | **yes** (prod-agora)          | `postgres://<USER>:<POSTGRES_PASSWORD>@lesche-postgres:5432/<DB>` — the lesche's durable chat store (rooms, membership, message payloads). |
-| `POSTGRES_USER`                   | **yes** (prod-agora)          | The postgres superuser role; read by BOTH postgres services and must match the user in both `*_DATABASE_URL`s (the image defaults to `postgres`).                    |
-| `POSTGRES_PASSWORD`               | **yes** (prod-agora)          | The postgres superuser password (read by both postgres images).                                                                          |
-| `POSTGRES_DB`                     | **yes** (prod-agora)          | The initial db; read by BOTH postgres services and must match the db in both `*_DATABASE_URL`s (the image defaults to `postgres`).                                   |
-| `KALLIP_AGORA_WEBAUTHN_RP_ID`     | **yes** (prod-agora)          | The registrable domain passkeys bind to; cannot change without invalidating every passkey.                                             |
-| `KALLIP_AGORA_WEBAUTHN_RP_ORIGIN` | **yes** (prod-agora)          | The exact origin the web app is served from (`https://app.example.com`).                                                               |
-| `KALLIP_AGORA_CORS_ORIGINS`       | **yes** (prod-agora)          | The app origin(s); never a wildcard on a public deploy.                                                                                |
-| `KALLIP_AGORA_COOKIE_SECURE`      | no (defaults true)            | Keep `true` behind TLS; `false` only for plain-HTTP dev. Dev is now behind Caddy's TLS and hardcodes `true`.                            |
-| `KALLIP_AGORA_TRUSTED_PROXIES`    | **yes** behind a remote proxy | Loopback-only by default and **cleared on a public bind**; set to the proxy's CIDR so X-Forwarded-For / per-client rate limiting work. Dev trusts loopback (`127.0.0.0/8, ::1/128`) because Caddy proxies over the host network. |
-| `KALLIP_AGORA_ADMIN_TOKEN`        | no                            | Stable admin token; else generated per boot and printed to `arion logs agora`.                                                         |
-| `KALLIP_LESCHE_AGORA_TOKEN`       | **yes** (prod-agora)          | Shared secret the lesche presents to the agora's `/internal/*` surface; must equal the agora's `KALLIP_AGORA_INTERNAL_TOKEN`.          |
-| `KALLIP_LESCHE_CORS_ORIGINS`      | **yes** (prod-agora)          | The app origin(s) for the lesche; never a wildcard on a public deploy.                                                                 |
+| `KALLIP_ARCHEION_DATABASE_URL`       | **yes** (prod-archeion)          | `postgres://<USER>:<POSTGRES_PASSWORD>@archeion-postgres:5432/<DB>` — user/db/password must match the `POSTGRES_*` vars. The archeion's identity store. |
+| `KALLIP_LESCHE_DATABASE_URL`      | **yes** (prod-archeion)          | `postgres://<USER>:<POSTGRES_PASSWORD>@lesche-postgres:5432/<DB>` — the lesche's durable chat store (rooms, membership, message payloads). |
+| `POSTGRES_USER`                   | **yes** (prod-archeion)          | The postgres superuser role; read by BOTH postgres services and must match the user in both `*_DATABASE_URL`s (the image defaults to `postgres`).                    |
+| `POSTGRES_PASSWORD`               | **yes** (prod-archeion)          | The postgres superuser password (read by both postgres images).                                                                          |
+| `POSTGRES_DB`                     | **yes** (prod-archeion)          | The initial db; read by BOTH postgres services and must match the db in both `*_DATABASE_URL`s (the image defaults to `postgres`).                                   |
+| `KALLIP_ARCHEION_WEBAUTHN_RP_ID`     | **yes** (prod-archeion)          | The registrable domain passkeys bind to; cannot change without invalidating every passkey.                                             |
+| `KALLIP_ARCHEION_WEBAUTHN_RP_ORIGIN` | **yes** (prod-archeion)          | The exact origin the web app is served from (`https://app.example.com`).                                                               |
+| `KALLIP_ARCHEION_CORS_ORIGINS`       | **yes** (prod-archeion)          | The app origin(s); never a wildcard on a public deploy.                                                                                |
+| `KALLIP_ARCHEION_COOKIE_SECURE`      | no (defaults true)            | Keep `true` behind TLS; `false` only for plain-HTTP dev. Dev is now behind Caddy's TLS and hardcodes `true`.                            |
+| `KALLIP_ARCHEION_TRUSTED_PROXIES`    | **yes** behind a remote proxy | Loopback-only by default and **cleared on a public bind**; set to the proxy's CIDR so X-Forwarded-For / per-client rate limiting work. Dev trusts loopback (`127.0.0.0/8, ::1/128`) because Caddy proxies over the host network. |
+| `KALLIP_ARCHEION_ADMIN_TOKEN`        | no                            | Stable admin token; else generated per boot and printed to `arion logs archeion`.                                                         |
+| `KALLIP_LESCHE_ARCHEION_TOKEN`       | **yes** (prod-archeion)          | Shared secret the lesche presents to the archeion's `/internal/*` surface; must equal the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.          |
+| `KALLIP_LESCHE_CORS_ORIGINS`      | **yes** (prod-archeion)          | The app origin(s) for the lesche; never a wildcard on a public deploy.                                                                 |
 
 Note: unset WebAuthn RP values fall back to the kallipai.com prod pair
 (passkeys simply stay unusable until configured) instead of failing boot.
@@ -341,18 +341,18 @@ docker run --rm \
 (The `kallip-tagma-image` has no default `Cmd` — pass the binary name
 `kallip-tagma` explicitly.)
 
-The agora runs from `kallip-agora-image` (behind your own TLS reverse proxy +
+The archeion runs from `kallip-archeion-image` (behind your own TLS reverse proxy +
 a postgres):
 
 ```sh
-nix build .#kallip-agora-image
+nix build .#kallip-archeion-image
 docker load < result
 docker run --rm \
-  -e KALLIP_AGORA_DATABASE_URL=postgres://kallip:...@postgres:5432/kallip \
-  -e KALLIP_AGORA_WEBAUTHN_RP_ID=agora.example.com \
-  -e KALLIP_AGORA_WEBAUTHN_RP_ORIGIN=https://app.example.com \
-  -e KALLIP_AGORA_CORS_ORIGINS=https://app.example.com \
-  kallip-agora:latest
+  -e KALLIP_ARCHEION_DATABASE_URL=postgres://kallip:...@postgres:5432/kallip \
+  -e KALLIP_ARCHEION_WEBAUTHN_RP_ID=archeion.example.com \
+  -e KALLIP_ARCHEION_WEBAUTHN_RP_ORIGIN=https://app.example.com \
+  -e KALLIP_ARCHEION_CORS_ORIGINS=https://app.example.com \
+  kallip-archeion:latest
 ```
 
 Then create an agent via the [tagma API](tagma-api.md) with

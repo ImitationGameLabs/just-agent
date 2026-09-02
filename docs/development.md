@@ -2,7 +2,7 @@
 
 Local development runs the full kallip stack under
 [Arion](https://docs.hercules-ci.com/arion/) (a Nix-native docker-compose). The
-dev agora side lives at `compose/dev/agora.nix`; the repo-root
+dev archeion side lives at `compose/dev/archeion.nix`; the repo-root
 `arion-compose.nix` is a one-line shim that re-exports it for arion's
 auto-discovery, so a plain `arion up` brings it up.
 
@@ -54,7 +54,7 @@ for local dev (so dev DNS/certs never clash with production), and you get that
 when you copy `.env.example` to `.env`. direnv's `dotenv` loads `.env` into the
 shell, so arion eval, `mkcert`, and vite all see it. Override further
 by editing `.env` or exporting `KALLIP_DOMAIN` in your shell. The whole
-stack — the agora/lesche env, the Caddyfile, vite, and the web app's API URLs —
+stack — the archeion/lesche env, the Caddyfile, vite, and the web app's API URLs —
 derives from this one variable.
 
 1. Generate the leaf cert with `mkcert` (provided by the nix devShell). Run this
@@ -70,7 +70,7 @@ derives from this one variable.
    `*.<devDomain>` + the bare domain, and creates the mkcert root CA at
    `~/.local/share/mkcert/rootCA.pem` on first use. It does **not** install the
    root into any trust store — that step is OS-specific (step 2).
-   `compose/dev/agora.nix` defaults the cert dir to `<repo>/compose/dev/.certs`,
+   `compose/dev/archeion.nix` defaults the cert dir to `<repo>/compose/dev/.certs`,
    so arion finds them with nothing further to do.
 2. Install the mkcert root CA into the host trust store, so the leaf cert is
    accepted by the browser (no warning, and WebAuthn runs in a real secure
@@ -100,7 +100,7 @@ derives from this one variable.
      `/etc/hosts`:
 
      ```text
-     192.168.1.7  web.kallipai.lan agora.kallipai.lan lesche.kallipai.lan
+     192.168.1.7  web.kallipai.lan archeion.kallipai.lan lesche.kallipai.lan
      ```
 
      `/etc/hosts` does not support wildcard entries, so list each subdomain
@@ -138,29 +138,29 @@ derives from this one variable.
 ## Bring-up
 
 The stack comes up in two phases because the tagma's relay connector cannot
-enroll with the agora until a real user signs up in the web UI and mints an
-enrollment code -- starting it with `KALLIP_TAGMA_RELAY_AGORA_URL` set but no code
+enroll with the archeion until a real user signs up in the web UI and mints an
+enrollment code -- starting it with `KALLIP_TAGMA_RELAY_ARCHEION_URL` set but no code
 degrades the tagma to local-only (it logs an error and keeps serving local
 agents; the lesche message route returns 503).
 
-### Agora side
+### Archeion side
 
 ```sh
-arion up -d                # caddy + agora + lesche + files + agora-postgres + lesche-postgres + files-postgres (arion builds the workspace via the flake)
+arion up -d                # caddy + archeion + lesche + files + archeion-postgres + lesche-postgres + files-postgres (arion builds the workspace via the flake)
 ```
 
 Dev is fronted by Caddy (see the one-time setup above): the browser loads the
-web app at `https://web.kallipai.lan` and reaches the agora at
-`https://agora.kallipai.lan` and the lesche at `https://lesche.kallipai.lan`,
+web app at `https://web.kallipai.lan` and reaches the archeion at
+`https://archeion.kallipai.lan` and the lesche at `https://lesche.kallipai.lan`,
 all TLS-terminated by Caddy. The session cookie carries `Domain=kallipai.lan`
-so it is shared across the agora/lesche subdomains. The web app (`deno task dev`
-from `packages/kallip-web`) reads its API origins from `VITE_AGORA_URL`
-(default `https://agora.kallipai.lan`), `VITE_LESCHE_URL` (default
+so it is shared across the archeion/lesche subdomains. The web app (`deno task dev`
+from `packages/kallip-web`) reads its API origins from `VITE_ARCHEION_URL`
+(default `https://archeion.kallipai.lan`), `VITE_LESCHE_URL` (default
 `https://lesche.kallipai.lan`), and `VITE_FILES_URL` (default
 `https://files.kallipai.lan`); the defaults already match the Caddy
 topology, so no `.env` override is needed for normal LAN dev.
 
-agora and lesche also publish `7100` / `7200` to the host for plain-HTTP
+archeion and lesche also publish `7100` / `7200` to the host for plain-HTTP
 tooling — `kallip-admin` and curl keep using `http://localhost:7100` /
 `http://localhost:7200` directly, bypassing Caddy. The files service
 publishes `7400` on all host interfaces (the lesche pattern -- browser-
@@ -171,17 +171,17 @@ tagma bearer (`KALLIP_FILES_TOKEN`); see docs/reference/files-api.md.
 
 > **Passkey migration:** changing the WebAuthn RP id from the old `localhost`
 > topology to `kallipai.lan` invalidates every previously registered dev
-> passkey. On first bring-up after this change, reset the agora volume
+> passkey. On first bring-up after this change, reset the archeion volume
 > (`arion down -v`) and re-register.
 
 #### Register a test user (first bring-up only)
 
 Signup is open (no invite code): a fresh database just needs someone to sign
-up. The `agora_pgdata` volume persists across `arion down` / `up`, so this
+up. The `archeion_pgdata` volume persists across `arion down` / `up`, so this
 sub-flow runs **once per volume** -- check before doing it:
 
 ```sh
-KALLIP_AGORA_ADMIN_TOKEN=sk-admin-dev-0123456789abcdef0123456789abcdef cargo run -q -p kallip-admin -- --agora-url http://localhost:7100 users list
+KALLIP_ARCHEION_ADMIN_TOKEN=sk-admin-dev-0123456789abcdef0123456789abcdef cargo run -q -p kallip-admin -- --archeion-url http://localhost:7100 users list
 ```
 
 If `users list` already shows a row, a test account exists -- skip to minting
@@ -192,8 +192,8 @@ Open the web app at `https://web.kallipai.lan` and sign up with a username +
 passkey (or "Continue with GitHub/Google" once OAuth is configured). Once signed
 in, mint a `sk-enroll-...` enrollment code in the web UI and paste it into
 `.env` as `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE`, and set `KALLIP_AUTH_TOKEN` to
-the tagma's operator token. (The tagma's agora/lesche relay URLs are wired to
-compose DNS by arion -- `http://agora:7100` / `http://lesche:7200` -- so they
+the tagma's operator token. (The tagma's archeion/lesche relay URLs are wired to
+compose DNS by arion -- `http://archeion:7100` / `http://lesche:7200` -- so they
 need no `.env` override.)
 
 Faster alternative without touching a browser: the dev stack enables the
@@ -212,28 +212,28 @@ enrollment code at `POST /v1/tagmata` without signing up.
 
 ##### The admin token
 
-`kallip-admin` authenticates with the agora's admin token. The clean path is to
+`kallip-admin` authenticates with the archeion's admin token. The clean path is to
 pin it **before** first boot so the same known value works on every run: make
 sure `.env` contains
 
 ```text
-KALLIP_AGORA_ADMIN_TOKEN=sk-admin-dev-0123456789abcdef0123456789abcdef
+KALLIP_ARCHEION_ADMIN_TOKEN=sk-admin-dev-0123456789abcdef0123456789abcdef
 ```
 
-then run `arion up -d`. The dev compose pins this same fixture in the agora
+then run `arion up -d`. The dev compose pins this same fixture in the archeion
 service's environment (a local-platform login is enabled there, and that
 route refuses to boot with an operator-set token shorter than 32 chars),
 so `kallip-admin` authenticates with it -- no log scraping.
 
-If the agora is **already running** without this pinned (e.g. an older stack
+If the archeion is **already running** without this pinned (e.g. an older stack
 booted before you set it), its token was generated randomly at startup and
 cannot be changed short of recreating the container. Either `arion up -d` to
 recreate it with the pinned value, or fall back to grepping the current token
-out of **agora's** logs (not tagma's):
+out of **archeion's** logs (not tagma's):
 
 ```sh
-TOK=$(arion logs agora 2>&1 | grep -oP 'sk-admin-[A-Za-z0-9_-]+' | tail -1)
-KALLIP_AGORA_ADMIN_TOKEN="$TOK" cargo run -q -p kallip-admin -- --agora-url http://localhost:7100 ...
+TOK=$(arion logs archeion 2>&1 | grep -oP 'sk-admin-[A-Za-z0-9_-]+' | tail -1)
+KALLIP_ARCHEION_ADMIN_TOKEN="$TOK" cargo run -q -p kallip-admin -- --archeion-url http://localhost:7100 ...
 ```
 
 The fixture is dev-only; prod must set a strong secret.
@@ -241,50 +241,50 @@ The fixture is dev-only; prod must set a strong secret.
 ### Tagma side
 
 The tagma (agent host + in-process relay connector) is a separate composition
-(`compose/dev/tagma.nix`) so its lifecycle does not entangle with the agora
-side. It runs on the host network and reaches the agora/lesche at
-`127.0.0.1:7100` / `:7200`, so bring the agora side up first, then:
+(`compose/dev/tagma.nix`) so its lifecycle does not entangle with the archeion
+side. It runs on the host network and reaches the archeion/lesche at
+`127.0.0.1:7100` / `:7200`, so bring the archeion side up first, then:
 
 ```sh
 arion -f compose/dev/tagma.nix up -d   # tagma; enrolls its relay
 ```
 
-### Dual-agora tagma (multi-relay)
+### Dual-archeion tagma (multi-relay)
 
-The tagma can hold one identity per agora simultaneously (e.g. the local
-dev agora plus a remote one). Declare the entries in
+The tagma can hold one identity per archeion simultaneously (e.g. the local
+dev archeion plus a remote one). Declare the entries in
 `<data-root>/relays.toml`:
 
 ```toml
 [[relay]]
 name    = "main"                # slug: [a-z0-9][a-z0-9-]*; keys the
                                 # credentials/<name>/ dir (stable across URL changes)
-agora_url    = "http://127.0.0.1:7100"
-lesche_url   = "http://127.0.0.1:7200"   # optional; defaults to the agora origin
+archeion_url    = "http://127.0.0.1:7100"
+lesche_url   = "http://127.0.0.1:7200"   # optional; defaults to the archeion origin
 # enrollment_code = "sk-enroll-..."      # first run only; afterwards the stored token is reused
 
 [[relay]]
 name     = "second"
-agora_url = "http://127.0.0.1:7101"
+archeion_url = "http://127.0.0.1:7101"
 ```
 
 Rules: a `relays.toml` entry and the legacy single-relay env vars
 (`KALLIP_TAGMA_RELAY_*`) are mutually exclusive -- unset the env vars or
 delete the file (the env vars keep working as one implicit `default` entry
-when the file is absent). Each entry enrolls with its own agora identity
+when the file is absent). Each entry enrolls with its own archeion identity
 (`credentials/<name>/tagma.id` + `tagma.token`); the Ed25519 `device.key`
 at the credentials root is shared (one device, many identities). A
-pre-multi-agora flat `credentials/tagma.id` is migrated into the single
+pre-multi-archeion flat `credentials/tagma.id` is migrated into the single
 entry's directory on the first boot; anything ambiguous fails fast with
 both exits named. Outbound frames fan out to every online relay; the first
-entry with stored credentials is the "primary" agora (frontend cache
+entry with stored credentials is the "primary" archeion (frontend cache
 key).
 
-Dual-agora acceptance runs on a second, parallel stack: the same compose
+Dual-archeion acceptance runs on a second, parallel stack: the same compose
 file parameterized by env vars:
-`KALLIP_ARION_PROJECT_NAME=kallipai-dev2 KALLIP_ARION_AGORA_PORT=7101 KALLIP_ARION_LESCHE_PORT=7201 arion up -d agora lesche`
+`KALLIP_ARION_PROJECT_NAME=kallipai-dev2 KALLIP_ARION_ARCHEION_PORT=7101 KALLIP_ARION_LESCHE_PORT=7201 arion up -d archeion lesche`
 -- with its own containers and volumes, reachable where the old inline
-pair was (caddy routes the agora2./lesche2. subdomains to those host
+pair was (caddy routes the archeion2./lesche2. subdomains to those host
 ports). Enroll a code on each side, fill `relays.toml`, and watch the
 tagma log for two `relay connector active` lines (one per entry name); a
 message sent on either side must arrive on both.
@@ -293,10 +293,10 @@ message sent on either side must arrive on both.
 
 The automated acceptance chain covers fanout and dual identity; the
 user-agent KEX round-trip itself (message in, agent reply out, both sides
-receiving) is a manual residual item. Verify it by hand once per dual-agora
+receiving) is a manual residual item. Verify it by hand once per dual-archeion
 setup:
 
-1. Bring the agora side and the web dev server up (`deno task dev` from
+1. Bring the archeion side and the web dev server up (`deno task dev` from
    `packages/kallip-web`), open `https://web.kallipai.lan/register`, and
    create a user (username + passkey).
 2. Open `https://web.kallipai.lan/tagmata`, pick the enrolled tagma, send a
@@ -352,7 +352,7 @@ any other value keeps the file default, and a file layer that fails
 to build falls back to stderr.
 The web management face lives in `crates/platform/kallip-instances`: a
 pure JSON API under `/api/instances/*`, proxying the daemon over its
-UDS socket. Platform mode: the agora's internal face
+UDS socket. Platform mode: the archeion's internal face
 verifies the SPA's `sk-admin-` key (the operator-key login). The SPA
 itself is served by the host vite dev server (Caddy routes
 `web.<devDomain>` to `:5173`) and calls the API cross-origin from the
@@ -373,11 +373,11 @@ by running it again -- arion builds the workspace transitively (via the image
 contents) and `useHostStore` shares that `/nix/store` into the containers:
 
 ```sh
-arion up -d                                # agora side
+arion up -d                                # archeion side
 arion -f compose/dev/tagma.nix up -d       # tagma side, if you want it up
 ```
 
-Tail logs with `arion logs -f <service>` (`agora`, `agora-postgres`,
+Tail logs with `arion logs -f <service>` (`archeion`, `archeion-postgres`,
 `lesche-postgres`); for the tagma use `arion -f compose/dev/tagma.nix logs -f
 tagma`.
 
@@ -412,20 +412,20 @@ See [container.md](reference/container.md) for which suites run.
 
 When the backend changes in a way that invalidates existing data (a schema
 reset, an incompatible wire format, or you simply want to start over), tear down
-**including volumes** and re-run bring-up from the agora side. `down -v` wipes
-`agora_pgdata` and `lesche_pgdata` plus the tagma `data` / `workspace` volumes,
+**including volumes** and re-run bring-up from the archeion side. `down -v` wipes
+`archeion_pgdata` and `lesche_pgdata` plus the tagma `data` / `workspace` volumes,
 so the test user, the enrollment code, and all tagma state are gone -- the
 sign-up sub-flow is needed again:
 
 ```sh
-arion down -v                                  # agora side: stop AND delete volumes
+arion down -v                                  # archeion side: stop AND delete volumes
 arion -f compose/dev/tagma.nix down -v         # tagma side: stop AND delete volumes
-arion up -d                                    # agora side
+arion up -d                                    # archeion side
 # ...sign up, mint enrollment code in the web UI, fill .env...
 arion -f compose/dev/tagma.nix up -d           # tagma side
 ```
 
-The agora side and the tagma are separate compose projects (`kallipai-dev` and
+The archeion side and the tagma are separate compose projects (`kallipai-dev` and
 `kallipai-dev-tagma`), so each `down -v` is scoped to its own volumes. To keep
 tagma state, back up or bind-mount the volumes (see "Optional bind overrides")
 instead of relying on `down -v`.

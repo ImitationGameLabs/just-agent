@@ -5,13 +5,13 @@ The file transfer service `kallip-files` hosts a small content API (default
 proxy). Blobs are content-addressed (SHA-256) and deduplicate by
 construction; record metadata (paths, owners, reference counts, the
 delivery log) lives in the service's own Postgres. Identity and enrollment
-facts stay in the agora, reached through its `/internal/*` ControlPlane API
+facts stay in the archeion, reached through its `/internal/*` ControlPlane API
 over a shared secret on the private network — never through a public edge.
 
-## Auth — agora-verified principals
+## Auth — archeion-verified principals
 
 There is **no files-specific token**. Every content request carries
-`Authorization: Bearer <token>`; the service resolves it through the agora's
+`Authorization: Bearer <token>`; the service resolves it through the archeion's
 `/internal/verify-bearer` (shared-secret guarded) and acts as the resolved
 principal:
 

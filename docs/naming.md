@@ -56,6 +56,32 @@ type, free of the `-olis` that does no technical work - and add **AI** as a
 suffix to make the project's nature unambiguous. Read together, `kallipai` is
 literally `kallip` + `ai`.
 
+### Service names: archeion and polis
+
+The platform's service names follow the same Greek-city framing. **archeion**
+(ἀρχεῖον) was the ancient record office - the building that kept the citizen
+registers and public archives. The identity service (enrollment, sessions,
+tagma records) held that job all along; its former name, **agora** (the
+marketplace), described a role it never had. **polis** (city) names the
+deployment composition, which assembles the whole platform rather than any
+one service.
+
+The 2026-09 rename retired `agora` from code, packages, deployment, and
+environment variables (`KALLIP_AGORA_*` -> `KALLIP_ARCHEION_*`), removing the
+collision with Agora.io along the way. Four wire-protocol tags keep the old
+spelling on purpose (`kallip-agora-aead-v1` and siblings): they are
+domain-separation strings that client SDKs match byte-for-byte and must never
+be re-versioned.
+
+| Before | After |
+| --- | --- |
+| `kallip-agora` / `-common` / `-client` (crates and package) | `kallip-archeion` / `-common` / `-client` |
+| `compose/{dev,prod}/agora.nix` | `compose/{dev,prod}/polis.nix` |
+| `services.agora` / `agora-postgres` | `services.archeion` / `archeion-postgres` |
+| `KALLIP_AGORA_*` / `KALLIP_*_AGORA_*` | `KALLIP_ARCHEION_*` / `KALLIP_*_ARCHEION_*` |
+| `agora.<domain>` / `agora.kallipai.lan` | `archeion.<domain>` / `archeion.kallipai.lan` |
+| `agora_pgdata` volume | `archeion_pgdata` (migrate old data manually) |
+
 ### The two-stem rule
 
 The name is split into **two stems** that serve different audiences. The split

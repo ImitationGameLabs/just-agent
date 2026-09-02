@@ -1,7 +1,7 @@
 # Frontend package development
 
 This guide covers the JS/TS workspace packages under `packages/`
-(`kallip-common`, `kallip-client`, `kallip-agora-client`,
+(`kallip-common`, `kallip-client`, `kallip-archeion-client`,
 `kallip-lesche-client`, `kallip-ui`, `kallip-web`, `kallip-app`,
 `kallip-direct`). They share a
 single toolchain, **Deno**, laid out as an npm-style workspace but never driven
@@ -121,7 +121,7 @@ writable directory, e.g. `export GRADLE_USER_HOME=$PWD/.gradle`.
 `kallip-direct` is the developer fallback for reaching a tagma when the web
 stack is down: it mounts the offline product (the `/local/*` routes plus the
 `/connect` front door) from the shared `kallip-ui` components, with no Tauri
-and no online/agora surface — the shell declares itself offline-only at
+and no online/archeion surface — the shell declares itself offline-only at
 bootstrap (`setOfflineOnlyShell()`), so the gate, navigation, and account
 chrome never enter the online product. It is a plain SvelteKit web app;
 run it standalone from `packages/kallip-direct`:
@@ -157,7 +157,7 @@ scoped to where they are actually used:
 - `packages/kallip-web`, `packages/kallip-app` — Tailwind + Svelte:
   `["prettier-plugin-tailwindcss", "prettier-plugin-svelte"]`
 - `packages/kallip-ui` — Svelte only: `["prettier-plugin-svelte"]`
-- `kallip-common`, `kallip-client`, `kallip-agora-client` — plain TS, no
+- `kallip-common`, `kallip-client`, `kallip-archeion-client` — plain TS, no
   plugins.
 
 The plugin npm packages themselves are root `devDependencies` (shared formatter

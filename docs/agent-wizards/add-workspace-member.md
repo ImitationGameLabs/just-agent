@@ -57,7 +57,7 @@ This automatically creates:
 - `crates/<name>/Cargo.toml`
 - `crates/<name>/src/main.rs` (binary) or `crates/<name>/src/lib.rs` (library)
 
-> **Platform crates:** the public-internet relay crates (agora, agora-common,
+> **Platform crates:** the public-internet relay crates (archeion, archeion-common,
 > lesche) live under `crates/platform/`, not flat. For a new platform-side
 > crate, substitute `crates/platform/<name>` for `crates/<name>` throughout
 > this wizard (the `cargo new` path and the `Cargo.toml` member +

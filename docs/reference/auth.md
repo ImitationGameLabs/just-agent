@@ -104,41 +104,41 @@ prevents superiors from using subordinates as proxies to run a command their own
 policy would gate. The operator identity is exempt. **Deny** decisions have no
 gate.
 
-## Agora / lesche service-to-service boundary
+## Archeion / lesche service-to-service boundary
 
-The cloud relay is split into two services: the **agora** (control plane:
+The cloud relay is split into two services: the **archeion** (control plane:
 identity, WebAuthn, tagma lifecycle, the durable identity Postgres store) and
 the **lesche** (data plane: tagma relay tunnels, app event streams, envelope
 routing, presence, plus the durable chat store — rooms, membership, message
 payloads — in its own Postgres). The lesche's in-memory surfaces
 are soft-state; its chat schema persists. It authenticates requests, resolves
 tagma metadata, attests identity facts, and advances the tunnel-proof replay
-guard through a narrow `ControlPlane` trait, reached over the agora's non-public
+guard through a narrow `ControlPlane` trait, reached over the archeion's non-public
 `/internal/*` HTTP API.
 
-The two services are addressed on their own subdomains (`agora.<d>` /
-`lesche.<d>` — e.g. `agora.kallipai.lan` / `lesche.kallipai.lan` in dev,
-`agora.kallipai.com` / `lesche.kallipai.com` in prod). The web app and the tagma
+The two services are addressed on their own subdomains (`archeion.<d>` /
+`lesche.<d>` — e.g. `archeion.kallipai.lan` / `lesche.kallipai.lan` in dev,
+`archeion.kallipai.com` / `lesche.kallipai.com` in prod). The web app and the tagma
 talk to each by its own subdomain. The session cookie carries a configurable
-`Domain` attribute (`KALLIP_AGORA_SESSION_COOKIE_DOMAIN`, the parent domain) so
-the cookie set on login at `agora.<d>` is also sent to `lesche.<d>`; the two
+`Domain` attribute (`KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN`, the parent domain) so
+the cookie set on login at `archeion.<d>` is also sent to `lesche.<d>`; the two
 subdomains share a registrable domain (same-site under `SameSite=Strict`), and
 each service's CORS allowlist authorizes the web origin with credentials. A
 single-origin deploy leaves the cookie host-only (the attribute unset).
 
 That `/internal/*` surface is guarded by a shared-secret bearer
-(`KALLIP_AGORA_INTERNAL_TOKEN` on the agora, `KALLIP_LESCHE_AGORA_TOKEN` on the
+(`KALLIP_ARCHEION_INTERNAL_TOKEN` on the archeion, `KALLIP_LESCHE_ARCHEION_TOKEN` on the
 lesche — the same value). The comparison is constant-time. If the token is
-unset on the agora, the `/internal` nest is not mounted at all (the agora runs
+unset on the archeion, the `/internal` nest is not mounted at all (the archeion runs
 standalone, no relay connected). The surface must be network-isolated so only
 the lesche can reach it.
 
 **Revocation latency**: the lesche verifies credentials per request against the
-agora (no auth cache). Its hot paths are long-lived connections (a tagma relay
+archeion (no auth cache). Its hot paths are long-lived connections (a tagma relay
 tunnel, an app SSE stream) that authenticate once at open and are not
 re-verified mid-stream — so revoking a tagma or disabling a user takes effect
 on the lesche when the affected connection is next (re)established, not
-necessarily the instant the agora row changes. To force immediate
+necessarily the instant the archeion row changes. To force immediate
 re-verification, drop the connection (the tagma relay reconnects; the app
 reconnects). This is the v1 revocation contract; a JWT migration (local
 validation, zero per-request RPC) is the future step if tighter coupling is
@@ -165,13 +165,13 @@ credential -- no separate token to configure or paste.
 
 Security boundary, three sentences: only the admin principal may enter
 (any other credential is a plain 401); the route is not mounted unless
-`KALLIP_AGORA_ADMIN_USER_LOGIN` is explicitly set, so the production
+`KALLIP_ARCHEION_ADMIN_USER_LOGIN` is explicitly set, so the production
 default has no such surface at all; and when it is set, an operator-chosen
 admin token shorter than 32 chars refuses to boot (the generated 256-bit
 token is exempt). Deleting the marker row together with its user row
 resets the account -- the next admin-login recreates both. Mounting the
 route is an explicit operator act that pre-provisions an operator
-account, so `KALLIP_AGORA_SIGNUP_ENABLED` does not gate it.
+account, so `KALLIP_ARCHEION_SIGNUP_ENABLED` does not gate it.
 
 ### Username availability probe (public, pre-release)
 
@@ -193,11 +193,11 @@ disabled user row), `available`.
 
 The instances service mirrors the lesche's dual-channel auth: a bearer
 token verifies via `/internal/verify-bearer` (only `Principal::Admin`
-passes -- the app and CLI channel), and, absent a bearer, the agora
+passes -- the app and CLI channel), and, absent a bearer, the archeion
 session cookie verifies via `/internal/verify-session`, passing only for
 the fixed local-admin account's session (`local_admin`; any other user
 session is 403, an absent one 401 with code `admin_session_required`).
 Cookie-bearing state-changing requests carry the same two-pillar CSRF
-defense as the agora/lesche (`SameSite=Strict` + the mandatory
+defense as the archeion/lesche (`SameSite=Strict` + the mandatory
 `X-Requested-With: kallip` marker on non-GETs; bearer requests are
 exempt).

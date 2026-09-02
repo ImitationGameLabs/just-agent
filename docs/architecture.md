@@ -60,10 +60,10 @@ authentication and the authorization matrix, see [auth.md](reference/auth.md).
 
 ## Online relay and chat history
 
-The tagma optionally participates in the public-internet relay (agora control
+The tagma optionally participates in the public-internet relay (archeion control
 plane + lesche data plane) so a user's app can reach it from anywhere and hold
 an E2EE conversation. The in-process relay connector (`relay/` module) enrolls
-with the agora on first boot, then holds a long-lived lesche tunnel: it
+with the archeion on first boot, then holds a long-lived lesche tunnel: it
 encrypts outbound agent replies into lesche envelopes and decrypts inbound
 user messages. See [container.md](reference/container.md) for the deployment
 topology and `KALLIP_TAGMA_RELAY_*` in [env.md](reference/env.md) for the
@@ -109,7 +109,7 @@ Two newtypes share one derived UUID, on purpose, at different layers:
 - **`ParticipantId`** — the cross-transport **conversation-sender** identity. It is the
   `sender` on every live envelope on BOTH transports (the bilateral 1:1 path and rooms), what
   the tagma persists in `chat_history`, and the key of the relay's shared presence registry.
-  Lives in `kallip-agora-common` (`ids.rs`, `participant.rs`); in TS, `@kallipai/kallip-common`
+  Lives in `kallip-archeion-common` (`ids.rs`, `participant.rs`); in TS, `@kallipai/kallip-common`
   (`chat.ts`, `ids.ts`).
 - **`MemberId`** — the **room-domain** identity: how rooms address their members
   (`RoomMember`, `room_members.member_id`, the roster, room-presence fan-out). It wraps a

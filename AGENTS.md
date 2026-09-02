@@ -21,14 +21,14 @@ The project brand is `kallipai` (literally `kallip` + `ai`); the technical stem 
 │   ├── kallip-client/    # Tagma client library
 │   ├── time/             # Timer/scheduling subsystem: cron daemon that fires schedules and injects them into conversations, plus its wire types, HTTP client, and management CLI
 │   ├── platform/        # Public-internet relay subsystem (servers + wire types + clients + admin + E2E crypto)
-│       ├── kallip-agora/        # Control-plane relay server
+│       ├── kallip-archeion/        # Control-plane relay server
 │       ├── kallip-lesche/       # Data-plane relay server
-│       ├── kallip-agora-common/ # Wire types for the relay and its clients
+│       ├── kallip-archeion-common/ # Wire types for the relay and its clients
 │       ├── kallip-lesche-common/ # Wire types for the relay data plane
 │       ├── kallip-e2ee/         # End-to-end encryption primitives (Ed25519 device key, X3DH KEX, AEAD)
-│       ├── kallip-agora-client/ # Agora relay HTTP client (enroll + admin surface)
+│       ├── kallip-archeion-client/ # Archeion relay HTTP client (enroll + admin surface)
 │       ├── kallip-lesche-client/ # Lesche data-plane relay HTTP client
-│       ├── kallip-admin/        # Headless agora admin CLI (sk-admin HTTP client)
+│       ├── kallip-admin/        # Headless archeion admin CLI (sk-admin HTTP client)
 │       ├── kallip-instances/   # Local instance management service (web API + static UI over the daemon)
 │   └── daemon/          # Local instance management subsystem (UDS daemon + wire types + clients + spawn helper + CLI)
 │       ├── kallip-daemon/        # Stateless, directory-driven manager for local instances (UDS control socket)
@@ -39,7 +39,7 @@ The project brand is `kallipai` (literally `kallip` + `ai`); the technical stem 
 ├── packages/                  # JS/TS workspace (Deno-first; see below)
 │   ├── kallip-common/         # Transport-agnostic shared types + SSE parser
 │   ├── kallip-client/         # Direct tagma HTTP+SSE client (offline path)
-│   ├── kallip-agora-client/   # Agora control-plane + WebAuthn client
+│   ├── kallip-archeion-client/   # Archeion control-plane + WebAuthn client
 │   ├── kallip-lesche-client/  # Lesche data-plane client (online E2EE path)
 │   ├── kallip-ui/             # Shared SvelteKit UI library
 │   ├── kallip-web/            # SvelteKit web app
