@@ -2,7 +2,7 @@
   // The passkeys section: the live-passkey list with its load phase, plus the
   // unified add-device entry (another device via a pairing code, or another
   // passkey on this browser). Prop-driven and portable (mirrors the tagmata
-  // dashboard split); the owning page maps the agora store into these props and
+  // dashboard split); the owning page maps the archeion store into these props and
   // wires the mutations. Per-card rename/revoke errors surface on the card.
   import type {
     PairingCodeView,

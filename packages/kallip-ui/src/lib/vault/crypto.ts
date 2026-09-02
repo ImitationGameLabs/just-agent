@@ -2,7 +2,7 @@
 //
 // The browser generates one AES-GCM-256 vault key per origin and keeps it in
 // IndexedDB (never extractable, never sent anywhere). Encrypting a provider
-// key means sealing it under that device-held key; the agora stores the blob
+// key means sealing it under that device-held key; the archeion stores the blob
 // opaquely -- it can neither read nor decrypt `encrypted` rows. The wire
 // format is base64(iv ‖ ciphertext): 12 random bytes of IV prepended to the
 // GCM ciphertext (the tag rides inside it), one string for the TEXT column.

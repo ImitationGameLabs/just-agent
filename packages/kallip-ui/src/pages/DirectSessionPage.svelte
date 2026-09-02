@@ -13,7 +13,7 @@
   import type { DirectMessageRow } from "@kallipai/kallip-client";
   import type { ConversationLine } from "../lib/transcript.ts";
   import ConversationView from "../components/ConversationView.svelte";
-  import { filesClientOrFail } from "../lib/session/agora.svelte.ts";
+  import { filesClientOrFail } from "../lib/session/archeion.svelte.ts";
   import { directSessionsStore } from "../lib/session/directSessions.svelte";
   import { saveBlob } from "../lib/saveBlob.ts";
   import {

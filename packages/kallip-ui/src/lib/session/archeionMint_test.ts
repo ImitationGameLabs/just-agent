@@ -5,11 +5,11 @@
 //
 // The module under test is rune-bearing; deno test runs it uncompiled, so
 // a passthrough $state shim (same pattern as relayWindow_test) lets the
-// store run with plain fields. The agora client singleton is not
+// store run with plain fields. The archeion client singleton is not
 // initialized in this process -- mintTagma's failure path throws at the
 // client() call, which is exactly the transport failure under test; the
 // success path is exercised through the store's own seams by stubbing
-// globalThis fetch at the agora client layer instead.
+// globalThis fetch at the archeion client layer instead.
 
 declare global {
   function $state<T>(initial: T): T;
@@ -19,21 +19,21 @@ declare global {
 (globalThis as Record<string, unknown>)["$state"] = (v: unknown) => v;
 
 const { assertEquals } = await import("@std/assert");
-const { agoraSession } = await import("./agora.svelte.ts");
-const { initAgora } = await import("./agora.svelte.ts");
+const { archeionSession } = await import("./archeion.svelte.ts");
+const { initArcheion } = await import("./archeion.svelte.ts");
 
 Deno.test(
   "a failed mint sets the list error; a successful retry clears it",
   async () => {
-    // Failure: the agora endpoint is dead (fetch rejects).
-    initAgora("http://127.0.0.1:1");
+    // Failure: the archeion endpoint is dead (fetch rejects).
+    initArcheion("http://127.0.0.1:1");
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (() =>
       Promise.reject(new Error("net down"))) as typeof fetch;
     try {
-      const first = await agoraSession.mintTagma();
+      const first = await archeionSession.mintTagma();
       assertEquals(first, null);
-      assertEquals(agoraSession.tagmataError !== null, true);
+      assertEquals(archeionSession.tagmataError !== null, true);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -51,9 +51,9 @@ Deno.test(
         ),
       )) as typeof fetch;
     try {
-      const second = await agoraSession.mintTagma();
+      const second = await archeionSession.mintTagma();
       assertEquals(second, { id: "t-1", code: "sk-enroll-x" });
-      assertEquals(agoraSession.tagmataError, null);
+      assertEquals(archeionSession.tagmataError, null);
     } finally {
       globalThis.fetch = originalFetch;
     }

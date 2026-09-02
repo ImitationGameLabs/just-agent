@@ -5,7 +5,7 @@
   import {
     RootLayout,
     initShell,
-    initAgora,
+    initArcheion,
     initConfigStorage,
     initFiles,
     initNotificationBackend,
@@ -27,7 +27,7 @@
     Wallet,
   } from "@lucide/svelte";
 
-  // Inject the app's navigation, agora/lesche URLs, and storage backend into
+  // Inject the app's navigation, archeion/lesche URLs, and storage backend into
   // kallip-ui. The shared <RootLayout> consumes these ports (it cannot import
   // $app/* or import.meta.env from inside the library package). Idempotent
   // setters; the root layout has a single instance so this runs once at boot.
@@ -35,7 +35,7 @@
   // once the plugin is wired. The WebAuthn passkey ceremony in this webview is
   // gated on Tauri webview origin support.
   initShell(goto);
-  initAgora(import.meta.env.VITE_AGORA_URL ?? "http://localhost:7100");
+  initArcheion(import.meta.env.VITE_ARCHEION_URL ?? "http://localhost:7100");
   initLesche(import.meta.env.VITE_LESCHE_URL ?? "http://localhost:7200");
   initFiles(import.meta.env.VITE_FILES_URL ?? "http://localhost:7400");
   initConfigStorage(localStorageConfigStorage);

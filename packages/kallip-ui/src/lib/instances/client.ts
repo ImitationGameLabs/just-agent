@@ -26,7 +26,7 @@ export interface InstanceInfo {
    * when running; null/absent when stopped or the daemon predates it. */
   port?: number | null;
   owner: number | null;
-  /** The enrolled tagma identity (agora-issued), read by the daemon scan
+  /** The enrolled tagma identity (archeion-issued), read by the daemon scan
    * from the instance's own `credentials/<entry>/tagma.id`. Absent when the
    * instance never enrolled, the read failed, or the daemon predates the
    * field — the panel join then falls back to the slug convention. */
@@ -231,7 +231,7 @@ async function faultBody(
 // The service's base URL is injected via initInstances() at app bootstrap --
 // the package does not read import.meta.env (SvelteKit-only typing). The
 // value is the FULL API prefix (origin + /api/instances): the service nests
-// its routes there, unlike the agora's root-mounted /v1.
+// its routes there, unlike the archeion's root-mounted /v1.
 let instancesClient: InstancesClient | null = null;
 
 /** Inject the service base URL and construct the client. Called once at bootstrap. */

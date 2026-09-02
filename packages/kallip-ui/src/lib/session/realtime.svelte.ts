@@ -1,7 +1,7 @@
 // RealtimeStore: the online-mode realtime feed. Owns the single multiplexed
 // SSE subscription to the lesche's `GET /v1/me/events` and demuxes its two
 // concerns: tagma presence (`tagma_online` / `tagma_offline`, the SOLE liveness
-// signal -- the agora's `/v1/tagmata` no longer carries an `online` field) and
+// signal -- the archeion's `/v1/tagmata` no longer carries an `online` field) and
 // inbound conversation `envelope` delivery (handed to channelsStore via a
 // shell-wired sink).
 //
@@ -12,7 +12,7 @@
 // presence to light the online dot and the presence sink drives auto-connect
 // (the shell opens a channel on an offline -> online transition).
 //
-// Dependency direction is one-way: realtime -> agora (the lesche client port).
+// Dependency direction is one-way: realtime -> archeion (the lesche client port).
 // It does NOT import channels -- the envelope sink is bound by the shell
 // (RootLayout), keeping the two stores decoupled.
 
@@ -24,7 +24,7 @@ import {
 } from "@kallipai/kallip-lesche-client";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import type { TagmaStatusSummary } from "../tagmata.svelte.ts";
-import { lescheClientOrFail } from "./agora.svelte.ts";
+import { lescheClientOrFail } from "./archeion.svelte.ts";
 
 /** Sink for inbound conversation envelopes. Bound by the shell to
  * `channelsStore.deliver`. `null` (the default) drops envelopes -- harmless

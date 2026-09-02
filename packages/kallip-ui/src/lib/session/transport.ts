@@ -10,7 +10,7 @@
 //   - DirectTransport demuxes all three off one SSE.
 //   - RelayTransport pulls replies from the E2EE RelayChannel and signals from
 //     a queue the realtime feed pushes into; status is EMPTY here (the relay's
-//     status rides the agora SSE, routed into the conversation via the realtime
+//     status rides the archeion SSE, routed into the conversation via the realtime
 //     status sink, not this transport).
 //
 // `replies()` / `signals()` / `status()` THROW on a transport-level failure
@@ -40,7 +40,7 @@ export interface IncomingFrame {
 
 export interface Transport {
   /** The UI sender for optimistic user lines this transport renders (online:
-   *  the agora session user; offline: the tagma-configured local identity). */
+   *  the archeion session user; offline: the tagma-configured local identity). */
   readonly localSender: ConversationSender;
   /** The authored-content reply stream (acks, op errors, replayed user
    *  messages, authored `assistant_content`), each paired with its sender. Ends

@@ -8,9 +8,9 @@ import { defineConfig } from "vite";
 // vite.config.ts lives in this package; the shared UI source is a sibling.
 const here = import.meta.dirname;
 
-// The dev domain (see compose/dev/agora.nix `devDomain`). The same env var drives
-// the agora/lesche env and the Caddyfile, so the whole stack agrees on one
-// name; override it in `.env`. Default must match compose/dev/agora.nix
+// The dev domain (see compose/dev/archeion.nix `devDomain`). The same env var drives
+// the archeion/lesche env and the Caddyfile, so the whole stack agrees on one
+// name; override it in `.env`. Default must match compose/dev/archeion.nix
 // and +layout.svelte.
 const tlsOff = process.env.KALLIP_TLS === "off";
 const devDomain =
@@ -62,8 +62,8 @@ export default defineConfig({
     },
   ],
   // Re-export the resolved domain to the client as import.meta.env.KALLIP_DOMAIN
-  // so +layout.svelte can derive the agora/lesche base URLs from the SAME value
-  // (VITE_AGORA_URL / VITE_LESCHE_URL still win if set explicitly).
+  // so +layout.svelte can derive the archeion/lesche base URLs from the SAME value
+  // (VITE_ARCHEION_URL / VITE_LESCHE_URL still win if set explicitly).
   define: {
     "import.meta.env.KALLIP_DOMAIN": JSON.stringify(devDomain),
     "import.meta.env.KALLIP_TLS": JSON.stringify(tlsOff ? "off" : "on"),

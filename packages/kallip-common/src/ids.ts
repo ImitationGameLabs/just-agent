@@ -1,6 +1,6 @@
 // Opaque identifier types. On the wire these are bare JSON strings: UUID v4 for
-// AgentId and the agora ids. Modelled as plain string aliases; the wire adapters
-// in @kallipai/kallip-client and @kallipai/kallip-agora-client produce them.
+// AgentId and the archeion ids. Modelled as plain string aliases; the wire adapters
+// in @kallipai/kallip-client and @kallipai/kallip-archeion-client produce them.
 import jsSHA from "jssha";
 
 export type AgentId = string;
@@ -16,7 +16,7 @@ export type ParticipantId = string;
 // It is a deterministic v5 UUID derived from the underlying platform id, so it
 // is stable across reconnects/restarts and requires no server round-trip. This
 // MUST match the Rust derivation byte-for-byte
-// (`crates/platform/kallip-agora-common/src/ids.rs`): v5 over the platform id's
+// (`crates/platform/kallip-archeion-common/src/ids.rs`): v5 over the platform id's
 // UUID *string* bytes (UTF-8), with a per-kind namespace constant. A mismatch
 // would silently break the room envelope sender authentication + fan-out.
 

@@ -7,8 +7,8 @@
   // and throw on failure. Copy runs through `onCopyKey`, which resolves to
   // the usable plaintext or null when THIS browser cannot open the stored
   // blob (a key sealed on another device).
-  import type { ProviderSummary } from "@kallipai/kallip-agora-client";
-  import { AgoraApiError } from "@kallipai/kallip-agora-client";
+  import type { ProviderSummary } from "@kallipai/kallip-archeion-client";
+  import { ArcheionApiError } from "@kallipai/kallip-archeion-client";
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
   import { Check, Copy, MoreVertical, Trash } from "@lucide/svelte";
   import { copyText } from "../../lib/clipboard.ts";
@@ -63,7 +63,7 @@
   }
 
   // Inline rename (only one field edits at a time); a duplicate name is a
-  // 409 the agora answers with, surfaced as its own qualitative line.
+  // 409 the archeion answers with, surfaced as its own qualitative line.
   let editing = $state(false);
   let draft = $state("");
   let renameError = $state<string | null>(null);
@@ -88,7 +88,7 @@
       console.error("[vault] rename failed:", e);
       // Leave the editor open so the user can retry.
       renameError =
-        e instanceof AgoraApiError && e.status === 409
+        e instanceof ArcheionApiError && e.status === 409
           ? settings_provider_name_duplicate()
           : settings_error_unknown();
     }

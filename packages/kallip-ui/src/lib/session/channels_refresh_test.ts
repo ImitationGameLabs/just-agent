@@ -20,7 +20,7 @@ declare global {
 
 (globalThis as Record<string, unknown>)["$state"] = (v: unknown) => v;
 
-type TagmaView = import("@kallipai/kallip-agora-client").TagmaView;
+type TagmaView = import("@kallipai/kallip-archeion-client").TagmaView;
 type Transport = import("./transport.ts").Transport;
 const { assertEquals } = await import("@std/assert");
 const { ChannelsStore } = await import("./channels.svelte.ts");

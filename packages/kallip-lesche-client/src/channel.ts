@@ -1,8 +1,8 @@
 // RelayChannel: the online chat data-plane transport. NOT a `Session` — it is a
-// pure E2EE pipe over the agora/lesche split. The pinned device key is TOFU
-// from the agora (control plane); the conversation, key exchange, and envelope
+// pure E2EE pipe over the archeion/lesche split. The pinned device key is TOFU
+// from the archeion (control plane); the conversation, key exchange, and envelope
 // relay run on the lesche (data plane). The browser opens a channel to a tagma
-// (key exchange against the agora-pinned key), then encrypts `TagmaRequest`s
+// (key exchange against the archeion-pinned key), then encrypts `TagmaRequest`s
 // into lesche envelopes and decrypts inbound `TagmaReply` envelopes that the SSE
 // demux routes to `enqueue`. The channel does NOT interpret `TagmaReply`
 // semantics; that is the UI store's job (see kallip-ui's channel transcript
@@ -40,9 +40,9 @@ import type {
 /**
  * Open an E2EE channel to `tagmaId` for `userId`: resolve the conversation + run
  * the 1-RTT key exchange on the lesche, verify the responder's signature
- * against the agora-pinned key (`pinnedKeyB64`, the standard-base64 Ed25519
- * public key the agora's `GET /v1/tagmata/{id}` returns verbatim), and derive
- * the session key. The pinned key is fetched from the agora by the caller (the
+ * against the archeion-pinned key (`pinnedKeyB64`, the standard-base64 Ed25519
+ * public key the archeion's `GET /v1/tagmata/{id}` returns verbatim), and derive
+ * the session key. The pinned key is fetched from the archeion by the caller (the
  * control-plane client is not a dependency of this package); the caller passes
  * the base64 string as-is so no base64 helper leaks across the boundary.
  *
@@ -263,7 +263,7 @@ export class RelayChannel {
   }
 
   /** Stop the channel. The `replies` generator ends; further enqueues are
-   * dropped. Does not close the underlying agora SSE (owned by the demux). */
+   * dropped. Does not close the underlying archeion SSE (owned by the demux). */
   close(): void {
     this.closed = true;
     for (const { reject } of this.pendingManage.values()) {

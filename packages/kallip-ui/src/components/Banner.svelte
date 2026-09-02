@@ -34,7 +34,7 @@
     icon?: Snippet<[{ class: string }]>;
     // Detach from document flow and hover at the top of the viewport instead of
     // sitting inline above page content. Used by the auth pages (rendered
-    // outside AppShell) so an agora-unreachable error floats over the centered
+    // outside AppShell) so an archeion-unreachable error floats over the centered
     // form with breathing room from the top edge.
     floating?: boolean;
     children?: Snippet;
@@ -47,7 +47,7 @@
   // Inline: centered, in flow, scaled up and dropped below the chrome so it
   // reads as a prominent notice (the offline tagma-error banner). Floating:
   // detached, fixed well below the viewport top, for surfaces without AppShell
-  // chrome (the auth pages' agora-unreachable banner).
+  // chrome (the auth pages' archeion-unreachable banner).
   const rootClass = $derived(
     floating
       ? "fixed inset-x-0 top-24 z-50 flex justify-center px-4 text-base md:text-2xl"

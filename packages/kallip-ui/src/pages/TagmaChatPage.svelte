@@ -9,7 +9,7 @@
   // owns), so this page is a thin resolver + opener.
 
   import ChannelChatPage from "./ChannelChatPage.svelte";
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { tagmaDetailsPath } from "../lib/shell/routes.ts";
   import { navigate } from "../lib/shell/port.ts";
@@ -30,7 +30,7 @@
   // is the always-show source for the sidebar, and the only source that can
   // confirm the id is still enrolled).
   const tagma = $derived(
-    agoraSession.tagmata.find(
+    archeionSession.tagmata.find(
       (t) => t.tagma_id === tagmaId && t.state === "enrolled",
     ),
   );
@@ -58,7 +58,7 @@
   // The open is explicit: a user visit outranks the failure budget's
   // gates (an explicit FAILURE still counts; success clears it).
   $effect(() => {
-    if (!agoraSession.user) return;
+    if (!archeionSession.user) return;
     if (tagma) void channelsStore.ensureOpen(tagma, { explicit: true });
   });
 </script>

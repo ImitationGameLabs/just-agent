@@ -1,9 +1,9 @@
 // RoomsStore: reactive ($state) wrapper for the multi-member room registry
-// (`/v1/rooms`). A peer singleton to `agoraSession` (rooms are a separate
+// (`/v1/rooms`). A peer singleton to `archeionSession` (rooms are a separate
 // concern from identity + the owner's tagmata), refreshed from a `$effect` in
 // RootLayout keyed on the signed-in user.
 //
-// Error discipline mirrors the tagma block of agora.svelte.ts: list-fetch
+// Error discipline mirrors the tagma block of archeion.svelte.ts: list-fetch
 // failures land in per-section error fields (`roomsError`, `invitesError`) and
 // never blank signed-in state; mutations THROW on error so the caller surfaces
 // it inline (a single failed invite/add must not blank the whole dashboard).
@@ -19,7 +19,7 @@ import {
 } from "@kallipai/kallip-lesche-client";
 import { unreadStore } from "./unread.svelte.ts";
 import { participantIdForTagma } from "@kallipai/kallip-common";
-import { agoraSession, lescheClientOrFail } from "./agora.svelte.ts";
+import { archeionSession, lescheClientOrFail } from "./archeion.svelte.ts";
 import { rooms_public_failed } from "../../paraglide/messages.js";
 
 function messageOf(e: unknown): string {
@@ -131,7 +131,7 @@ class RoomsStore {
 
   /** Leave a room (self-removal). Re-fetch to reconcile. THROWS on error. */
   async leaveRoom(roomId: string): Promise<void> {
-    const memberId = agoraSession.participantId;
+    const memberId = archeionSession.participantId;
     if (!memberId) throw new Error("no signed-in user");
     await lescheClientOrFail().removeRoomMember(roomId, memberId);
     await this.refresh();

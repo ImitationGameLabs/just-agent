@@ -1,14 +1,14 @@
-// @kallipai/kallip-agora-client
+// @kallipai/kallip-archeion-client
 //
-// Browser client for the agora control-plane relay (default :7100): passkey
+// Browser client for the archeion control-plane relay (default :7100): passkey
 // register/login, `/me`, and the tagma lifecycle (mint/rename/revoke + the
 // pinned device-key fetch). The data-plane client (conversations, key exchange,
 // E2EE envelopes, app SSE) lives in `@kallipai/kallip-lesche-client`. The
-// session cookie is shared cross-subdomain between agora and lesche.
+// session cookie is shared cross-subdomain between archeion and lesche.
 
-export const PACKAGE_NAME = "@kallipai/kallip-agora-client";
+export const PACKAGE_NAME = "@kallipai/kallip-archeion-client";
 
-export { AgoraClient } from "./http.ts";
+export { ArcheionClient } from "./http.ts";
 export type { LoginBeginRequest, RegisterBeginRequest } from "./http.ts";
 export {
   addPasskey,
@@ -72,4 +72,4 @@ export type {
   TagmaView,
   VerifyEmailRequest,
 } from "./types.ts";
-export { AgoraApiError } from "./types.ts";
+export { ArcheionApiError } from "./types.ts";

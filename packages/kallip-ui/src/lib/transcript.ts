@@ -354,7 +354,7 @@ export function applySignal(
  * `"sending"`) and mark the channel busy (a turn is starting). The store
  * replaces `localId` with the real `history_id` and flips status to `"sent"`
  * when the `MessageAccepted` ack lands. `sender` is the local user (online: the
- * agora session; offline: the tagma-configured local identity). */
+ * archeion session; offline: the tagma-configured local identity). */
 export function withUserLine(
   state: ConversationTranscript,
   text: string,

@@ -1,9 +1,9 @@
 /// <reference lib="dom" />
-// WebAuthn ceremony transforms: convert between the agora's JSON wire shapes
+// WebAuthn ceremony transforms: convert between the archeion's JSON wire shapes
 // (webauthn-rs serde -- every binary field is an UNPADDED base64url `String`)
 // and the browser WebAuthn API (`BufferSource` in, `ArrayBuffer` out).
 //
-// Authoritative shapes (from the webauthn-rs-proto 0.6 source the agora
+// Authoritative shapes (from the webauthn-rs-proto 0.6 source the archeion
 // serializes with): `CreationChallengeResponse = { publicKey: ... }`,
 // `RequestChallengeResponse = { publicKey: ... }`, and the finish bodies
 // `RegisterPublicKeyCredential` / `PublicKeyCredential` carry `rawId`,
@@ -15,10 +15,10 @@
 import * as b64u from "./base64url.ts";
 
 // ---------------------------------------------------------------------------
-// Server -> browser: decode the challenge options the agora returned.
+// Server -> browser: decode the challenge options the archeion returned.
 // ---------------------------------------------------------------------------
 
-/** A credential descriptor as the agora serializes it (`id` is base64url). */
+/** A credential descriptor as the archeion serializes it (`id` is base64url). */
 interface ServerCredentialDescriptor {
   readonly type: string;
   readonly id: string;
@@ -128,7 +128,7 @@ export function optionsForGet(
 
 /**
  * The `POST /v1/auth/register/finish` body. Note `authenticatorData` is
- * absent: the agora's passkey register flow surfaces only `attestationObject`
+ * absent: the archeion's passkey register flow surfaces only `attestationObject`
  * + `clientDataJSON` (the `none` attestation path). A future richer-attestation
  * flow would add it here.
  */

@@ -1,6 +1,6 @@
 // Passkey-manager view-models. Pure shapes + helpers -- no transport, no
-// `@kallipai/kallip-agora-client` import -- so the prop-driven components stay
-// portable. The consuming page maps agora-client response types into these
+// `@kallipai/kallip-archeion-client` import -- so the prop-driven components stay
+// portable. The consuming page maps archeion-client response types into these
 // `Props` before passing them down (mirrors `tagmata.svelte.ts`).
 
 import { getLocale } from "../paraglide/runtime.js";

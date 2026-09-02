@@ -2010,13 +2010,6 @@
       ]
     },
     "members": {
-      "packages/kallip-agora-client": {
-        "packageJson": {
-          "dependencies": [
-            "npm:@jsr/std__assert@^1.0.19"
-          ]
-        }
-      },
       "packages/kallip-app": {
         "packageJson": {
           "dependencies": [
@@ -2040,6 +2033,13 @@
             "npm:tailwindcss@^4.3.0",
             "npm:typescript@^6.0.3",
             "npm:vite@^8.0.16"
+          ]
+        }
+      },
+      "packages/kallip-archeion-client": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@jsr/std__assert@^1.0.19"
           ]
         }
       },

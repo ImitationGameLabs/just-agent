@@ -45,7 +45,7 @@
   "settings_email_verified": "verified",
   "settings_email_unverified": "unverified",
   "settings_email_make_primary": "Make primary",
-  "settings_email_token_notice": "Verification token emitted to the agora log (paste it below) until SMTP is wired.",
+  "settings_email_token_notice": "Verification token emitted to the archeion log (paste it below) until SMTP is wired.",
   "settings_email_verified_notice": "Email verified.",
   "settings_email_invalid": "Enter a valid email address.",
   "settings_email_failed": "Couldn't reach the server.",

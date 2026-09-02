@@ -9,7 +9,7 @@
 // reducer (../transcript.ts); see conversation.svelte.ts for the per-conversation
 // state and the transport-drain contract.
 
-import { type TagmaView } from "@kallipai/kallip-agora-client";
+import { type TagmaView } from "@kallipai/kallip-archeion-client";
 import {
   type Envelope,
   LescheApiError,
@@ -20,10 +20,10 @@ import {
 } from "@kallipai/kallip-lesche-client";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import {
-  agoraClientOrFail,
-  agoraSession,
+  archeionClientOrFail,
+  archeionSession,
   lescheClientOrFail,
-} from "./agora.svelte.ts";
+} from "./archeion.svelte.ts";
 import { unreadStore } from "./unread.svelte.ts";
 import type { DirectTransport } from "./directTransport.ts";
 import { RelayTransport } from "./relayTransport.ts";
@@ -294,7 +294,7 @@ export class ChannelsStore {
    *  transcript from the local cache (instant), then asks the tagma for an
    *  incremental history batch and drains. Resolves to the conversation id. */
   async openRelay(tagma: TagmaView): Promise<string> {
-    const user = agoraSession.user;
+    const user = archeionSession.user;
     const userId = user?.user_id;
     if (!userId) throw new Error("not signed in");
     const userHandle = user?.display_name ?? user?.username ?? userId;
@@ -303,7 +303,7 @@ export class ChannelsStore {
     // we built instead of resurrecting it into the cleared map.
     const generation = this.generation;
 
-    const info = await agoraClientOrFail().getTagma(tagma.tagma_id);
+    const info = await archeionClientOrFail().getTagma(tagma.tagma_id);
     const channel = await openRelayChannel(
       lescheClientOrFail(),
       tagma.tagma_id,
@@ -356,7 +356,7 @@ export class ChannelsStore {
       return channel.conversationId;
     }
     conv.status = "open";
-    // Backfill the status snapshot from the realtime store's cache (the agora
+    // Backfill the status snapshot from the realtime store's cache (the archeion
     // SSE has been receiving tagma_status since login), so the header shows at
     // once instead of waiting up to the next status push (~2s). The realtime
     // status sink keeps it fresh thereafter. The read goes through an injected
@@ -479,7 +479,7 @@ export class ChannelsStore {
    *  up in the registry (it may have been revoked since) and open it
    *  explicitly, ignoring the failure budget. */
   retryTagma(tagmaId: string): void {
-    const tagma = agoraSession.tagmata.find(
+    const tagma = archeionSession.tagmata.find(
       (t) => t.tagma_id === tagmaId && t.state === "enrolled",
     );
     if (tagma) void this.ensureOpen(tagma, { explicit: true });

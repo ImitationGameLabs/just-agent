@@ -5,7 +5,7 @@
   import {
     RootLayout,
     initShell,
-    initAgora,
+    initArcheion,
     initConfigStorage,
     initFiles,
     initInstances,
@@ -25,20 +25,20 @@
     Wallet,
   } from "@lucide/svelte";
 
-  // Inject the app's navigation, agora/lesche URLs, and storage backend into
+  // Inject the app's navigation, archeion/lesche URLs, and storage backend into
   // kallip-ui. The shared <RootLayout> consumes these ports (it cannot import
   // $app/* or import.meta.env from inside the library package). Idempotent
   // setters; the root layout has a single instance so this runs once at boot.
   initShell(goto);
-  // The https shape is fronted by Caddy: the browser reaches agora/lesche at
+  // The https shape is fronted by Caddy: the browser reaches archeion/lesche at
   // their *.<devDomain> subdomains. KALLIP_TLS=off (injected alongside the
   // domain by vite.config.ts) selects the plain-http shape: direct ports on
   // the host. Explicit VITE_*_URL values still win in either shape.
   const tlsOff = import.meta.env.KALLIP_TLS === "off";
   const devDomain = import.meta.env.KALLIP_DOMAIN ?? "kallipai.com";
-  initAgora(
-    import.meta.env.VITE_AGORA_URL ??
-      (tlsOff ? `http://${devDomain}:7100` : `https://agora.${devDomain}`),
+  initArcheion(
+    import.meta.env.VITE_ARCHEION_URL ??
+      (tlsOff ? `http://${devDomain}:7100` : `https://archeion.${devDomain}`),
   );
   initLesche(
     import.meta.env.VITE_LESCHE_URL ??

@@ -379,7 +379,7 @@ Deno.test("online protected + logged-out -> /login?next=...", () => {
   );
 });
 
-Deno.test("online protected + agora unreachable -> /login (no next)", () => {
+Deno.test("online protected + archeion unreachable -> /login (no next)", () => {
   assertEquals(
     decide({
       mode: "online",

@@ -1,8 +1,8 @@
 <script lang="ts">
   // One pending tagma (an enrollment code, not yet first-connected). `code` is
-  // whatever the agora returned for this row: the full plaintext straight from
+  // whatever the archeion returned for this row: the full plaintext straight from
   // the mint response (only while `copyable` -- the user's one chance to copy
-  // it), or the agora's masked `sk-enroll-abc***xyz` from the list endpoint.
+  // it), or the archeion's masked `sk-enroll-abc***xyz` from the list endpoint.
   // The label is editable in place via the kebab menu's Rename action, mirroring
   // the enrolled TagmaCard.
   import { onMount } from "svelte";

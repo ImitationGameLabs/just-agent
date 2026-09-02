@@ -27,7 +27,7 @@ export function navigate(url: string, opts?: GotoOptions): Promise<void> {
 // persisted config: since the offline world moved to the kallip-direct
 // package, a web/app shell is always "online" (a stored offline config
 // from an older build is clamped away -- its routes and entries no longer
-// exist there), and the direct shell is always "offline" (agora is
+// exist there), and the direct shell is always "offline" (archeion is
 // unreachable). Components read this instead of re-deriving the mode
 // from the persisted config, so the mode can never disagree between the
 // layout and the chrome.

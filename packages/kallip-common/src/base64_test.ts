@@ -1,11 +1,11 @@
 // Standard-base64 codec tests. The wire alphabet (STANDARD, padded, +//) must
-// match the agora's `bytes.rs` (`general_purpose::STANDARD`).
+// match the archeion's `bytes.rs` (`general_purpose::STANDARD`).
 
 import { assertEquals } from "@std/assert";
 import { decodeB64, encodeB64 } from "./base64.ts";
 
 Deno.test("encodeB64 matches bytes.rs STANDARD alphabet", () => {
-  // Mirrors crates/platform/kallip-agora-common/src/bytes.rs::ciphertext_round_trips.
+  // Mirrors crates/platform/kallip-archeion-common/src/bytes.rs::ciphertext_round_trips.
   assertEquals(encodeB64(Uint8Array.of(0xde, 0xad, 0xbe, 0xef)), "3q2+7w==");
 });
 

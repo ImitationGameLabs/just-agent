@@ -1,6 +1,6 @@
 // Pinned vectors for the v5 `ParticipantId` derivation. These MUST match the
 // Rust derivation byte-for-byte (`ParticipantId::for_user` / `for_tagma` in
-// `crates/platform/kallip-agora-common/src/ids.rs`): the lesche authenticates
+// `crates/platform/kallip-archeion-common/src/ids.rs`): the lesche authenticates
 // room-envelope senders against the derived id, and the relay fans room
 // envelopes by it, so a TS/Rust mismatch silently breaks rooms. The expected
 // values are RFC 4122 v5 over the namespace + the UTF-8 of the id string.

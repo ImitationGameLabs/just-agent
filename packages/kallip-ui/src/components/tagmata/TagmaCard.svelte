@@ -53,7 +53,7 @@
     tagma_rename_failed,
     auth_couldnt_reach,
   } from "../../paraglide/messages.js";
-  import { AgoraApiError } from "@kallipai/kallip-agora-client";
+  import { ArcheionApiError } from "@kallipai/kallip-archeion-client";
 
   let {
     tagma = undefined,
@@ -116,10 +116,10 @@
   let revoking = $state(false);
   let revokeError = $state<string | null>(null);
 
-  /** Typed agora failures keep their server copy; transport failures are
+  /** Typed archeion failures keep their server copy; transport failures are
    * qualitative, details to the console. */
   function msgOf(e: unknown): string {
-    if (e instanceof AgoraApiError) return e.message;
+    if (e instanceof ArcheionApiError) return e.message;
     console.error("[tagma] rename/revoke failed:", e);
     return auth_couldnt_reach();
   }

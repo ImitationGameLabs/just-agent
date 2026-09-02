@@ -1,12 +1,12 @@
 <script lang="ts">
   // Self-service linked OAuth identities: list linked providers, link new ones,
   // unlink. Linking navigates away to the provider (the callback page completes
-  // the ceremony and returns here); unlinking is a hard-delete that the agora
+  // the ceremony and returns here); unlinking is a hard-delete that the archeion
   // refuses with 409 when it would remove the account's last sign-in method
   // (the symmetric last-method guard with passkeys). Mirrors EmailManager: reads
   // the store directly, surfaces per-action errors inline.
-  import { agoraSession } from "../../lib/session/agora.svelte";
-  import { AgoraApiError } from "@kallipai/kallip-agora-client";
+  import { archeionSession } from "../../lib/session/archeion.svelte";
+  import { ArcheionApiError } from "@kallipai/kallip-archeion-client";
   import {
     settings_linked_accounts,
     settings_linked_intro,
@@ -17,20 +17,20 @@
     auth_reauth_required,
   } from "../../paraglide/messages.js";
 
-  const identities = $derived(agoraSession.externalIdentities);
+  const identities = $derived(archeionSession.externalIdentities);
 
   // Provider id -> label, for rendering the linked rows. A provider may have
   // been disabled (dropped from the registry) after the user linked it; fall
   // back to the id itself so the row still names it.
   const labelOf = $derived(
-    new Map(agoraSession.oauthProviders.map((p) => [p.id, p.label])),
+    new Map(archeionSession.oauthProviders.map((p) => [p.id, p.label])),
   );
 
   // Link buttons: one per configured provider the user has NOT yet linked. The
   // common case is one identity per provider; a second account of the same
   // provider is a rare edge and is not surfaced as a primary affordance.
   const linkable = $derived(
-    agoraSession.oauthProviders.filter(
+    archeionSession.oauthProviders.filter(
       (p) => !identities.some((i) => i.provider === p.id),
     ),
   );
@@ -39,7 +39,7 @@
   let error = $state<string | null>(null);
 
   function msgOf(e: unknown): string {
-    if (e instanceof AgoraApiError) {
+    if (e instanceof ArcheionApiError) {
       if (e.status === 409) {
         return settings_last_signin_error();
       }
@@ -58,7 +58,7 @@
     error = null;
     try {
       // Navigates away to the provider; the rest happens on the callback page.
-      await agoraSession.linkProvider(provider);
+      await archeionSession.linkProvider(provider);
     } catch (e) {
       error = msgOf(e);
     } finally {
@@ -75,7 +75,7 @@
     busy = true;
     error = null;
     try {
-      await agoraSession.unlinkExternalIdentity(id);
+      await archeionSession.unlinkExternalIdentity(id);
     } catch (e) {
       error = msgOf(e);
     } finally {

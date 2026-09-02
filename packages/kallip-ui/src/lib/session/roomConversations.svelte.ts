@@ -19,7 +19,7 @@ import {
 } from "@kallipai/kallip-lesche-client";
 import { decodeB64, encodeB64, uuidV4 } from "@kallipai/kallip-common";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
-import { agoraSession, lescheClientOrFail } from "./agora.svelte.ts";
+import { archeionSession, lescheClientOrFail } from "./archeion.svelte.ts";
 import { roomsStore } from "./rooms.svelte.ts";
 import {
   room_history_failed,
@@ -196,7 +196,7 @@ function randomTraceId(): string {
  * optimistic header and the confirmed history echo agree even in the no-username
  * edge case, and a partially-migrated account never renders a bare `@`. */
 function optimisticHandle(participantId: string): string {
-  const username = agoraSession.user?.username;
+  const username = archeionSession.user?.username;
   return username ? `@${username}` : `user ${participantId.slice(0, 6)}`;
 }
 
@@ -246,7 +246,7 @@ class RoomConversationsStore {
   async send(roomId: string, text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
-    const participantId = agoraSession.participantId;
+    const participantId = archeionSession.participantId;
     if (!participantId) throw new Error("no signed-in user");
     const conv = this.convs.get(roomId);
     // Optimistic line: synthetic seq below any real (positive) seq. Sender is
@@ -389,9 +389,9 @@ class RoomConversationsStore {
    * anything (the optimistic local line already carries the user's own
    * `@username`). THROWS when no signed-in user is resolved. */
   private buildEnvelope(roomId: string, payload: string): Envelope {
-    const participantId = agoraSession.participantId;
+    const participantId = archeionSession.participantId;
     if (!participantId) throw new Error("no signed-in user");
-    const user = agoraSession.user;
+    const user = archeionSession.user;
     return {
       channel_id: roomId,
       sender: {
@@ -462,7 +462,7 @@ class RoomConversationsStore {
       return;
     }
     if (decoded.op !== "message") return;
-    const me = agoraSession.participantId;
+    const me = archeionSession.participantId;
     const line: RoomLine = {
       seq: seq ?? conv.nextSyntheticSeq(),
       senderId: sender.id,

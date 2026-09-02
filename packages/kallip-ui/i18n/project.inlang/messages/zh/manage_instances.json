@@ -19,7 +19,7 @@
   "manage_instances_spawn_slug_placeholder": "如 work-laptop",
   "manage_instances_spawn_workspace_label": "工作区路径",
   "manage_instances_spawn_workspace_placeholder": "如 /home/me/kallip",
-  "manage_instances_spawn_agora_label": "中继 URL（可选）",
+  "manage_instances_spawn_archeion_label": "中继 URL（可选）",
   "manage_instances_spawn_enrollment_label": "注册码（可选）",
   "manage_instances_spawn_lesche_label": "Lesche URL（可选）",
   "manage_instances_spawn_token_label": "进程令牌（可选）",

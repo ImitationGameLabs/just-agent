@@ -2,7 +2,7 @@
   // The combined manage page: the Tagmata section is one card per tagma
   // across its lifecycle -- a pending enrollment code, an enrolled identity,
   // and (when one backs the card) its host-side process, joined by the slug
-  // prefix convention. The registry half (codes + identities) is agora-side;
+  // prefix convention. The registry half (codes + identities) is archeion-side;
   // the process half is the local process host, so the page is mode-neutral:
   // offline the registry is simply absent and the page degrades to the
   // process list. Online, a second section surfaces Rooms management (rows
@@ -12,16 +12,16 @@
   // discipline). The AppShell expects the page root to scroll itself
   // (h-full overflow-y-auto).
   import {
-    agoraBaseUrlOrFail,
-    agoraClientOrFail,
-    agoraSession,
+    archeionBaseUrlOrFail,
+    archeionClientOrFail,
+    archeionSession,
     lescheBaseUrlOrFail,
     lescheClientOrFail,
-  } from "../lib/session/agora.svelte";
+  } from "../lib/session/archeion.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { roomsStore } from "../lib/session/rooms.svelte";
   import { openRelayChannel } from "@kallipai/kallip-lesche-client";
-  import { type ProviderSummary } from "@kallipai/kallip-agora-client";
+  import { type ProviderSummary } from "@kallipai/kallip-archeion-client";
   import { OnlineBackend } from "../lib/manage/backend.ts";
   import { shellMode } from "../lib/shell/port.ts";
   import {
@@ -162,14 +162,14 @@
     pushStatus = null;
     createError = null;
     try {
-      const minted = await agoraSession.mintTagma();
+      const minted = await archeionSession.mintTagma();
       if (!minted) {
         createError = manage_instances_create_mint_failed();
         return;
       }
       const slug = instanceSlugFor(minted.id);
       const env = [
-        `KALLIP_TAGMA_RELAY_AGORA_URL=${agoraBaseUrlOrFail()}`,
+        `KALLIP_TAGMA_RELAY_ARCHEION_URL=${archeionBaseUrlOrFail()}`,
         `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=${minted.code}`,
         `KALLIP_TAGMA_RELAY_LESCHE_URL=${lescheBaseUrlOrFail()}`,
       ];
@@ -213,8 +213,8 @@
     model: string,
   ): Promise<void> {
     pushStatus = { slug, kind: "pending" };
-    const entry = agoraSession.providers.find((p) => p.id === providerId);
-    const viaPasskey = agoraSession.canFlipKeys();
+    const entry = archeionSession.providers.find((p) => p.id === providerId);
+    const viaPasskey = archeionSession.canFlipKeys();
     if (!entry || isLocked(entry, viaPasskey)) {
       pushStatus = { slug, kind: "locked" };
       return;
@@ -223,7 +223,7 @@
     if (entry.mode === "plaintext") {
       apiKey = entry.key_material;
     } else {
-      apiKey = await agoraSession.revealProviderKey(entry);
+      apiKey = await archeionSession.revealProviderKey(entry);
       if (!apiKey) {
         // Sealed on another device: not deliverable from THIS session.
         pushStatus = { slug, kind: "locked" };
@@ -238,9 +238,9 @@
       model,
     };
     try {
-      const user = agoraSession.user;
+      const user = archeionSession.user;
       if (!user) throw new Error("not signed in");
-      const info = await agoraClientOrFail().getTagma(tagmaId);
+      const info = await archeionClientOrFail().getTagma(tagmaId);
       const channel = await openRelayChannel(
         lescheClientOrFail(),
         tagmaId,
@@ -294,8 +294,8 @@
     spawnResult = null;
     createError = null;
     const env: string[] = [];
-    if (f.agoraUrl.trim()) {
-      env.push("KALLIP_TAGMA_RELAY_AGORA_URL=" + f.agoraUrl.trim());
+    if (f.archeionUrl.trim()) {
+      env.push("KALLIP_TAGMA_RELAY_ARCHEION_URL=" + f.archeionUrl.trim());
     }
     if (f.enrollmentCode.trim()) {
       env.push("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=" + f.enrollmentCode.trim());
@@ -345,7 +345,7 @@
     createBusy = true;
     createError = null;
     try {
-      const minted = await agoraSession.mintTagma();
+      const minted = await archeionSession.mintTagma();
       if (!minted) createError = manage_instances_create_mint_failed();
       return minted;
     } finally {
@@ -416,7 +416,7 @@
   // slug convention as fallback (see joinDeviceRows for the key order).
   const devices = $derived(
     joinDeviceRows(
-      agoraSession.enrolledCards,
+      archeionSession.enrolledCards,
       instancesStore.instances,
       instancesStore.spawnedPorts,
       instanceSlugFor,
@@ -430,7 +430,7 @@
     ),
   );
 
-  const pending = $derived(agoraSession.pending);
+  const pending = $derived(archeionSession.pending);
 
   // Both halves must settle before the empty state may fire (the process
   // list loaded or failed; the registry loaded or failed for the signed-in
@@ -438,9 +438,9 @@
   // daemon error keeps the banner up instead of the hero.
   const settled = $derived(
     (instancesStore.loaded || instancesStore.errorKind !== null) &&
-      (agoraSession.user == null ||
-        agoraSession.tagmataLoaded ||
-        agoraSession.tagmataError !== null),
+      (archeionSession.user == null ||
+        archeionSession.tagmataLoaded ||
+        archeionSession.tagmataError !== null),
   );
   const empty = $derived(
     settled &&
@@ -458,7 +458,7 @@
   // so a shared device does not keep the previous user's plaintext
   // transcript (the retired section's discipline).
   async function onRevoke(id: string) {
-    await agoraSession.revokeTagma(id);
+    await archeionSession.revokeTagma(id);
     channelsStore.closeByTagma(id);
   }
 </script>
@@ -567,7 +567,7 @@
       {/if}
     {/if}
 
-    {#if agoraSession.tagmataError}
+    {#if archeionSession.tagmataError}
       <p class="text-error-500 dark:text-error-400 text-sm">
         {tagmata_load_failed()}
       </p>
@@ -580,7 +580,7 @@
     {/if}
     {#if instancesStore.errorKind === null && !instancesStore.loaded}
       <p class="text-sm opacity-70">{manage_instances_loading()}</p>
-    {:else if agoraSession.user != null && !agoraSession.tagmataLoaded && !agoraSession.tagmataError}
+    {:else if archeionSession.user != null && !archeionSession.tagmataLoaded && !archeionSession.tagmataError}
       <p class="text-sm opacity-70">{manage_instances_loading()}</p>
     {/if}
 
@@ -618,17 +618,17 @@
         {#each pending as code (code.id)}
           <EnrollmentCodeCard
             {code}
-            onCopy={(id, secret) => agoraSession.copySecret(id, secret)}
+            onCopy={(id, secret) => archeionSession.copySecret(id, secret)}
             {onRevoke}
-            onRename={(id, label) => agoraSession.renameTagma(id, label)}
-            copied={agoraSession.copiedCodeId === code.id}
+            onRename={(id, label) => archeionSession.renameTagma(id, label)}
+            copied={archeionSession.copiedCodeId === code.id}
           />
         {/each}
         {#each devices as d (d.key)}
           <TagmaCard
             tagma={d.tagma}
             process={d.process}
-            onRename={(id, label) => agoraSession.renameTagma(id, label)}
+            onRename={(id, label) => archeionSession.renameTagma(id, label)}
             {onRevoke}
             onStart={onStartClick}
             onStop={(slug) => {
@@ -704,14 +704,14 @@
       busy={createBusy}
       error={createError}
       {canSpawn}
-      providers={agoraSession.providers.map((p) => ({
+      providers={archeionSession.providers.map((p) => ({
         id: p.id,
         name: p.name,
         family: p.provider,
         baseUrl: p.base_url,
         mode: p.mode,
       }))}
-      sessionViaPasskey={agoraSession.canFlipKeys()}
+      sessionViaPasskey={archeionSession.canFlipKeys()}
       {onOneClick}
       {onSpawn}
       {onMint}

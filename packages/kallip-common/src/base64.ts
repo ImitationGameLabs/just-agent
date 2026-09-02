@@ -1,13 +1,13 @@
 // Standard base64 (RFC 4648 section 4) encode/decode, with padding and the
-// `+`/`/` alphabet. The shared wire codec: the agora serializes opaque byte
+// `+`/`/` alphabet. The shared wire codec: the archeion serializes opaque byte
 // fields (ciphertext, public keys, signatures) via `general_purpose::STANDARD`
-// (crates/platform/kallip-agora-common/src/bytes.rs), and the room surface
+// (crates/platform/kallip-archeion-common/src/bytes.rs), and the room surface
 // carries envelope payloads as the same standard base64. Lives here in the
 // transport-agnostic shared layer so every browser package imports one codec,
 // not a per-package copy.
 //
 // Distinct from the WebAuthn ceremony's unpadded base64url, which is local to
-// the agora client (it pairs with the WebAuthn `id`/`rawId` convention).
+// the archeion client (it pairs with the WebAuthn `id`/`rawId` convention).
 //
 // Browser-only: uses the Web `btoa`/`atob` globals and `Uint8Array`. It MUST
 // NOT import `node:buffer`, since the codec ships in the browser bundle where

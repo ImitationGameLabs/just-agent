@@ -1,6 +1,6 @@
 <script lang="ts">
   // A confirm modal for revoking an enrolled tagma. Revocation is one-click
-  // irreversible AND functionally immediate (the agora cuts the tagma off on
+  // irreversible AND functionally immediate (the archeion cuts the tagma off on
   // its next request), so it gets a second-chance confirmation the pending-code
   // revoke does not. Built on the shared skeleton-svelte `Dialog` (controlled
   // `open`); Escape + backdrop dismiss come from the Zag machine defaults, both

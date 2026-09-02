@@ -7,7 +7,7 @@
   import TagmaStatusLine from "../../components/TagmaStatusLine.svelte";
   import TagmaStatusPanel from "../../components/TagmaStatusPanel.svelte";
   import { classifyError } from "../errors.ts";
-  import { agoraSession } from "../session/agora.svelte";
+  import { archeionSession } from "../session/archeion.svelte";
   import { channelsStore } from "../session/channels.svelte";
   import { statusCardStore } from "../session/statusCard.svelte.ts";
   import { roomsStore } from "../session/rooms.svelte";
@@ -69,8 +69,8 @@
 
   // Boot once the config has loaded. Two boot shapes:
   //   - offline-only shell: reconnect the tagma when credentials exist,
-  //     never touch agora (no credentials = nothing to boot);
-  //   - online (web/app, any stored mode): resolve the agora session so
+  //     never touch archeion (no credentials = nothing to boot);
+  //   - online (web/app, any stored mode): resolve the archeion session so
   //     the gate reads a settled `user`.
   // onMount (not a reactive $effect) so this runs exactly once, with no
   // `booted` flag and no effect read-of-write hazard.
@@ -141,7 +141,7 @@
     // restarted-peer channel.
     realtimeStore.setPresenceSink((tagmaId, online) => {
       if (!online) return;
-      const tagma = agoraSession.tagmata.find(
+      const tagma = archeionSession.tagmata.find(
         (t) => t.tagma_id === tagmaId && t.state === "enrolled",
       );
       // No budget reset here: an online transition cannot be told apart
@@ -170,11 +170,11 @@
     void configStore.ready.then(() => {
       const cfg = configStore.value;
       if (isOfflineOnlyShell()) {
-        // Offline-only shell (kallip-direct): agora is unreachable by design.
+        // Offline-only shell (kallip-direct): archeion is unreachable by design.
         // Boot the local transport when connect credentials exist; without
         // them there is nothing to boot -- the gate parks the user on
         // /connect, whose submit writes cfg.offline for the next boot. Never
-        // touches agoraSession.
+        // touches archeionSession.
         if (cfg?.offline) {
           connectDirect(cfg.offline)
             .then(({ transport, conversationId }) =>
@@ -188,7 +188,7 @@
         // Resolve the session; the gate reads the settled `user`. The tagma
         // registry fetch + auto-open are driven by the user_id $effect below
         // (which also re-fires on re-login, unlike this one-shot onMount).
-        void agoraSession.whoami();
+        void archeionSession.whoami();
       }
     });
     // One capability probe at boot (both modes): the tagmata page's
@@ -216,11 +216,11 @@
   // pre-warm convenience, not load-bearing for sidebar visibility (enrolled
   // tagmas always show; /tagma/{tagmaId}/chat opens on demand).
   $effect(() => {
-    const uid = agoraSession.user?.user_id;
+    const uid = archeionSession.user?.user_id;
     if (mode !== "online" || !uid) return;
-    void agoraSession.refreshTagmata().then(() => {
-      if (!agoraSession.user) return; // logged out mid-flight: gate redirects.
-      for (const t of agoraSession.tagmata) {
+    void archeionSession.refreshTagmata().then(() => {
+      if (!archeionSession.user) return; // logged out mid-flight: gate redirects.
+      for (const t of archeionSession.tagmata) {
         if (t.state === "enrolled" && realtimeStore.has(t.tagma_id)) {
           void channelsStore.ensureOpen(t);
         }
@@ -233,7 +233,7 @@
   // effect ends in a channel auto-open sweep that is unrelated). Same keying
   // discipline: `user?.user_id` (a stable primitive), not the `user` object.
   $effect(() => {
-    const uid = agoraSession.user?.user_id;
+    const uid = archeionSession.user?.user_id;
     if (mode !== "online" || !uid) return;
     void roomsStore.refresh();
   });
@@ -243,7 +243,7 @@
   // beyond the channels the boot sweep already opens. Same keying
   // discipline as the rooms effect: user_id + mode.
   $effect(() => {
-    const uid = agoraSession.user?.user_id;
+    const uid = archeionSession.user?.user_id;
     if (mode !== "online" || !uid) {
       directSessionsStore.stop();
       return;
@@ -257,9 +257,9 @@
   // first loads; the other no-ops) -- two triggers with the SAME guard, not a
   // maintenance trap. Keyed on user_id; reset() clears passkeysLoaded on logout.
   $effect(() => {
-    const uid = agoraSession.user?.user_id;
-    if (mode !== "online" || !uid || agoraSession.passkeysLoaded) return;
-    void agoraSession.refreshPasskeys();
+    const uid = archeionSession.user?.user_id;
+    if (mode !== "online" || !uid || archeionSession.passkeysLoaded) return;
+    void archeionSession.refreshPasskeys();
   });
 
   // Run the realtime SSE feed (presence + envelope delivery) while signed-in in
@@ -269,7 +269,7 @@
   // re-fetch. user_id still changes on login-as-different-user / logout, so the
   // cleanup fires exactly when it should.
   $effect(() => {
-    const uid = agoraSession.user?.user_id;
+    const uid = archeionSession.user?.user_id;
     if (mode === "online" && uid) {
       realtimeStore.start();
       return () => {
@@ -282,8 +282,8 @@
     appGateDecision({
       loaded: configStore.loaded,
       mode,
-      user: agoraSession.user,
-      authError: agoraSession.authError,
+      user: archeionSession.user,
+      authError: archeionSession.authError,
       connected: channelsStore.localConnected,
       pathname,
       search,
@@ -308,7 +308,7 @@
   // safe-default policy as the /tagmata dashboard), so a never-online peer
   // cannot spin forever -- auto-open only fires for online tagmas.
   const tagmaNav = $derived(
-    agoraSession.enrolledCards.map((c) => ({
+    archeionSession.enrolledCards.map((c) => ({
       tagmaId: c.tagmaId,
       label: c.label,
       indicator: tagmaNavIndicator(
@@ -375,7 +375,7 @@
       !shouldNotifyRoom({
         unreadCount: unreadStore.countOf(key),
         viewing: unreadStore.isViewing(key),
-        own: env.sender.id === agoraSession.participantId,
+        own: env.sender.id === archeionSession.participantId,
       })
     ) {
       return;

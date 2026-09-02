@@ -1,5 +1,5 @@
-// Persisted app mode + offline tagma credentials. Online (agora) auth is a
-// browser session cookie (see @kallipai/kallip-agora-client/http.ts), so it is
+// Persisted app mode + offline tagma credentials. Online (archeion) auth is a
+// browser session cookie (see @kallipai/kallip-archeion-client/http.ts), so it is
 // never persisted here -- the only stored state is which mode is active and the
 // offline tagma creds. Both are retained across mode switches so switching is
 // non-destructive (re-auth-free in both directions); flipping the active mode

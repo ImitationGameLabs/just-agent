@@ -1,7 +1,7 @@
 // Browser client for the lesche data-plane relay. The lesche (default :7200) is
 // the data plane: conversation setup, the synchronous key exchange, envelope
 // posting, and the multiplexed app SSE. The session cookie is shared
-// cross-subdomain with the agora (`KALLIP_AGORA_SESSION_COOKIE_DOMAIN`), so the
+// cross-subdomain with the archeion (`KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN`), so the
 // same credentialed fetch works. Every fetch carries `credentials: "include"`
 // (the session cookie is the auth) and every non-GET carries the CSRF marker
 // (`X-Requested-With: kallip`), which the lesche's `csrf_guard` requires on
@@ -166,7 +166,7 @@ export class LescheClient extends BaseClient {
     }
   }
 
-  // --- room management (relocated from agora) -------------------------------
+  // --- room management (relocated from archeion) -------------------------------
 
   /** `POST /v1/rooms` -- create a room; the caller is the founding member.
    * `name` is required; `description` and `visibility` default to empty and

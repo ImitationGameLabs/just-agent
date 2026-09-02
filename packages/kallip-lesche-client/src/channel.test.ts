@@ -34,7 +34,7 @@ const enc = new TextEncoder();
 
 /** A minimal tagma-relay mock for the data plane: the conversation + KEX +
  * envelope relay are served by the `lesche` mock; the pinned device key (TOFU
- * from the agora in production) is returned as `pinnedKeyB64` for the caller to
+ * from the archeion in production) is returned as `pinnedKeyB64` for the caller to
  * pass into `openRelayChannel`. On each posted envelope the lesche mock
  * decrypts the initiator's request and enqueues an `assistant_content` reply
  * back into the channel. */

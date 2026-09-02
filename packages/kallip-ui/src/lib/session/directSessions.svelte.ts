@@ -20,7 +20,7 @@ import type {
   DirectMessageRow,
   LescheSessionEntry,
 } from "@kallipai/kallip-client";
-import { agoraSession } from "./agora.svelte";
+import { archeionSession } from "./archeion.svelte";
 import { channelsStore } from "./channels.svelte";
 import { chat_direct_fallback } from "../../paraglide/messages.js";
 
@@ -74,7 +74,7 @@ export class DirectSessionsStore {
   /** Best display label for a peer: the enrollment's label (the owner's own
    * name for the tagma), else the relay-stamped handle, else a short id. */
   peerLabel(peerId: string, peerHandle?: string): string {
-    const enrolled = agoraSession.enrolledCards.find(
+    const enrolled = archeionSession.enrolledCards.find(
       (t) => t.tagmaId === peerId,
     );
     if (enrolled?.label) return enrolled.label;
@@ -104,7 +104,9 @@ export class DirectSessionsStore {
     this.#tickNo += 1;
     const tick = this.#tickNo;
     await Promise.allSettled(
-      agoraSession.enrolledCards.map((t) => this.refreshTagma(t.tagmaId, tick)),
+      archeionSession.enrolledCards.map((t) =>
+        this.refreshTagma(t.tagmaId, tick),
+      ),
     );
     for (const [key, entry] of this.#entries) {
       const fresh = (this.#seen.get(key) ?? 0) >= tick - PRUNE_TICKS + 1;

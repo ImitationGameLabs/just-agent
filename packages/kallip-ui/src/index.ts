@@ -7,17 +7,17 @@
 //     headless factories (composer, auto-scroll, connection projection, error
 //     classification) are pure.
 //   - App layer (session stores, config facade, auth gate, route page bodies):
-//     added when kallip-app converged on agora login. This tier depends on the
-//     transport clients (@kallipai/kallip-client, @kallipai/kallip-agora-client,
+//     added when kallip-app converged on archeion login. This tier depends on the
+//     transport clients (@kallipai/kallip-client, @kallipai/kallip-archeion-client,
 //     @kallipai/kallip-lesche-client) as peerDeps, and stays free of `$app/*` --
 //     navigation is injected via
-//     initShell(), the agora URL via initAgora(), storage via initConfigStorage().
+//     initShell(), the archeion URL via initArcheion(), storage via initConfigStorage().
 //
 // SPLIT PENDING: the app tier should eventually live in its own package
 // (kallip-app-core) so this package returns to being purely presentational.
 // Until then, both tiers coexist here; the seam is the boundary between
 // `components/`+pure `lib/` (presentational) and `lib/{session,config,shell}`+
-// `pages/` (app). The injectable ports (initShell/initAgora/initConfigStorage)
+// `pages/` (app). The injectable ports (initShell/initArcheion/initConfigStorage)
 // are designed so the split is a move, not a rewrite.
 //
 // Interactive Skeleton primitives are permitted only for structural chrome (e.g.
@@ -25,7 +25,7 @@
 // consume Skeleton via CSS tokens only, so they stay portable to a non-Skeleton
 // theme.
 
-// App bootstrap ports (inject $app/navigation, the agora URL, and storage).
+// App bootstrap ports (inject $app/navigation, the archeion URL, and storage).
 export {
   type Goto,
   type GotoOptions,
@@ -35,10 +35,10 @@ export {
   shellMode,
 } from "./lib/shell/port.ts";
 export {
-  initAgora,
+  initArcheion,
   initFiles,
   initLesche,
-} from "./lib/session/agora.svelte.ts";
+} from "./lib/session/archeion.svelte.ts";
 export { initInstances } from "./lib/instances/client.ts";
 export {
   initConfigStorage,
@@ -52,7 +52,7 @@ export {
 } from "./lib/config/storage.ts";
 
 // Reactive stores (singletons).
-export { agoraSession } from "./lib/session/agora.svelte.ts";
+export { archeionSession } from "./lib/session/archeion.svelte.ts";
 export { channelsStore } from "./lib/session/channels.svelte.ts";
 export { realtimeStore } from "./lib/session/realtime.svelte.ts";
 export { roomsStore } from "./lib/session/rooms.svelte.ts";

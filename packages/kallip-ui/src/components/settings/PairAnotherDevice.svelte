@@ -2,7 +2,7 @@
   // The cross-device "add" form: mint a short-lived pairing code and show it as
   // a typeable code + QR with a live countdown. A new device types it or scans
   // it to enroll its own passkey onto this account (see PairPage). Form-only and
-  // prop-driven (the page maps agora state into these props); the chooser +
+  // prop-driven (the page maps archeion state into these props); the chooser +
   // trigger live in `AddDevice`. User-facing copy says "Add a device"; the
   // internal name keeps "pair" as the mechanism (the issued credential is a
   // pairing code, like Bluetooth pairing).

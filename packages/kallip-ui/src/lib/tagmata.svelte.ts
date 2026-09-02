@@ -1,6 +1,6 @@
 // Tagmata-dashboard view-models and projections. Pure shapes + helpers -- no
-// transport, no `@kallipai/kallip-agora-client` import -- so `kallip-ui` stays
-// prop-driven and portable. The consuming app (kallip-web) maps agora-client
+// transport, no `@kallipai/kallip-archeion-client` import -- so `kallip-ui` stays
+// prop-driven and portable. The consuming app (kallip-web) maps archeion-client
 // response types into these `Props` before passing them down.
 
 import { getLocale } from "../paraglide/runtime.js";
@@ -70,7 +70,7 @@ export interface TagmaCardProps {
 }
 
 /** Props for one pending-tagma card. `code` is the display value: the full
- *  plaintext straight from the mint response (while `copyable`), or the agora's
+ *  plaintext straight from the mint response (while `copyable`), or the archeion's
  *  masked `sk-enroll-abc***xyz` from the list endpoint. */
 export interface EnrollmentCodeCardProps {
   readonly id: string;
@@ -112,7 +112,7 @@ export interface TagmaDeviceRow {
   };
 }
 
-/** Join enrolled identities (agora `/v1/tagmata`) with hosted processes
+/** Join enrolled identities (archeion `/v1/tagmata`) with hosted processes
  * (instances list) into panel rows. Key preference: the process-reported
  * `tagma_id` (the daemon scan reads the tagma's own persisted id — manual
  * slugs and enroll-after-spawn join here), falling back to the one-click

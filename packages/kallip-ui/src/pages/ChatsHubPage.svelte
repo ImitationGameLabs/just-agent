@@ -8,7 +8,7 @@
   // the same way RootLayout does; the page owns no fetches of its own.
   import { Cpu, Users } from "@lucide/svelte";
   import HubRow from "../components/HubRow.svelte";
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { realtimeStore } from "../lib/session/realtime.svelte.ts";
   import { roomsStore } from "../lib/session/rooms.svelte";
@@ -32,7 +32,7 @@
   } from "../paraglide/messages.js";
 
   const tagmaRows = $derived(
-    agoraSession.enrolledCards.map((c) => ({
+    archeionSession.enrolledCards.map((c) => ({
       href: tagmaChatPath(c.tagmaId),
       label: c.label ?? tagma_profile_unnamed(),
       indicator: tagmaNavIndicator(

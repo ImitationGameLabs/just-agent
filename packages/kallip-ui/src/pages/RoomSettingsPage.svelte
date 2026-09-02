@@ -18,9 +18,9 @@
   } from "@kallipai/kallip-lesche-client";
   import ConfirmDialog from "../components/ConfirmDialog.svelte";
   import {
-    agoraSession,
+    archeionSession,
     lescheClientOrFail,
-  } from "../lib/session/agora.svelte";
+  } from "../lib/session/archeion.svelte";
   import { roomsStore } from "../lib/session/rooms.svelte";
   import { roomConversationsStore } from "../lib/session/roomConversations.svelte";
   import MemberRow from "../components/rooms/MemberRow.svelte";
@@ -113,7 +113,7 @@
   // The caller's own enrolled tagmata: the picker source for the add-tagma
   // shortcut (pending tagmata are not enrolled and cannot join a room).
   const myTagmas = $derived(
-    agoraSession.tagmata.filter((t) => t.state === "enrolled"),
+    archeionSession.tagmata.filter((t) => t.state === "enrolled"),
   );
 
   // Map tagma_id -> participant id for my enrolled tagmata, so the picker can
@@ -345,11 +345,11 @@
             {#each roster.members as m (m.id)}
               <MemberRow
                 member={m}
-                selfId={agoraSession.participantId}
+                selfId={archeionSession.participantId}
                 isCreator={roster.is_creator &&
-                  m.id === agoraSession.participantId}
+                  m.id === archeionSession.participantId}
                 removable={roster.is_creator &&
-                  m.id !== agoraSession.participantId}
+                  m.id !== archeionSession.participantId}
                 onRemove={() => openRemove(m)}
               />
             {/each}
@@ -410,7 +410,7 @@
         >
           <Menu.Trigger
             class="btn btn-sm preset-outlined-surface-500 hover:preset-filled-surface-500 self-start flex items-center gap-2 disabled:opacity-60"
-            disabled={addBusy || !agoraSession.tagmataLoaded}
+            disabled={addBusy || !archeionSession.tagmataLoaded}
           >
             {roomsettings_pick_tagma()}
             <ChevronDown class="size-4" />
@@ -422,7 +422,7 @@
               >
                 {#if myTagmas.length === 0}
                   <p class="px-3 py-2 text-sm opacity-60">
-                    {agoraSession.tagmataLoaded
+                    {archeionSession.tagmataLoaded
                       ? roomsettings_no_tagmata()
                       : roomsettings_loading_tagmata()}
                   </p>

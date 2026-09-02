@@ -14,9 +14,9 @@
     type PutResponse,
   } from "@kallipai/kallip-files-client";
   import {
-    agoraSession,
+    archeionSession,
     filesClientOrFail,
-  } from "../../lib/session/agora.svelte";
+  } from "../../lib/session/archeion.svelte";
   import {
     displayPath,
     groupFileEntries,
@@ -77,8 +77,8 @@
   let highlightId = $state<string | null>(null);
 
   const selfPrefix = $derived(
-    agoraSession.user
-      ? `/users/${agoraSession.user.user_id}/`
+    archeionSession.user
+      ? `/users/${archeionSession.user.user_id}/`
       : // Pre-auth the page sits behind the gate anyway; the prefix only
         // shapes display strings until the first load replaces it.
         "/users/unknown/",
@@ -96,7 +96,7 @@
     if (group.kind === "shared") return files_group_shared();
     if (group.kind === "root") return files_group_root();
     if (group.kind === "folder") return group.label ?? "";
-    const label = agoraSession.enrolledCards.find(
+    const label = archeionSession.enrolledCards.find(
       (t) => t.tagmaId === group.tagmaId,
     )?.label;
     // Unenrolled tagma groups keep the raw id segment (D4: never explode).
@@ -109,7 +109,7 @@
     return [
       { value: "shared/", label: files_group_shared() },
       { value: "inbox/", label: files_group_inbox() },
-      ...agoraSession.enrolledCards.map((t) => ({
+      ...archeionSession.enrolledCards.map((t) => ({
         value: `tagmas/${t.tagmaId}/`,
         label: files_group_tagma({ label: t.label ?? t.tagmaId }),
       })),

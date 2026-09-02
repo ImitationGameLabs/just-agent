@@ -55,7 +55,7 @@ import {
   clearReadWatermarks,
   putReadWatermark,
 } from "@kallipai/kallip-lesche-client";
-import { agoraSession, lescheClientOrFail } from "./agora.svelte.ts";
+import { archeionSession, lescheClientOrFail } from "./archeion.svelte.ts";
 
 /** Badge display cap: anything above renders as "99+" ({@link badgeLabel}). */
 export const UNREAD_CAP = 99;
@@ -136,7 +136,7 @@ function defaultPutCursor(roomId: string, seq: number): Promise<void> {
   return lescheClientOrFail().setRoomReadCursor(roomId, seq);
 }
 function defaultSelfId(): string | null {
-  return agoraSession.participantId;
+  return archeionSession.participantId;
 }
 function defaultArmTimer(fn: () => void): ReturnType<typeof setTimeout> {
   return setTimeout(fn, PUT_THROTTLE_MS);

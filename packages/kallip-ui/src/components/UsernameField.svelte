@@ -4,7 +4,7 @@
   // markup + validation copy cannot drift. The owning page binds `value`,
   // derives submit-readiness from `isValidUsername`, and passes `paused`
   // while its submit is in flight (the server is the final authority either
-  // way). The availability probe (3s debounce, then the agora endpoint)
+  // way). The availability probe (3s debounce, then the archeion endpoint)
   // renders a check icon when a handle is free and red copy below the field
   // when it is taken or reserved.
   import { CircleCheck } from "@lucide/svelte";
@@ -16,7 +16,7 @@
     shouldProbe,
     type AvailabilityState,
   } from "../lib/username-availability.ts";
-  import { agoraClientOrFail } from "../lib/session/agora.svelte";
+  import { archeionClientOrFail } from "../lib/session/archeion.svelte";
   import {
     auth_username,
     auth_username_hint,
@@ -49,7 +49,7 @@
     availability = { phase: "checking" };
     const timer = setTimeout(() => {
       try {
-        agoraClientOrFail()
+        archeionClientOrFail()
           .usernameAvailability(handle)
           .then((r) => {
             if (!isStale(token, latestProbe))

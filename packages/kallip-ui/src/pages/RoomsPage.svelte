@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import { roomsStore } from "../lib/session/rooms.svelte";
   import { roomConversationsStore } from "../lib/session/roomConversations.svelte";
   import { navigate } from "../lib/shell/port.ts";
@@ -35,7 +35,7 @@
 <svelte:head><title>{rooms_title()}</title></svelte:head>
 <div class="h-full flex flex-col">
   <div class="flex-1 min-h-0">
-    {#if agoraSession.user}
+    {#if archeionSession.user}
       <RoomsDashboard
         rooms={roomsStore.rooms}
         {roomsPhase}
@@ -56,10 +56,10 @@
         onOpenSettings={(roomId) => navigate(`/rooms/${roomId}/settings`)}
         onOpen={(roomId) => navigate(`/rooms/${roomId}`)}
       />
-    {:else if agoraSession.authError}
+    {:else if archeionSession.authError}
       <div class="p-4">
         <p class="text-error-500 dark:text-error-400 text-sm">
-          {agoraSession.authError}
+          {archeionSession.authError}
         </p>
         <p class="opacity-60 text-sm">{rooms_retrying()}</p>
       </div>

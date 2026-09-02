@@ -4,10 +4,10 @@
 // conversation transport. `LescheClient` covers conversation setup, the
 // synchronous key exchange, envelope posting, and the multiplexed `me/events`
 // SSE stream; `openRelayChannel`/`RelayChannel` wire those into a pure E2EE pipe
-// to a tagma. The pinned device key is TOFU from the agora (control plane) and
+// to a tagma. The pinned device key is TOFU from the archeion (control plane) and
 // is passed in as a base64 string by the caller, so this package has no source
-// dependency on the agora client. Browser-first (session cookie shared
-// cross-subdomain with the agora; `me/events` is parsed with the shared
+// dependency on the archeion client. Browser-first (session cookie shared
+// cross-subdomain with the archeion; `me/events` is parsed with the shared
 // `parseSseStream`).
 
 export const PACKAGE_NAME = "@kallipai/kallip-lesche-client";
@@ -39,7 +39,7 @@ export type {
   TagmaReply,
 } from "./types.ts";
 export type { LescheEvent } from "./types.ts";
-// Room management (relocated from the agora client).
+// Room management (relocated from the archeion client).
 export type {
   AddTagmaRequest,
   CreateInviteRequest,

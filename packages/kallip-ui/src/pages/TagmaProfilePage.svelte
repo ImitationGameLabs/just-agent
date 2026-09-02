@@ -8,12 +8,15 @@
   // The "Message" CTA opens the tagma's DM, but ONLY for a tagma the caller owns
   // (the bilateral DM is owner-scoped); a peer's tagma has no CTA.
   import { ChevronLeft, Cpu, MessageSquare } from "@lucide/svelte";
-  import { agoraClientOrFail, agoraSession } from "../lib/session/agora.svelte";
+  import {
+    archeionClientOrFail,
+    archeionSession,
+  } from "../lib/session/archeion.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import { tagmaChatPath } from "../lib/shell/routes.ts";
   import { formatDateTime } from "../lib/tagmata.svelte.ts";
   import { TONAL_ICON_SURF } from "../lib/classes.ts";
-  import type { PublicTagmaProfile } from "@kallipai/kallip-agora-client";
+  import type { PublicTagmaProfile } from "@kallipai/kallip-archeion-client";
   import {
     common_loading,
     common_back_aria,
@@ -41,7 +44,7 @@
     error = null;
     profile = null;
     let stale = false;
-    void agoraClientOrFail()
+    void archeionClientOrFail()
       .getTagmaProfile(id)
       .then((p) => {
         if (!stale) {
@@ -51,7 +54,7 @@
       })
       .catch((e) => {
         if (!stale) {
-          // Transport-level (agora unreachable); qualitative copy only.
+          // Transport-level (archeion unreachable); qualitative copy only.
           console.error("[tagma profile] fetch failed:", e);
           error = auth_couldnt_reach();
           loading = false;
@@ -67,7 +70,7 @@
   // own one -- would fail to open). Mirrors the `state === "enrolled"` filter
   // used by RootLayout's presence sink.
   const ownTagma = $derived(
-    agoraSession.tagmata.some(
+    archeionSession.tagmata.some(
       (t) => t.tagma_id === tagmaId && t.state === "enrolled",
     ),
   );

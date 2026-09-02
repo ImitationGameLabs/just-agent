@@ -40,7 +40,7 @@ export function providerEndpointKey(instanceSlug: string): string {
   return `provider:${instanceSlug}`;
 }
 
-/** The subset of an agora ProviderSummary the selection and push need. */
+/** The subset of an archeion ProviderSummary the selection and push need. */
 export interface PushCandidate {
   readonly id: string;
   readonly name: string;

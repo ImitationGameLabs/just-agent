@@ -1,5 +1,5 @@
-// Response + error shapes for the agora `/v1` HTTP surface. These mirror the
-// serde DTOs in `crates/platform/kallip-agora/src/routes/` (`auth.rs`, `tagmata.rs`,
+// Response + error shapes for the archeion `/v1` HTTP surface. These mirror the
+// serde DTOs in `crates/platform/kallip-archeion/src/routes/` (`auth.rs`, `tagmata.rs`,
 // `admin.rs`). Timestamps are RFC3339 strings (time::OffsetDateTime serde)
 // unless noted.
 
@@ -105,7 +105,7 @@ export interface OAuthSignupCompleteRequest {
   readonly username: string;
 }
 
-/** `GET /v1/me/passkeys` — one of the caller's live passkeys. The agora's
+/** `GET /v1/me/passkeys` — one of the caller's live passkeys. The archeion's
  * `passkeys` table holds only live credentials (revoked history lives in a
  * separate audit table), so there is no status field. `label` is the user-
  * supplied device name ("" for the initial passkey until the user names it). */
@@ -166,7 +166,7 @@ export interface EmailSummary {
 /** `GET /v1/me`. Email is an optional contact channel, decoupled from login
  * (which resolves by username): `emails` is empty until the user links one in
  * settings, and `primary_email` is null then. `display_name` is nullable (null
- * when unset) -- the agora returns `users.display_name` verbatim with no
+ * when unset) -- the archeion returns `users.display_name` verbatim with no
  * synthesis; presentation fallback belongs to the frontend. */
 export interface MeResponse {
   readonly user_id: string;
@@ -196,7 +196,7 @@ export interface VerifyEmailRequest {
 
 /** Storage mode of a user-provider key. `plaintext` stores the raw key
  * readable by any session of the account; `encrypted` stores an opaque blob
- * sealed by a device-held vault key that the agora can neither read nor
+ * sealed by a device-held vault key that the archeion can neither read nor
  * decrypt (the service is blind to encrypted rows by design). */
 export type ProviderKeyMode = "plaintext" | "encrypted";
 
@@ -245,7 +245,7 @@ export type TagmaState = "pending" | "enrolled";
  * currently open arrives via the data plane: the lesche's `GET /v1/me/events`
  * SSE stream emits `tagma_online` / `tagma_offline` events (plus an initial
  * presence snapshot on connect). The pending-phase fields `code_masked` and
- * `expires_at` are present only while `state === "pending"` (the agora omits
+ * `expires_at` are present only while `state === "pending"` (the archeion omits
  * them for enrolled rows). `code_masked` is the display-safe form
  * (`sk-enroll-abc***xyz`); the full plaintext is returned only once, on
  * {@link MintTagmaResponse.code}.
@@ -301,17 +301,17 @@ export interface PublicTagmaProfile {
 // AddTagmaRequest / RoomMemberProfile / ParticipantKind from there.
 
 /**
- * Agora API error. Mirrors `kallip_common::protocol::ApiError`. This is a
+ * Archeion API error. Mirrors `kallip_common::protocol::ApiError`. This is a
  * distinct surface from `kallip-ui`'s tagma-transport `classifyError` -- the
- * agora errors are rendered inline by the auth/dashboard pages, not through the
+ * archeion errors are rendered inline by the auth/dashboard pages, not through the
  * shared AppShell banner.
  */
-export class AgoraApiError extends Error {
+export class ArcheionApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
   ) {
     super(message);
-    this.name = "AgoraApiError";
+    this.name = "ArcheionApiError";
   }
 }

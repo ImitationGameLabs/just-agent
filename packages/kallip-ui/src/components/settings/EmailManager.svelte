@@ -2,16 +2,16 @@
   // Self-service email management: list / add / verify / make-primary / remove.
   // Email is an optional contact channel (login resolves by username). A newly
   // added address starts UNVERIFIED; with only the logging transport wired, the
-  // verification token is emitted to the agora log -- paste it into the verify
+  // verification token is emitted to the archeion log -- paste it into the verify
   // field here (or follow the link once a real SMTP provider is configured).
   import {
-    agoraClientOrFail,
-    agoraSession,
-  } from "../../lib/session/agora.svelte";
+    archeionClientOrFail,
+    archeionSession,
+  } from "../../lib/session/archeion.svelte";
   import {
-    AgoraApiError,
+    ArcheionApiError,
     type EmailSummary,
-  } from "@kallipai/kallip-agora-client";
+  } from "@kallipai/kallip-archeion-client";
   import { isValidEmail } from "../../lib/email.ts";
   import {
     settings_email,
@@ -31,7 +31,7 @@
     common_verify,
   } from "../../paraglide/messages.js";
 
-  const emails = $derived(agoraSession.user?.emails ?? []);
+  const emails = $derived(archeionSession.user?.emails ?? []);
 
   let newAddress = $state("");
   let token = $state("");
@@ -43,7 +43,7 @@
   const canAdd = $derived(addressValid && !busy);
 
   function msgOf(e: unknown): string {
-    if (e instanceof AgoraApiError) return e.message;
+    if (e instanceof ArcheionApiError) return e.message;
     // Transport/internal failure: qualitative copy for the form, details to
     // the console (raw exception text never reaches the user).
     console.error(e);
@@ -53,7 +53,7 @@
   async function refresh(): Promise<void> {
     // Narrow refresh of just the emails slice (one round-trip to /me/emails),
     // not a full whoami().
-    await agoraSession.refreshEmails();
+    await archeionSession.refreshEmails();
   }
 
   async function add(): Promise<void> {
@@ -62,7 +62,7 @@
     error = null;
     notice = null;
     try {
-      await agoraClientOrFail().addEmail({ address: newAddress.trim() });
+      await archeionClientOrFail().addEmail({ address: newAddress.trim() });
       await refresh();
       newAddress = "";
       notice = settings_email_token_notice();
@@ -79,7 +79,7 @@
     error = null;
     notice = null;
     try {
-      await agoraClientOrFail().verifyEmail({ token: token.trim() });
+      await archeionClientOrFail().verifyEmail({ token: token.trim() });
       await refresh();
       token = "";
       notice = settings_email_verified_notice();
@@ -96,7 +96,7 @@
     error = null;
     notice = null;
     try {
-      await agoraClientOrFail().makeEmailPrimary(e.id);
+      await archeionClientOrFail().makeEmailPrimary(e.id);
       await refresh();
     } catch (err) {
       error = msgOf(err);
@@ -111,7 +111,7 @@
     error = null;
     notice = null;
     try {
-      await agoraClientOrFail().removeEmail(e.id);
+      await archeionClientOrFail().removeEmail(e.id);
       await refresh();
     } catch (err) {
       error = msgOf(err);

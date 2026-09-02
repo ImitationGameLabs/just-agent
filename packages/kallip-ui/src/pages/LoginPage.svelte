@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import { isValidUsername } from "../lib/username.ts";
-  import type { CeremonyResult } from "@kallipai/kallip-agora-client";
+  import type { CeremonyResult } from "@kallipai/kallip-archeion-client";
   import Brand from "../components/Brand.svelte";
   import FormError from "../components/FormError.svelte";
   import Banner from "../components/Banner.svelte";
@@ -43,7 +43,7 @@
   let username = $state("");
   let submitting = $state(false);
   let result: CeremonyResult | null = $state(null);
-  // Network/transport error from a submit attempt (e.g. agora unreachable now).
+  // Network/transport error from a submit attempt (e.g. archeion unreachable now).
   let error = $state<string | null>(null);
   // Aborts the background conditional-mediation get() before an explicit
   // ceremony (the username form submit) or on unmount. Two concurrent
@@ -70,8 +70,8 @@
 
   // The reverse guard (already signed in -> /tagmata) and the forward guard
   // (logged out -> /login) live in <RootLayout>; this page is only reached for a
-  // genuinely logged-out user. If whoami failed at boot (agora unreachable),
-  // agoraSession.authError is set -- the floating banner above carries that
+  // genuinely logged-out user. If whoami failed at boot (archeion unreachable),
+  // archeionSession.authError is set -- the floating banner above carries that
   // environment error, while a submit's own transport failure renders inline
   // in the form below (FormError); the two channels no longer merge.
   const usernameValid = $derived(isValidUsername(username));
@@ -105,11 +105,11 @@
     result = null;
     error = null;
     try {
-      const r = await agoraSession.login(username.trim());
+      const r = await archeionSession.login(username.trim());
       result = r;
       if (r.ok) await navigate(returnPath ?? "/tagmata");
     } catch (e) {
-      // A thrown error here is transport-level (agora unreachable); the
+      // A thrown error here is transport-level (archeion unreachable); the
       // ceremony's own failures come back as a non-ok result below.
       console.error(e);
       error = auth_couldnt_reach();
@@ -128,7 +128,7 @@
     offlineBusy = true;
     offlineError = null;
     try {
-      const r = await agoraSession.adminLogin(adminKey.trim());
+      const r = await archeionSession.adminLogin(adminKey.trim());
       if (r.ok) {
         await navigate(returnPath ?? "/tagmata");
       } else if (r.status === 404) {
@@ -154,7 +154,7 @@
   onMount(() => {
     // Fetch enabled OAuth providers for the "Continue with X" buttons (fire-
     // and-forget; a failure leaves the list empty).
-    agoraSession.refreshOAuthProviders();
+    archeionSession.refreshOAuthProviders();
     // Track mount state so a discoverable-autofill resolution that lands AFTER
     // the user navigated away (Create account / Add device / Offline) does not
     // rip them back to /tagmata from whatever page they are now on.
@@ -179,7 +179,7 @@
     pk.isConditionalMediationAvailable()
       .then((available) => {
         if (!available || !mounted) return;
-        agoraSession.loginDiscoverable(signal).then((r) => {
+        archeionSession.loginDiscoverable(signal).then((r) => {
           if (!mounted) return;
           if (r.ok) {
             // The username form may have won the race (user typed + submitted
@@ -206,10 +206,10 @@
 </script>
 
 <svelte:head><title>{login_title()}</title></svelte:head>
-{#if agoraSession.authError}
-  <!-- Environment error (agora unreachable at boot): stays in the floating
+{#if archeionSession.authError}
+  <!-- Environment error (archeion unreachable at boot): stays in the floating
        banner; a submit's own failures render inline in the form below. -->
-  <Banner floating title={agoraSession.authError} />
+  <Banner floating title={archeionSession.authError} />
 {/if}
 
 <div class="flex items-center justify-center min-h-dvh p-4 bg-surface-200-800">

@@ -22,7 +22,7 @@ Deno.test("parseParticipantHandle decomposes an agent handle", () => {
     shortId: "a4f2b9",
   });
   // A hyphenated owner username must not over-split: only the FIRST `@` is the
-  // separator (agora usernames are `[a-z0-9-]`, never `@`, but this locks the
+  // separator (archeion usernames are `[a-z0-9-]`, never `@`, but this locks the
   // split-once behavior regardless).
   assertEquals(parseParticipantHandle("a4f2b9@alice-doe", "agent"), {
     handle: "@alice-doe",

@@ -19,7 +19,7 @@
   "manage_instances_spawn_slug_placeholder": "e.g. work-laptop",
   "manage_instances_spawn_workspace_label": "Workspace path",
   "manage_instances_spawn_workspace_placeholder": "e.g. /home/me/kallip",
-  "manage_instances_spawn_agora_label": "Relay URL (optional)",
+  "manage_instances_spawn_archeion_label": "Relay URL (optional)",
   "manage_instances_spawn_enrollment_label": "Enrollment code (optional)",
   "manage_instances_spawn_lesche_label": "Lesche URL (optional)",
   "manage_instances_spawn_token_label": "Process token (optional)",

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { configStore } from "../lib/config/config.svelte";
   import { shellMode } from "../lib/shell/port.ts";
@@ -7,7 +7,7 @@
     AddPasskeyResult,
     PasskeySummary,
     ProviderRequest,
-  } from "@kallipai/kallip-agora-client";
+  } from "@kallipai/kallip-archeion-client";
   import type {
     PasskeyAddHint,
     PasskeyCardProps,
@@ -51,7 +51,7 @@
 
   // Settings is now info-only: account actions (logout, mode switch) live in
   // the sidebar AccountMenu. Online shows the account (identity lives in
-  // agora); offline shows the tagma connection (no identity). Offline
+  // archeion); offline shows the tagma connection (no identity). Offline
   // Disconnect/Reconnect stays here -- it is tagma session management, not an
   // account/mode action.
   const mode = $derived(shellMode());
@@ -92,10 +92,10 @@
   $effect(() => {
     if (
       mode === "online" &&
-      agoraSession.user &&
-      !agoraSession.passkeysLoaded
+      archeionSession.user &&
+      !archeionSession.passkeysLoaded
     ) {
-      agoraSession.refreshPasskeys();
+      archeionSession.refreshPasskeys();
     }
   });
 
@@ -104,10 +104,10 @@
   $effect(() => {
     if (
       mode === "online" &&
-      agoraSession.user &&
-      !agoraSession.providersLoaded
+      archeionSession.user &&
+      !archeionSession.providersLoaded
     ) {
-      agoraSession.refreshProviders();
+      archeionSession.refreshProviders();
     }
   });
 
@@ -116,12 +116,12 @@
   // flag (NOT on length): a zero-provider deploy is a valid steady state, and
   // the flag is set on both success and failure so the effect does not refetch.
   $effect(() => {
-    if (mode === "online" && agoraSession.user) {
-      if (!agoraSession.externalIdentitiesLoaded) {
-        agoraSession.refreshExternalIdentities();
+    if (mode === "online" && archeionSession.user) {
+      if (!archeionSession.externalIdentitiesLoaded) {
+        archeionSession.refreshExternalIdentities();
       }
-      if (!agoraSession.oauthProvidersLoaded) {
-        agoraSession.refreshOAuthProviders();
+      if (!archeionSession.oauthProvidersLoaded) {
+        archeionSession.refreshOAuthProviders();
       }
     }
   });
@@ -129,7 +129,7 @@
   // Project the wire types into the prop-driven components. The store owns the
   // ceremony + mutations; this page only projects state and forwards callbacks.
   const passkeyCards = $derived(
-    agoraSession.passkeys.map(
+    archeionSession.passkeys.map(
       (p: PasskeySummary): PasskeyCardProps => ({
         id: p.id,
         label: p.label,
@@ -141,14 +141,14 @@
   );
 
   const passkeyPhase = $derived<PasskeyPhase>(
-    agoraSession.passkeysError
+    archeionSession.passkeysError
       ? "error"
-      : agoraSession.passkeysLoaded
+      : archeionSession.passkeysLoaded
         ? "loaded"
         : "loading",
   );
 
-  const passkeyAddHint = $derived(addHintFor(agoraSession.lastAddPasskey));
+  const passkeyAddHint = $derived(addHintFor(archeionSession.lastAddPasskey));
 
   let adding = $state(false);
 
@@ -158,7 +158,7 @@
   ): Promise<boolean> {
     adding = true;
     try {
-      return (await agoraSession.addPasskey(label, opts)).ok;
+      return (await archeionSession.addPasskey(label, opts)).ok;
     } finally {
       adding = false;
     }
@@ -173,7 +173,7 @@
     if (minting) return;
     minting = true;
     try {
-      await agoraSession.mintPairingCode();
+      await archeionSession.mintPairingCode();
     } finally {
       minting = false;
     }
@@ -205,7 +205,7 @@
   // name; flip/reveal open with THIS device's vault key). The components
   // render and surface errors; this page only wires store calls in.
   async function onCreateProvider(req: ProviderRequest): Promise<boolean> {
-    await agoraSession.createProvider(req);
+    await archeionSession.createProvider(req);
     return true;
   }
 </script>
@@ -262,8 +262,8 @@
     </section>
 
     {#if mode === "online"}
-      {#if agoraSession.user}
-        {@const me = agoraSession.user}
+      {#if archeionSession.user}
+        {@const me = archeionSession.user}
         <section class="space-y-3">
           <h2 class="text-sm font-medium uppercase opacity-60 tracking-wide">
             {settings_account()}
@@ -289,33 +289,33 @@
         <PasskeyManager
           passkeys={passkeyCards}
           phase={passkeyPhase}
-          error={agoraSession.passkeysError}
+          error={archeionSession.passkeysError}
           addHint={passkeyAddHint}
           {adding}
           {onAdd}
-          onRename={(id, label) => agoraSession.renamePasskey(id, label)}
-          onRevoke={(id) => agoraSession.revokePasskey(id)}
-          pairingCode={agoraSession.pairingCode}
-          pairingError={agoraSession.pairingError}
+          onRename={(id, label) => archeionSession.renamePasskey(id, label)}
+          onRevoke={(id) => archeionSession.revokePasskey(id)}
+          pairingCode={archeionSession.pairingCode}
+          pairingError={archeionSession.pairingError}
           {minting}
           {onMint}
-          onClear={() => (agoraSession.pairingCode = null)}
+          onClear={() => (archeionSession.pairingCode = null)}
         />
 
         <ProviderVault
-          entries={agoraSession.providers}
-          phase={agoraSession.providersError
+          entries={archeionSession.providers}
+          phase={archeionSession.providersError
             ? "error"
-            : agoraSession.providersLoaded
+            : archeionSession.providersLoaded
               ? "loaded"
               : "loading"}
-          error={agoraSession.providersError}
-          canFlip={agoraSession.canFlipKeys()}
-          onRename={(id, name) => agoraSession.renameProvider(id, name)}
-          onFlip={(entry) => agoraSession.flipProviderEncryption(entry)}
-          onDelete={(id) => agoraSession.deleteProvider(id)}
+          error={archeionSession.providersError}
+          canFlip={archeionSession.canFlipKeys()}
+          onRename={(id, name) => archeionSession.renameProvider(id, name)}
+          onFlip={(entry) => archeionSession.flipProviderEncryption(entry)}
+          onDelete={(id) => archeionSession.deleteProvider(id)}
           onCreate={onCreateProvider}
-          onCopyKey={(entry) => agoraSession.revealProviderKey(entry)}
+          onCopyKey={(entry) => archeionSession.revealProviderKey(entry)}
         />
       {/if}
     {:else}

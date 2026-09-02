@@ -1,10 +1,10 @@
 <script lang="ts">
   // The provider-vault section: the user's stored API keys, plus the add
-  // form. Prop-driven like PasskeyManager -- the owning page maps the agora
+  // form. Prop-driven like PasskeyManager -- the owning page maps the archeion
   // store into these props and wires the mutations (which throw on failure;
   // the store never blanks the list). Encryption affordances are gated by
   // `canFlip` (the page passes the passkey-session marker).
-  import type { ProviderSummary } from "@kallipai/kallip-agora-client";
+  import type { ProviderSummary } from "@kallipai/kallip-archeion-client";
   import {
     settings_providers,
     settings_provider_none,

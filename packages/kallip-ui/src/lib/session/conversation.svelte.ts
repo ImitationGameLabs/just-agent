@@ -163,7 +163,7 @@ export abstract class ConversationBase {
     protected readonly store: ConversationStoreLike,
     transport: Transport | null,
     cacheConversationId: string,
-    /** The UI sender for optimistic user lines (online: the agora session;
+    /** The UI sender for optimistic user lines (online: the archeion session;
      *  offline: the tagma-configured local identity). */
     protected readonly localSender: ConversationSender,
   ) {

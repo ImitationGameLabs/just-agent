@@ -4,7 +4,7 @@
 // lesche's `crates/platform/kallip-lesche/src/routes/conversations.rs`. The
 // lesche forwards `Envelope.ciphertext` and the byte fields below without
 // interpreting them; every base64 string is STANDARD base64 (padded, +//),
-// matching agora-common's bytes.rs.
+// matching archeion-common's bytes.rs.
 //
 // The chat wire types (`AuthoredEvent`, `SignalEvent`, `TagmaReply`,
 // `FailoverChainExhausted`) live in `@kallipai/kallip-common` and are
@@ -110,7 +110,7 @@ export interface RoomMessageView {
   readonly created_at: string;
 }
 
-// --- room management (relocated from agora) --------------------------------
+// --- room management (relocated from archeion) --------------------------------
 // The chat domain lives in lesche; these mirror the lesche route DTOs in
 // `crates/platform/kallip-lesche/src/routes/room_management/`.
 

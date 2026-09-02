@@ -21,7 +21,7 @@
   } from "../../paraglide/messages.js";
 
   // Branch on mode, not on `user` (the AccountMenu invariant): offline must
-  // never act on a stale agora session, so the row set follows the mode.
+  // never act on a stale archeion session, so the row set follows the mode.
   const mode = $derived(shellMode());
 </script>
 

@@ -8,8 +8,8 @@
   // "!" badge hover explains why (native title tooltips are pointer-only,
   // touch screens get no hover).
   import { Dialog, Portal } from "@skeletonlabs/skeleton-svelte";
-  import type { ProviderKeyMode } from "@kallipai/kallip-agora-client";
-  import { AgoraApiError } from "@kallipai/kallip-agora-client";
+  import type { ProviderKeyMode } from "@kallipai/kallip-archeion-client";
+  import { ArcheionApiError } from "@kallipai/kallip-archeion-client";
   import { MODEL_PROVIDER_FAMILIES } from "../../lib/providerFamilies.ts";
   import InfoBadge from "../InfoBadge.svelte";
   import SecretInput from "../SecretInput.svelte";
@@ -105,7 +105,7 @@
     } catch (e) {
       console.error("[vault] create failed:", e);
       error =
-        e instanceof AgoraApiError && e.status === 409
+        e instanceof ArcheionApiError && e.status === 409
           ? settings_provider_name_duplicate()
           : settings_error_unknown();
     } finally {

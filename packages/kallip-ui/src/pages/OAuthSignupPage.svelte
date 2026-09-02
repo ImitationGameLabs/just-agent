@@ -10,14 +10,14 @@
   // navigation / refresh after success), bounce back to register.
   import { onMount } from "svelte";
   import {
-    agoraSession,
+    archeionSession,
     clearOAuthSignup,
     peekOAuthSignup,
     type OAuthSignupContext,
-  } from "../lib/session/agora.svelte";
+  } from "../lib/session/archeion.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import { isValidUsername } from "../lib/username.ts";
-  import type { OAuthSignupResult } from "@kallipai/kallip-agora-client";
+  import type { OAuthSignupResult } from "@kallipai/kallip-archeion-client";
   import Brand from "../components/Brand.svelte";
   import UsernameField from "../components/UsernameField.svelte";
   import {
@@ -77,7 +77,7 @@
     result = null;
     error = null;
     try {
-      const r = await agoraSession.completeOAuthSignup({
+      const r = await archeionSession.completeOAuthSignup({
         signupToken: ctx.signupToken,
         username: normalizedUsername,
       });

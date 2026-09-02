@@ -45,7 +45,7 @@
   "settings_email_verified": "已验证",
   "settings_email_unverified": "未验证",
   "settings_email_make_primary": "设为主邮箱",
-  "settings_email_token_notice": "SMTP 尚未接入，验证令牌已输出到 agora 日志（请粘贴到下方）。",
+  "settings_email_token_notice": "SMTP 尚未接入，验证令牌已输出到 archeion 日志（请粘贴到下方）。",
   "settings_email_verified_notice": "邮箱已验证。",
   "settings_email_invalid": "请输入有效的邮箱地址。",
   "settings_email_failed": "无法连接服务器。",

@@ -67,7 +67,7 @@
 
   // On success the gate (offline + /connect + connected) redirects to "/" -- so
   // this page does NOT navigate. Single owner of the post-connect route.
-  // Entering offline mode no longer touches the online (agora) session: its
+  // Entering offline mode no longer touches the online (archeion) session: its
   // cookie survives so a later switch back is re-auth-free. The retained offline
   // creds are persisted via setOffline, then the active mode flips to offline.
   async function submit(e: Event) {

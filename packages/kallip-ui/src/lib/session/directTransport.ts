@@ -60,7 +60,7 @@ export type DirectFrame =
   | { readonly kind: "status"; readonly payload: DirectStatusPayload };
 
 /** Map the snake_case direct status payload to the transport-neutral
- *  `TagmaStatusSummary` (the same shape the relay path's agora-SSE status maps
+ *  `TagmaStatusSummary` (the same shape the relay path's archeion-SSE status maps
  *  to), so the conversation drains one uniform type from either transport. */
 function toSummary(p: DirectStatusPayload): TagmaStatusSummary {
   return {

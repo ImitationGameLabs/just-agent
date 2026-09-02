@@ -11,7 +11,7 @@
   import HubRow from "../components/HubRow.svelte";
   import { desktopQuery } from "../lib/shell/breakpoint.ts";
   import { navigate } from "../lib/shell/port.ts";
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import { channelsStore } from "../lib/session/channels.svelte";
   import { realtimeStore } from "../lib/session/realtime.svelte.ts";
   import { roomsStore } from "../lib/session/rooms.svelte";
@@ -59,7 +59,7 @@
   const sessionRows = $derived(
     panoramaSessionRows(
       [
-        ...agoraSession.enrolledCards.map((c) => ({
+        ...archeionSession.enrolledCards.map((c) => ({
           href: tagmaChatPath(c.tagmaId),
           label: c.label ?? tagma_profile_unnamed(),
           kind: "tagma" as const,
@@ -82,7 +82,7 @@
   );
 
   const tagmaRows = $derived(
-    agoraSession.enrolledCards.map((c) => ({
+    archeionSession.enrolledCards.map((c) => ({
       href: tagmaChatPath(c.tagmaId),
       label: c.label ?? tagma_profile_unnamed(),
       indicator: tagmaNavIndicator(

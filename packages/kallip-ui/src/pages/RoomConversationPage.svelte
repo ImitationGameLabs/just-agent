@@ -28,7 +28,7 @@
   import SenderIdentity from "../components/rooms/SenderIdentity.svelte";
   import { roomConversationsStore } from "../lib/session/roomConversations.svelte.ts";
   import { roomsStore } from "../lib/session/rooms.svelte";
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import { unreadStore, roomKey } from "../lib/session/unread.svelte.ts";
   import { navigate } from "../lib/shell/port.ts";
   import { profileHref } from "../lib/room-message.ts";
@@ -93,7 +93,7 @@
   // the page mounted the interleaved cleanup writes drove the knownSeq
   // ping-pong into effect_update_depth_exceeded (operator live log 2026-09-01).
   $effect(() => {
-    if (!agoraSession.participantId) return;
+    if (!archeionSession.participantId) return;
     untrack(() => {
       void roomConversationsStore.open(roomId);
       // Viewing (plan q-M4): an explicitly opened room page clears its badge
@@ -347,9 +347,9 @@
               {#each conv.roster.members as m (m.id)}
                 <MemberRow
                   member={m}
-                  selfId={agoraSession.participantId}
+                  selfId={archeionSession.participantId}
                   isCreator={conv.roster.is_creator &&
-                    m.id === agoraSession.participantId}
+                    m.id === archeionSession.participantId}
                   online={conv.online.has(m.id)}
                 />
               {/each}

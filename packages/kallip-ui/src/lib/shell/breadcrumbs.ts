@@ -13,7 +13,7 @@
  * channel labels) stay reactive while a deep view loads. The matching engine
  * itself lives in trailMatch.ts, dependency-free and unit-tested there.
  */
-import { agoraSession } from "../session/agora.svelte.ts";
+import { archeionSession } from "../session/archeion.svelte.ts";
 import { channelsStore } from "../session/channels.svelte.ts";
 import { roomsStore } from "../session/rooms.svelte.ts";
 import { RelayConversation } from "../session/conversation.svelte.ts";
@@ -88,7 +88,7 @@ export const trailTable: TrailEntry[] = [
     { label: nav_tagmata(), href: "/tagmata" },
     {
       label:
-        agoraSession.enrolledCards.find((t) => t.tagmaId === id)?.label ??
+        archeionSession.enrolledCards.find((t) => t.tagmaId === id)?.label ??
         tagma_fallback_label({ id: id.slice(0, 8) }),
       current: true,
     },
@@ -98,7 +98,7 @@ export const trailTable: TrailEntry[] = [
     { label: nav_chats(), href: "/chats" },
     {
       label:
-        agoraSession.enrolledCards.find((t) => t.tagmaId === id)?.label ??
+        archeionSession.enrolledCards.find((t) => t.tagmaId === id)?.label ??
         tagma_fallback_label({ id: id.slice(0, 8) }),
       current: true,
     },

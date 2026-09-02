@@ -3,9 +3,9 @@
   // short code minted by an already-signed-in device, then create a LOCAL
   // passkey. On success this device is signed in. Mirrors RegisterPage's shape.
   import { onMount } from "svelte";
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import { navigate } from "../lib/shell/port.ts";
-  import type { PairResult } from "@kallipai/kallip-agora-client";
+  import type { PairResult } from "@kallipai/kallip-archeion-client";
   import Brand from "../components/Brand.svelte";
   import Banner from "../components/Banner.svelte";
   import FormError from "../components/FormError.svelte";
@@ -115,7 +115,7 @@
     result = null;
     error = null;
     try {
-      const r = await agoraSession.pairDevice(code.trim(), label.trim());
+      const r = await archeionSession.pairDevice(code.trim(), label.trim());
       result = r;
       if (r.ok) await navigate("/tagmata");
     } catch (e) {
@@ -128,10 +128,10 @@
 </script>
 
 <svelte:head><title>{pair_title()}</title></svelte:head>
-{#if agoraSession.authError}
-  <!-- Environment error (agora unreachable at boot); a submit's own failures
+{#if archeionSession.authError}
+  <!-- Environment error (archeion unreachable at boot); a submit's own failures
        render inline in the form below. -->
-  <Banner floating title={agoraSession.authError} />
+  <Banner floating title={archeionSession.authError} />
 {/if}
 
 <div class="flex items-center justify-center min-h-dvh p-4 bg-surface-100-900">

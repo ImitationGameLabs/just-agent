@@ -1,10 +1,10 @@
 // Ceremony drivers: run the begin -> `navigator.credentials.create|get` ->
-// finish flow against an [`AgoraClient`], returning a typed result rather than
+// finish flow against an [`ArcheionClient`], returning a typed result rather than
 // throwing raw. The page decides how to render each `reason` (a user cancel is
 // a soft hint, a 429 is a rate-limit message, etc.).
 
-import type { AgoraClient } from "./http.ts";
-import { AgoraApiError, type PasskeySummary } from "./types.ts";
+import type { ArcheionClient } from "./http.ts";
+import { ArcheionApiError, type PasskeySummary } from "./types.ts";
 import {
   loginCredentialToJson,
   optionsForCreate,
@@ -28,7 +28,7 @@ export interface RegisterArgs {
 
 /** Run the registration ceremony (username -> passkey -> finish). */
 export async function registerWithPasskey(
-  client: AgoraClient,
+  client: ArcheionClient,
   args: RegisterArgs,
 ): Promise<CeremonyResult> {
   // begin: reserve the ceremony (HTTP failure -> typed).
@@ -56,7 +56,7 @@ export async function registerWithPasskey(
   }
 
   // finish: bind the passkey (HTTP failure -> typed). A 409 is a username
-  // collision (the agora emits "username already taken"); route 409 through
+  // collision (the archeion emits "username already taken"); route 409 through
   // classifyRegisterConflict before falling back to the status-based mapper for
   // everything else.
   try {
@@ -66,7 +66,7 @@ export async function registerWithPasskey(
     });
     return { ok: true, userId: finish.user_id };
   } catch (e) {
-    if (e instanceof AgoraApiError && e.status === 409) {
+    if (e instanceof ArcheionApiError && e.status === 409) {
       return {
         ok: false,
         reason: classifyRegisterConflict(e.message),
@@ -79,7 +79,7 @@ export async function registerWithPasskey(
 
 /** Run the login ceremony (username -> passkey -> finish). */
 export async function loginWithPasskey(
-  client: AgoraClient,
+  client: ArcheionClient,
   username: string,
 ): Promise<CeremonyResult> {
   let ceremonyId: string;
@@ -126,14 +126,14 @@ export type AdminLoginResult =
  * errors still throw for the caller to render as unreachable.
  */
 export async function adminLoginWithKey(
-  client: AgoraClient,
+  client: ArcheionClient,
   key: string,
 ): Promise<AdminLoginResult> {
   try {
     const finish = await client.adminLogin(key);
     return { ok: true, userId: finish.user_id };
   } catch (e) {
-    if (e instanceof AgoraApiError) return { ok: false, status: e.status };
+    if (e instanceof ArcheionApiError) return { ok: false, status: e.status };
     throw e;
   }
 }
@@ -148,7 +148,7 @@ export async function adminLoginWithKey(
  * `loginWithPasskey`.
  */
 export async function loginWithDiscoverablePasskey(
-  client: AgoraClient,
+  client: ArcheionClient,
   signal?: AbortSignal,
 ): Promise<CeremonyResult> {
   let ceremonyId: string;
@@ -202,7 +202,7 @@ export async function loginWithDiscoverablePasskey(
  * ceremony completes on the callback page after the redirect.
  */
 export async function signInWithOAuth(
-  client: AgoraClient,
+  client: ArcheionClient,
   provider: string,
   opts: { returnPath?: string } = {},
 ): Promise<void> {
@@ -237,7 +237,7 @@ export type OAuthCompleteResult =
 
 /**
  * Complete an OAuth ceremony on the SPA callback page: post the provider's
- * `code`+`state` to the agora. A 204 (no body) is a successful link; a 200/201
+ * `code`+`state` to the archeion. A 204 (no body) is a successful link; a 200/201
  * body is a successful signin (cookie set via this same-site credentialed XHR),
  * carrying the user id + the sanitized return path to resume to; a 202 body
  * `kind:"needs-username"` holds the resolved claim -- the SPA collects a chosen
@@ -246,7 +246,7 @@ export type OAuthCompleteResult =
  * page shows a neutral message + a return-to-login link.
  */
 export async function completeOAuth(
-  client: AgoraClient,
+  client: ArcheionClient,
   provider: string,
   body: { state: string; code: string },
 ): Promise<OAuthCompleteResult> {
@@ -270,7 +270,7 @@ export async function completeOAuth(
       ...(finish.return_path ? { returnPath: finish.return_path } : {}),
     };
   } catch (e) {
-    if (e instanceof AgoraApiError) {
+    if (e instanceof ArcheionApiError) {
       if (e.status === 429) {
         return { ok: false, reason: "rate-limited", message: e.message };
       }
@@ -307,7 +307,7 @@ export type OAuthSignupResult =
  * operator kill-switch (`signup_enabled` off) -> `signup-disabled`.
  */
 export async function completeOAuthSignup(
-  client: AgoraClient,
+  client: ArcheionClient,
   body: { signupToken: string; username: string },
 ): Promise<OAuthSignupResult> {
   try {
@@ -321,7 +321,7 @@ export async function completeOAuthSignup(
       ...(finish.return_path ? { returnPath: finish.return_path } : {}),
     };
   } catch (e) {
-    if (e instanceof AgoraApiError) {
+    if (e instanceof ArcheionApiError) {
       if (e.status === 409 && e.message === "username already taken") {
         return { ok: false, reason: "duplicate-username", message: e.message };
       }
@@ -360,7 +360,7 @@ export type AddPasskeyResult =
 
 export interface AddPasskeyArgs {
   /** The signed-in user's username (login id); used for the passkey step-up
-   * re-login when the agora returns `reauth-required`. OMIT for an OAuth-only
+   * re-login when the archeion returns `reauth-required`. OMIT for an OAuth-only
    * account (no passkey to re-auth with): the driver then returns
    * `reauth-required` and the UI re-establishes the step-up via OAuth (which
    * navigates away and back). */
@@ -383,7 +383,7 @@ export interface AddPasskeyArgs {
  * re-auth so the user does not re-type it.
  */
 export async function addPasskey(
-  client: AgoraClient,
+  client: ArcheionClient,
   args: AddPasskeyArgs,
 ): Promise<AddPasskeyResult> {
   // begin (with one step-up retry on reauth-required).
@@ -392,7 +392,7 @@ export async function addPasskey(
   try {
     begun = await client.addPasskeyBegin(beginOpts);
   } catch (e) {
-    if (!(e instanceof AgoraApiError) || e.status !== 403) {
+    if (!(e instanceof ArcheionApiError) || e.status !== 403) {
       return mapAddBeginError(e);
     }
     // OAuth-only accounts (no username) cannot re-auth via a passkey: surface
@@ -439,10 +439,10 @@ export async function addPasskey(
     });
     return { ok: true, passkey };
   } catch (e) {
-    if (e instanceof AgoraApiError && e.status === 409) {
+    if (e instanceof ArcheionApiError && e.status === 409) {
       return { ok: false, reason: "duplicate-credential", message: e.message };
     }
-    if (e instanceof AgoraApiError && e.status === 429) {
+    if (e instanceof ArcheionApiError && e.status === 429) {
       return { ok: false, reason: "rate-limited", message: e.message };
     }
     return addUnknown(e);
@@ -462,7 +462,7 @@ function addUnknown(e: unknown): AddPasskeyResult {
 
 /** Map an add-passkey begin failure (other than the 403 handled by the caller). */
 function mapAddBeginError(e: unknown): AddPasskeyResult {
-  if (e instanceof AgoraApiError) {
+  if (e instanceof ArcheionApiError) {
     if (e.status === 403) {
       return { ok: false, reason: "reauth-required", message: e.message };
     }
@@ -506,7 +506,7 @@ export interface PairArgs {
  * ownership). On success this device is signed in with its own local passkey.
  */
 export async function pairDevice(
-  client: AgoraClient,
+  client: ArcheionClient,
   args: PairArgs,
 ): Promise<PairResult> {
   // begin: validate the code (the server emits a uniform 401 for
@@ -515,7 +515,7 @@ export async function pairDevice(
   try {
     begun = await client.pairBegin({ code: args.code });
   } catch (e) {
-    if (e instanceof AgoraApiError) {
+    if (e instanceof ArcheionApiError) {
       if (e.status === 401 || e.status === 403) {
         return { ok: false, reason: "invalid-code", message: e.message };
       }
@@ -546,15 +546,15 @@ export async function pairDevice(
     });
     return { ok: true, userId: finish.user_id };
   } catch (e) {
-    if (e instanceof AgoraApiError && e.status === 409) {
+    if (e instanceof ArcheionApiError && e.status === 409) {
       return { ok: false, reason: "duplicate-credential", message: e.message };
     }
-    if (e instanceof AgoraApiError && e.status === 429) {
+    if (e instanceof ArcheionApiError && e.status === 429) {
       return { ok: false, reason: "rate-limited", message: e.message };
     }
     // 401 "ceremony expired" (the user sat on the prompt past its TTL) collapses
     // to the same `invalid-code` UX as begin -- "code invalid/expired/used".
-    if (e instanceof AgoraApiError && e.status === 401) {
+    if (e instanceof ArcheionApiError && e.status === 401) {
       return { ok: false, reason: "invalid-code", message: e.message };
     }
     return pairUnknown(e);
@@ -575,7 +575,7 @@ function beginError(
   e: unknown,
   map: Readonly<Record<number, CeremonyReason>>,
 ): CeremonyResult {
-  if (e instanceof AgoraApiError) {
+  if (e instanceof ArcheionApiError) {
     const reason = map[e.status];
     if (reason) return { ok: false, reason, message: e.message };
   }
@@ -587,7 +587,7 @@ function finishError(
   e: unknown,
   map: Readonly<Record<number, CeremonyReason>>,
 ): CeremonyResult {
-  if (e instanceof AgoraApiError) {
+  if (e instanceof ArcheionApiError) {
     const reason = map[e.status];
     if (reason) return { ok: false, reason, message: e.message };
   }
@@ -627,14 +627,14 @@ type CeremonyReason =
 
 /**
  * Map a register-finish 409 message to a typed reason. Registration collects no
- * email, so the only collision is the username (the agora emits
+ * email, so the only collision is the username (the archeion emits
  * "username already taken"). Match the EXACT server string so a contract drift
  * surfaces as a visible "unknown" rather than a silent misclassification. The
- * stable long-term fix belongs at the agora layer (a stable `code` field on
+ * stable long-term fix belongs at the archeion layer (a stable `code` field on
  * `ApiError`, not prose) -- flagged as coupling debt to revisit there.
  *
  * Exported (but not re-exported from index.ts) so the contract string is
- * pinned by `auth_test.ts`; an agora copy change must update this switch.
+ * pinned by `auth_test.ts`; an archeion copy change must update this switch.
  */
 export function classifyRegisterConflict(message: string): CeremonyReason {
   switch (message) {

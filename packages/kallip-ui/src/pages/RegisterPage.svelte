@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import { isValidUsername } from "../lib/username.ts";
-  import type { CeremonyResult } from "@kallipai/kallip-agora-client";
+  import type { CeremonyResult } from "@kallipai/kallip-archeion-client";
   import Brand from "../components/Brand.svelte";
   import Banner from "../components/Banner.svelte";
   import FormError from "../components/FormError.svelte";
@@ -26,7 +26,7 @@
     auth_sign_in,
   } from "../paraglide/messages.js";
 
-  // display_name length cap enforced on the trimmed value by the agora
+  // display_name length cap enforced on the trimmed value by the archeion
   // (auth.rs:179). HTML maxlength counts untrimmed length, so this is a UX
   // hint only -- the server remains the authority.
   const DISPLAY_NAME_MAX = 64;
@@ -34,11 +34,11 @@
   let displayName = $state("");
   let submitting = $state(false);
   let result: CeremonyResult | null = $state(null);
-  // Network/transport error from a submit attempt (e.g. agora unreachable now).
+  // Network/transport error from a submit attempt (e.g. archeion unreachable now).
   let error = $state<string | null>(null);
 
   // The reverse guard (already signed in -> /tagmata) lives in <RootLayout>.
-  // If whoami failed at boot (agora unreachable), agoraSession.authError is
+  // If whoami failed at boot (archeion unreachable), archeionSession.authError is
   // set -- the floating banner carries that environment error, while a
   // submit's own transport failure renders inline in the form (FormError).
 
@@ -74,16 +74,16 @@
     error = null;
     try {
       const trimmedDisplay = displayName.trim();
-      const r = await agoraSession.register({
+      const r = await archeionSession.register({
         username: normalizedUsername,
-        // Omit when blank: the agora falls back to the username as the
+        // Omit when blank: the archeion falls back to the username as the
         // WebAuthn displayName.
         ...(trimmedDisplay ? { display_name: trimmedDisplay } : {}),
       });
       result = r;
       if (r.ok) await navigate("/tagmata");
     } catch (e) {
-      // Transport-level (agora unreachable); ceremony failures are non-ok results.
+      // Transport-level (archeion unreachable); ceremony failures are non-ok results.
       console.error(e);
       error = auth_couldnt_reach();
     } finally {
@@ -94,15 +94,15 @@
   // Fetch enabled OAuth providers for the "Continue with X" buttons. Registration
   // has no return path -- a brand-new account always lands on /tagmata.
   onMount(() => {
-    agoraSession.refreshOAuthProviders();
+    archeionSession.refreshOAuthProviders();
   });
 </script>
 
 <svelte:head><title>{register_title()}</title></svelte:head>
-{#if agoraSession.authError}
-  <!-- Environment error (agora unreachable at boot); a submit's own failures
+{#if archeionSession.authError}
+  <!-- Environment error (archeion unreachable at boot); a submit's own failures
        render inline in the form below. -->
-  <Banner floating title={agoraSession.authError} />
+  <Banner floating title={archeionSession.authError} />
 {/if}
 
 <div class="flex items-center justify-center min-h-dvh p-4 bg-surface-100-900">

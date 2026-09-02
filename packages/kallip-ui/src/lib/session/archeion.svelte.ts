@@ -1,4 +1,4 @@
-// AgoraSessionStore: reactive ($state) wrapper around the agora client holding
+// ArcheionSessionStore: reactive ($state) wrapper around the archeion client holding
 // the signed-in user and the owner's tagmata across their lifecycle (pending ->
 // enrolled -> revoked).
 //
@@ -13,7 +13,7 @@
 // The *Error fields carry qualitative, localized copy only -- a raw error's
 // message/stack is internal detail and goes to the console, never the UI.
 //
-// The agora base URL is injected via initAgora() at app bootstrap -- this
+// The archeion base URL is injected via initArcheion() at app bootstrap -- this
 // package does not read import.meta.env (which is only typed in a SvelteKit
 // app, not a library).
 
@@ -23,8 +23,8 @@ import {
   adminLoginWithKey,
   type AdminLoginResult,
   type AddPasskeyResult,
-  AgoraApiError,
-  AgoraClient,
+  ArcheionApiError,
+  ArcheionClient,
   type CeremonyResult,
   completeOAuth,
   completeOAuthSignup,
@@ -42,7 +42,7 @@ import {
   type ProviderRequest,
   registerWithPasskey,
   type TagmaView,
-} from "@kallipai/kallip-agora-client";
+} from "@kallipai/kallip-archeion-client";
 import type { PairingCodeView } from "../passkeys.svelte.ts";
 import { INSTANCES_TOKEN_KEY } from "../instances/client.ts";
 import { LescheClient } from "@kallipai/kallip-lesche-client";
@@ -64,45 +64,45 @@ import type {
 import { open, seal } from "../vault/crypto.ts";
 import { deviceVault } from "../vault/keyStore.ts";
 
-let agoraClient: AgoraClient | null = null;
-let agoraBaseUrl = "";
+let archeionClient: ArcheionClient | null = null;
+let archeionBaseUrl = "";
 
-/** Inject the agora base URL and construct the client. Called once at bootstrap. */
-export function initAgora(url: string): void {
-  agoraClient = new AgoraClient(url);
-  agoraBaseUrl = url;
+/** Inject the archeion base URL and construct the client. Called once at bootstrap. */
+export function initArcheion(url: string): void {
+  archeionClient = new ArcheionClient(url);
+  archeionBaseUrl = url;
 }
 
-function client(): AgoraClient {
-  if (!agoraClient) {
-    throw new Error("initAgora(url) must be called at app bootstrap");
+function client(): ArcheionClient {
+  if (!archeionClient) {
+    throw new Error("initArcheion(url) must be called at app bootstrap");
   }
-  return agoraClient;
+  return archeionClient;
 }
 
-/** The control-plane (agora) client; throws if initAgora has not been called.
+/** The control-plane (archeion) client; throws if initArcheion has not been called.
  * Exposed so peer stores (e.g. the channels store, which needs `getTagma` for
  * the key-exchange's pinned key) can reach the same singleton. */
-export function agoraClientOrFail(): AgoraClient {
+export function archeionClientOrFail(): ArcheionClient {
   return client();
 }
-/** The injected agora base URL; the one-click instance spawn relays it to
+/** The injected archeion base URL; the one-click instance spawn relays it to
  * the new tagma as bootstrap environment. Throws pre-init. */
-export function agoraBaseUrlOrFail(): string {
-  if (!agoraBaseUrl) {
-    throw new Error("initAgora(url) must be called at app bootstrap");
+export function archeionBaseUrlOrFail(): string {
+  if (!archeionBaseUrl) {
+    throw new Error("initArcheion(url) must be called at app bootstrap");
   }
-  return agoraBaseUrl;
+  return archeionBaseUrl;
 }
 
-// The lesche (data-plane) client lives on a separate origin from the agora; its
+// The lesche (data-plane) client lives on a separate origin from the archeion; its
 // URL is injected the same way (no import.meta.env in this library). The session
 // cookie is shared cross-subdomain, so the same credentialed fetch works.
 let lescheClient: LescheClient | null = null;
 let lescheBaseUrl = "";
 
 /** Inject the lesche base URL and construct the data-plane client. Called once
- * at bootstrap alongside initAgora. */
+ * at bootstrap alongside initArcheion. */
 export function initLesche(url: string): void {
   lescheClient = new LescheClient(url);
   lescheBaseUrl = url;
@@ -124,7 +124,7 @@ export function lescheClientOrFail(): LescheClient {
 let filesClient: FilesClient | null = null;
 
 /** Inject the files base URL and construct the transfer client. Called once
- * at bootstrap alongside initAgora/initLesche. */
+ * at bootstrap alongside initArcheion/initLesche. */
 export function initFiles(url: string): void {
   filesClient = new FilesClient(url);
 }
@@ -138,7 +138,7 @@ export function filesClientOrFail(): FilesClient {
   }
   return filesClient;
 }
-/** The injected lesche base URL; same relay purpose as the agora one. */
+/** The injected lesche base URL; same relay purpose as the archeion one. */
 export function lescheBaseUrlOrFail(): string {
   if (!lescheBaseUrl) {
     throw new Error("initLesche(url) must be called at app bootstrap");
@@ -246,10 +246,10 @@ export function clearOAuthSignup(): void {
     // Best-effort.
   }
 }
-class AgoraSessionStore {
+class ArcheionSessionStore {
   // Tri-state: undefined = unresolved, null = logged out, MeResponse = signed in.
   //
-  // Invariant: this field is only meaningful in online mode. The agora session
+  // Invariant: this field is only meaningful in online mode. The archeion session
   // cookie survives offline mode (we never logout() on a mode switch), so `user`
   // can remain a stale MeResponse while the app is in offline mode. Offline UI
   // must not branch on it -- the status snippet, nav, and gate are all
@@ -275,7 +275,7 @@ class AgoraSessionStore {
   copiedCodeId: string | null = $state(null);
 
   // The owner's tagmata (pending + enrolled; revoked are never listed), newest
-  // first. The agora owns code masking; this store holds no separate secret
+  // first. The archeion owns code masking; this store holds no separate secret
   // cache beyond the transient `mintedCode` (the once-shown plaintext).
   tagmata: TagmaView[] = $state([]);
   tagmataLoaded = $state(false);
@@ -323,12 +323,12 @@ class AgoraSessionStore {
   lastPair: PairResult | null = $state(null);
 
   // The plaintext of just-minted pending tagmas, shown once on the new card
-  // (transient -- dropped on the next refresh, when the agora's masked value
+  // (transient -- dropped on the next refresh, when the archeion's masked value
   // takes over). Keyed by tagma id.
   private mintedCode: Record<string, string> = {};
 
   /** Pending tagmata as card props. `code` is the just-minted full plaintext
-   *  while `mintedCode` holds it (the only chance to copy); otherwise the agora's
+   *  while `mintedCode` holds it (the only chance to copy); otherwise the archeion's
    *  masked `code_masked`. base64url bodies and the `sk-enroll-` prefix contain
    *  no `*`, so the masked form's `***` is an unambiguous "not the plaintext"
    *  signal. */
@@ -351,7 +351,7 @@ class AgoraSessionStore {
 
   /** Enrolled tagmata as card props WITHOUT presence. The registry owns
    * identity/label/createdAt only; live presence is overlaid by the view from
-   * realtime (the agora `/v1/tagmata` no longer carries liveness). */
+   * realtime (the archeion `/v1/tagmata` no longer carries liveness). */
   get enrolledCards(): Omit<TagmaCardProps, "presence">[] {
     return this.tagmata
       .filter((t) => t.state === "enrolled")
@@ -375,14 +375,14 @@ class AgoraSessionStore {
       this.authError = null;
     } catch (e) {
       if (
-        e instanceof AgoraApiError &&
+        e instanceof ArcheionApiError &&
         (e.status === 401 || e.status === 403)
       ) {
         this.user = null;
         this.participantId = null;
         this.authError = null;
       } else {
-        console.error("[agora] whoami failed:", e);
+        console.error("[archeion] whoami failed:", e);
         this.authError = auth_couldnt_reach();
       }
     }
@@ -456,14 +456,14 @@ class AgoraSessionStore {
   async refreshTagmata(): Promise<void> {
     this.tagmataError = null;
     try {
-      // The once-shown plaintext does not survive a refresh: the agora returns
+      // The once-shown plaintext does not survive a refresh: the archeion returns
       // only the masked form, and the just-minted cards drop their plaintext.
       this.mintedCode = {};
       this.tagmata = await client().listTagmata();
       this.tagmataLoaded = true;
     } catch (e) {
       // Leave the stale list + loaded flag so a refresh failure does not blank it.
-      console.error("[agora] listTagmata failed:", e);
+      console.error("[archeion] listTagmata failed:", e);
       this.tagmataError = rooms_couldnt_reach();
     }
   }
@@ -506,7 +506,7 @@ class AgoraSessionStore {
       this.tagmataError = null;
       return { id: minted.id, code: minted.code };
     } catch (e) {
-      console.error("[agora] mintTagma failed:", e);
+      console.error("[archeion] mintTagma failed:", e);
       this.tagmataError = rooms_couldnt_reach();
       return null;
     } finally {
@@ -516,7 +516,7 @@ class AgoraSessionStore {
 
   /**
    * Revoke a tagma (pending or enrolled); on success drop it from the list. For
-   * an enrolled tagma the agora cuts the tagma off on its next request. On
+   * an enrolled tagma the archeion cuts the tagma off on its next request. On
    * error it THROWS (the caller -- the card / dialog -- surfaces it inline),
    * mirroring `renameTagma`: a single failed revoke must not blank the whole
    * dashboard the way a `tagmataError` would.
@@ -539,7 +539,7 @@ class AgoraSessionStore {
       this.passkeysLoaded = true;
     } catch (e) {
       // Leave the stale list + loaded flag so a refresh failure does not blank it.
-      console.error("[agora] listPasskeys failed:", e);
+      console.error("[archeion] listPasskeys failed:", e);
       this.passkeysError = auth_couldnt_reach();
     }
   }
@@ -588,7 +588,7 @@ class AgoraSessionStore {
   }
 
   /** Revoke a passkey (hard-delete + audit); mirrors `revokeTagma` (locally
-   *  removes, THROWS on error). The agora refuses the last live passkey (409). */
+   *  removes, THROWS on error). The archeion refuses the last live passkey (409). */
   async revokePasskey(id: string): Promise<void> {
     await client().revokePasskey(id);
     this.passkeys = this.passkeys.filter((p) => p.id !== id);
@@ -621,7 +621,7 @@ class AgoraSessionStore {
       this.externalIdentities = [...(await client().listExternalIdentities())];
       this.externalIdentitiesLoaded = true;
     } catch (e) {
-      console.error("[agora] listExternalIdentities failed:", e);
+      console.error("[archeion] listExternalIdentities failed:", e);
       this.externalIdentitiesError = auth_couldnt_reach();
     }
   }
@@ -653,7 +653,7 @@ class AgoraSessionStore {
       this.providers = await client().listProviders();
       this.providersLoaded = true;
     } catch (e) {
-      console.error("[agora] listProviders failed:", e);
+      console.error("[archeion] listProviders failed:", e);
       this.providersError = auth_couldnt_reach();
     }
   }
@@ -689,7 +689,7 @@ class AgoraSessionStore {
     this.providers = this.providers.map((p) => (p.id === id ? updated : p));
   }
 
-  /** Delete a vault entry; THROWS on error. The agora returns the remaining
+  /** Delete a vault entry; THROWS on error. The archeion returns the remaining
    *  list, which becomes the new local state (mirrors removeEmail). */
   async deleteProvider(id: string): Promise<void> {
     this.providers = await client().deleteProvider(id);
@@ -778,7 +778,7 @@ class AgoraSessionStore {
   /** Start an OAuth LINK from settings (step-up gated server-side): navigate to
    *  the provider. The callback page completes the link and the user returns to
    *  settings. Stashes the callback context AFTER the begin succeeds so a failed
-   *  begin (e.g. step-up stale, agora unreachable) does not leave a stale
+   *  begin (e.g. step-up stale, archeion unreachable) does not leave a stale
    *  context in sessionStorage. */
   async linkProvider(provider: string): Promise<void> {
     const { authorize_url } = await client().oauthLinkBegin(provider, {});
@@ -796,7 +796,7 @@ class AgoraSessionStore {
   }
 
   /** Complete an OAuth ceremony on the callback page: exchange `code`+`state`.
-   *  On a signin the agora sets the session cookie, so `whoami()` is re-run
+   *  On a signin the archeion sets the session cookie, so `whoami()` is re-run
    *  before the caller navigates. Returns the typed result so the callback page
    *  can branch (signin resumes to `returnPath`/home; link returns to settings). */
   async completeOAuth(
@@ -881,8 +881,8 @@ class AgoraSessionStore {
     try {
       resp = await client().mintPairingCode();
     } catch (e) {
-      if (!(e instanceof AgoraApiError) || e.status !== 403) {
-        console.error("[agora] mintPairingCode failed:", e);
+      if (!(e instanceof ArcheionApiError) || e.status !== 403) {
+        console.error("[archeion] mintPairingCode failed:", e);
         this.pairingError = auth_couldnt_reach();
         return false;
       }
@@ -908,7 +908,7 @@ class AgoraSessionStore {
       try {
         resp = await client().mintPairingCode();
       } catch (e2) {
-        console.error("[agora] mintPairingCode (step-up retry) failed:", e2);
+        console.error("[archeion] mintPairingCode (step-up retry) failed:", e2);
         this.pairingError = auth_couldnt_reach();
         return false;
       }
@@ -973,4 +973,4 @@ class AgoraSessionStore {
   }
 }
 
-export const agoraSession = new AgoraSessionStore();
+export const archeionSession = new ArcheionSessionStore();

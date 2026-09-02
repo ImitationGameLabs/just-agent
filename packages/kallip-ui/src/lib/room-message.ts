@@ -145,8 +145,8 @@ export function profileHref(
  * two server-side invariants:
  *   - `short_prefix` is `chars().take(6)` of a server-derived participant id --
  *     no `@` (identity.rs).
- *   - an agora username is `[a-z0-9-]` only (single interior hyphens), never
- *     `@` (`crates/platform/kallip-agora/src/username.rs`).
+ *   - an archeion username is `[a-z0-9-]` only (single interior hyphens), never
+ *     `@` (`crates/platform/kallip-archeion/src/username.rs`).
  * A change to either is a flagged contract break, not a silent mis-parse here.
  * Malformed input (no `@`, or an agent handle without one) degrades to
  * `{ handle: raw }` so a bad frame never crashes render. Pure so it is unit-
@@ -167,7 +167,7 @@ export function parseParticipantHandle(
   // through. The degraded `"user <id-prefix>"` form (a registry miss at the
   // relay, or the optimistic local line) is passed through VERBATIM -- never
   // fabricated into an `@`, which would forge a username that cannot exist
-  // (the agora charset is `[a-z0-9-]`, no spaces).
+  // (the archeion charset is `[a-z0-9-]`, no spaces).
   return { handle: raw };
 }
 

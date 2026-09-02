@@ -20,8 +20,8 @@
   import { channelsStore } from "../lib/session/channels.svelte";
   import {
     filesClientOrFail,
-    agoraSession,
-  } from "../lib/session/agora.svelte.ts";
+    archeionSession,
+  } from "../lib/session/archeion.svelte.ts";
   import {
     allReady,
     isTooLarge,
@@ -99,7 +99,7 @@
     item: AttachmentItem,
     tagmaId: string,
   ): Promise<void> {
-    const username = agoraSession.user?.username;
+    const username = archeionSession.user?.username;
     if (!username) {
       setAttachment(item.id, { status: "failed" });
       return;

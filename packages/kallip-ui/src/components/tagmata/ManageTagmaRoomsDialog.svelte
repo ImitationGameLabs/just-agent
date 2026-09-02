@@ -7,7 +7,7 @@
   import { Dialog, Portal } from "@skeletonlabs/skeleton-svelte";
   import type { TagmaRoomView } from "@kallipai/kallip-lesche-client";
   import ConfirmDialog from "../ConfirmDialog.svelte";
-  import { lescheClientOrFail } from "../../lib/session/agora.svelte";
+  import { lescheClientOrFail } from "../../lib/session/archeion.svelte";
   import { roomsStore } from "../../lib/session/rooms.svelte";
   import {
     common_loading,

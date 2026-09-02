@@ -6,7 +6,10 @@
   // settings, a needs-username (unlinked identity) continues to the username
   // step. A failure renders inline + a return-to-login link.
   import { onMount } from "svelte";
-  import { agoraSession, stashOAuthSignup } from "../lib/session/agora.svelte";
+  import {
+    archeionSession,
+    stashOAuthSignup,
+  } from "../lib/session/archeion.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import Brand from "../components/Brand.svelte";
   import {
@@ -29,7 +32,7 @@
       return;
     }
     try {
-      const result = await agoraSession.completeOAuthFromCallback(
+      const result = await archeionSession.completeOAuthFromCallback(
         code,
         oauthState,
       );

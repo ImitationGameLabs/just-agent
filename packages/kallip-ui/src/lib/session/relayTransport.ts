@@ -28,7 +28,7 @@ export class RelayTransport implements Transport {
   }
 
   async *status(): AsyncGenerator<TagmaStatusSummary> {
-    // Empty by design: the relay's status rides the agora SSE (the
+    // Empty by design: the relay's status rides the archeion SSE (the
     // `tagma_status` LescheEvent), routed into the conversation via the realtime
     // status sink -- not this E2EE transport. The uniform Transport.status()
     // drain in Conversation.run() therefore contributes nothing here.
@@ -75,7 +75,7 @@ export class RelayTransport implements Transport {
   }
 
   /** Detach from the relay: close the E2EE channel and the signal queue. The
-   *  underlying agora SSE is owned by realtimeStore and is not torn down here
+   *  underlying archeion SSE is owned by realtimeStore and is not torn down here
    *  (it is shared across all conversations). */
   close(): void {
     this.channel.close();

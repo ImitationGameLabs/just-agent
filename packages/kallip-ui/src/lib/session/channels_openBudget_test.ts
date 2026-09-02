@@ -6,7 +6,7 @@
 //
 // Seams, and why they are safe: the module under test is rune-bearing, but
 // `deno test` runs it uncompiled, so a passthrough $state shim (the
-// agoraMint_test / relayWindow_test pattern) lets the store run with plain
+// archeionMint_test / relayWindow_test pattern) lets the store run with plain
 // fields. `openRelay` is overridden in a Harness subclass -- ensureOpen's
 // budget contract is with openRelay (attempt / fail / succeed), not with the
 // KEX stack under it, so stubbing there tests exactly the retry policy. The
@@ -20,7 +20,7 @@ declare global {
 
 (globalThis as Record<string, unknown>)["$state"] = (v: unknown) => v;
 
-type TagmaView = import("@kallipai/kallip-agora-client").TagmaView;
+type TagmaView = import("@kallipai/kallip-archeion-client").TagmaView;
 const { LescheApiError } = await import("@kallipai/kallip-lesche-client");
 const { assertEquals } = await import("@std/assert");
 const { ChannelsStore } = await import("./channels.svelte.ts");

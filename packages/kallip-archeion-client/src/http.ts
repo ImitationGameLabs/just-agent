@@ -1,14 +1,14 @@
-// Browser client for the agora control-plane relay. The agora (default :7100)
+// Browser client for the archeion control-plane relay. The archeion (default :7100)
 // is the control plane: passkey ceremonies, `/me`, and the tagma lifecycle. It
 // shares a session cookie cross-subdomain with the lesche (data plane), so every
 // fetch carries `credentials: "include"` (the session cookie is the auth) and
 // every non-GET carries the CSRF marker (`X-Requested-With: kallip`), which the
-// agora's `csrf_guard` requires on cookie-bearing mutating requests. Non-2xx
-// responses become `AgoraApiError` (`{ status, message }`). The data-plane
+// archeion's `csrf_guard` requires on cookie-bearing mutating requests. Non-2xx
+// responses become `ArcheionApiError` (`{ status, message }`). The data-plane
 // client lives in `@kallipai/kallip-lesche-client`.
 
 import { readApiError } from "@kallipai/kallip-common";
-import { AgoraApiError } from "./types.ts";
+import { ArcheionApiError } from "./types.ts";
 import type {
   AddEmailRequest,
   AddPasskeyFinishRequest,
@@ -42,12 +42,12 @@ import type {
   VerifyEmailRequest,
 } from "./types.ts";
 
-/** CSRF marker the agora's `csrf_guard` checks (see `session.rs:21-24`). */
+/** CSRF marker the archeion's `csrf_guard` checks (see `session.rs:21-24`). */
 export const CSRF_HEADER = "X-Requested-With";
 export const CSRF_HEADER_VALUE = "kallip";
 
-/** Request bodies for the ceremony begins. Mirrors the agora DTOs in
- * `crates/platform/kallip-agora/src/routes/auth.rs` (`RegisterBeginRequest`,
+/** Request bodies for the ceremony begins. Mirrors the archeion DTOs in
+ * `crates/platform/kallip-archeion/src/routes/auth.rs` (`RegisterBeginRequest`,
  * `LoginBeginRequest`): the username is the login id (login resolves by
  * username); email is no longer collected at registration -- it is an optional
  * contact channel the user links later in settings. */
@@ -60,18 +60,18 @@ export interface LoginBeginRequest {
 }
 
 /**
- * Shared base for the agora browser client: a base URL + the JSON/CSRF fetch
+ * Shared base for the archeion browser client: a base URL + the JSON/CSRF fetch
  * helper. The session cookie (`credentials: "include"`) is the auth; the
  * `X-Requested-With` CSRF marker is required on cookie-bearing mutating
- * requests. Non-2xx responses become `AgoraApiError` (`{ status, message }`).
+ * requests. Non-2xx responses become `ArcheionApiError` (`{ status, message }`).
  *
- * Internal to this package: the agora surface has a single client, so the base
+ * Internal to this package: the archeion surface has a single client, so the base
  * is not re-exported.
  */
 abstract class BaseClient {
   constructor(protected readonly baseUrl: string) {}
 
-  /** JSON fetch with the CSRF marker on non-GETs; `AgoraApiError` on non-2xx.
+  /** JSON fetch with the CSRF marker on non-GETs; `ArcheionApiError` on non-2xx.
    * `bearer` adds an Authorization header for the token-authenticated routes
    * (the admin-login exchange). */
   protected async json<T>(
@@ -95,7 +95,7 @@ abstract class BaseClient {
       credentials: "include",
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
-    if (!resp.ok) throw await agoraError(resp);
+    if (!resp.ok) throw await archeionError(resp);
     // 204 No Content (revoke) -- nothing to parse.
     if (resp.status === 204 || resp.headers.get("content-length") === "0") {
       return undefined as T;
@@ -105,12 +105,12 @@ abstract class BaseClient {
 }
 
 /**
- * Control-plane client (the agora service, default :7100): passkey ceremonies,
+ * Control-plane client (the archeion service, default :7100): passkey ceremonies,
  * `/me`, and the tagma lifecycle. Also exposes `getTagma` — the pinned device
  * key is TOFU from the control plane, even though the key exchange itself runs
  * on the lesche (see `@kallipai/kallip-lesche-client`).
  */
-export class AgoraClient extends BaseClient {
+export class ArcheionClient extends BaseClient {
   // -- auth ceremonies ------------------------------------------------------
 
   registerBegin(body: RegisterBeginRequest): Promise<RegisterBeginResponse> {
@@ -401,7 +401,7 @@ export class AgoraClient extends BaseClient {
   }
 
   /** `DELETE /v1/tagmata/{id}` — revoke (pending or enrolled). For an enrolled
-   * tagma the agora cuts the tagma off on its next request. Returns on 204. */
+   * tagma the archeion cuts the tagma off on its next request. Returns on 204. */
   revokeTagma(id: string): Promise<void> {
     return this.json(
       `/v1/tagmata/${encodeURIComponent(id)}`,
@@ -430,10 +430,10 @@ export class AgoraClient extends BaseClient {
   }
 }
 
-/** Build an `AgoraApiError` from a non-2xx response. Envelope parsing is
- * shared (`readApiError`) so the agora client cannot drift from the
+/** Build an `ArcheionApiError` from a non-2xx response. Envelope parsing is
+ * shared (`readApiError`) so the archeion client cannot drift from the
  * `{"error":{"message":...}}` shape the server emits. */
-async function agoraError(resp: Response): Promise<AgoraApiError> {
+async function archeionError(resp: Response): Promise<ArcheionApiError> {
   const { status, message } = await readApiError(resp);
-  return new AgoraApiError(status, message);
+  return new ArcheionApiError(status, message);
 }

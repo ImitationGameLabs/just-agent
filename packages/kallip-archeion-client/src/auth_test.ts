@@ -7,12 +7,12 @@ import {
   completeOAuthSignup,
   loginWithDiscoverablePasskey,
 } from "./auth.ts";
-import { AgoraApiError } from "./types.ts";
-import type { AgoraClient } from "./http.ts";
+import { ArcheionApiError } from "./types.ts";
+import type { ArcheionClient } from "./http.ts";
 
 // `classifyRegisterConflict` is the only code in this package whose
-// correctness depends on EXACT string matching against the agora's 409 prose
-// (crates/platform/kallip-agora/src/routes/auth.rs: "username already taken").
+// correctness depends on EXACT string matching against the archeion's 409 prose
+// (crates/platform/kallip-archeion/src/routes/auth.rs: "username already taken").
 // Registration collects no email, so username is the only collision. These
 // tests pin that contract: a server-side copy change must update the switch or
 // fail here.
@@ -28,14 +28,14 @@ Deno.test(
 );
 
 Deno.test("classifyRegisterConflict falls back to unknown on drift", () => {
-  // If the agora rephrases the message, surface it as "unknown" (generic
+  // If the archeion rephrases the message, surface it as "unknown" (generic
   // failure copy) rather than silently misclassifying -- this is the drift
   // signal.
   assertEquals(classifyRegisterConflict("something else entirely"), "unknown");
 });
 
 // --- driver coverage ------------------------------------------------------
-// The drivers below take an `AgoraClient` and call `navigator.credentials`. The
+// The drivers below take an `ArcheionClient` and call `navigator.credentials`. The
 // client is mocked (only the methods each driver exercises); `navigator.
 // credentials.get` is stubbed via Object.defineProperty and restored after each
 // test. These pin the load-bearing branches the page relies on: the
@@ -43,10 +43,11 @@ Deno.test("classifyRegisterConflict falls back to unknown on drift", () => {
 // agnostic add-passkey step-up (OAuth-only -> reauth-required; discoverable opt
 // threading).
 
-/** A mock AgoraClient carrying only the methods a given driver exercises. Cast
+/** A mock ArcheionClient carrying only the methods a given driver exercises. Cast
  *  through `unknown` so each test implements just what it needs. */
-type MockClient = Partial<AgoraClient>;
-const asClient = (m: MockClient): AgoraClient => m as unknown as AgoraClient;
+type MockClient = Partial<ArcheionClient>;
+const asClient = (m: MockClient): ArcheionClient =>
+  m as unknown as ArcheionClient;
 
 /** Temporarily replace `navigator.credentials.get` with `impl`, returning a
  *  restore function. Captures every options object it is called with. Deno's
@@ -127,7 +128,7 @@ Deno.test(
     const client = asClient({
       addPasskeyBegin: () => {
         beginCalls += 1;
-        return Promise.reject(new AgoraApiError(403, "reauth-required"));
+        return Promise.reject(new ArcheionApiError(403, "reauth-required"));
       },
     });
     const result = await addPasskey(client, { label: "Phone" });
@@ -146,7 +147,7 @@ Deno.test("addPasskey threads the discoverable opt into begin", async () => {
   const client = asClient({
     addPasskeyBegin: (opts?: { discoverable?: boolean }) => {
       beginOptsSeen.push(opts);
-      return Promise.reject(new AgoraApiError(403, "reauth-required"));
+      return Promise.reject(new ArcheionApiError(403, "reauth-required"));
     },
   });
   await addPasskey(client, {
@@ -160,7 +161,7 @@ Deno.test("addPasskey threads the discoverable opt into begin", async () => {
 // --- OAuth finish / signup-complete drivers -------------------------------
 // `completeOAuth` must branch on the 202 needs-username body (an unlinked
 // identity -> the SPA collects a username); `completeOAuthSignup` must map the
-// agora's 409 "username already taken" to `duplicate-username` (the same prose
+// archeion's 409 "username already taken" to `duplicate-username` (the same prose
 // the passkey register flow pins above). Both pin the wire contract.
 
 Deno.test("completeOAuth maps a 202 needs-username body", async () => {
@@ -204,7 +205,7 @@ Deno.test("completeOAuth maps a 200 signin body", async () => {
 Deno.test("completeOAuthSignup maps a 409 duplicate username", async () => {
   const client = asClient({
     oauthSignupComplete: () =>
-      Promise.reject(new AgoraApiError(409, "username already taken")),
+      Promise.reject(new ArcheionApiError(409, "username already taken")),
   });
   const result = await completeOAuthSignup(client, {
     signupToken: "sk-oauthsu-abc",
@@ -221,7 +222,7 @@ Deno.test("completeOAuthSignup maps a 400 invalid username", async () => {
   const client = asClient({
     oauthSignupComplete: () =>
       Promise.reject(
-        new AgoraApiError(400, "username must be at least 3 chars"),
+        new ArcheionApiError(400, "username must be at least 3 chars"),
       ),
   });
   const result = await completeOAuthSignup(client, {
@@ -240,7 +241,7 @@ Deno.test("completeOAuthSignup maps a 403 signup-disabled", async () => {
   // distinct reason so the page shows specific copy rather than "unknown".
   const client = asClient({
     oauthSignupComplete: () =>
-      Promise.reject(new AgoraApiError(403, "signup disabled")),
+      Promise.reject(new ArcheionApiError(403, "signup disabled")),
   });
   const result = await completeOAuthSignup(client, {
     signupToken: "sk-oauthsu-abc",
@@ -266,14 +267,14 @@ Deno.test("adminLoginWithKey maps a 200 body to ok", async () => {
 Deno.test("adminLoginWithKey maps 401/404 to typed statuses", async () => {
   const wrongKey = asClient({
     adminLogin: () =>
-      Promise.reject(new AgoraApiError(401, "admin token required")),
+      Promise.reject(new ArcheionApiError(401, "admin token required")),
   });
   assertEquals(await adminLoginWithKey(wrongKey, "sk-admin-bad"), {
     ok: false,
     status: 401,
   });
   const unmounted = asClient({
-    adminLogin: () => Promise.reject(new AgoraApiError(404, "not found")),
+    adminLogin: () => Promise.reject(new ArcheionApiError(404, "not found")),
   });
   assertEquals(await adminLoginWithKey(unmounted, "sk-admin-x"), {
     ok: false,

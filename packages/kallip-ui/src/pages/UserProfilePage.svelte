@@ -5,11 +5,11 @@
   // by clicking a human sender's header in a room. A protected app-shell route:
   // a logged-out deep link redirects to /login?next=, then returns here.
   import { ChevronLeft } from "@lucide/svelte";
-  import { agoraClientOrFail } from "../lib/session/agora.svelte";
+  import { archeionClientOrFail } from "../lib/session/archeion.svelte";
   import { navigate } from "../lib/shell/port.ts";
   import { formatDateTime } from "../lib/tagmata.svelte.ts";
   import { TONAL_ICON_SURF } from "../lib/classes.ts";
-  import type { PublicUserProfile } from "@kallipai/kallip-agora-client";
+  import type { PublicUserProfile } from "@kallipai/kallip-archeion-client";
   import {
     common_loading,
     auth_couldnt_reach,
@@ -37,7 +37,7 @@
     // (prior) response so it cannot overwrite the current view (mirrors
     // RoomSettingsPage.svelte's `stale` flag).
     let stale = false;
-    void agoraClientOrFail()
+    void archeionClientOrFail()
       .getUserProfile(username)
       .then((p) => {
         if (!stale) {
@@ -47,7 +47,7 @@
       })
       .catch((e) => {
         if (!stale) {
-          // Transport-level (agora unreachable); qualitative copy only.
+          // Transport-level (archeion unreachable); qualitative copy only.
           console.error("[user profile] fetch failed:", e);
           error = auth_couldnt_reach();
           loading = false;

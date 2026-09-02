@@ -13,7 +13,7 @@
     "clean": "rm -rf node_modules/.vite .svelte-kit"
   },
   "dependencies": {
-    "@kallipai/kallip-agora-client": "workspace:*",
+    "@kallipai/kallip-archeion-client": "workspace:*",
     "@kallipai/kallip-lesche-client": "workspace:*",
     "@kallipai/kallip-client": "workspace:*",
     "@kallipai/kallip-common": "workspace:*",

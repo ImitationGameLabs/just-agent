@@ -6,7 +6,7 @@
   // the divider border shade). `returnPath` is the sanitized path to resume to
   // after a signin; register has none (a brand-new account always lands on
   // /tagmata).
-  import { agoraSession } from "../lib/session/agora.svelte";
+  import { archeionSession } from "../lib/session/archeion.svelte";
   import {
     auth_couldnt_reach,
     auth_continue_with,
@@ -14,7 +14,7 @@
   } from "../paraglide/messages.js";
   let { returnPath = undefined }: { returnPath?: string } = $props();
 
-  // A begin failure (agora unreachable, 429) would otherwise reject unhandled:
+  // A begin failure (archeion unreachable, 429) would otherwise reject unhandled:
   // the success path navigates away (page unloads), so only the error path
   // needs handling. Mirrors LinkedAccounts' link-error discipline.
   let error = $state<string | null>(null);
@@ -22,16 +22,16 @@
   // (plain http on a LAN host) hides that entry, GitHub stays.
   const providers = $derived(
     window.isSecureContext
-      ? agoraSession.oauthProviders
-      : agoraSession.oauthProviders.filter((p) => p.id !== "google"),
+      ? archeionSession.oauthProviders
+      : archeionSession.oauthProviders.filter((p) => p.id !== "google"),
   );
 
   async function begin(provider: string): Promise<void> {
     error = null;
     try {
-      await agoraSession.signInWithOAuth(provider, returnPath);
+      await archeionSession.signInWithOAuth(provider, returnPath);
     } catch (e) {
-      // Transport-level (agora unreachable); the redirect never happens on
+      // Transport-level (archeion unreachable); the redirect never happens on
       // failure, so the raw error is console-only and the buttons stay usable.
       console.error("[oauth] begin failed:", e);
       error = auth_couldnt_reach();
