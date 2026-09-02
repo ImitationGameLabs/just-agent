@@ -1,6 +1,6 @@
 /**
- * Single source for the app's tagma-centric URLs (the path-builder from the
- * tagma-centric online IA plan). Every href/redirect must come from here, so
+ * Single source for the app's URLs (the path-builder from the online IA
+ * plan, tagma-centric at first; global pages like /files live here too).
  * a future route rename is a one-line change instead of a repo-wide string
  * hunt. Route params are interpolated verbatim; callers pass real tagma ids.
  */
@@ -35,4 +35,9 @@ export function tagmaDetailsSectionPath(
 /** An agent detail page: `/tagma/<uuid>/details/agents/<agentId>`. */
 export function tagmaAgentPath(tagmaId: string, agentId: string): string {
   return `${tagmaDetailsSectionPath(tagmaId, "agents")}/${agentId}`;
+}
+
+/** The global files page: `/files` (the user-scope file manager). */
+export function filesPath(): string {
+  return "/files";
 }

@@ -13,6 +13,7 @@ const icons = {
   rooms: () => {},
   settings: () => {},
   home: () => {},
+  files: () => {},
 } as unknown as NavIcons;
 
 // The section shape stripped to its structural parts (title + manage href +
@@ -48,7 +49,7 @@ Deno.test("navFor online -> Chats hub section + Manage cell (no gears)", () => {
       manage: null,
       hub: null,
       smallScreenHidden: false,
-      items: ["/tagmata"],
+      items: ["/tagmata", "/files"],
     },
   ]);
 });
@@ -77,7 +78,7 @@ Deno.test(
         manage: null,
         hub: null,
         smallScreenHidden: false,
-        items: ["/tagmata"],
+        items: ["/tagmata", "/files"],
       },
     ]);
   },
@@ -97,7 +98,8 @@ Deno.test("navFor online lists every enrolled tagma in the hub section", () => {
   // route (always navigable -- the channel opens on demand there). An entry
   // appears regardless of whether its channel is open: live / down / pending
   // are all present, proving visibility is not gated on an open channel.
-  // The trailing cell is the combined manage page, labeled by the action.
+  // The trailing cells are the combined manage page (labeled by the
+  // action) and the files page.
   assertEquals(
     sections.map((s) => ({
       title: s.title,
@@ -150,6 +152,12 @@ Deno.test("navFor online lists every enrolled tagma in the hub section", () => {
             icon: true,
             indicator: null,
           },
+          {
+            href: "/files",
+            label: "Files",
+            icon: true,
+            indicator: null,
+          },
         ],
       },
     ],
@@ -178,7 +186,7 @@ Deno.test(
         manage: null,
         hub: null,
         smallScreenHidden: false,
-        items: ["/tagmata"],
+        items: ["/tagmata", "/files"],
       },
     ]);
   },

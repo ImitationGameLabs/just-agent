@@ -35,6 +35,7 @@ const FILES = [
   "manage_schedules",
   "manage_instances",
   "panorama",
+  "files",
 ] as const;
 
 type Loader = () => Promise<Record<string, string>>;
@@ -128,6 +129,10 @@ const loaders: Record<string, Loader> = {
     import("../i18n/project.inlang/messages/en/panorama.json", {
       with: { type: "json" },
     }).then((m) => m.default as Record<string, string>),
+  "en|files": () =>
+    import("../i18n/project.inlang/messages/en/files.json", {
+      with: { type: "json" },
+    }).then((m) => m.default as Record<string, string>),
   "zh|common": () =>
     import("../i18n/project.inlang/messages/zh/common.json", {
       with: { type: "json" },
@@ -214,6 +219,10 @@ const loaders: Record<string, Loader> = {
     }).then((m) => m.default as Record<string, string>),
   "zh|panorama": () =>
     import("../i18n/project.inlang/messages/zh/panorama.json", {
+      with: { type: "json" },
+    }).then((m) => m.default as Record<string, string>),
+  "zh|files": () =>
+    import("../i18n/project.inlang/messages/zh/files.json", {
       with: { type: "json" },
     }).then((m) => m.default as Record<string, string>),
 };
@@ -325,6 +334,7 @@ const PREFIXES = new Set([
   "manage_schedules",
   "manage_instances",
   "panorama",
+  "files",
 ]);
 const BARE_MANAGE_KEYS = new Set(["manage_opening", "manage_backend_failed"]);
 
@@ -390,6 +400,7 @@ const PREFIX_FILES: Record<string, string> = {
   manage_schedules: "manage_schedules",
   manage_instances: "manage_instances",
   panorama: "panorama",
+  files: "files",
 };
 
 Deno.test(
@@ -450,6 +461,8 @@ Deno.test("catalog: _one/_other appear only as complete plural pairs", () => {
 // collide far more often and those collisions are accepted as
 // translation coincidence, not guarded.
 const SYNONYMS: string[][] = [
+  ["files_heading", "nav_files"],
+  ["files_download_aria", "chat_file_download_aria"],
   ["account_menu", "settings_account"],
   ["settings_heading", "rooms_menu_settings"],
   ["connection_connecting", "shell_connecting"],

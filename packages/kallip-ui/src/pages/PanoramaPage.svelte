@@ -1,9 +1,9 @@
 <script lang="ts">
   // The panorama: the product home ('/'), desktop-only. A 12-column bento --
   // the sessions region (8 cols) and the tagmata column (4 cols) project the
-  // same stores the chats hub reads; the second bento row's slots (files,
-  // extension) are reserved in the template and render nothing until their
-  // batch lands (no placeholder cards, no copy). Small screens never see
+  // same stores the chats hub reads; the second bento row carries the files
+  // entry card (design D3); the extension slot stays reserved and renders
+  // nothing (no placeholder card, no copy). Small screens never see
   // this page: the root route's load redirects to /chats before mount, and
   // the listener below covers a desktop->mobile crossing afterwards. Pure
   // store projection: the page owns no fetches of its own.
@@ -16,7 +16,7 @@
   import { realtimeStore } from "../lib/session/realtime.svelte.ts";
   import { roomsStore } from "../lib/session/rooms.svelte";
   import { directSessionsStore } from "../lib/session/directSessions.svelte";
-  import { tagmaChatPath } from "../lib/shell/routes.ts";
+  import { filesPath, tagmaChatPath } from "../lib/shell/routes.ts";
   import { tagmaNavIndicator } from "../lib/shell/links.ts";
   import {
     unreadStore,
@@ -27,6 +27,9 @@
     nav_chats,
     nav_chats_empty,
     nav_home,
+    files_heading,
+    files_panorama_blurb,
+    files_panorama_open,
     nav_manage,
     nav_tagmata,
     panorama_view_all,
@@ -95,8 +98,8 @@
 
 <div class="p-6 max-w-6xl mx-auto grid grid-cols-12 gap-6 items-start">
   <!-- Bento template: sessions 8 + tagmata 4 fill the first row; the second
-       row's slots (files 8, extension 4) are reserved -- they render nothing
-       until their batches land, so the column budget stays honest. -->
+       row's files slot (8) carries the D3 entry card; extension (4) stays
+       reserved, so the column budget stays honest. -->
   <section class="col-span-8 space-y-3" aria-label={nav_chats()}>
     <div class="flex items-baseline justify-between gap-4">
       <h2 class="text-sm font-semibold uppercase tracking-wide opacity-60">
@@ -140,6 +143,20 @@
     {/if}
     <div class="card preset-tonal-surface">
       <HubRow href="/tagmata" Icon={Cpu} label={nav_manage()} />
+    </div>
+  </section>
+  <!-- The files region (design D3): a static entry card -- title, one
+       line of copy, one link. Zero data dependencies by design (the
+       decoupling the scope ruling asked for). -->
+  <section class="col-span-8 space-y-3" aria-label={files_heading()}>
+    <h2 class="text-sm font-semibold uppercase tracking-wide opacity-60">
+      {files_heading()}
+    </h2>
+    <div class="card preset-tonal-surface p-6 flex flex-col gap-3">
+      <p class="text-sm opacity-80">{files_panorama_blurb()}</p>
+      <a href={filesPath()} class="btn preset-filled-primary-500 self-start">
+        {files_panorama_open()}
+      </a>
     </div>
   </section>
 </div>

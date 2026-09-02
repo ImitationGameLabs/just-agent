@@ -181,7 +181,7 @@ const cases: {
     sheetSections: [],
   },
   {
-    name: "online real shape (hub section + plain manage cell) -> 2 cells, no More",
+    name: "online real shape (hub + manage + files cells) -> 3 cells, no More",
     links: [
       {
         title: "Chats",
@@ -192,10 +192,11 @@ const cases: {
         title: "Tagmata",
         items: [
           { href: "/tagmata", label: "Manage", icon: (() => {}) as never },
+          { href: "/files", label: "Files", icon: (() => {}) as never },
         ],
       },
     ],
-    visible: ["/chats", "/tagmata"],
+    visible: ["/chats", "/tagmata", "/files"],
     overflow: [],
     hasMore: false,
     sheetSections: [],

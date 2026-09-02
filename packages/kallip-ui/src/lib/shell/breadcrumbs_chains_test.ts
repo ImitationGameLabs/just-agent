@@ -18,12 +18,19 @@ const { assertEquals } = await import("@std/assert");
 const { matchTrail, trailTable } = await import("./breadcrumbs.ts");
 const {
   nav_chats,
+  nav_files,
   nav_home,
   nav_rooms,
   room_label_fallback,
   settings_heading,
 } = await import("../../paraglide/messages.js");
 
+Deno.test("the files page keeps its home-first chain", () => {
+  assertEquals(matchTrail("/files"), [
+    { label: nav_home(), href: "/" },
+    { label: nav_files(), current: true },
+  ]);
+});
 Deno.test("the rooms list keeps its home-first chain", () => {
   assertEquals(matchTrail("/rooms"), [
     { label: nav_home(), href: "/" },

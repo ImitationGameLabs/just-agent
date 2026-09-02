@@ -4,7 +4,7 @@
 // out of the trail with no special case; the tagma details sections
 // stay on the bottom bar (null -- the manage cell lights via RootLayout
 // isActive); the agent detail and the tagma hub keep their trail
-// drill; bar-cell destinations (/account, /tagmata) never grow a row.
+// drill; bar-cell destinations (/account, /tagmata, /files) never grow
 //
 // The module under test transitively imports rune-bearing stores and
 // the compiled paraglide messages, so the $state / $derived passthrough
@@ -60,6 +60,7 @@ Deno.test("the tagma hub keeps its registry drill", () => {
 Deno.test("bar-cell destinations never grow a back row", () => {
   assertEquals(mobileBack("/account"), null);
   assertEquals(mobileBack("/tagmata"), null);
+  assertEquals(mobileBack("/files"), null);
 });
 
 Deno.test("home-first chains back domain-less pages to Home", () => {

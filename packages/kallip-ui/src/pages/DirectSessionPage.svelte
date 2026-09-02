@@ -15,6 +15,7 @@
   import ConversationView from "../components/ConversationView.svelte";
   import { filesClientOrFail } from "../lib/session/agora.svelte.ts";
   import { directSessionsStore } from "../lib/session/directSessions.svelte";
+  import { saveBlob } from "../lib/saveBlob.ts";
   import {
     chat_direct_empty,
     chat_direct_title,
@@ -122,12 +123,7 @@
   // referenced record and hand the bytes to the browser as a named download.
   async function downloadAttachment(attachment: FileAttachment): Promise<void> {
     const bytes = await filesClientOrFail().get(attachment.record_id);
-    const url = URL.createObjectURL(new Blob([bytes]));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = attachment.name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    saveBlob(new Blob([bytes]), attachment.name);
   }
 </script>
 

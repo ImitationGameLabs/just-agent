@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import {
+  filesPath,
   tagmaAgentPath,
   tagmaChatPath,
   tagmaDetailsPath,
@@ -104,6 +105,38 @@ Deno.test(
       assert(
         src.includes('"overview"'),
         "hub must land on the overview section",
+      );
+    }
+  },
+);
+
+Deno.test("filesPath builds the global files route", () => {
+  assertEquals(filesPath(), "/files");
+});
+
+const FILES_SHELLS = [
+  new URL(
+    "../../../../kallip-app/src/routes/files/+page.svelte",
+    import.meta.url,
+  ),
+  new URL(
+    "../../../../kallip-web/src/routes/files/+page.svelte",
+    import.meta.url,
+  ),
+];
+
+Deno.test(
+  "the /files shells stay thin and render the shared FilesPage",
+  // Same rot-risk one tree over: a shell could re-derive the page inline
+  // or drift between hosts. Scoped read grant, same rationale.
+  { permissions: { read: FILES_SHELLS } },
+  () => {
+    for (const shell of FILES_SHELLS) {
+      const src = new TextDecoder().decode(Deno.readFileSync(shell));
+      assert(src.includes("FilesPage"), "shell must render FilesPage");
+      assert(
+        src.includes("@kallipai/kallip-ui"),
+        "shell must import the shared package, not a local copy",
       );
     }
   },

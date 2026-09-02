@@ -7,8 +7,9 @@
 //     told apart by their leading mark (status dot vs rooms icon). The section
 //     declares hub -> /chats, so the bottom bar folds it into one cell and the
 //     /chats hub page carries the grouped view as pure conversation rows. A
-//     second single-item "Manage" section is the combined manage page
-//     (/tagmata: Tagmata registry + Rooms management), reached directly.
+//     second two-item "Manage" section carries the combined manage page
+//     (/tagmata: Tagmata registry + Rooms management) and the files page
+//     (/files), both reached directly.
 //   - offline -> Chat (the single local conversation at /local/chat), no header.
 // Settings is intentionally NOT a nav link: it lives in the AccountMenu
 // dropdown (footer) alongside the other account/system actions.
@@ -17,12 +18,13 @@
 import type { Component } from "svelte";
 import type { AppMode } from "../config/mode.ts";
 import type { NavIndicator, NavItem } from "../shell.ts";
-import { tagmaChatPath } from "./routes.ts";
+import { filesPath, tagmaChatPath } from "./routes.ts";
 import type { TagmaChannelState } from "../session/channels.svelte.ts";
 import {
   nav_agents,
   nav_budget,
   nav_chat,
+  nav_files,
   nav_home,
   nav_manage,
   nav_overview,
@@ -70,6 +72,8 @@ export interface NavIcons {
   manageAgents: Component;
   manageProfiles: Component;
   manageSchedules: Component;
+  /** The files page entry (online Manage section, second item). */
+  files: Component;
 }
 
 /** One enrolled tagma as a sidebar chat entry. `indicator` is the channel
@@ -238,11 +242,14 @@ export function navFor(args: {
       ],
     },
     {
-      // The combined manage page as a direct bar cell (Tagmata registry +
-      // Rooms management sections); the label names the action, not the
-      // registry.
+      // The combined manage page and the user-scope files page as direct
+      // bar cells (Tagmata registry + Rooms management sections, then
+      // /files); the labels name the action, not the registry.
       title: nav_tagmata(),
-      items: [{ href: "/tagmata", label: nav_manage(), icon: icons.tagmata }],
+      items: [
+        { href: "/tagmata", label: nav_manage(), icon: icons.tagmata },
+        { href: filesPath(), label: nav_files(), icon: icons.files },
+      ],
     },
   ];
 }

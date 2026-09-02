@@ -30,6 +30,7 @@ import {
   nav_breadcrumb_agents,
   nav_breadcrumb_tagma,
   nav_chats,
+  nav_files,
   nav_home,
   nav_overview,
   nav_profiles,
@@ -77,6 +78,10 @@ export const trailTable: TrailEntry[] = [
   entry("/tagmata", () => [
     { label: nav_home(), href: "/" },
     { label: nav_tagmata(), current: true },
+  ]),
+  entry("/files", () => [
+    { label: nav_home(), href: "/" },
+    { label: nav_files(), current: true },
   ]),
   entry("/tagma/:id", ({ id }: With<"id">) => [
     { label: nav_home(), href: "/" },
@@ -201,7 +206,7 @@ export function matchTrail(pathname: string) {
 /** The small-screen back row's target: trail-derived (the deepest linked
  * segment is the parent, the same chain the desktop bar renders), with
  * the route policy the pure engine must not own. Bar-cell destinations
- * (/account, /tagmata) are excluded: swapping the bar for a back row
+ * (/account, /tagmata, /files) are excluded: swapping the bar for a back
  * there would strand the other cells. /chats stays off-table and keeps
  * the bar with no exclusion needed. The tagma details sections return
  * null and keep the bar (the manage cell lights via RootLayout
@@ -210,7 +215,12 @@ export function matchTrail(pathname: string) {
 export function mobileBack(
   pathname: string,
 ): { href: string; label: string } | null {
-  if (pathname === "/account" || pathname === "/tagmata") return null;
+  if (
+    pathname === "/account" ||
+    pathname === "/tagmata" ||
+    pathname === "/files"
+  )
+    return null;
   const segs = pathname.split("/").filter(Boolean);
   if (segs.length === 4 && segs[0] === "tagma" && segs[2] === "details") {
     return null;

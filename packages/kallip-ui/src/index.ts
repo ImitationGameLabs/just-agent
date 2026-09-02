@@ -87,6 +87,7 @@ export { default as ChannelChatPage } from "./pages/ChannelChatPage.svelte";
 export { default as TagmaChatPage } from "./pages/TagmaChatPage.svelte";
 export { default as DirectSessionPage } from "./pages/DirectSessionPage.svelte";
 export { default as TagmataPage } from "./pages/TagmataPage.svelte";
+export { default as FilesPage } from "./pages/FilesPage.svelte";
 export { default as RoomsPage } from "./pages/RoomsPage.svelte";
 export { default as RoomConversationPage } from "./pages/RoomConversationPage.svelte";
 export { default as RoomSettingsPage } from "./pages/RoomSettingsPage.svelte";

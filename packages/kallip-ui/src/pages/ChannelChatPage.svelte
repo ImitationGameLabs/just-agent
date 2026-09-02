@@ -10,6 +10,7 @@
   import TagmaStatusHeader from "../components/TagmaStatusHeader.svelte";
   import AttachmentBar from "../components/AttachmentBar.svelte";
   import { createComposer } from "../lib/composer.svelte.ts";
+  import { saveBlob } from "../lib/saveBlob.ts";
   import { bindDraft } from "../lib/session/drafts.svelte.ts";
   import { RelayConversation } from "../lib/session/conversation.svelte.ts";
   import { statusCardStore } from "../lib/session/statusCard.svelte.ts";
@@ -149,12 +150,7 @@
   // named download. The bubble renders any failure inline.
   async function downloadAttachment(attachment: FileAttachment): Promise<void> {
     const bytes = await filesClientOrFail().get(attachment.record_id);
-    const url = URL.createObjectURL(new Blob([bytes]));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = attachment.name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
+    saveBlob(new Blob([bytes]), attachment.name);
   }
 
   const composer = createComposer({

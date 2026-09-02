@@ -209,3 +209,6 @@ discoverable for every agent, instead of each one hand-rolling a
 - `deno task fmt:file <paths>` (or `deno task fmt`) — formatting.
 - `deno task build` — for packages with a build step (e.g. `kallip-web`).
 - `deno task lint` — Deno lint.
+- the 375/1280 dual-form walkthrough for page-facing changes: empty
+  states, cap note, delete confirm, upload landing, breakpoint
+  density, and entry-cell layout (see the page design doc).

@@ -18,6 +18,7 @@
   import {
     Calendar,
     Cpu,
+    Folder,
     House,
     LayoutGrid,
     MessageSquare,
@@ -54,6 +55,7 @@
     manageAgents: Users,
     manageProfiles: Settings,
     manageSchedules: Calendar,
+    files: Folder,
   };
 
   let { children } = $props();
