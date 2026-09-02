@@ -1,8 +1,10 @@
 // Chain pins for the wired trail table: a drill page's chain must extend
-// its list page's chain verbatim and append. The operator-reported defect
-// this locks: /rooms/:id showed [rooms -> name] while its own list page
-// showed [tagmata -> rooms] -- the bar changed shape on every crumb
-// follow. Same shim discipline as breadcrumbs_mobileback_test: the module
+// its list page's chain verbatim and append, and every entry opens with
+// the Home segment (target /) -- the bar's universal first crumb
+// (operator-set IA rule). Same shim discipline as
+// breadcrumbs_mobileback_test: the module under test pulls rune-bearing
+// stores and compiled paraglide messages, so the passthrough shims
+// precede the dynamic import.
 // under test pulls rune-bearing stores and compiled paraglide messages,
 // so the passthrough shims precede the dynamic import.
 
@@ -15,20 +17,25 @@ declare global {
 (globalThis as Record<string, unknown>)["$derived"] = (v: unknown) => v;
 
 const { assertEquals } = await import("@std/assert");
-const { matchTrail } = await import("./breadcrumbs.ts");
-const { nav_rooms, nav_tagmata, room_label_fallback, settings_heading } =
-  await import("../../paraglide/messages.js");
+const { matchTrail, trailTable } = await import("./breadcrumbs.ts");
+const {
+  nav_chats,
+  nav_home,
+  nav_rooms,
+  room_label_fallback,
+  settings_heading,
+} = await import("../../paraglide/messages.js");
 
-Deno.test("the rooms list keeps its manage-domain chain", () => {
+Deno.test("the rooms list keeps its home-first chain", () => {
   assertEquals(matchTrail("/rooms"), [
-    { label: nav_tagmata(), href: "/tagmata" },
+    { label: nav_home(), href: "/" },
     { label: nav_rooms(), current: true },
   ]);
 });
 
 Deno.test("the room drill extends the list chain with the room", () => {
   assertEquals(matchTrail("/rooms/r-1"), [
-    { label: nav_tagmata(), href: "/tagmata" },
+    { label: nav_home(), href: "/" },
     { label: nav_rooms(), href: "/rooms" },
     { label: room_label_fallback({ id: "r-1" }), current: true },
   ]);
@@ -36,7 +43,7 @@ Deno.test("the room drill extends the list chain with the room", () => {
 
 Deno.test("the room settings drill keeps the full chain", () => {
   assertEquals(matchTrail("/rooms/r-1/settings"), [
-    { label: nav_tagmata(), href: "/tagmata" },
+    { label: nav_home(), href: "/" },
     { label: nav_rooms(), href: "/rooms" },
     {
       label: room_label_fallback({ id: "r-1" }),
@@ -56,4 +63,31 @@ Deno.test("drill chains extend their list chain (shape continuity)", () => {
   );
   // the list page's tail becomes a link in the drill chain
   assertEquals(drill[list.length - 1]?.href, "/rooms");
+});
+
+Deno.test("every entry opens with the home segment", () => {
+  for (const { pattern } of trailTable) {
+    const path = pattern
+      .split("/")
+      .map((seg) =>
+        seg === ":section" ? "overview" : seg.startsWith(":") ? "x-1" : seg,
+      )
+      .join("/");
+    const trail = matchTrail(path);
+    if (!trail) throw new Error(`${path} must resolve`);
+    assertEquals(
+      trail[0],
+      { label: nav_home(), href: "/" },
+      `${path} must open with Home`,
+    );
+  }
+});
+
+Deno.test("conversations chain through their chats-hub domain", () => {
+  const paths = ["/chat/c-1", "/tagma/t-1/chat", "/tagma/t-1/direct/p-1"];
+  for (const path of paths) {
+    const trail = matchTrail(path);
+    if (!trail) throw new Error(`${path} must resolve`);
+    assertEquals(trail[1], { label: nav_chats(), href: "/chats" });
+  }
 });

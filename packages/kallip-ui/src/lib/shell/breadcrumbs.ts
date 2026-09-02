@@ -29,8 +29,8 @@ import {
   nav_budget,
   nav_breadcrumb_agents,
   nav_breadcrumb_tagma,
-  nav_chat,
   nav_chats,
+  nav_home,
   nav_overview,
   nav_profiles,
   nav_rooms,
@@ -68,9 +68,17 @@ const sectionLabels: Record<TagmaDetailsSection, () => string> = {
   schedules: nav_schedules,
 };
 
+// Operator-set IA rule: every entry opens with the Home segment (target
+// /) and the middle layers follow the real hierarchy (domain hub,
+// object, subpage). Transitional: online "/" still redirects to /chats
+// until the home page lands; offline "/" falls to /local via the gate.
 export const trailTable: TrailEntry[] = [
-  entry("/tagmata", () => [{ label: nav_tagmata(), current: true }]),
+  entry("/tagmata", () => [
+    { label: nav_home(), href: "/" },
+    { label: nav_tagmata(), current: true },
+  ]),
   entry("/tagma/:id", ({ id }: With<"id">) => [
+    { label: nav_home(), href: "/" },
     { label: nav_tagmata(), href: "/tagmata" },
     {
       label:
@@ -80,12 +88,19 @@ export const trailTable: TrailEntry[] = [
     },
   ]),
   entry("/tagma/:id/chat", ({ id }: With<"id">) => [
-    { label: nav_breadcrumb_tagma(), href: tagmaDetailsPath(id) },
-    { label: nav_chat(), current: true },
+    { label: nav_home(), href: "/" },
+    { label: nav_chats(), href: "/chats" },
+    {
+      label:
+        agoraSession.enrolledCards.find((t) => t.tagmaId === id)?.label ??
+        tagma_fallback_label({ id: id.slice(0, 8) }),
+      current: true,
+    },
   ]),
   entry(
     "/tagma/:id/details/:section",
     ({ id, section }: With<"id" | "section">) => [
+      { label: nav_home(), href: "/" },
       { label: nav_breadcrumb_tagma(), href: tagmaDetailsPath(id) },
       { label: sectionLabels[section as TagmaDetailsSection](), current: true },
     ],
@@ -93,6 +108,7 @@ export const trailTable: TrailEntry[] = [
   entry(
     "/tagma/:id/details/agents/:agentId",
     ({ id, agentId }: With<"id" | "agentId">) => [
+      { label: nav_home(), href: "/" },
       { label: nav_breadcrumb_tagma(), href: tagmaDetailsPath(id) },
       {
         label: nav_breadcrumb_agents(),
@@ -106,16 +122,16 @@ export const trailTable: TrailEntry[] = [
     ],
   ),
   entry("/rooms", () => [
-    { label: nav_tagmata(), href: "/tagmata" },
+    { label: nav_home(), href: "/" },
     { label: nav_rooms(), current: true },
   ]),
   // Drill chains extend the list page's chain verbatim and append:
-  // following a crumb must not reshape the bar (the /rooms/:id drill
-  // dropped the tagmata root its own list page shows).
+  // following a crumb must not reshape the bar. Every entry also opens
+  // with Home (target /) -- the bar's universal first crumb.
   entry("/rooms/:id", ({ id }: With<"id">) => {
     const name = roomsStore.rooms.find((r) => r.room_id === id)?.name;
     return [
-      { label: nav_tagmata(), href: "/tagmata" },
+      { label: nav_home(), href: "/" },
       { label: nav_rooms(), href: "/rooms" },
       {
         label: name || room_label_fallback({ id: id.slice(0, 8) }),
@@ -126,7 +142,7 @@ export const trailTable: TrailEntry[] = [
   entry("/rooms/:id/settings", ({ id }: With<"id">) => {
     const name = roomsStore.rooms.find((r) => r.room_id === id)?.name;
     return [
-      { label: nav_tagmata(), href: "/tagmata" },
+      { label: nav_home(), href: "/" },
       { label: nav_rooms(), href: "/rooms" },
       {
         label: name || room_label_fallback({ id: id.slice(0, 8) }),
@@ -144,30 +160,32 @@ export const trailTable: TrailEntry[] = [
           ? chat_title_local()
           : id.slice(0, 8);
     return [
-      { label: nav_tagmata(), href: "/tagmata" },
+      { label: nav_home(), href: "/" },
+      { label: nav_chats(), href: "/chats" },
       { label, current: true },
     ];
   }),
   // The direct-session transcript: chat-domain (the entering section is the
   // chats hub, which the trail chain yields as the mobile back target).
   entry("/tagma/:id/direct/:peer", ({ peer }: With<"id" | "peer">) => [
+    { label: nav_home(), href: "/" },
     { label: nav_chats(), href: "/chats" },
     // `id` (the fetch-through daemon) is deliberately not in the label:
     // the peer is what the breadcrumb names.
     { label: directSessionsStore.peerLabel(peer), current: true },
   ]),
   entry("/settings", () => [
-    { label: nav_tagmata(), href: "/tagmata" },
+    { label: nav_home(), href: "/" },
     { label: settings_heading(), current: true },
   ]),
   entry("/account", () => [
-    { label: nav_tagmata(), href: "/tagmata" },
+    { label: nav_home(), href: "/" },
     { label: account_menu(), current: true },
   ]),
   // The matcher decodes captures once, aligned with the decoded params the
   // framework hands the page shells -- the resolver uses them as-is.
   entry("/user/:handle", ({ handle }: With<"handle">) => [
-    { label: nav_tagmata(), href: "/tagmata" },
+    { label: nav_home(), href: "/" },
     { label: handle, current: true },
   ]),
 ];
@@ -181,26 +199,18 @@ export function matchTrail(pathname: string) {
 
 /** The small-screen back row's target: trail-derived (the deepest linked
  * segment is the parent, the same chain the desktop bar renders), with
- * the route policy the pure engine must not own. Conversations are the
- * one override: their mobile parent is the chats hub the bar cell lists
- * them under, not the manage registry the desktop chain names. /account
- * is excluded: it is a bar cell destination -- swapping the bar for a
- * back row there would strand the other cells. The hubs yield null by
- * construction (/tagmata is a pure tail, /chats is off-table) and keep
- * the bar. */
+ * the route policy the pure engine must not own. Bar-cell destinations
+ * (/account, /tagmata) are excluded: swapping the bar for a back row
+ * there would strand the other cells. /chats stays off-table and keeps
+ * the bar with no exclusion needed. The tagma details sections return
+ * null and keep the bar (the manage cell lights via RootLayout
+ * isActive); the agent detail below them stays a drill (back = its
+ * agents section), and so does the tagma hub itself. */
 export function mobileBack(
   pathname: string,
 ): { href: string; label: string } | null {
-  if (pathname === "/account") return null;
+  if (pathname === "/account" || pathname === "/tagmata") return null;
   const segs = pathname.split("/").filter(Boolean);
-  // Conversations live in the chats domain wherever they route from: the
-  // relay chat and the tagma chat both drill back to the chats hub.
-  if (pathname === "/chat" || pathname.startsWith("/chat/")) {
-    return { href: "/chats", label: nav_chats() };
-  }
-  if (segs.length === 3 && segs[0] === "tagma" && segs[2] === "chat") {
-    return { href: "/chats", label: nav_chats() };
-  }
   // The tagma details sections are manage-domain: they keep the bottom
   // bar (with the manage cell lit, see RootLayout isActive) instead of
   // a back row. The agent detail below them stays a drill (back = its
