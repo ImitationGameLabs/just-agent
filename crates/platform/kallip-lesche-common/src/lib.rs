@@ -4,14 +4,14 @@
 //! the room-domain wire types ([`rooms`]: the `/v1/rooms` DTOs, the room
 //! identity atoms, the membership snapshot).
 //!
-//! This crate depends on `kallip-agora-common` for the foundation the data
+//! This crate depends on `kallip-archeion-common` for the foundation the data
 //! plane shares with the control plane (identity newtypes, crypto-byte
 //! wrappers, the deputy principal, the signed-proof verification primitive).
-//! The lesche service reaches the agora over HTTP through a client implementing
-//! `kallip_agora_common::control_plane::ControlPlane`.
+//! The lesche service reaches the archeion over HTTP through a client implementing
+//! `kallip_archeion_common::control_plane::ControlPlane`.
 //!
 //! The E2E payload ([`message::TagmaRequest`] / [`message::TagmaReply`]) and
-//! the crypto material are opaque to the agora and are decrypted only by the
+//! the crypto material are opaque to the archeion and are decrypted only by the
 //! endpoints. No private-key material ever lives in this crate.
 
 pub mod control;

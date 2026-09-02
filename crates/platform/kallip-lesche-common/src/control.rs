@@ -1,9 +1,9 @@
 //! Data-plane key exchange (the 1-RTT conversation E2E handshake). The
 //! responder is the enrolled tagma; the lesche brokers the init/response but
 //! cannot derive the resulting shared secret. The enrollment request/response
-//! (a control-plane act) lives in `kallip-agora-common`.
+//! (a control-plane act) lives in `kallip-archeion-common`.
 
-use kallip_agora_common::bytes::{Ed25519Signature, X25519PublicKey};
+use kallip_archeion_common::bytes::{Ed25519Signature, X25519PublicKey};
 use serde::{Deserialize, Serialize};
 
 /// Initiator -> responder (relayed by the lesche; the responder is the tagma):

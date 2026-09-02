@@ -2,7 +2,7 @@
 //! agreement, and ChaCha20-Poly1305 AEAD.
 //!
 //! This is the signing/AEAD (private-key) half of the E2E contract; the
-//! verify-only half lives in `kallip_agora_common::proof` (a separate crate, not
+//! verify-only half lives in `kallip_archeion_common::proof` (a separate crate, not
 //! a dependency of this one). Together the two halves define the contract: a
 //! holder of this crate can sign and encrypt; a holder of only the verify half
 //! can authenticate ciphertext without ever touching a private key.
@@ -91,7 +91,7 @@ pub const DIR_INITIATOR_TO_RESPONDER: u32 = 0;
 /// WIRE-PROTOCOL: must match the app SDK byte-for-byte.
 pub const DIR_RESPONDER_TO_INITIATOR: u32 = 1;
 
-/// The long-lived Ed25519 device key, pinned at the agora at enrollment and used
+/// The long-lived Ed25519 device key, pinned at the archeion at enrollment and used
 /// to sign key-exchange responses.
 pub struct DeviceKey {
     signing: SigningKey,

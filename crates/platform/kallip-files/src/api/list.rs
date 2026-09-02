@@ -15,7 +15,7 @@ use super::tagma_facts;
 use crate::acl::{self, Action, SpacePath};
 use crate::auth::AuthPrincipal;
 use crate::state::AppState;
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 use kallip_common::protocol::ApiError;
 
 /// Which slice of the caller's own space to list.

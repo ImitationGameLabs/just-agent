@@ -43,7 +43,7 @@ pub struct HealthQuery {
 }
 
 /// Build a CORS layer from a comma-separated allowlist. Mirrors the
-/// agora/lesche `cors_layer` (credentials-aware, explicit method list,
+/// archeion/lesche `cors_layer` (credentials-aware, explicit method list,
 /// never a wildcard origin). The tagma has a separate permissive variant
 /// -- do NOT copy that one; this is the credentials-aware variant the
 /// browser app needs.

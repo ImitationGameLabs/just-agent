@@ -3,7 +3,7 @@
 //! registry is a fact service; it never renders a "usable for purpose X"
 //! verdict -- that policy lives here, in the conversation/room domain.
 //!
-//! Each predicate mirrors a pre-consolidation agora oracle so behavior is
+//! Each predicate mirrors a pre-consolidation archeion oracle so behavior is
 //! preserved exactly:
 //! - [`tunnel_usable`] / the rooms-send gate = the old `tagma_identity` "Some"
 //!   outcome (enrolled + non-revoked + pinned key).
@@ -16,8 +16,8 @@
 //! literal regardless of which field failed, preserving the existence-oracle
 //! (the client never learns *why* a tagma/user is unusable).
 
-use kallip_agora_common::control_plane::{ControlPlane, ControlPlaneError, TagmaProfile};
-use kallip_agora_common::ids::{TagmaId, UserId};
+use kallip_archeion_common::control_plane::{ControlPlane, ControlPlaneError, TagmaProfile};
+use kallip_archeion_common::ids::{TagmaId, UserId};
 
 /// Fetch one tagma's profile (`None` if unknown). A thin wrapper over the
 /// batched read for the single-id call sites (tunnel, rooms-send, the authz

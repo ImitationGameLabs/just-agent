@@ -10,8 +10,8 @@
 //! tagma-id pair with zero storage, which makes create-or-get idempotent and
 //! pair-addressed reads work without a lookup round trip.
 
-use kallip_agora_common::bytes::Ciphertext;
-use kallip_agora_common::ids::TagmaId;
+use kallip_archeion_common::bytes::Ciphertext;
+use kallip_archeion_common::ids::TagmaId;
 use kallip_common::id_type;
 use uuid::Uuid;
 
@@ -22,7 +22,7 @@ id_type! {
     /// [`DIRECT_SESSION_NAMESPACE`], so both endpoints and the lesche agree
     /// byte-for-byte with no storage. The v4 nibble keeps the id in the
     /// plaintext member-set routing domain (see
-    /// `kallip_agora_common::ids::ChannelId`), disjoint from the v5 E2E
+    /// `kallip_archeion_common::ids::ChannelId`), disjoint from the v5 E2E
     /// bilateral conversation domain.
     DirectSessionId
 }
@@ -173,11 +173,11 @@ mod tests {
         // A distinct derivation namespace: never a bilateral conversation id.
         assert_ne!(
             id.as_ref(),
-            kallip_agora_common::ids::ConversationId::for_tagma(&a).as_ref()
+            kallip_archeion_common::ids::ConversationId::for_tagma(&a).as_ref()
         );
         assert_ne!(
             id.as_ref(),
-            kallip_agora_common::ids::ConversationId::for_tagma(&b).as_ref()
+            kallip_archeion_common::ids::ConversationId::for_tagma(&b).as_ref()
         );
     }
 

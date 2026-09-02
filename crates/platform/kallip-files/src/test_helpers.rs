@@ -1,7 +1,7 @@
 //! Test-only fixtures: an ephemeral per-process Postgres (testcontainers)
-//! with one isolated database per test. Ported from the agora harness; this
+//! with one isolated database per test. Ported from the archeion harness; this
 //! crate talks to its own container so files tests never contend with the
-//! agora/lesche shared one. Needs Docker at test time.
+//! archeion/lesche shared one. Needs Docker at test time.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -195,6 +195,6 @@ mod tests {
         // 4e9 is far beyond Linux pid_max: no such process exists.
         assert!(owner_dead(&format!("{DB_PREFIX}4000000000_0")));
         assert!(!owner_dead("files_test_4000000000"));
-        assert!(!owner_dead("agora_test_4000000000_0"));
+        assert!(!owner_dead("archeion_test_4000000000_0"));
     }
 }

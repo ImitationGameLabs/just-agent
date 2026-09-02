@@ -5,12 +5,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use kallip_agora_common::bytes::Ed25519PublicKey;
-use kallip_agora_common::control_plane::{
+use kallip_archeion_common::bytes::Ed25519PublicKey;
+use kallip_archeion_common::control_plane::{
     ControlPlane, ControlPlaneError, EnrollmentLookup, TagmaProfile, UserIdentity, VerifiedSession,
 };
-use kallip_agora_common::ids::{TagmaId, UserId};
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::ids::{TagmaId, UserId};
+use kallip_archeion_common::principal::Principal;
 
 use crate::state::{ConversationsState, SharedConvState};
 
@@ -375,7 +375,7 @@ async fn shared_pg_port() -> &'static u16 {
             use testcontainers_modules::testcontainers::ImageExt;
             use testcontainers_modules::testcontainers::ReuseDirective;
             use testcontainers_modules::testcontainers::runners::AsyncRunner;
-            // Twin of kallip-agora's test_helpers::shared_pg_port (same
+            // Twin of kallip-archeion's test_helpers::shared_pg_port (same
             // request: name + tag + credentials) so both binaries reuse
             // ONE container; keep the two copies in sync.
             let make_request = || {
@@ -413,14 +413,14 @@ async fn shared_pg_port() -> &'static u16 {
         .await
 }
 /// A test database is owned by the process whose pid is encoded in its
-/// name (`{lesche|agora}_test_{pid}_{n}`). The zero-connection SQL
+/// name (`{lesche|archeion}_test_{pid}_{n}`). The zero-connection SQL
 /// prefilter cannot distinguish "dead" from "just created, not yet
 /// connected", so a candidate is dropped only when its owner process no
 /// longer exists (`/proc/{pid}`). Unparseable names are never dropped:
 /// failing to prove the owner dead means leaving the database alone.
 fn owner_dead(db_name: &str) -> bool {
     let rest = db_name
-        .strip_prefix("agora_test_")
+        .strip_prefix("archeion_test_")
         .or_else(|| db_name.strip_prefix("lesche_test_"));
     let Some(pid) = rest
         .and_then(|r| r.split_once('_'))
@@ -434,7 +434,7 @@ fn owner_dead(db_name: &str) -> bool {
 /// Best-effort cleanup, once per process, of test databases left dead by
 /// earlier runs (the reusable container never drops them). Sweeps BOTH
 /// crates' prefixes: the shared container's hygiene must not depend on
-/// which crate is running. Twin of kallip-agora's
+/// which crate is running. Twin of kallip-archeion's
 /// test_helpers::sweep_dead_test_dbs.
 async fn sweep_dead_test_dbs(port: u16) {
     use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement};
@@ -461,7 +461,7 @@ async fn sweep_dead_test_dbs(port: u16) {
         .query_all(Statement::from_string(
             DatabaseBackend::Postgres,
             "SELECT datname FROM pg_database d \
-             WHERE d.datname ~ '^(lesche|agora)_test_' \
+             WHERE d.datname ~ '^(lesche|archeion)_test_' \
              AND NOT EXISTS \
              (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)"
                 .to_owned(),
@@ -544,11 +544,14 @@ mod tests {
     #[test]
     fn owner_dead_requires_a_dead_encoded_pid() {
         // This process is alive, so its own databases are never swept.
-        assert!(!owner_dead(&format!("agora_test_{}_0", std::process::id())));
+        assert!(!owner_dead(&format!(
+            "archeion_test_{}_0",
+            std::process::id()
+        )));
         // 4e9 is far beyond Linux pid_max: no such process exists.
-        assert!(owner_dead("agora_test_4000000000_0"));
+        assert!(owner_dead("archeion_test_4000000000_0"));
         assert!(owner_dead("lesche_test_4000000000_0"));
-        assert!(!owner_dead("agora_test_4000000000"));
+        assert!(!owner_dead("archeion_test_4000000000"));
         assert!(!owner_dead("other_test_4000000000_0"));
     }
 }

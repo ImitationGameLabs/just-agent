@@ -28,7 +28,7 @@
 
 use crate::message::Envelope;
 use crate::rooms::{MemberId, RoomId};
-use kallip_agora_common::ids::TagmaId;
+use kallip_archeion_common::ids::TagmaId;
 use serde::{Deserialize, Serialize};
 
 // Re-exported so downstream crates (e.g. `kallip-lesche-client`) can name the

@@ -16,17 +16,17 @@ use std::time::Duration;
 
 use axum::extract::FromRequestParts;
 use axum::http::HeaderMap;
-use kallip_agora_common::control_plane::{
+use kallip_archeion_common::control_plane::{
     ControlPlane, ControlPlaneError, EnrollmentLookup, TagmaProfile, UserIdentity, VerifiedSession,
 };
-use kallip_agora_common::ids::{TagmaId, UserId};
-use kallip_agora_common::internal_api::{
+use kallip_archeion_common::ids::{TagmaId, UserId};
+use kallip_archeion_common::internal_api::{
     EnrollmentLookupRequest, EnrollmentLookupResponse, TagmaProfilesRequest, TagmaProfilesResponse,
     TunnelProofTsRequest, TunnelProofTsResponse, UserIdentitiesRequest, UserIdentitiesResponse,
     UserIdentityByUsernameRequest, UserIdentityResponse, VerifyBearerRequest, VerifyBearerResponse,
     VerifySessionRequest, VerifySessionResponse,
 };
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 use kallip_common::auth_header::extract_bearer_token;
 use kallip_common::protocol::ApiError;
 use serde::Serialize;
@@ -40,21 +40,21 @@ use crate::state::AppState;
 /// latency.
 const INTERNAL_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A reqwest-backed [`ControlPlane`] calling the agora's `/internal/*` API,
+/// A reqwest-backed [`ControlPlane`] calling the archeion's `/internal/*` API,
 /// the files service's twin of the relay's client.
 #[derive(Clone)]
 pub struct FilesControlPlane {
-    /// Agora internal root (e.g. `http://127.0.0.1:7100`); `/internal/...`
+    /// Archeion internal root (e.g. `http://127.0.0.1:7100`); `/internal/...`
     /// is appended per call.
     base_url: String,
     /// Plaintext shared secret sent as `Authorization: Bearer <token>`;
-    /// must equal the agora's `KALLIP_AGORA_INTERNAL_TOKEN`.
+    /// must equal the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.
     token: String,
     http: reqwest::Client,
 }
 
 impl FilesControlPlane {
-    /// Build the client. `base_url` is the agora's internal root; `token`
+    /// Build the client. `base_url` is the archeion's internal root; `token`
     /// is the shared secret.
     pub fn new(base_url: String, token: String) -> Self {
         let http = reqwest::Client::builder()
@@ -99,7 +99,7 @@ impl FilesControlPlane {
                 .map_err(|e| ControlPlaneError::Backend(e.to_string())),
             404 => Ok(None),
             status => Err(ControlPlaneError::Backend(format!(
-                "agora {path} returned HTTP {status}"
+                "archeion {path} returned HTTP {status}"
             ))),
         }
     }
@@ -288,6 +288,6 @@ pub(crate) fn read_session_cookie(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Session cookie name. Mirrors the registry's `kallip_session`; a stable
-/// wire literal kept here (duplicated from `kallip-agora`) so this crate
+/// wire literal kept here (duplicated from `kallip-archeion`) so this crate
 /// does not pull the registry's session module.
 const SESSION_COOKIE_NAME: &str = "kallip_session";

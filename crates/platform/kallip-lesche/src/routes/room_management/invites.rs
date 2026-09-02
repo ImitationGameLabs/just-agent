@@ -1,7 +1,7 @@
 //! The invite flow: an inbox of pending invites, invite creation (any member
 //! may invite), and accept (invitee-only). Both creation and accept run the
-//! membership write + epoch bump in one transaction. Ported from the agora
-//! registry; `create_invite` attests the invitee's existence through the agora
+//! membership write + epoch bump in one transaction. Ported from the archeion
+//! registry; `create_invite` attests the invitee's existence through the archeion
 //! registry rather than a local users-table read. A real membership change on
 //! accept fires a local post-commit fan (`spawn_local_membership_fan`); a
 //! re-accept by an already-member is a no-op and does not.
@@ -19,7 +19,7 @@ use crate::state::SharedConvState;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use kallip_agora_common::ids::{ParticipantId, ParticipantKind, UserId};
+use kallip_archeion_common::ids::{ParticipantId, ParticipantKind, UserId};
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::rooms::RoomId;
 use sea_orm::{
@@ -121,7 +121,7 @@ pub(super) struct CreateInviteResponse {
 }
 
 /// Invite a user to a room. Any current member may invite. The invitee must be a
-/// real user account (attested by the agora registry). At most one unaccepted
+/// real user account (attested by the archeion registry). At most one unaccepted
 /// invite per (room, invitee) is allowed: a still-live prior unaccepted invite
 /// is a 409; an expired one is deleted to re-open the slot (lazy GC). The
 /// check+delete+insert run in one transaction with the prior row locked, so a

@@ -23,7 +23,7 @@ pub struct ScannedInstance {
     pub port: Option<u16>,
     /// The spawn-time uid of the requesting peer, from `meta.json`.
     pub owner: Option<u32>,
-    /// The enrolled tagma identity (agora-issued id) if the instance's own
+    /// The enrolled tagma identity (archeion-issued id) if the instance's own
     /// credentials tree carries one; see `read_tagma_id`.
     pub tagma_id: Option<String>,
 }
@@ -175,7 +175,7 @@ pub fn read_runtime(dir: &Path) -> Option<RuntimeFile> {
 /// The enrolled tagma identity under `<instance>/credentials/`, read from
 /// the tagma's own persisted `tagma.id`. Mirrors the tagma's primary-identity
 /// rule as a conservative approximation: the first credentials entry
-/// (alphabetical) carrying a non-empty `tagma.id` — single-agora deployments
+/// (alphabetical) carrying a non-empty `tagma.id` — single-archeion deployments
 /// have exactly one entry, so this IS the tagma's primary. Discipline lock:
 /// this reads `tagma.id` ONLY; `tagma.token` (0o600 secret) is never opened,
 /// and the scan test asserts the token never reaches the wire.

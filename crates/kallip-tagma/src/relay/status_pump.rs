@@ -200,7 +200,7 @@ mod tests {
         let handle = RelayHandle::new(
             client,
             "test".to_string(),
-            kallip_agora_common::ids::TagmaId::from("tagma".to_string()),
+            kallip_archeion_common::ids::TagmaId::from("tagma".to_string()),
             "Tagma".into(),
             DeviceKey::generate(),
             root,

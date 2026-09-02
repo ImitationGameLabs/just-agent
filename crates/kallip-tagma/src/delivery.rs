@@ -5,7 +5,7 @@
 //! messages — so every entry wakes a dead agent identically; only prompt
 //! formatting and (bilateral-only) inbound persistence differ between callers.
 
-use kallip_agora_common::ids::ParticipantKind;
+use kallip_archeion_common::ids::ParticipantKind;
 use kallip_common::agentid::AgentId;
 use kallip_common::protocol::{ApiError, MessageResponse};
 use kallip_lesche_common::message::Participant;

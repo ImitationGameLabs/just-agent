@@ -15,7 +15,7 @@ use crate::auth::AuthPrincipal;
 use crate::state::AppState;
 use futures_util::FutureExt as _;
 use http_body_util::BodyExt as _;
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 use kallip_common::protocol::ApiError;
 
 #[derive(Debug, Deserialize)]

@@ -113,7 +113,7 @@ fn not_found_reply() -> TagmaReply {
 impl RelayHandle {
     pub(super) async fn handle_manage(
         &self,
-        trace: &kallip_agora_common::ids::TraceId,
+        trace: &kallip_archeion_common::ids::TraceId,
         req_id: u64,
         method: &str,
         path: &str,

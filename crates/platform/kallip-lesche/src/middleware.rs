@@ -1,6 +1,6 @@
 //! Cross-cutting middleware: the CSRF custom-header guard.
 //!
-//! Mirrors the agora's `csrf_guard` (same two-pillar defense: a `SameSite=Strict`
+//! Mirrors the archeion's `csrf_guard` (same two-pillar defense: a `SameSite=Strict`
 //! session cookie plus a custom `X-Requested-With` header the browser cannot
 //! synthesize cross-origin without a preflight). Stateless-changing requests
 //! (GET/HEAD/OPTIONS) and any request that carries no session cookie (the
@@ -57,7 +57,7 @@ pub async fn csrf_guard(
 /// Bearer` token does not hash to the expected shared secret; the
 /// comparison is constant-time (high-value service-to-service secret).
 /// A missing or non-matching bearer is 401; the internal nest is mounted
-/// only when the token is configured. Same shape as the agora's twin
+/// only when the token is configured. Same shape as the archeion's twin
 /// guard.
 pub async fn internal_guard(
     State(expected): State<TokenHash>,

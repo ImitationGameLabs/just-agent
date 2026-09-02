@@ -27,7 +27,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use base64::Engine as _;
 use futures_util::StreamExt;
-use kallip_agora_common::ids::{ChannelId, ConversationId, TagmaId};
+use kallip_archeion_common::ids::{ChannelId, ConversationId, TagmaId};
 use kallip_e2ee::DeviceKey;
 use kallip_lesche_common::control::KeyExchangeResponse;
 use kallip_lesche_common::direct::{DirectMessageView, DirectSessionId, DirectSessionView};
@@ -61,7 +61,7 @@ pub struct RoomMessageView {
     pub seq: i64,
     pub sender: kallip_lesche_common::message::Participant,
     pub epoch: i64,
-    pub ciphertext: kallip_agora_common::bytes::Ciphertext,
+    pub ciphertext: kallip_archeion_common::bytes::Ciphertext,
     #[serde(with = "time::serde::iso8601")]
     pub created_at: time::OffsetDateTime,
 }
@@ -655,8 +655,8 @@ impl LescheClientBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kallip_agora_common::bytes::Ciphertext;
-    use kallip_agora_common::ids::{
+    use kallip_archeion_common::bytes::Ciphertext;
+    use kallip_archeion_common::ids::{
         ConversationId, ParticipantId, ParticipantKind, TagmaId, TraceId,
     };
     use kallip_lesche_common::event::AgentState;

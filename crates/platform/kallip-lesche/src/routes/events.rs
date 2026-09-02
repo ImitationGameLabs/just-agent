@@ -23,7 +23,7 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use crate::auth::{AuthPrincipal, require_user};
 use crate::sse::{BoxEventStream, OnDrop};
 use crate::state::SharedConvState;
-use kallip_agora_common::ids::ParticipantId;
+use kallip_archeion_common::ids::ParticipantId;
 
 pub fn router() -> Router<SharedConvState> {
     Router::new().route("/me/events", get(me_events))

@@ -1,6 +1,6 @@
 //! End-to-end: the CLI's file client against a real files service (the
 //! real boot migration on a test Postgres, the real router, real HTTP)
-//! with a mini agora `/internal` mock. The client is driven function-level
+//! with a mini archeion `/internal` mock. The client is driven function-level
 //! through `kallip::file`; the binary-invoke path (arg parsing to exit
 //! code) is compose-smoke territory (B4b).
 
@@ -14,9 +14,9 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use kallip::file::FilesClient;
-use kallip_agora_common::control_plane::EnrollmentLookup;
-use kallip_agora_common::ids::{TagmaId, UserId};
-use kallip_agora_common::internal_api::{
+use kallip_archeion_common::control_plane::EnrollmentLookup;
+use kallip_archeion_common::ids::{TagmaId, UserId};
+use kallip_archeion_common::internal_api::{
     EnrollmentLookupRequest, VerifyBearerRequest, VerifyBearerResponse, WirePrincipal,
 };
 use kallip_files::LocalBackend;
@@ -38,9 +38,9 @@ struct Registry {
 }
 
 /// The mock ignores the internal shared secret the client presents (the
-/// real agora verifies it); these e2e tests exercise the files-side
+/// real archeion verifies it); these e2e tests exercise the files-side
 /// behavior, not the secret check.
-async fn spawn_mini_agora(registry: Registry) -> String {
+async fn spawn_mini_archeion(registry: Registry) -> String {
     let app = axum::Router::new()
         .route(
             "/internal/verify-bearer",
@@ -166,7 +166,7 @@ async fn spawn_world() -> World {
         bearer: Arc::new(Mutex::new(bearers)),
         enrollment: Arc::new(Mutex::new(enrollments)),
     };
-    let agora_url = spawn_mini_agora(registry).await;
+    let archeion_url = spawn_mini_archeion(registry).await;
 
     let db_url = common::test_db_url().await;
     let db = connect_and_migrate(&db_url)
@@ -177,7 +177,7 @@ async fn spawn_world() -> World {
         blob: LocalBackend::arc(blob_dir.path()),
         blob_root: blob_dir.path().to_path_buf(),
         control: Arc::new(FilesControlPlane::new(
-            agora_url,
+            archeion_url,
             "sk-internal-e2e".to_owned(),
         )),
         notify: None,

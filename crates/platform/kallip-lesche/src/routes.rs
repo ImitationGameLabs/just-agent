@@ -37,7 +37,7 @@ pub fn router(
         .merge(tunnel::router().with_state(state.clone()));
 
     // The service-to-service `/internal/*` surface: mounted only when the
-    // shared secret is configured (same discipline as the agora's internal
+    // shared secret is configured (same discipline as the archeion's internal
     // nest; the files service pushes FileDelivered events here).
     if let Some(hash) = internal_token_hash {
         let internal = internal::router(state.clone()).layer(axum::middleware::from_fn_with_state(
@@ -48,7 +48,7 @@ pub fn router(
     }
     app
 }
-/// Build a CORS layer from a comma-separated allowlist. Mirrors the agora's
+/// Build a CORS layer from a comma-separated allowlist. Mirrors the archeion's
 /// `cors_layer` (credentials-aware, explicit method list, never a wildcard
 /// origin). The tagma has a separate permissive `cors_layer` -- do NOT copy
 /// that one; this is the credentials-aware variant the browser app needs.
@@ -112,9 +112,9 @@ mod tests {
     use super::cors_layer;
     use axum::Router;
 
-    /// Same pin as the agora's: the advertised preflight set must equal the
+    /// Same pin as the archeion's: the advertised preflight set must equal the
     /// table exactly, so dropping a method (the omission that broke the
-    /// agora's provider vault) fails here instead of in a live session.
+    /// archeion's provider vault) fails here instead of in a live session.
     /// The advertised PATCH has no patch route yet; removing it is deferred
     /// to a future CORS cleanup on purpose.
     #[tokio::test]

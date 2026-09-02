@@ -28,8 +28,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use kallip_agora_common::control_plane::ControlPlane;
-use kallip_agora_common::ids::{ConversationId, ParticipantId, TagmaId, UserId};
+use kallip_archeion_common::control_plane::ControlPlane;
+use kallip_archeion_common::ids::{ConversationId, ParticipantId, TagmaId, UserId};
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::control::KeyExchangeResponse;
 use kallip_lesche_common::event::LescheEvent;
@@ -46,7 +46,7 @@ pub const BROADCAST_CAPACITY: usize = 128;
 /// in-memory, per-incarnation.
 pub struct ConversationsState {
     /// The registry (identity + tagma metadata + replay guard), DB-backed in
-    /// production by `kallip-agora`, mockable in tests.
+    /// production by `kallip-archeion`, mockable in tests.
     pub control: Arc<dyn ControlPlane>,
     pub registry: RwLock<Registry>,
     /// Outstanding synchronous key exchanges, keyed by conversation. Bounded by
@@ -70,7 +70,7 @@ pub struct ConversationsState {
 
 /// An agent's authoritative display identity, resolved from the registry and
 /// stamped onto room envelopes/rows by the relay. Mirrors the display fields of
-/// [`kallip_agora_common::control_plane::TagmaProfile`] minus the raw usability
+/// [`kallip_archeion_common::control_plane::TagmaProfile`] minus the raw usability
 /// facts + pinned key (which only the tunnel-proof / policy paths need).
 #[derive(Debug, Clone)]
 pub struct AgentProfile {
@@ -312,7 +312,7 @@ impl Default for Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kallip_agora_common::ids::TagmaId;
+    use kallip_archeion_common::ids::TagmaId;
     use kallip_lesche_common::event::LescheEvent;
 
     /// `register_presence` stores the owner so presence events can be routed to

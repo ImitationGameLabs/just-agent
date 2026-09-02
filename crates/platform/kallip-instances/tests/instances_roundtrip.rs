@@ -332,13 +332,13 @@ async fn relay_intent_spawn_persists_filled_urls() {
             .expect("parse meta.json");
     let env = meta["env"].as_array().expect("env array");
     assert!(env.contains(&serde_json::json!(
-        "KALLIP_TAGMA_RELAY_AGORA_URL=http://localhost:7100"
+        "KALLIP_TAGMA_RELAY_ARCHEION_URL=http://localhost:7100"
     )));
     assert!(env.contains(&serde_json::json!(
         "KALLIP_TAGMA_RELAY_LESCHE_URL=http://localhost:7200"
     )));
     for key in [
-        "KALLIP_TAGMA_RELAY_AGORA_URL",
+        "KALLIP_TAGMA_RELAY_ARCHEION_URL",
         "KALLIP_TAGMA_RELAY_LESCHE_URL",
     ] {
         assert_eq!(
@@ -399,14 +399,14 @@ async fn local_spawn_meta_stays_free_of_relay_keys() {
     let _ = backend.stop("local-e2e".into()).await;
 }
 
-/// A scriptable stand-in for the agora verifier: each call consumes the next
+/// A scriptable stand-in for the archeion verifier: each call consumes the next
 /// programmed outcome.
 struct MockVerifier {
     outcomes: std::sync::Mutex<
         Vec<
             Result<
-                Option<kallip_agora_common::principal::Principal>,
-                kallip_agora_common::control_plane::ControlPlaneError,
+                Option<kallip_archeion_common::principal::Principal>,
+                kallip_archeion_common::control_plane::ControlPlaneError,
             >,
         >,
     >,
@@ -415,8 +415,8 @@ struct MockVerifier {
     session_outcomes: std::sync::Mutex<
         Vec<
             Result<
-                Option<kallip_agora_common::control_plane::VerifiedSession>,
-                kallip_agora_common::control_plane::ControlPlaneError,
+                Option<kallip_archeion_common::control_plane::VerifiedSession>,
+                kallip_archeion_common::control_plane::ControlPlaneError,
             >,
         >,
     >,
@@ -428,8 +428,8 @@ impl kallip_instances::control_plane::AuthVerifier for MockVerifier {
         &self,
         _token: &str,
     ) -> Result<
-        Option<kallip_agora_common::principal::Principal>,
-        kallip_agora_common::control_plane::ControlPlaneError,
+        Option<kallip_archeion_common::principal::Principal>,
+        kallip_archeion_common::control_plane::ControlPlaneError,
     > {
         self.outcomes
             .lock()
@@ -442,8 +442,8 @@ impl kallip_instances::control_plane::AuthVerifier for MockVerifier {
         &self,
         _cookie: &str,
     ) -> Result<
-        Option<kallip_agora_common::control_plane::VerifiedSession>,
-        kallip_agora_common::control_plane::ControlPlaneError,
+        Option<kallip_archeion_common::control_plane::VerifiedSession>,
+        kallip_archeion_common::control_plane::ControlPlaneError,
     > {
         // The session-channel tests script `session_outcomes`; an
         // unprogrammed pop means a bearer-path test unexpectedly took
@@ -458,19 +458,19 @@ impl kallip_instances::control_plane::AuthVerifier for MockVerifier {
 
 #[tokio::test]
 async fn platform_mode_admin_only_and_fail_closed() {
-    use kallip_agora_common::control_plane::ControlPlaneError;
-    use kallip_agora_common::ids::TagmaId;
-    use kallip_agora_common::principal::Principal;
+    use kallip_archeion_common::control_plane::ControlPlaneError;
+    use kallip_archeion_common::ids::TagmaId;
+    use kallip_archeion_common::principal::Principal;
     use kallip_instances::guard::AuthMode;
 
     let verifier = std::sync::Arc::new(MockVerifier {
         session_outcomes: std::sync::Mutex::new(vec![]),
         outcomes: std::sync::Mutex::new(vec![
             // Last popped first: reverse program order.
-            Err(ControlPlaneError::Backend("agora down".into())),
+            Err(ControlPlaneError::Backend("archeion down".into())),
             Ok(None),
             Ok(Some(Principal::User(
-                kallip_agora_common::ids::UserId::from("u1".to_string()),
+                kallip_archeion_common::ids::UserId::from("u1".to_string()),
             ))),
             Ok(Some(Principal::Tagma(TagmaId::from("t1".to_string())))),
             Ok(Some(Principal::Admin)),
@@ -504,7 +504,7 @@ async fn platform_mode_admin_only_and_fail_closed() {
     let (status, body) = send(&app, "GET", "/api/instances/list", Some("any"), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
 
-    // Agora unreachable: fail closed.
+    // Archeion unreachable: fail closed.
     let (status, body) = send(&app, "GET", "/api/instances/list", Some("any"), None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert!(body.contains("\"auth_backend_unavailable\""), "{body}");
@@ -515,8 +515,8 @@ async fn platform_mode_admin_only_and_fail_closed() {
 /// is 403, an absent one 401.
 #[tokio::test]
 async fn platform_mode_session_channel_local_admin_only() {
-    use kallip_agora_common::control_plane::VerifiedSession;
-    use kallip_agora_common::ids::UserId;
+    use kallip_archeion_common::control_plane::VerifiedSession;
+    use kallip_archeion_common::ids::UserId;
     use kallip_instances::guard::AuthMode;
 
     let session = |local_admin| VerifiedSession {
@@ -599,9 +599,9 @@ async fn platform_mode_session_channel_local_admin_only() {
 /// itself proof of intent).
 #[tokio::test]
 async fn csrf_guard_cookie_channel() {
-    use kallip_agora_common::control_plane::VerifiedSession;
-    use kallip_agora_common::ids::UserId;
-    use kallip_agora_common::principal::Principal;
+    use kallip_archeion_common::control_plane::VerifiedSession;
+    use kallip_archeion_common::ids::UserId;
+    use kallip_archeion_common::principal::Principal;
     use kallip_instances::guard::AuthMode;
 
     let verifier = std::sync::Arc::new(MockVerifier {
@@ -679,10 +679,10 @@ fn refuses_to_start_unauthenticated_on_non_loopback() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
-        relay_agora_url: String::new(),
+        relay_archeion_url: String::new(),
         relay_lesche_url: String::new(),
-        agora_internal_url: None,
-        agora_internal_token: None,
+        archeion_internal_url: None,
+        archeion_internal_token: None,
         allowed_hosts_raw: String::new(),
         cors_origins: String::new(),
     };
@@ -697,10 +697,10 @@ fn open_mode_allowed_on_loopback() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
-        relay_agora_url: String::new(),
+        relay_archeion_url: String::new(),
         relay_lesche_url: String::new(),
-        agora_internal_url: None,
-        agora_internal_token: None,
+        archeion_internal_url: None,
+        archeion_internal_token: None,
         allowed_hosts_raw: String::new(),
         cors_origins: String::new(),
     };
@@ -710,7 +710,7 @@ fn open_mode_allowed_on_loopback() {
     ));
 }
 #[test]
-fn half_configured_agora_url_refuses_to_start() {
+fn half_configured_archeion_url_refuses_to_start() {
     // A URL without the internal token must not silently fall through
     // to open mode on a loopback bind.
     let config = kallip_instances::Config {
@@ -718,10 +718,10 @@ fn half_configured_agora_url_refuses_to_start() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
-        relay_agora_url: String::new(),
+        relay_archeion_url: String::new(),
         relay_lesche_url: String::new(),
-        agora_internal_url: Some("http://127.0.0.1:7100".into()),
-        agora_internal_token: None,
+        archeion_internal_url: Some("http://127.0.0.1:7100".into()),
+        archeion_internal_token: None,
         allowed_hosts_raw: String::new(),
         cors_origins: String::new(),
     };
@@ -729,28 +729,28 @@ fn half_configured_agora_url_refuses_to_start() {
     assert!(
         error
             .to_string()
-            .contains("KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN"),
+            .contains("KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN"),
         "{error}"
     );
 }
 
 #[test]
-fn half_configured_agora_token_refuses_to_start() {
+fn half_configured_archeion_token_refuses_to_start() {
     let config = kallip_instances::Config {
         addr: "127.0.0.1:7300".into(),
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
-        relay_agora_url: String::new(),
+        relay_archeion_url: String::new(),
         relay_lesche_url: String::new(),
-        agora_internal_url: None,
-        agora_internal_token: Some("internal-secret".into()),
+        archeion_internal_url: None,
+        archeion_internal_token: Some("internal-secret".into()),
         allowed_hosts_raw: String::new(),
         cors_origins: String::new(),
     };
     let error = kallip_instances::resolve_auth(&config, &config.addr).expect_err("must refuse");
     assert!(
-        error.to_string().contains("KALLIP_INSTANCES_AGORA_URL"),
+        error.to_string().contains("KALLIP_INSTANCES_ARCHEION_URL"),
         "{error}"
     );
 }

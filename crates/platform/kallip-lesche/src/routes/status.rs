@@ -16,7 +16,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::post;
-use kallip_agora_common::ids::TagmaId;
+use kallip_archeion_common::ids::TagmaId;
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::event::{LescheEvent, TagmaStatusPayload};
 use tracing::debug;
@@ -84,9 +84,9 @@ async fn post_status(
 mod tests {
     use super::*;
     use crate::test_support::{make_state, seed_presence};
-    use kallip_agora_common::bytes::Ed25519PublicKey;
-    use kallip_agora_common::ids::{TagmaId, UserId};
-    use kallip_agora_common::principal::Principal;
+    use kallip_archeion_common::bytes::Ed25519PublicKey;
+    use kallip_archeion_common::ids::{TagmaId, UserId};
+    use kallip_archeion_common::principal::Principal;
     use kallip_common::protocol::AgentState;
     use kallip_lesche_common::event::LescheEvent;
 

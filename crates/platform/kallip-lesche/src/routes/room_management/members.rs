@@ -1,7 +1,7 @@
 //! Membership mutation: adding a tagma to a room, joining a public room, and
 //! removing a member. Removals hard-delete the live row, append a
 //! revocation-audit row, and bump the epoch in one transaction. Ported from the
-//! agora registry; `add_tagma` attests enrollment through the agora
+//! archeion registry; `add_tagma` attests enrollment through the archeion
 //! `/internal/*` surface rather than a local tagma-table read. Each actual
 //! membership change fires a local post-commit fan (`spawn_local_membership_fan`);
 //! an idempotent no-op add does not. A real new add past the member cap
@@ -17,7 +17,7 @@
 //! - **self** -- a member removing their own row (leave). Any member may leave.
 //! - **owner-of-agent** -- the owner of a tagma member may pull it out of ANY
 //!   room, even one the owner is not a member of (the owner controls their agent
-//!   everywhere). Ownership is attested through the agora registry
+//!   everywhere). Ownership is attested through the archeion registry
 //!   (`tagma_profile`), as a raw `owner_user_id == caller` compare -- NOT
 //!   `bilateral_resolvable`, so a revoked/disabled tagma can still be pulled.
 //!   This leaks nothing: an owner already discovers their tagma's rooms via
@@ -37,7 +37,7 @@ use crate::state::SharedConvState;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use kallip_agora_common::ids::{ParticipantId, ParticipantKind, TagmaId, UserId};
+use kallip_archeion_common::ids::{ParticipantId, ParticipantKind, TagmaId, UserId};
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::rooms::{RoomId, Visibility};
 use sea_orm::{
@@ -57,7 +57,7 @@ pub(super) struct AddTagmaRequest {
 /// member may add (a tagma member authenticates via tunnel, not the HTTP cookie
 /// this route requires). The tagma must be enrolled and non-revoked -- attested
 /// through the
-/// agora registry (a transient agora failure surfaces as 500 before the txn, so
+/// archeion registry (a transient archeion failure surfaces as 500 before the txn, so
 /// no half-commit). Inserting a tagma already in the room is a true no-op (no
 /// epoch bump); otherwise insert + bump the epoch, in one txn. The agent-free
 /// boundary is preserved: the member is stored as a derived `member_id`,
@@ -73,8 +73,8 @@ pub(super) async fn add_tagma(
     let room = RoomId::from(room_id);
     let tagma = TagmaId::from(req.tagma_id);
     // Usability is derived from the registry's raw tagma facts, attested by the
-    // agora registry (the tagmata table lives there). The predicate (enrolled +
-    // non-revoked + owner-not-disabled) runs before the txn, so an agora outage
+    // archeion registry (the tagmata table lives there). The predicate (enrolled +
+    // non-revoked + owner-not-disabled) runs before the txn, so an archeion outage
     // is a 500 with no half-commit. Any failure -- unknown / pending / revoked /
     // owner-disabled -- collapses to one "unknown tagma" 404.
     let joinable = crate::control_policy::tagma_profile(&*state.control, &tagma)

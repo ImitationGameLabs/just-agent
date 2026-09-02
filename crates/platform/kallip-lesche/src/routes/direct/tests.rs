@@ -6,15 +6,15 @@
 use super::*;
 use crate::auth::AuthPrincipal;
 use crate::routes::test_support::{as_tagma, db_state};
-use kallip_agora_common::ids::{ChannelId, TraceId, UserId};
+use kallip_archeion_common::ids::{ChannelId, TraceId, UserId};
 use std::sync::Arc;
 
 fn uid(s: &str) -> UserId {
     UserId::from(s.to_string())
 }
 
-fn dummy_key() -> kallip_agora_common::bytes::Ed25519PublicKey {
-    kallip_agora_common::bytes::Ed25519PublicKey([0u8; 32].to_vec())
+fn dummy_key() -> kallip_archeion_common::bytes::Ed25519PublicKey {
+    kallip_archeion_common::bytes::Ed25519PublicKey([0u8; 32].to_vec())
 }
 
 /// Enroll `tagma` under `owner` with a usable pinned key + bearer token.

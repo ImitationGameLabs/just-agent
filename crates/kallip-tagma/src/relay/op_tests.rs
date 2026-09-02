@@ -3,7 +3,7 @@
 //! root agent. The initiator side is simulated inline (dir-0 encrypt of the
 //! request, dir-1 decrypt of the replies). This proves the semantic channel
 //! — encrypt -> relay op -> in-process tagma call -> encrypt reply -> decrypt
-//! — without the real agora or any TS. Adapted from the former standalone
+//! — without the real archeion or any TS. Adapted from the former standalone
 //! connector's HTTP-mock-tagma tests, now exercising `deliver_message` and
 //! the broadcast pump directly.
 
@@ -11,8 +11,8 @@ use super::*;
 use axum::extract::State;
 use axum::{Router, routing::post};
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce, aead::Aead};
-use kallip_agora_common::bytes::Ciphertext;
-use kallip_agora_common::ids::{
+use kallip_archeion_common::bytes::Ciphertext;
+use kallip_archeion_common::ids::{
     ChannelId, ConversationId, ParticipantId, ParticipantKind, TagmaId, TraceId, UserId,
 };
 use kallip_common::protocol::agent::FileAttachment;
@@ -563,7 +563,9 @@ async fn re_kex_installs_key_resets_seq_and_starts_pump() {
     let app_secret = x25519_dalek::ReusableSecret::random();
     let app_pub = x25519_dalek::PublicKey::from(&app_secret);
     let init = KeyExchangeInit {
-        ephemeral_public: kallip_agora_common::bytes::X25519PublicKey(app_pub.to_bytes().to_vec()),
+        ephemeral_public: kallip_archeion_common::bytes::X25519PublicKey(
+            app_pub.to_bytes().to_vec(),
+        ),
     };
     handle.handle_kex(conv_of(&handle), init).await;
 
@@ -646,7 +648,7 @@ async fn send_message_persists_inbound_and_forwards_usermessage() {
 
     // It replays as a UserMessage echo under its row id (filtered to the peer).
     capture.lock().await.clear();
-    let trace = kallip_agora_common::ids::TraceId::from("h".to_string());
+    let trace = kallip_archeion_common::ids::TraceId::from("h".to_string());
     handle
         .handle_history(&trace, 1, &user, None, None, 50)
         .await;
@@ -737,7 +739,7 @@ async fn send_message_attachment_persists_and_replays() {
 async fn handle_history_latest_replays_both_directions_in_order() {
     let (handle, key, capture, _prompt_rx, _root_id, _state, db, _dir) =
         setup_with_history(8).await;
-    let trace = kallip_agora_common::ids::TraceId::from("test".to_string());
+    let trace = kallip_archeion_common::ids::TraceId::from("test".to_string());
     let user = peer();
     // Outbound, inbound, outbound — interleaved, ids assigned in append order.
     // All seeded under the peer partition (the relay replay filters to it); the
@@ -837,7 +839,7 @@ async fn handle_history_latest_replays_both_directions_in_order() {
 async fn handle_history_latest_more_is_false_even_at_full_page() {
     let (handle, key, capture, _prompt_rx, _root_id, _state, db, _dir) =
         setup_with_history(8).await;
-    let trace = kallip_agora_common::ids::TraceId::from("test".to_string());
+    let trace = kallip_archeion_common::ids::TraceId::from("test".to_string());
     let user = peer();
     // Insert exactly `limit` rows under the peer partition.
     for i in 0..3 {
@@ -894,7 +896,7 @@ async fn handle_history_after_and_before_windows() {
             .0,
         );
     }
-    let trace = kallip_agora_common::ids::TraceId::from("test".to_string());
+    let trace = kallip_archeion_common::ids::TraceId::from("test".to_string());
 
     // after=ids[0] -> ids[1..3] + batch-end; more=false (3 < 50).
     capture.lock().await.clear();
@@ -929,7 +931,7 @@ async fn handle_history_after_and_before_windows() {
 #[tokio::test]
 async fn handle_history_without_store_emits_empty_batch_end() {
     let (handle, key, capture, _prompt_rx, _root_id, _state) = setup(8).await;
-    let trace = kallip_agora_common::ids::TraceId::from("h".to_string());
+    let trace = kallip_archeion_common::ids::TraceId::from("h".to_string());
     let user = peer();
     handle
         .handle_history(&trace, 5, &user, None, None, 50)

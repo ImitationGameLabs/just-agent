@@ -1,10 +1,10 @@
 use super::*;
 use crate::test_support::{make_state, seed_presence};
-use kallip_agora_common::bytes::{Ciphertext, Ed25519PublicKey, X25519PublicKey};
-use kallip_agora_common::ids::{
+use kallip_archeion_common::bytes::{Ciphertext, Ed25519PublicKey, X25519PublicKey};
+use kallip_archeion_common::ids::{
     ChannelId, ConversationId, ParticipantId, ParticipantKind, TagmaId, TraceId, UserId,
 };
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 use kallip_lesche_common::control::KeyExchangeInit;
 use kallip_lesche_common::message::Participant;
 use kallip_lesche_common::tunnel::TunnelInbound;
@@ -21,7 +21,7 @@ fn dummy_x25519() -> X25519PublicKey {
 fn dummy_response() -> kallip_lesche_common::control::KeyExchangeResponse {
     kallip_lesche_common::control::KeyExchangeResponse {
         ephemeral_public: X25519PublicKey(vec![1u8; 32]),
-        signature: kallip_agora_common::bytes::Ed25519Signature(vec![2u8; 64]),
+        signature: kallip_archeion_common::bytes::Ed25519Signature(vec![2u8; 64]),
     }
 }
 

@@ -4,7 +4,7 @@
 //! daemon's UDS socket. The daemon itself never grows an HTTP or token
 //! surface; this crate is the only networked door: a Host-header check
 //! on everything, plus one of three auth modes for the API —
-//! agora-verified admin access, a configured standalone token, or open
+//! archeion-verified admin access, a configured standalone token, or open
 //! on bare loopback.
 
 pub mod api;
@@ -57,27 +57,30 @@ async fn not_found() -> Response {
 ///
 /// Platform credentials take precedence when both modes are configured
 /// (the platform is the intended shape; a leftover standalone token does
-/// not silently downgrade the deployment). Half of the agora pair alone
+/// not silently downgrade the deployment). Half of the archeion pair alone
 /// likewise refuses to start rather than fall through to a weaker mode.
 /// Bare loopback with nothing configured is the open mode; anything else
 /// refuses to start.
 pub fn resolve_auth(config: &Config, addr: &str) -> anyhow::Result<guard::AuthMode> {
     use guard::AuthMode;
-    match (&config.agora_internal_url, &config.agora_internal_token) {
+    match (
+        &config.archeion_internal_url,
+        &config.archeion_internal_token,
+    ) {
         (Some(url), Some(token)) => {
             return Ok(AuthMode::Platform(std::sync::Arc::new(
-                control_plane::AgoraVerifier::new(url.clone(), token.clone()),
+                control_plane::ArcheionVerifier::new(url.clone(), token.clone()),
             )));
         }
         // A half-configured pair must refuse to start: falling through
         // would silently serve the API under a weaker mode than intended.
         (Some(_), None) => anyhow::bail!(
-            "refusing to start: KALLIP_INSTANCES_AGORA_URL is set but \
-             KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN is missing"
+            "refusing to start: KALLIP_INSTANCES_ARCHEION_URL is set but \
+             KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN is missing"
         ),
         (None, Some(_)) => anyhow::bail!(
-            "refusing to start: KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN is set \
-             but KALLIP_INSTANCES_AGORA_URL is missing"
+            "refusing to start: KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN is set \
+             but KALLIP_INSTANCES_ARCHEION_URL is missing"
         ),
         (None, None) => {}
     }
@@ -89,7 +92,7 @@ pub fn resolve_auth(config: &Config, addr: &str) -> anyhow::Result<guard::AuthMo
     }
     anyhow::bail!(
         "refusing to start: {addr} is not loopback and no auth is configured \
-         (set KALLIP_INSTANCES_TOKEN, or agora internal URL + token for platform mode)"
+         (set KALLIP_INSTANCES_TOKEN, or archeion internal URL + token for platform mode)"
     )
 }
 

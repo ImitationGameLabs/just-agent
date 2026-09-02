@@ -2400,7 +2400,7 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
- "kallip-agora-common",
+ "kallip-archeion-common",
  "kallip-client",
  "kallip-common",
  "kallip-files",
@@ -2425,8 +2425,8 @@ dependencies = [
  "anyhow",
  "clap",
  "comfy-table",
- "kallip-agora-client",
- "kallip-agora-common",
+ "kallip-archeion-client",
+ "kallip-archeion-common",
  "serde",
  "serde_json",
  "time",
@@ -2434,7 +2434,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kallip-agora"
+name = "kallip-archeion"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2448,7 +2448,7 @@ dependencies = [
  "hex",
  "http-body-util",
  "ipnet",
- "kallip-agora-common",
+ "kallip-archeion-common",
  "kallip-common",
  "reqwest",
  "sea-orm",
@@ -2472,11 +2472,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "kallip-agora-client"
+name = "kallip-archeion-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "kallip-agora-common",
+ "kallip-archeion-common",
  "kallip-common",
  "kallip-e2ee",
  "reqwest",
@@ -2487,7 +2487,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kallip-agora-common"
+name = "kallip-archeion-common"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -2669,7 +2669,7 @@ dependencies = [
  "getrandom 0.4.2",
  "hex",
  "http-body-util",
- "kallip-agora-common",
+ "kallip-archeion-common",
  "kallip-common",
  "reqwest",
  "sea-orm",
@@ -2702,7 +2702,7 @@ dependencies = [
  "cookie",
  "dirs",
  "http-body-util",
- "kallip-agora-common",
+ "kallip-archeion-common",
  "kallip-common",
  "kallip-daemon-client",
  "kallip-daemon-common",
@@ -2731,7 +2731,7 @@ dependencies = [
  "cookie",
  "ed25519-dalek",
  "futures-util",
- "kallip-agora-common",
+ "kallip-archeion-common",
  "kallip-common",
  "kallip-lesche-common",
  "reqwest",
@@ -2763,7 +2763,7 @@ dependencies = [
  "base64 0.22.1",
  "futures-core",
  "futures-util",
- "kallip-agora-common",
+ "kallip-archeion-common",
  "kallip-e2ee",
  "kallip-lesche-common",
  "reqwest",
@@ -2780,7 +2780,7 @@ name = "kallip-lesche-common"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
- "kallip-agora-common",
+ "kallip-archeion-common",
  "kallip-common",
  "serde",
  "serde_json",
@@ -2871,8 +2871,8 @@ dependencies = [
  "getrandom 0.4.2",
  "hkdf 0.13.0",
  "just-llm-client",
- "kallip-agora-client",
- "kallip-agora-common",
+ "kallip-archeion-client",
+ "kallip-archeion-common",
  "kallip-common",
  "kallip-e2ee",
  "kallip-lesche-client",

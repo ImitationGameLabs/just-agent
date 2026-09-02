@@ -4,11 +4,11 @@
 use super::*;
 use crate::auth::AuthPrincipal;
 use crate::routes::test_support::{db_state, seed_room};
-use kallip_agora_common::bytes::Ciphertext;
-use kallip_agora_common::ids::{
+use kallip_archeion_common::bytes::Ciphertext;
+use kallip_archeion_common::ids::{
     ChannelId, ParticipantId, ParticipantKind, TagmaId, TraceId, UserId,
 };
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 use kallip_lesche_common::event::LescheEvent;
 use kallip_lesche_common::tunnel::TunnelInbound;
 use time::OffsetDateTime;
@@ -136,7 +136,7 @@ async fn agent_envelope_is_stamped_with_stable_owner_handle() {
     control.enroll_tagma(
         &t1,
         alice.clone(),
-        kallip_agora_common::bytes::Ed25519PublicKey(vec![1u8; 32]),
+        kallip_archeion_common::bytes::Ed25519PublicKey(vec![1u8; 32]),
         "tagma-token",
     );
     seed_room(state.db.as_ref().unwrap(), "room-1", &alice, &[], &[&t1]).await;
@@ -192,7 +192,7 @@ async fn agent_envelope_degrades_to_prefix_when_not_usable() {
     control.enroll_tagma(
         &revoked,
         alice.clone(),
-        kallip_agora_common::bytes::Ed25519PublicKey(vec![1u8; 32]),
+        kallip_archeion_common::bytes::Ed25519PublicKey(vec![1u8; 32]),
         "tok-rev",
     );
     control.revoke_tagma(&revoked);
@@ -200,7 +200,7 @@ async fn agent_envelope_degrades_to_prefix_when_not_usable() {
     control.enroll_tagma(
         &pending,
         alice.clone(),
-        kallip_agora_common::bytes::Ed25519PublicKey(vec![2u8; 32]),
+        kallip_archeion_common::bytes::Ed25519PublicKey(vec![2u8; 32]),
         "tok-pen",
     );
     control.set_pinned_key(&pending, None);
@@ -402,7 +402,7 @@ async fn history_resolves_sender_handles_from_registry() {
     control.enroll_tagma(
         &t1,
         alice.clone(),
-        kallip_agora_common::bytes::Ed25519PublicKey(vec![1u8; 32]),
+        kallip_archeion_common::bytes::Ed25519PublicKey(vec![1u8; 32]),
         "tagma-token",
     );
     seed_room(state.db.as_ref().unwrap(), "room-1", &alice, &[], &[&t1]).await;

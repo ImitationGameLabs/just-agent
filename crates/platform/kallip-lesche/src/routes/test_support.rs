@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use kallip_agora_common::ids::{ParticipantId, ParticipantKind, TagmaId, UserId};
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::ids::{ParticipantId, ParticipantKind, TagmaId, UserId};
+use kallip_archeion_common::principal::Principal;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use time::OffsetDateTime;
 

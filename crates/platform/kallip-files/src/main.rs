@@ -2,7 +2,7 @@
 //!
 //! Content lives in a local content-addressed blob directory; records,
 //! reference counts, and the delivery log live in the service's own
-//! Postgres. Every request authenticates against the agora through the
+//! Postgres. Every request authenticates against the archeion through the
 //! `/internal/*` ControlPlane API (per request, no cache) and is
 //! authorized by the single-point ACL (`acl`) against the two-layer space
 //! namespace.
@@ -38,8 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let boot = BootConfig {
         listen_addr: args.listen_addr,
         database_url: args.database_url,
-        agora_internal_url: args.agora_internal_url,
-        agora_internal_token: args.agora_internal_token,
+        archeion_internal_url: args.archeion_internal_url,
+        archeion_internal_token: args.archeion_internal_token,
         blob_root: args.blob_root.into(),
         files: config,
         notify_url: args.notify_url,

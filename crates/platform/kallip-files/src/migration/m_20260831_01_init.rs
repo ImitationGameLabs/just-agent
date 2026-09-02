@@ -16,7 +16,7 @@
 //! Secondary indexes are separate `create_index` calls rather than inline:
 //! Postgres `CREATE TABLE` only accepts `UNIQUE`/`PRIMARY KEY` as table
 //! constraints, so sea-query would emit invalid SQL for an inline
-//! non-unique index (house note carried from the agora init migration).
+//! non-unique index (house note carried from the archeion init migration).
 
 use sea_orm_migration::prelude::*;
 

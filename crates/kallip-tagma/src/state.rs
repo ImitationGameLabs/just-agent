@@ -48,7 +48,7 @@ pub struct ProfileBundle {
 
 /// Tagma-side cache of the rooms this tagma belongs to, keyed by relay name:
 /// each online relay's room-membership poll owns its slice, so two concurrently
-/// connected agoras never overwrite each other. Rooms are plaintext
+/// connected archeions never overwrite each other. Rooms are plaintext
 /// server-readable (the lesche enforces member access), so the cache is pure
 /// routing state: it tells the relay inbound fork and the agent's room
 /// send/read/list routes whether a given conversation id is a room envelope
@@ -204,7 +204,7 @@ pub struct AppState {
     /// enforces locks via landlock on Linux (mandatory); advisory elsewhere.
     pub lock_manager: Arc<kallip_runtime::dirlock::DirLockManager>,
     /// Online-mode relay connectors, keyed by entry name (one per configured
-    /// agora), each with its long-running tunnel task's `JoinHandle` so
+    /// archeion), each with its long-running tunnel task's `JoinHandle` so
     /// graceful shutdown can drain it. Empty in pure-local deployments and
     /// holds only the successfully-activated subset otherwise (a failed entry
     /// degrades to local-only for that entry alone).

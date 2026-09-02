@@ -1,22 +1,22 @@
 //! Request authentication for the relay. The `AuthPrincipal` extractor resolves
 //! a request to a [`Principal`] by delegating credential verification to the
 //! registry through the
-//! [`ControlPlane`](kallip_agora_common::control_plane::ControlPlane) trait.
+//! [`ControlPlane`](kallip_archeion_common::control_plane::ControlPlane) trait.
 //! The deputy guard (cookie -> User, bearer -> Tagma/Admin) is preserved by
 //! construction: `verify_session` can only return a user, `verify_bearer` only
 //! an admin or tagma.
 
 use axum::extract::FromRequestParts;
 use axum::http::HeaderMap;
-use kallip_agora_common::control_plane::ControlPlaneError;
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::control_plane::ControlPlaneError;
+use kallip_archeion_common::principal::Principal;
 use kallip_common::auth_header::extract_bearer_token;
 use kallip_common::protocol::ApiError;
 
 use crate::state::SharedConvState;
 
 /// Session cookie name. Mirrors the registry's `kallip_session`; a stable wire
-/// literal kept here (duplicated from `kallip-agora`) so this crate does not
+/// literal kept here (duplicated from `kallip-archeion`) so this crate does not
 /// pull the registry's session module.
 const SESSION_COOKIE_NAME: &str = "kallip_session";
 
@@ -123,4 +123,4 @@ pub(crate) fn read_session_cookie(headers: &HeaderMap) -> Option<String> {
 
 // Re-export the authorization helpers the relay's handlers use. (`require_admin`
 // is not needed here: the relay has no admin routes.)
-pub use kallip_agora_common::principal::{require_tagma, require_user};
+pub use kallip_archeion_common::principal::{require_tagma, require_user};

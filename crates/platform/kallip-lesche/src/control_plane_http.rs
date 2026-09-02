@@ -1,6 +1,6 @@
 //! The data-plane's RPC client for the registry's [`ControlPlane`].
 //!
-//! Each call is one HTTP POST to the agora's `/internal/*` surface, guarded by
+//! Each call is one HTTP POST to the archeion's `/internal/*` surface, guarded by
 //! a shared-secret bearer. There is deliberately NO auth cache: the relay's hot
 //! paths are long-lived connections (tagma tunnel, app SSE) that authenticate
 //! once at open and never re-verify mid-stream, so per-request RPC volume is
@@ -16,27 +16,27 @@
 
 use std::time::Duration;
 
-use kallip_agora_common::control_plane::{
+use kallip_archeion_common::control_plane::{
     ControlPlane, ControlPlaneError, EnrollmentLookup, TagmaProfile, UserIdentity, VerifiedSession,
 };
-use kallip_agora_common::ids::{TagmaId, UserId};
-use kallip_agora_common::internal_api::{
+use kallip_archeion_common::ids::{TagmaId, UserId};
+use kallip_archeion_common::internal_api::{
     EnrollmentLookupRequest, EnrollmentLookupResponse, TagmaProfilesRequest, TagmaProfilesResponse,
     TunnelProofTsRequest, TunnelProofTsResponse, UserIdentitiesRequest, UserIdentitiesResponse,
     UserIdentityByUsernameRequest, UserIdentityResponse, VerifyBearerRequest, VerifyBearerResponse,
     VerifySessionRequest, VerifySessionResponse,
 };
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 
 /// Per-call timeout for an `/internal/*` round-trip. These are tiny JSON
 /// request/response pairs against a same-host registry; a 10s ceiling is a
 /// generous backstop, not the expected latency.
 const INTERNAL_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A reqwest-backed [`ControlPlane`] calling the agora's `/internal/*` API.
+/// A reqwest-backed [`ControlPlane`] calling the archeion's `/internal/*` API.
 #[derive(Clone)]
 pub struct HttpControlPlane {
-    /// Agora internal root (e.g. `http://127.0.0.1:7100`); `/internal/...` is
+    /// Archeion internal root (e.g. `http://127.0.0.1:7100`); `/internal/...` is
     /// appended per call.
     base_url: String,
     /// Plaintext shared secret sent as `Authorization: Bearer <token>`.
@@ -45,8 +45,8 @@ pub struct HttpControlPlane {
 }
 
 impl HttpControlPlane {
-    /// `base_url` is the agora's internal root; `token` is the plaintext shared
-    /// secret that must match the agora's `KALLIP_AGORA_INTERNAL_TOKEN`.
+    /// `base_url` is the archeion's internal root; `token` is the plaintext shared
+    /// secret that must match the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.
     pub fn new(base_url: String, token: String) -> Self {
         let http = reqwest::Client::builder()
             .timeout(INTERNAL_TIMEOUT)
@@ -90,7 +90,7 @@ impl HttpControlPlane {
                 .map_err(|e| ControlPlaneError::Backend(e.to_string())),
             404 => Ok(None),
             status => Err(ControlPlaneError::Backend(format!(
-                "agora {path} returned HTTP {status}"
+                "archeion {path} returned HTTP {status}"
             ))),
         }
     }
@@ -221,14 +221,14 @@ impl ControlPlane for HttpControlPlane {
 
 #[cfg(test)]
 mod tests {
-    //! Stand up a wiremock agora `/internal/*` and assert each `ControlPlane`
+    //! Stand up a wiremock archeion `/internal/*` and assert each `ControlPlane`
     //! method maps request shape + HTTP status to the trait's `Option`/`bool`
     //! contract. No cache exists, so there is no cache behavior to test.
 
     use super::*;
     use base64::Engine;
-    use kallip_agora_common::control_plane::ControlPlane;
-    use kallip_agora_common::ids::{TagmaId, UserId};
+    use kallip_archeion_common::control_plane::ControlPlane;
+    use kallip_archeion_common::ids::{TagmaId, UserId};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

@@ -1,19 +1,19 @@
-//! Thin HTTP client for the agora's service-to-service auth calls.
+//! Thin HTTP client for the archeion's service-to-service auth calls.
 //!
-//! The lesche reaches the agora through `HttpControlPlane` (private to that
+//! The lesche reaches the archeion through `HttpControlPlane` (private to that
 //! crate, and implementing the full six-method `ControlPlane` trait); this
 //! proxy needs exactly two calls (bearer + session verify), so it carries
 //! a verifier of its own rather than pulling the relay crate in or
 //! refactoring a shared client out (a tracked follow-up if a third
 //! consumer appears).
 
-use kallip_agora_common::control_plane::{ControlPlaneError, VerifiedSession};
-use kallip_agora_common::internal_api::{
+use kallip_archeion_common::control_plane::{ControlPlaneError, VerifiedSession};
+use kallip_archeion_common::internal_api::{
     VerifyBearerRequest, VerifyBearerResponse, VerifySessionRequest,
 };
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 
-/// Per-call timeout: a tiny JSON round trip against a local agora; 10s is a
+/// Per-call timeout: a tiny JSON round trip against a local archeion; 10s is a
 /// generous backstop, matching the lesche's client.
 const INTERNAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -26,7 +26,7 @@ pub trait AuthVerifier: Send + Sync {
     /// simply not valid.
     async fn verify_bearer(&self, token: &str) -> Result<Option<Principal>, ControlPlaneError>;
 
-    /// Verify a `kallip_session` cookie value against the agora. Same error
+    /// Verify a `kallip_session` cookie value against the archeion. Same error
     /// contract as [`Self::verify_bearer`]: `Ok(None)` = absent/expired/
     /// disabled, `Ok(Some)` carries the `local_admin` flag the guard's
     /// cookie channel admits on.
@@ -36,19 +36,19 @@ pub trait AuthVerifier: Send + Sync {
     ) -> Result<Option<VerifiedSession>, ControlPlaneError>;
 }
 
-/// Agora-backed [`AuthVerifier`]: one POST per call to the agora's
+/// Archeion-backed [`AuthVerifier`]: one POST per call to the archeion's
 /// `/internal/verify-bearer` / `/internal/verify-session`, guarded by the
 /// shared internal secret.
 #[derive(Clone)]
-pub struct AgoraVerifier {
-    /// Agora internal root (e.g. `http://127.0.0.1:7100`).
+pub struct ArcheionVerifier {
+    /// Archeion internal root (e.g. `http://127.0.0.1:7100`).
     base_url: String,
-    /// Shared secret matching the agora's `KALLIP_AGORA_INTERNAL_TOKEN`.
+    /// Shared secret matching the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.
     internal_token: String,
     http: reqwest::Client,
 }
 
-impl AgoraVerifier {
+impl ArcheionVerifier {
     pub fn new(base_url: String, internal_token: String) -> Self {
         let http = reqwest::Client::builder()
             .timeout(INTERNAL_TIMEOUT)
@@ -63,7 +63,7 @@ impl AgoraVerifier {
 }
 
 #[async_trait::async_trait]
-impl AuthVerifier for AgoraVerifier {
+impl AuthVerifier for ArcheionVerifier {
     async fn verify_bearer(&self, token: &str) -> Result<Option<Principal>, ControlPlaneError> {
         let response = self
             .http
@@ -83,7 +83,7 @@ impl AuthVerifier for AgoraVerifier {
                 .map_err(|e| ControlPlaneError::Backend(e.to_string())),
             404 => Ok(None),
             status => Err(ControlPlaneError::Backend(format!(
-                "agora /internal/verify-bearer returned HTTP {status}"
+                "archeion /internal/verify-bearer returned HTTP {status}"
             ))),
         }
     }
@@ -110,7 +110,7 @@ impl AuthVerifier for AgoraVerifier {
                 .map_err(|e| ControlPlaneError::Backend(e.to_string())),
             404 => Ok(None),
             status => Err(ControlPlaneError::Backend(format!(
-                "agora /internal/verify-session returned HTTP {status}"
+                "archeion /internal/verify-session returned HTTP {status}"
             ))),
         }
     }

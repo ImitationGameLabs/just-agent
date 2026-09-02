@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use kallip_agora_common::ids::ParticipantId;
+use kallip_archeion_common::ids::ParticipantId;
 use kallip_lesche_common::event::LescheEvent;
 use kallip_lesche_common::rooms::{MemberId, RoomId};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
@@ -127,7 +127,7 @@ mod tests {
 
     use super::*;
     use crate::routes::test_support::{db_state, seed_room};
-    use kallip_agora_common::ids::{TagmaId, UserId};
+    use kallip_archeion_common::ids::{TagmaId, UserId};
     use kallip_lesche_common::event::LescheEvent;
     use kallip_lesche_common::tunnel::TunnelInbound;
 

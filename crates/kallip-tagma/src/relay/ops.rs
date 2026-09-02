@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use kallip_agora_common::ids::TraceId;
+use kallip_archeion_common::ids::TraceId;
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::message::TagmaReply;
 

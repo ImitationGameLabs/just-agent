@@ -263,7 +263,7 @@ fn start_filters_consumed_enrollment_code() {
     let workspace = tempfile::tempdir().expect("workspace tempdir");
 
     // Spawn local-only (the real enrolled setup is fabricated below — the
-    // test has no agora).
+    // test has no archeion).
     let spawn = tokio_block_on(client.call(RequestBody::Spawn {
         slug: "stale-code".into(),
         workspace: workspace.path().display().to_string(),
@@ -293,7 +293,7 @@ fn start_filters_consumed_enrollment_code() {
 
     // Fabricate the bug's exact state: a spawn-time enrollment code still
     // persisted in meta.json plus credentials stored by a completed
-    // enrollment. The agora points at a port nothing listens on — after the
+    // enrollment. The archeion points at a port nothing listens on — after the
     // fix the real tagma boots through the Stored branch and the entry
     // merely degrades to local-only; replaying the code instead makes tagma
     // fail fast on stored-credentials-plus-code and Start times out.
@@ -303,7 +303,7 @@ fn start_filters_consumed_enrollment_code() {
     )
     .expect("parse meta.json");
     let env = meta["env"].as_array_mut().expect("env array");
-    env.push("KALLIP_TAGMA_RELAY_AGORA_URL=http://127.0.0.1:9".into());
+    env.push("KALLIP_TAGMA_RELAY_ARCHEION_URL=http://127.0.0.1:9".into());
     env.push("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-spent".into());
     std::fs::write(
         instance_dir.join("meta.json"),
@@ -331,7 +331,7 @@ fn start_filters_consumed_enrollment_code() {
     assert_ne!(started_pid, pid, "a fresh incarnation");
 
     // The scrub removed the spent code from the persisted copy while the
-    // rest of the env survived (the agora url is not secret material and
+    // rest of the env survived (the archeion url is not secret material and
     // stays — the Stored branch needs it).
     let after: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta after"),
@@ -340,7 +340,7 @@ fn start_filters_consumed_enrollment_code() {
     let env = after["env"].as_array().expect("env array after");
     assert!(env.contains(&serde_json::json!("KALLIP_OPERATOR_TOKEN=test-op-token")));
     assert!(env.contains(&serde_json::json!(
-        "KALLIP_TAGMA_RELAY_AGORA_URL=http://127.0.0.1:9"
+        "KALLIP_TAGMA_RELAY_ARCHEION_URL=http://127.0.0.1:9"
     )));
     assert!(!env.iter().any(|pair| {
         pair.as_str()
@@ -432,7 +432,7 @@ fn manual_boot_in_unmarked_dir_writes_nothing() {
         // stack (e.g. an agent) carries ambient KALLIP_TAGMA_RELAY_*
         // vars; leaked into the child they trip the tagma relay
         // fail-fast and this local-only boot never listens.
-        .env_remove("KALLIP_TAGMA_RELAY_AGORA_URL")
+        .env_remove("KALLIP_TAGMA_RELAY_ARCHEION_URL")
         .env_remove("KALLIP_TAGMA_RELAY_LESCHE_URL")
         .env_remove("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE")
         .stdout(std::process::Stdio::null())

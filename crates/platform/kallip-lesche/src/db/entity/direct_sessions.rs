@@ -13,7 +13,7 @@ pub struct Model {
     pub id: String,
     /// Canonical byte-ordered member pair (`member_a` <= `member_b`, the same
     /// ordering the id derivation hashes). Plain TEXT tagma-id references,
-    /// NOT FKs to the agora registry (same boundary as
+    /// NOT FKs to the archeion registry (same boundary as
     /// `room_members.member_id`).
     #[sea_orm(column_type = "Text")]
     pub member_a: String,

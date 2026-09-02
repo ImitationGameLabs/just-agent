@@ -14,7 +14,7 @@
 //! ordering the session-id derivation hashes -- see
 //! `kallip_lesche_common::direct`), so the pair is unique by construction and
 //! the UNIQUE constraint documents it. Like `room_members.member_id`, member
-//! columns are plain TEXT references (no FK to the agora registry); the only
+//! columns are plain TEXT references (no FK to the archeion registry); the only
 //! FKs are internal-to-lesche cascade links.
 
 use sea_orm_migration::prelude::*;

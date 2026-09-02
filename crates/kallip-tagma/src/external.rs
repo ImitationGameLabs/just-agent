@@ -29,7 +29,7 @@
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
-use kallip_agora_common::ids::{ConversationId, ParticipantId, ParticipantKind, TagmaId};
+use kallip_archeion_common::ids::{ConversationId, ParticipantId, ParticipantKind, TagmaId};
 use kallip_common::protocol::SseEvent;
 use kallip_common::protocol::agent::FileAttachment;
 use kallip_lesche_common::message::{HistoryEntry, Participant, TagmaReply};
@@ -118,7 +118,7 @@ const FALLBACK_AGENT_HANDLE: &str = "Tagma";
 
 /// The reserved tagma id used to derive the agent `ParticipantId` when the
 /// enrolled id is unresolved (a never-enrolled tagma). Stable across restarts
-/// and distinct from any agora-assigned id; `agent_sender().tagma_id` stays
+/// and distinct from any archeion-assigned id; `agent_sender().tagma_id` stays
 /// `None` to signal "not enrolled" honestly.
 fn offline_tagma_id() -> TagmaId {
     "local-tagma".parse().unwrap()
@@ -223,7 +223,7 @@ impl ExternalProjector {
     /// The agent sender for outbound frames: the tagma id + its label. The agent
     /// exists (it is this tagma), so its id/handle are always real; only the
     /// enrolled `tagma_id` is honestly `None` for a never-enrolled tagma (the
-    /// signal that the agora-assigned id is unresolved), using a reserved
+    /// signal that the archeion-assigned id is unresolved), using a reserved
     /// offline id for the derivation in the meantime.
     fn agent_sender(&self) -> Participant {
         let resolved = self.inner.tagma_id.get().cloned();

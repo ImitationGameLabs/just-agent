@@ -18,9 +18,9 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use kallip_agora_common::bytes::Ciphertext;
-use kallip_agora_common::ids::{ParticipantId, ParticipantKind, TagmaId};
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::bytes::Ciphertext;
+use kallip_archeion_common::ids::{ParticipantId, ParticipantKind, TagmaId};
+use kallip_archeion_common::principal::Principal;
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::direct::{
     DirectMessageView, DirectSessionId, DirectSessionPeer, DirectSessionView,

@@ -1,7 +1,7 @@
 use super::*;
 use crate::state::RegistryEntry;
 use crate::test_helpers::{make_entry, make_state};
-use kallip_agora_common::ids::{TagmaId, UserId};
+use kallip_archeion_common::ids::{TagmaId, UserId};
 use kallip_common::agentid::AgentId;
 use kallip_common::protocol::AuthoredEvent;
 use std::sync::Arc;

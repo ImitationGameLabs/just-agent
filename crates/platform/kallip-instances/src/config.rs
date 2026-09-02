@@ -23,32 +23,32 @@ pub struct Config {
     pub daemon_socket: Option<PathBuf>,
 
     /// Standalone-mode bearer token for /api/instances/* (constant-time
-    /// compared; the platform mode uses the agora credentials below).
+    /// compared; the platform mode uses the archeion credentials below).
     #[arg(long, env = "KALLIP_INSTANCES_TOKEN")]
     pub token: Option<String>,
     /// Instance source: the host daemon (the only implementation today;
     /// a cloud orchestration backend is reserved but not built yet).
     #[arg(long, env = "KALLIP_INSTANCES_BACKEND", default_value = "daemon")]
     pub backend: String,
-    /// Agora internal root for platform mode (e.g. http://127.0.0.1:7100);
-    /// together with the internal token this enables agora-backed auth.
-    #[arg(long, env = "KALLIP_INSTANCES_AGORA_URL")]
-    pub agora_internal_url: Option<String>,
+    /// Archeion internal root for platform mode (e.g. http://127.0.0.1:7100);
+    /// together with the internal token this enables archeion-backed auth.
+    #[arg(long, env = "KALLIP_INSTANCES_ARCHEION_URL")]
+    pub archeion_internal_url: Option<String>,
 
-    /// Shared secret matching the agora's KALLIP_AGORA_INTERNAL_TOKEN.
-    #[arg(long, env = "KALLIP_INSTANCES_AGORA_INTERNAL_TOKEN")]
-    pub agora_internal_token: Option<String>,
+    /// Shared secret matching the archeion's KALLIP_ARCHEION_INTERNAL_TOKEN.
+    #[arg(long, env = "KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN")]
+    pub archeion_internal_token: Option<String>,
     /// Server-side default relay URLs for spawned tagmata that signal
     /// relay intent (any KALLIP_TAGMA_RELAY_* env) but omit a URL; local-
     /// backend scope only (the daemon and its tagmata run on this host,
     /// so localhost always reaches the local stack).
     #[arg(
         long,
-        env = "KALLIP_INSTANCES_RELAY_AGORA_URL",
+        env = "KALLIP_INSTANCES_RELAY_ARCHEION_URL",
         default_value = "http://localhost:7100"
     )]
-    pub relay_agora_url: String,
-    /// Lesche counterpart of `relay_agora_url` (tunnel + envelopes).
+    pub relay_archeion_url: String,
+    /// Lesche counterpart of `relay_archeion_url` (tunnel + envelopes).
     #[arg(
         long,
         env = "KALLIP_INSTANCES_RELAY_LESCHE_URL",
@@ -108,10 +108,10 @@ mod tests {
             daemon_socket: Some(PathBuf::from("/tmp/flag.sock")),
             token: None,
             backend: "daemon".into(),
-            relay_agora_url: String::new(),
+            relay_archeion_url: String::new(),
             relay_lesche_url: String::new(),
-            agora_internal_url: None,
-            agora_internal_token: None,
+            archeion_internal_url: None,
+            archeion_internal_token: None,
             allowed_hosts_raw: String::new(),
             cors_origins: String::new(),
         };
@@ -128,10 +128,10 @@ mod tests {
             daemon_socket: None,
             token: None,
             backend: "daemon".into(),
-            relay_agora_url: String::new(),
+            relay_archeion_url: String::new(),
             relay_lesche_url: String::new(),
-            agora_internal_url: None,
-            agora_internal_token: None,
+            archeion_internal_url: None,
+            archeion_internal_token: None,
             allowed_hosts_raw: String::new(),
             cors_origins: String::new(),
         };
@@ -146,10 +146,10 @@ mod tests {
             daemon_socket: None,
             token: None,
             backend: "daemon".into(),
-            relay_agora_url: String::new(),
+            relay_archeion_url: String::new(),
             relay_lesche_url: String::new(),
-            agora_internal_url: None,
-            agora_internal_token: None,
+            archeion_internal_url: None,
+            archeion_internal_token: None,
             allowed_hosts_raw: String::new(),
             cors_origins: String::new(),
         };
@@ -170,10 +170,10 @@ mod tests {
             daemon_socket: None,
             token: None,
             backend: "daemon".into(),
-            relay_agora_url: String::new(),
+            relay_archeion_url: String::new(),
             relay_lesche_url: String::new(),
-            agora_internal_url: None,
-            agora_internal_token: None,
+            archeion_internal_url: None,
+            archeion_internal_token: None,
             allowed_hosts_raw: " platform.internal , localhost ,".into(),
             cors_origins: String::new(),
         };

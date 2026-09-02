@@ -1,6 +1,6 @@
 //! Room creation and listing: the founding of a room (caller is the founding
 //! member), the caller's own-room listing, and the public-room discovery list.
-//! Ported from the agora registry; reads and writes the lesche-local membership
+//! Ported from the archeion registry; reads and writes the lesche-local membership
 //! graph.
 
 use crate::auth::{AuthPrincipal, require_user};
@@ -9,7 +9,7 @@ use crate::db::{TxnError, flatten_txn, map_db_err, store};
 use crate::state::SharedConvState;
 use axum::Json;
 use axum::extract::State;
-use kallip_agora_common::ids::{ParticipantId, ParticipantKind};
+use kallip_archeion_common::ids::{ParticipantId, ParticipantKind};
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::rooms::{MemberId, RoomId, Visibility};
 use sea_orm::{

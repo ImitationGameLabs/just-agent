@@ -2,7 +2,7 @@
 //!
 //! Auth follows the deployment modes (operator decision): the platform mode
 //! is dual-channel, mirroring the lesche — a bearer token verifies with the
-//! agora (only Admin may pass) and, absent a bearer, the agora session
+//! archeion (only Admin may pass) and, absent a bearer, the archeion session
 //! cookie authenticates the fixed local-admin account (instance control is
 //! an operator surface, so any other user session is 403); the standalone
 //! mode compares a locally configured token; bare loopback with nothing
@@ -15,7 +15,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 use subtle::ConstantTimeEq;
 
 use crate::error::fault;
@@ -23,8 +23,8 @@ use crate::error::fault;
 /// How `/api/instances/*` requests are authenticated.
 #[derive(Clone)]
 pub enum AuthMode {
-    /// Platform mode: every request's bearer is verified with the agora;
-    /// only `Principal::Admin` passes. Without a bearer, the agora session
+    /// Platform mode: every request's bearer is verified with the archeion;
+    /// only `Principal::Admin` passes. Without a bearer, the archeion session
     /// cookie is verified instead and passes only for the local-admin
     /// account's session (a valid non-admin identity — Tagma, User, or a
     /// plain user session — still gets 403; instance life cycles are the
@@ -112,9 +112,9 @@ pub async fn token_guard(
                     "unauthorized",
                     "invalid bearer token",
                 ),
-                // Agora unreachable or off-contract: fail closed.
+                // Archeion unreachable or off-contract: fail closed.
                 Err(error) => {
-                    tracing::warn!(%error, "agora verify_bearer failed");
+                    tracing::warn!(%error, "archeion verify_bearer failed");
                     fault(
                         StatusCode::SERVICE_UNAVAILABLE,
                         "auth_backend_unavailable",
@@ -147,9 +147,9 @@ pub async fn token_guard(
                         "admin_session_required",
                         "sign in as the platform administrator to manage instances",
                     ),
-                    // Agora unreachable or off-contract: fail closed.
+                    // Archeion unreachable or off-contract: fail closed.
                     Err(error) => {
-                        tracing::warn!(%error, "agora verify_session failed");
+                        tracing::warn!(%error, "archeion verify_session failed");
                         fault(
                             StatusCode::SERVICE_UNAVAILABLE,
                             "auth_backend_unavailable",

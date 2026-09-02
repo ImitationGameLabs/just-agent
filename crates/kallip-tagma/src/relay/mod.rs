@@ -1,5 +1,5 @@
 //! The relay connector: the optional online-mode subsystem that links the
-//! tagma to agora/lesche. Folded in from the former standalone connector — the
+//! tagma to archeion/lesche. Folded in from the former standalone connector — the
 //! tagma now hosts it in-process.
 //!
 //! Responsibilities (ported from the former standalone connector):
@@ -32,8 +32,8 @@ use std::sync::{Arc, Weak};
 
 use anyhow::{Context, Result};
 use futures_util::{FutureExt, StreamExt};
-use kallip_agora_common::bytes::Ciphertext;
-use kallip_agora_common::ids::{ConversationId, ParticipantId, ParticipantKind, TagmaId};
+use kallip_archeion_common::bytes::Ciphertext;
+use kallip_archeion_common::ids::{ConversationId, ParticipantId, ParticipantKind, TagmaId};
 use kallip_e2ee::{self as e2e, DeviceKey};
 use kallip_lesche_client::LescheClient;
 use kallip_lesche_common::direct::{DirectMessage, DirectSessionId};
@@ -101,7 +101,7 @@ pub(crate) struct RoomPayload {
 struct Inner {
     /// The config entry name (stable slug, e.g. "main"): keys the relay's
     /// AppState slot and its joined-rooms slice, and stamps relay-scoped log
-    /// lines so two concurrently connected agoras are distinguishable.
+    /// lines so two concurrently connected archeions are distinguishable.
     name: String,
     tagma_id: TagmaId,
     /// The enrolled label (or a fallback) used to stamp the agent sender's

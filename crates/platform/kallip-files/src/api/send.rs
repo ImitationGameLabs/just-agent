@@ -23,7 +23,7 @@ use uuid::Uuid;
 use crate::acl::{self, Action};
 use crate::auth::AuthPrincipal;
 use crate::state::AppState;
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 use kallip_common::protocol::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -247,14 +247,14 @@ async fn resolve_landing(
     }
 }
 
-fn parse_user(raw: &str) -> Result<kallip_agora_common::ids::UserId, ApiError> {
+fn parse_user(raw: &str) -> Result<kallip_archeion_common::ids::UserId, ApiError> {
     use std::str::FromStr as _;
-    kallip_agora_common::ids::UserId::from_str(raw)
+    kallip_archeion_common::ids::UserId::from_str(raw)
         .map_err(|_| ApiError::bad_request("to_user must be a user id"))
 }
-fn parse_tagma(raw: &str) -> Result<kallip_agora_common::ids::TagmaId, ApiError> {
+fn parse_tagma(raw: &str) -> Result<kallip_archeion_common::ids::TagmaId, ApiError> {
     use std::str::FromStr as _;
-    kallip_agora_common::ids::TagmaId::from_str(raw)
+    kallip_archeion_common::ids::TagmaId::from_str(raw)
         .map_err(|_| ApiError::bad_request("to_tagma must be a tagma id"))
 }
 

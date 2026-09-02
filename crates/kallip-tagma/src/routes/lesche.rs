@@ -17,8 +17,8 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Response};
-use kallip_agora_common::bytes::Ciphertext;
-use kallip_agora_common::ids::{ChannelId, TagmaId, TraceId};
+use kallip_archeion_common::bytes::Ciphertext;
+use kallip_archeion_common::ids::{ChannelId, TagmaId, TraceId};
 use kallip_common::message::DeliveryResponse;
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::direct::{
@@ -40,7 +40,7 @@ pub(crate) struct LescheMessageRequest {
     /// room (the tagma posts the plaintext to `/v1/rooms/{room}/envelopes`);
     /// absent for the bilateral 1:1 send. A raw string parsed into a
     /// [`RoomId`] so this route owns the id-type boundary (the `kallip` CLI /
-    /// `kallip-client` stay agora-id-free).
+    /// `kallip-client` stay archeion-id-free).
     pub room: Option<String>,
     /// Optional peer tagma id. Present when the agent is sending into the
     /// direct session with that tagma (create-or-get on first send, so
@@ -349,7 +349,7 @@ async fn send_room_message(
         channel_id: ChannelId::from(room.as_ref().to_string()),
         sender,
         // sequence_n is bilateral-replay-only (the AEAD nonce counter + the
-        // agora idempotency key); the rooms route does not consult it. A
+        // archeion idempotency key); the rooms route does not consult it. A
         // constant 0 is harmless here.
         sequence_n: 0,
         trace_id: TraceId::random(),

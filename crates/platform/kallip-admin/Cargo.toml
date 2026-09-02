@@ -1,6 +1,6 @@
 [package]
 name = "kallip-admin"
-description = "Headless admin CLI for kallip-agora (HTTP client, sk-admin bearer)"
+description = "Headless admin CLI for kallip-archeion (HTTP client, sk-admin bearer)"
 edition = "2024"
 version.workspace = true
 license.workspace = true
@@ -10,8 +10,8 @@ name = "kallip-admin"
 path = "src/main.rs"
 
 [dependencies]
-kallip-agora-client = { workspace = true }
-kallip-agora-common = { workspace = true }
+kallip-archeion-client = { workspace = true }
+kallip-archeion-common = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }

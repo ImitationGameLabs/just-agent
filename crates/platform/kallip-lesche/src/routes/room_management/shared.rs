@@ -1,6 +1,6 @@
 //! Cross-handler helpers shared across the room-management submodules: the
 //! member-row -> view mapping, the in-txn membership gate, and the epoch bump.
-//! Ported from the agora registry; identity is now attested through the agora
+//! Ported from the archeion registry; identity is now attested through the archeion
 //! `/internal/*` surface rather than local table reads, but the membership
 //! graph itself lives here.
 
@@ -8,7 +8,7 @@ use crate::db::TxnError;
 use crate::db::entity::{room_members, rooms};
 use crate::fan::deliver_membership_changed;
 use crate::state::SharedConvState;
-use kallip_agora_common::ids::{ParticipantKind, UserId};
+use kallip_archeion_common::ids::{ParticipantKind, UserId};
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::rooms::{MemberId, RoomId, RoomMember};
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter};
@@ -99,7 +99,7 @@ pub(super) async fn bump_epoch_locked(
 
 /// After a room's `membership_epoch` bumps (a committed membership mutation),
 /// notify the room's online members to reconcile. This is the local replacement
-/// for the agora->lesche wake push: a single relay instance fans directly to its
+/// for the archeion->lesche wake push: a single relay instance fans directly to its
 /// in-process `Registry` (no HTTP hop). Best-effort and off the request path:
 /// the task runs on a detached `tokio::spawn`, a FRESH post-commit
 /// `room_members` SELECT loads the live members (the just-removed member is

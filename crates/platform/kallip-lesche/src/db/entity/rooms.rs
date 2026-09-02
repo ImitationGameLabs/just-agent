@@ -3,7 +3,7 @@
 //! A room is M users + N agents (the membership graph lives in `room_members`).
 //! `created_by_user_id` is the creator; it is a plain
 //! TEXT reference, NOT a foreign key, because the `users` table lives in the
-//! agora registry (lesche never touches the registry store). `membership_epoch`
+//! archeion registry (lesche never touches the registry store). `membership_epoch`
 //! is the membership-version counter the relay reads to authorize senders,
 //! bumped on every add/remove.
 
@@ -18,7 +18,7 @@ pub struct Model {
     #[sea_orm(primary_key, column_type = "Text")]
     pub id: String,
     /// `UserId` of the creator. Plain TEXT reference (no FK): the `users` table
-    /// lives in the agora registry, not in lesche's store.
+    /// lives in the archeion registry, not in lesche's store.
     #[sea_orm(column_type = "Text")]
     pub created_by_user_id: String,
     #[sea_orm(column_type = "TimestampWithTimeZone")]

@@ -4,7 +4,7 @@
 //! identity (`ParticipantId::for_user` / `for_tagma` -- a member is a participant
 //! who belongs to the room); `kind` is `"human"` / `"agent"`; `source_id` is the
 //! underlying `user_id` / `tagma_id` (a plain string, NOT a foreign key -- the
-//! underlying tables live in the agora registry). Composite PK `(room_id,
+//! underlying tables live in the archeion registry). Composite PK `(room_id,
 //! member_id)`; no status column. A participant is a member iff a row exists.
 //! Removal hard-deletes the row and appends a `room_member_revocations` audit
 //! entry (the live/revocation-audit split).

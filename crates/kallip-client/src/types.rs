@@ -14,7 +14,7 @@ pub type MessageResponse = kallip_common::protocol::MessageResponse;
 /// multi-member room; `tagma` the optional peer tagma id: present when the
 /// agent is sending into that tagma's direct session. Exactly one may be
 /// set; neither is the bilateral 1:1 send. Kept as raw strings so this
-/// client crate stays free of agora id-type coupling; the tagma parses them.
+/// client crate stays free of archeion id-type coupling; the tagma parses them.
 /// (A direct-session attachment must live in a workspace the peer can read:
 /// a private-area record fails the peer's fetch with 403.)
 #[derive(Debug, serde::Serialize)]

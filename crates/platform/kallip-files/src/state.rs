@@ -14,7 +14,7 @@ use crate::auth::FilesControlPlane;
 use crate::backend::LocalBackend;
 use crate::blob::BlobStore;
 use crate::gc::GcConfig;
-use kallip_agora_common::control_plane::ControlPlane;
+use kallip_archeion_common::control_plane::ControlPlane;
 
 /// Static service configuration, resolved once at boot.
 #[derive(Debug, Clone)]
@@ -27,7 +27,7 @@ pub struct FilesConfig {
     /// cross-origin allowed (the allowlist is `AllowOrigin::list`, never
     /// `Any`); see `Args::cors_origins`.
     pub cors_origins: String,
-    /// Agora degrade posture (seventh approved default). `false` (default)
+    /// Archeion degrade posture (seventh approved default). `false` (default)
     /// is fail-closed: a registry that cannot answer produces 503 and no
     /// decision. `true` is fail-soft: the enrollment lookup degrading to an
     /// empty fact set turns tagma decisions into denials (403) instead of
@@ -49,7 +49,7 @@ pub struct AppState {
     /// Blob root path, for the reconcile walk (the store trait has no
     /// directory listing; reconciliation is root-aware by design).
     pub blob_root: PathBuf,
-    /// The agora control-plane client.
+    /// The archeion control-plane client.
     pub control: Arc<dyn ControlPlane>,
     /// Static configuration.
     pub config: Arc<FilesConfig>,
@@ -65,10 +65,10 @@ pub struct BootConfig {
     pub listen_addr: String,
     /// Postgres URL for the metadata store.
     pub database_url: String,
-    /// Agora internal base URL for `/internal/*` calls.
-    pub agora_internal_url: String,
-    /// Shared secret bearer for the agora internal API.
-    pub agora_internal_token: String,
+    /// Archeion internal base URL for `/internal/*` calls.
+    pub archeion_internal_url: String,
+    /// Shared secret bearer for the archeion internal API.
+    pub archeion_internal_token: String,
     /// Lesche internal base URL + shared secret for the file-delivered
     /// event push; an empty URL disables the push.
     pub notify_url: String,
@@ -112,7 +112,7 @@ pub fn router(state: AppState) -> Router {
 /// The CORS gate for browser callers: the web app lives on a different
 /// origin than this service (e.g. `files.<domain>` vs `app.<domain>`), so
 /// uploads/downloads from the browser are cross-origin and preflighted.
-/// Same shape as the agora's layer (the twin implementation): origins are
+/// Same shape as the archeion's layer (the twin implementation): origins are
 /// an explicit comma-separated allowlist (an empty config yields an empty
 /// allowlist, never a wildcard), methods are enumerated because
 /// `allow_credentials(true)` + `Any` is forbidden by the Fetch spec, and
@@ -158,8 +158,8 @@ pub async fn run(boot: BootConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
         blob: LocalBackend::arc(&boot.blob_root),
         blob_root: boot.blob_root.clone(),
         control: Arc::new(FilesControlPlane::new(
-            boot.agora_internal_url,
-            boot.agora_internal_token,
+            boot.archeion_internal_url,
+            boot.archeion_internal_token,
         )),
         notify: crate::notify::LescheNotifyClient::new(boot.notify_url, boot.notify_token)
             .map(|c| std::sync::Arc::new(c) as _),
@@ -220,7 +220,7 @@ mod tests {
     use super::*;
 
     /// The preflight surface: an allowed origin gets the method list back,
-    /// mirroring the agora's pinned preflight test (the twin layer).
+    /// mirroring the archeion's pinned preflight test (the twin layer).
     #[tokio::test]
     async fn preflight_from_an_allowed_origin_advertises_methods() {
         let app = Router::new()

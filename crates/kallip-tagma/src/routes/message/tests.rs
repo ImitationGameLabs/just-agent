@@ -444,7 +444,7 @@ async fn duty_toggle_off_then_on() {
 
 use crate::external::ExternalProjector;
 use crate::relay::MessageLimits;
-use kallip_agora_common::ids::{ConversationId, TagmaId};
+use kallip_archeion_common::ids::{ConversationId, TagmaId};
 use std::sync::Arc;
 use tempfile::TempDir;
 

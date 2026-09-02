@@ -19,8 +19,8 @@ use crate::acl::{self, Action, EnrollmentFacts, SpacePath};
 use crate::auth::AuthPrincipal;
 use crate::metadata::models::file_records;
 use crate::state::AppState;
-use kallip_agora_common::ids::TagmaId;
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::ids::TagmaId;
+use kallip_archeion_common::principal::Principal;
 use kallip_common::protocol::ApiError;
 
 /// GET /health: no authentication, on purpose -- compose healthcheck, the

@@ -1,11 +1,11 @@
 //! Data-plane signed proofs: the **tunnel** reconnect proof (`GET /v1/tunnel`)
 //! and the **key-exchange** proof. The shared verification primitive
-//! ([`kallip_agora_common::proof::verify`]), the [`framed`] length-prefix
-//! helper, and the [`ProofError`] type live in `kallip-agora-common`; the
+//! ([`kallip_archeion_common::proof::verify`]), the [`framed`] length-prefix
+//! helper, and the [`ProofError`] type live in `kallip-archeion-common`; the
 //! enroll proof also lives there. Every variable-length field is length-prefixed
 //! (4-byte big-endian) so the wire contract is unambiguous.
 
-use kallip_agora_common::proof::{ProofError, framed, verify};
+use kallip_archeion_common::proof::{ProofError, framed, verify};
 
 const TUNNEL_TAG: &[u8] = b"kallip-agora-tunnel-proof-v1";
 const KEX_TAG: &[u8] = b"kallip-agora-kex-v1";

@@ -1,24 +1,24 @@
 //! Envelope + E2E payload model.
 //!
-//! The agora sees only the [`Envelope`] (routing metadata + opaque ciphertext).
+//! The archeion sees only the [`Envelope`] (routing metadata + opaque ciphertext).
 //! The [`TagmaRequest`] / [`TagmaReply`] inside is the E2E payload shared
-//! between app and tagma; the agora never decrypts it.
+//! between app and tagma; the archeion never decrypts it.
 
 use crate::direct::FileAttachment;
 use crate::event::AuthoredEvent;
-use kallip_agora_common::bytes::Ciphertext;
-use kallip_agora_common::ids::{ChannelId, TraceId};
+use kallip_archeion_common::bytes::Ciphertext;
+use kallip_archeion_common::ids::{ChannelId, TraceId};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use time::OffsetDateTime;
 
-/// Re-exported from `kallip_agora_common::participant` so the envelope sender
+/// Re-exported from `kallip_archeion_common::participant` so the envelope sender
 /// type stays reachable from its long-standing `kallip_lesche_common::message`
 /// path. See that module for the trust model.
-pub use kallip_agora_common::participant::Participant;
+pub use kallip_archeion_common::participant::Participant;
 
-/// The unit the agora forwards between endpoints. Carries routing metadata +
-/// AEAD ciphertext; the agora reads only the metadata.
+/// The unit the archeion forwards between endpoints. Carries routing metadata +
+/// AEAD ciphertext; the archeion reads only the metadata.
 ///
 /// `channel_id` is the routing target: which channel this envelope is
 /// addressed to. One field, two value domains -- a multi-member room
@@ -37,7 +37,7 @@ pub struct Envelope {
     pub channel_id: ChannelId,
     pub sender: Participant,
     /// Per-conversation, per-sender monotonic counter from 0. Doubles as the
-    /// AEAD nonce counter (direction-tagged) and as the agora's idempotency key.
+    /// AEAD nonce counter (direction-tagged) and as the archeion's idempotency key.
     pub sequence_n: u64,
     pub trace_id: TraceId,
     #[serde(with = "time::serde::iso8601")]
@@ -137,7 +137,7 @@ pub enum TagmaControl {
 }
 
 /// Tagma -> app: either the result of a correlated op, or an unsolicited
-/// event from the tagma's event pump. The agora never decrypts this.
+/// event from the tagma's event pump. The archeion never decrypts this.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TagmaReply {
@@ -167,7 +167,7 @@ pub enum TagmaReply {
     },
     /// `Interrupt` was delivered.
     Interrupted { req_id: u64 },
-    /// An op failed. `status` mirrors the tagma/agora HTTP status where one
+    /// An op failed. `status` mirrors the tagma/archeion HTTP status where one
     /// applies (502 for an internal tagma panic).
     Error {
         req_id: u64,
@@ -274,7 +274,7 @@ fn format_created_at(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kallip_agora_common::ids::{ParticipantId, ParticipantKind, TagmaId, UserId};
+    use kallip_archeion_common::ids::{ParticipantId, ParticipantKind, TagmaId, UserId};
     use time::OffsetDateTime;
 
     #[test]

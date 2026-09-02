@@ -6,7 +6,7 @@ use clap::Parser;
 /// rebuilt on restart from tagmas reconnecting + conversations created on
 /// demand; it owns the durable chat store (rooms, membership, message payloads)
 /// in its own Postgres. Durable identity / credential / tagma metadata stays in
-/// the agora, reached through the `/internal/*` ControlPlane API.
+/// the archeion, reached through the `/internal/*` ControlPlane API.
 #[derive(Parser)]
 #[command(
     name = "kallip-lesche",
@@ -17,14 +17,14 @@ pub struct Args {
     /// Address to listen on (behind a TLS-terminating reverse proxy).
     #[arg(long, env = "KALLIP_LESCHE_ADDR", default_value = "127.0.0.1:7200")]
     pub listen_addr: String,
-    /// Agora internal base URL for `/internal/*` ControlPlane calls (e.g.
+    /// Archeion internal base URL for `/internal/*` ControlPlane calls (e.g.
     /// `http://127.0.0.1:7100`). Must NOT be publicly reachable.
-    #[arg(long, env = "KALLIP_LESCHE_AGORA_INTERNAL_URL")]
-    pub agora_internal_url: String,
-    /// Shared secret bearer for the agora `/internal/*` API. Must equal the
-    /// agora's `KALLIP_AGORA_INTERNAL_TOKEN`.
-    #[arg(long, env = "KALLIP_LESCHE_AGORA_TOKEN")]
-    pub agora_internal_token: String,
+    #[arg(long, env = "KALLIP_LESCHE_ARCHEION_INTERNAL_URL")]
+    pub archeion_internal_url: String,
+    /// Shared secret bearer for the archeion `/internal/*` API. Must equal the
+    /// archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.
+    #[arg(long, env = "KALLIP_LESCHE_ARCHEION_TOKEN")]
+    pub archeion_internal_token: String,
     /// Shared secret bearer for THIS service's internal surface, consumed
     /// by the files service to push file-delivery events. Must equal the
     /// files service's KALLIP_FILES_NOTIFY_TOKEN. Empty (the default)

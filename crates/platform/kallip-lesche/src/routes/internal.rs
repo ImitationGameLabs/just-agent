@@ -3,13 +3,13 @@
 //! `FileDelivered` event onto the recipient's app event stream, so the
 //! recipient's UI/agent learns a file arrived without polling. Mounted only
 //! when the internal token is configured, behind `internal_guard` (the same
-//! constant-time bearer-hash discipline as the agora's internal surface).
+//! constant-time bearer-hash discipline as the archeion's internal surface).
 
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
-use kallip_agora_common::ids::UserId;
+use kallip_archeion_common::ids::UserId;
 use kallip_lesche_common::event::LescheEvent;
 use serde::Deserialize;
 

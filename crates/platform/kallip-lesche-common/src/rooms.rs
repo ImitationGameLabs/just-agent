@@ -7,14 +7,14 @@
 //! [`MemberId`]) and the membership snapshot ([`RoomMembership`]) the
 //! lesche's authorization and fan-out paths consume. Platform-wide identity
 //! newtypes (`ParticipantId`, `TagmaId`, ...) stay in
-//! `kallip_agora_common::ids` -- this crate builds on that foundation.
+//! `kallip_archeion_common::ids` -- this crate builds on that foundation.
 
-use kallip_agora_common::ids::{ParticipantId, ParticipantKind, TagmaId, UserId};
+use kallip_archeion_common::ids::{ParticipantId, ParticipantKind, TagmaId, UserId};
 use kallip_common::id_type;
 
 id_type! {
     /// Unique identifier for a persistent multi-member chat room. Distinct
-    /// from `kallip_agora_common::ids::ConversationId`, the bilateral 1:1
+    /// from `kallip_archeion_common::ids::ConversationId`, the bilateral 1:1
     /// conversation key.
     RoomId
 }
@@ -184,7 +184,7 @@ pub struct TagmaRoomView {
 /// holds a tunnel / a human holds an app stream). It is soft, per-incarnation,
 /// in-memory -- never a durable fact. The relay populates it from the live
 /// registry; `room_member_online` / `room_member_offline` SSE deltas keep it live
-/// between fetches. Only the relay populates it; the agora never constructs a
+/// between fetches. Only the relay populates it; the archeion never constructs a
 /// [`RoomRosterView`] (or a `RoomMemberProfile`).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RoomMemberProfile {

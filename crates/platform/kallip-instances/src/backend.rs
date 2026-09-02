@@ -50,7 +50,7 @@ pub struct UdsBackend {
     /// Server-side relay-URL defaults injected on spawn (see
     /// `fill_relay_defaults`); the local-backend scope keeps them plain
     /// strings.
-    relay_agora_url: String,
+    relay_archeion_url: String,
     relay_lesche_url: String,
     client: DaemonClient,
 }
@@ -63,11 +63,11 @@ impl UdsBackend {
     /// `arc` with the server-side relay-URL defaults wired in from Config.
     pub fn arc_with_relays(
         client: DaemonClient,
-        relay_agora_url: String,
+        relay_archeion_url: String,
         relay_lesche_url: String,
     ) -> Arc<dyn InstanceBackend> {
         Arc::new(Self {
-            relay_agora_url,
+            relay_archeion_url,
             relay_lesche_url,
             client,
         })
@@ -88,7 +88,7 @@ impl InstanceBackend for UdsBackend {
         // pass through untouched, and no RELAY_* at all means local-
         // only -- nothing is injected (the tagma boot fails fast on a
         // URL without enrollment).
-        let env = fill_relay_defaults(env, &self.relay_agora_url, &self.relay_lesche_url);
+        let env = fill_relay_defaults(env, &self.relay_archeion_url, &self.relay_lesche_url);
         let wire = self
             .client
             .call(RequestBody::Spawn {
@@ -143,12 +143,12 @@ pub use crate::wire::BackendError as Error;
 /// default. No relay signal at all returns the env unchanged:
 /// local-only spawns must not carry a URL the tagma boot would
 /// fail on.
-fn fill_relay_defaults(env: Vec<String>, agora: &str, lesche: &str) -> Vec<String> {
+fn fill_relay_defaults(env: Vec<String>, archeion: &str, lesche: &str) -> Vec<String> {
     let mut env = env;
     if !env.iter().any(|e| e.starts_with("KALLIP_TAGMA_RELAY_")) {
         return env;
     }
-    fill_one(&mut env, "KALLIP_TAGMA_RELAY_AGORA_URL=", agora);
+    fill_one(&mut env, "KALLIP_TAGMA_RELAY_ARCHEION_URL=", archeion);
     fill_one(&mut env, "KALLIP_TAGMA_RELAY_LESCHE_URL=", lesche);
     env
 }
@@ -188,7 +188,7 @@ fn fill_one(env: &mut Vec<String>, prefix: &str, default: &str) {
 mod tests {
     use super::fill_relay_defaults;
 
-    const AGORA: &str = "http://localhost:7100";
+    const ARCHEION: &str = "http://localhost:7100";
     const LESCHE: &str = "http://localhost:7200";
 
     fn has(env: &[String], prefix: &str) -> bool {
@@ -200,12 +200,12 @@ mod tests {
     fn relay_intent_code_only_fills_both_urls() {
         let out = fill_relay_defaults(
             vec!["KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-x".into()],
-            AGORA,
+            ARCHEION,
             LESCHE,
         );
         assert!(has(
             &out,
-            "KALLIP_TAGMA_RELAY_AGORA_URL=http://localhost:7100"
+            "KALLIP_TAGMA_RELAY_ARCHEION_URL=http://localhost:7100"
         ));
         assert!(has(
             &out,
@@ -216,7 +216,11 @@ mod tests {
     /// State B: no relay signal -- nothing is injected.
     #[test]
     fn local_only_env_stays_untouched() {
-        let out = fill_relay_defaults(vec!["KALLIP_LLM_PROVIDER=deepseek".into()], AGORA, LESCHE);
+        let out = fill_relay_defaults(
+            vec!["KALLIP_LLM_PROVIDER=deepseek".into()],
+            ARCHEION,
+            LESCHE,
+        );
         assert!(!has(&out, "KALLIP_TAGMA_RELAY_"));
         assert_eq!(out.len(), 1);
     }
@@ -227,15 +231,15 @@ mod tests {
     fn explicit_values_win_and_empty_is_filled_in_place() {
         let out = fill_relay_defaults(
             vec![
-                "KALLIP_TAGMA_RELAY_AGORA_URL=https://agora.example.com".into(),
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=https://archeion.example.com".into(),
                 "KALLIP_TAGMA_RELAY_LESCHE_URL=".into(),
             ],
-            AGORA,
+            ARCHEION,
             LESCHE,
         );
         assert!(has(
             &out,
-            "KALLIP_TAGMA_RELAY_AGORA_URL=https://agora.example.com"
+            "KALLIP_TAGMA_RELAY_ARCHEION_URL=https://archeion.example.com"
         ));
         assert!(has(
             &out,
@@ -253,20 +257,20 @@ mod tests {
     fn duplicate_keys_collapse_to_the_explicit_value() {
         let out = fill_relay_defaults(
             vec![
-                "KALLIP_TAGMA_RELAY_AGORA_URL=".into(),
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=".into(),
                 "KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-x".into(),
-                "KALLIP_TAGMA_RELAY_AGORA_URL=https://agora.example.com".into(),
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=https://archeion.example.com".into(),
             ],
-            AGORA,
+            ARCHEION,
             LESCHE,
         );
         assert!(has(
             &out,
-            "KALLIP_TAGMA_RELAY_AGORA_URL=https://agora.example.com"
+            "KALLIP_TAGMA_RELAY_ARCHEION_URL=https://archeion.example.com"
         ));
         assert_eq!(
             out.iter()
-                .filter(|e| e.starts_with("KALLIP_TAGMA_RELAY_AGORA_URL"))
+                .filter(|e| e.starts_with("KALLIP_TAGMA_RELAY_ARCHEION_URL"))
                 .count(),
             1
         );
@@ -276,7 +280,7 @@ mod tests {
                 "KALLIP_TAGMA_RELAY_LESCHE_URL=".into(),
                 "KALLIP_TAGMA_RELAY_LESCHE_URL=https://lesche.example.com".into(),
             ],
-            AGORA,
+            ARCHEION,
             LESCHE,
         );
         assert!(has(
@@ -292,16 +296,16 @@ mod tests {
         // Two empties fill once, never duplicate.
         let out = fill_relay_defaults(
             vec![
-                "KALLIP_TAGMA_RELAY_AGORA_URL=".into(),
-                "KALLIP_TAGMA_RELAY_AGORA_URL=".into(),
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=".into(),
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=".into(),
             ],
-            AGORA,
+            ARCHEION,
             LESCHE,
         );
-        assert_eq!(out.len(), 2, "agora collapsed plus the lesche default");
+        assert_eq!(out.len(), 2, "archeion collapsed plus the lesche default");
         assert!(has(
             &out,
-            "KALLIP_TAGMA_RELAY_AGORA_URL=http://localhost:7100"
+            "KALLIP_TAGMA_RELAY_ARCHEION_URL=http://localhost:7100"
         ));
     }
 }

@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     let backend = match config.backend.as_str() {
         "daemon" => UdsBackend::arc_with_relays(
             DaemonClient::new(socket.clone()),
-            config.relay_agora_url.clone(),
+            config.relay_archeion_url.clone(),
             config.relay_lesche_url.clone(),
         ),
         other => anyhow::bail!(

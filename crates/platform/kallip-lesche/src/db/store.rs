@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use kallip_agora_common::ids::ParticipantKind;
+use kallip_archeion_common::ids::ParticipantKind;
 use kallip_lesche_common::rooms::{MemberId, RoomMember, RoomMembership};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait,
@@ -182,7 +182,7 @@ pub async fn member_source_map(
 /// `None` if the room does not exist (the existence gate the delivery routes
 /// collapse to a uniform 404). The single live membership table holds only
 /// active rows, so no status filter is needed. This is the local replacement
-/// for the agora `/internal/room-membership` RPC + TTL cache: one SQL read on
+/// for the archeion `/internal/room-membership` RPC + TTL cache: one SQL read on
 /// the delivery hot path, strongly consistent with mutations in the same DB.
 pub async fn room_membership(
     db: &Db,

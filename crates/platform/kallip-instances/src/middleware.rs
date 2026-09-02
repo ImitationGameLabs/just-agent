@@ -1,6 +1,6 @@
 //! Cross-cutting middleware: the CSRF custom-header guard.
 //!
-//! Mirrors the agora's and the lesche's `csrf_guard` (same two-pillar defense:
+//! Mirrors the archeion's and the lesche's `csrf_guard` (same two-pillar defense:
 //! a `SameSite=Strict` session cookie plus a custom `X-Requested-With` header
 //! the browser cannot synthesize cross-origin without a preflight). The
 //! cookie auth channel (`token_guard`'s Platform branch) is what opens the
@@ -21,7 +21,7 @@ pub const CSRF_HEADER: &str = "x-requested-with";
 /// The custom-header CSRF marker value.
 pub const CSRF_HEADER_VALUE: &str = "kallip";
 
-/// Session cookie name. Mirrors the agora's `kallip_session`; a stable wire
+/// Session cookie name. Mirrors the archeion's `kallip_session`; a stable wire
 /// literal kept here (duplicated, as in the lesche, so this crate does not
 /// pull the registry's session module).
 const SESSION_COOKIE_NAME: &str = "kallip_session";
@@ -53,7 +53,7 @@ pub async fn csrf_guard(
 }
 
 /// Read the session cookie value from a request's `Cookie` header, if present.
-/// Mirrors the agora/lesche helper: multiple `Cookie` headers and multiple
+/// Mirrors the archeion/lesche helper: multiple `Cookie` headers and multiple
 /// `name=value` pairs within one are both tolerated; first match wins.
 pub(crate) fn read_session_cookie(headers: &HeaderMap) -> Option<String> {
     for header in headers.get_all(axum::http::header::COOKIE) {

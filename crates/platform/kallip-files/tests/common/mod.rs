@@ -8,11 +8,11 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use kallip_agora_common::control_plane::{
+use kallip_archeion_common::control_plane::{
     ControlPlane, ControlPlaneError, EnrollmentLookup, TagmaProfile, UserIdentity, VerifiedSession,
 };
-use kallip_agora_common::ids::{TagmaId, UserId};
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::ids::{TagmaId, UserId};
+use kallip_archeion_common::principal::Principal;
 use kallip_files::LocalBackend;
 use kallip_files::gc::GcConfig;
 use kallip_files::metadata::Db;

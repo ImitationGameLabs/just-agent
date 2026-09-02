@@ -28,7 +28,7 @@ pub async fn connect_and_migrate(url: &str) -> Result<Db, DbErr> {
 }
 
 /// Connect to Postgres, retrying with a capped backoff: the file service may
-/// boot before its database in a composed deploy. Same policy as the agora
+/// boot before its database in a composed deploy. Same policy as the archeion
 /// (which additionally jitters to de-synchronize replicas; the file service
 /// is a single instance, so the plain cap suffices).
 async fn connect(url: &str) -> Result<Db, DbErr> {

@@ -5,7 +5,7 @@
 //! `room_members` row is inserted, the membership epoch is bumped, and
 //! `accepted_at` is stamped. `expires_at` bounds the offer. The user-id columns
 //! are plain TEXT references, NOT foreign keys -- the `users` table lives in
-//! the agora registry, not in lesche's store.
+//! the archeion registry, not in lesche's store.
 
 use sea_orm::entity::prelude::*;
 use time::OffsetDateTime;
@@ -21,7 +21,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub room_id: String,
     /// `UserId` of the invitee. Plain TEXT reference (no FK): the `users` table
-    /// lives in the agora registry.
+    /// lives in the archeion registry.
     #[sea_orm(column_type = "Text")]
     pub invitee_user_id: String,
     /// `UserId` of the inviter (the offer's author). Plain TEXT reference.

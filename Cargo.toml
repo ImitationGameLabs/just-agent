@@ -1,12 +1,12 @@
 [workspace]
 members = [
   "crates/kallip-common",
-  "crates/platform/kallip-agora-common",
+  "crates/platform/kallip-archeion-common",
   "crates/platform/kallip-lesche-common",
-  "crates/platform/kallip-agora",
+  "crates/platform/kallip-archeion",
   "crates/platform/kallip-lesche",
   "crates/platform/kallip-e2ee",
-  "crates/platform/kallip-agora-client",
+  "crates/platform/kallip-archeion-client",
   "crates/platform/kallip-lesche-client",
   "crates/platform/kallip-admin",
   "crates/kallip-runtime",
@@ -41,12 +41,12 @@ name = "kallip"
 just-llm-client = "0.2.0"
 
 kallip-common = { path = "crates/kallip-common", default-features = false }
-kallip-agora-common = { path = "crates/platform/kallip-agora-common" }
+kallip-archeion-common = { path = "crates/platform/kallip-archeion-common" }
 kallip-lesche-common = { path = "crates/platform/kallip-lesche-common" }
-kallip-agora = { path = "crates/platform/kallip-agora" }
+kallip-archeion = { path = "crates/platform/kallip-archeion" }
 kallip-lesche = { path = "crates/platform/kallip-lesche" }
 kallip-e2ee = { path = "crates/platform/kallip-e2ee" }
-kallip-agora-client = { path = "crates/platform/kallip-agora-client" }
+kallip-archeion-client = { path = "crates/platform/kallip-archeion-client" }
 kallip-lesche-client = { path = "crates/platform/kallip-lesche-client" }
 kallip-runtime = { path = "crates/kallip-runtime" }
 kallip-shell = { path = "crates/kallip-shell" }
@@ -66,7 +66,7 @@ kallip-files = { path = "crates/platform/kallip-files" }
 anyhow = "1.0.102"
 async-trait = "0.1.89"
 async-stream = "0.3.6"
-# RFC 5321/5322 email validation for agora login ids; pure-Rust, no heavy deps.
+# RFC 5321/5322 email validation for archeion login ids; pure-Rust, no heavy deps.
 email_address = "0.2.9"
 # `signal` transitively enables `process` (for `nix::unistd::Pid`).
 nix = { version = "0.31", features = ["fs", "signal"] }

@@ -1,5 +1,5 @@
 //! Read-only room views: the user-device roster snapshot and the tagma's room
-//! discovery poll. Ported verbatim from the agora registry; the creator
+//! discovery poll. Ported verbatim from the archeion registry; the creator
 //! designation (strict total-order minimum among live Agent members) is a pure
 //! function of the moved membership tables, so it carries over unchanged.
 
@@ -11,8 +11,8 @@ use crate::member_identity::{MemberRef, degraded, resolve_handles};
 use crate::state::SharedConvState;
 use axum::Json;
 use axum::extract::{Path, State};
-use kallip_agora_common::ids::{ParticipantKind, TagmaId};
-use kallip_agora_common::principal::require_tagma;
+use kallip_archeion_common::ids::{ParticipantKind, TagmaId};
+use kallip_archeion_common::principal::require_tagma;
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::rooms::{
     MemberId, RoomId, RoomMemberProfile, RoomRosterView, TagmaRoomView, Visibility,
@@ -41,7 +41,7 @@ pub(super) async fn list_tagma_rooms(
 /// The user-side view of the rooms ONE of the caller's tagmata has joined (the
 /// owner-management source for the "Manage rooms" dialog). Unlike
 /// [`list_tagma_rooms`] (tagma-bearer, self-only), this attests ownership
-/// through the agora registry: the caller must be the tagma's owner. A revoked
+/// through the archeion registry: the caller must be the tagma's owner. A revoked
 /// or disabled tagma still has rooms the owner must be able to manage, so the
 /// gate is the raw `owner_user_id == caller` (NOT `bilateral_resolvable`); any
 /// failure -- unknown / not-owned -- collapses to one "unknown tagma" 404.

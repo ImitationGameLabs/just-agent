@@ -1,14 +1,14 @@
 //! The tagma's persisted credentials for authenticating to the relay fleet
-//! (the Ed25519 device key + the tagma id/token issued at agora enrollment).
+//! (the Ed25519 device key + the tagma id/token issued at archeion enrollment).
 //!
 //! These are the tagma's authentication material — distinct from the
 //! [`crate::relay`] connector, which *consumes* them to hold the live tunnel.
 //! Secrets live under `KALLIP_DATA_DIR/credentials/` (resolved via
 //! `kallip_runtime::persistence::data_dir_root`), written owner-only (`0o600`);
 //! the leaf dir is `0o700`.
-//! A third file, `agora.url`, records the enrollment origin (non-secret:
+//! A third file, `archeion.url`, records the enrollment origin (non-secret:
 //! it mirrors the configured env var) so a later enrollment code at a
-//! different agora can be told apart from a stale same-agora code. The
+//! different archeion can be told apart from a stale same-archeion code. The
 //! kallip-daemon start path mirrors the stored-credentials predicate
 //! (`tagma.id` + `tagma.token`) to decide whether replaying an enrollment
 //! code is safe — keep this layout in sync.
@@ -32,42 +32,42 @@ pub(crate) fn load_or_create_device(credentials_dir: &Path) -> Result<DeviceKey>
     Ok(device)
 }
 
-/// Stored enrollment material for one relay entry: the agora-issued
+/// Stored enrollment material for one relay entry: the archeion-issued
 /// (id, token) pair plus the origin the enrollment happened at. The origin
 /// is absent on credentials written before origin recording began — the
 /// next stored boot backfills it.
 pub(crate) struct StoredTagma {
     pub(crate) id: String,
     pub(crate) token: String,
-    pub(crate) agora_url: Option<String>,
+    pub(crate) archeion_url: Option<String>,
 }
 
 /// Load stored credentials, if a prior enrollment persisted them.
 pub(crate) fn load_tagma(credentials_dir: &Path) -> Option<StoredTagma> {
     let id = std::fs::read_to_string(credentials_dir.join("tagma.id")).ok()?;
     let token = std::fs::read_to_string(credentials_dir.join("tagma.token")).ok()?;
-    let agora_url = std::fs::read_to_string(credentials_dir.join("agora.url"))
+    let archeion_url = std::fs::read_to_string(credentials_dir.join("archeion.url"))
         .ok()
         .map(|url| url.trim().to_owned());
     Some(StoredTagma {
         id: id.trim().to_owned(),
         token: token.trim().to_owned(),
-        agora_url,
+        archeion_url,
     })
 }
 
 /// Persist `(tagma_id, tagma_token)` for reuse across restarts, recording
 /// the enrollment origin alongside (non-secret: it mirrors the configured
-/// env var, and lets a later code-plus-different-agora boot be told apart
-/// from a stale same-agora code).
+/// env var, and lets a later code-plus-different-archeion boot be told apart
+/// from a stale same-archeion code).
 pub(crate) fn save_tagma(
     credentials_dir: &Path,
     tagma_id: &str,
     tagma_token: &str,
-    agora_url: &str,
+    archeion_url: &str,
 ) {
     let _ = std::fs::write(credentials_dir.join("tagma.id"), tagma_id);
-    let _ = std::fs::write(credentials_dir.join("agora.url"), agora_url);
+    let _ = std::fs::write(credentials_dir.join("archeion.url"), archeion_url);
     if let Err(e) = write_secret(&credentials_dir.join("tagma.token"), tagma_token.as_bytes()) {
         tracing::error!(
             error = %format!("{e:#}"),
@@ -80,10 +80,10 @@ pub(crate) fn save_tagma(
 /// recording, exactly once — never overwriting a recorded origin. Called
 /// from both stored boot arms so any stored-credential boot closes the
 /// window.
-pub(crate) fn backfill_agora_url(credentials_dir: &Path, agora_url: &str) {
-    let path = credentials_dir.join("agora.url");
+pub(crate) fn backfill_archeion_url(credentials_dir: &Path, archeion_url: &str) {
+    let path = credentials_dir.join("archeion.url");
     if !path.exists() {
-        let _ = std::fs::write(&path, agora_url);
+        let _ = std::fs::write(&path, archeion_url);
     }
 }
 
@@ -112,16 +112,16 @@ pub(crate) fn set_owner_only(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// One-time migration from the pre-multi-agora flat layout
+/// One-time migration from the pre-multi-archeion flat layout
 /// (`credentials/tagma.id` + `credentials/tagma.token`) into the entry's
 /// subdirectory. Runs at boot before any entry is resolved.
 ///
 /// Exactly one configured entry is the only unambiguous case: the flat pair
-/// belongs to the single agora the tagma was enrolled with, and `fs::rename`
+/// belongs to the single archeion the tagma was enrolled with, and `fs::rename`
 /// moves the files (mode 0o600 and content untouched) into
 /// `credentials/<name>/`. Every other state fails fast with both exits named
 /// — guessing a destination would risk attaching an existing identity to
-/// the wrong agora:
+/// the wrong archeion:
 ///
 /// - zero entries with leftover flat files: nothing to attach them to;
 /// - multiple entries: the flat pair cannot be attributed to one of them;

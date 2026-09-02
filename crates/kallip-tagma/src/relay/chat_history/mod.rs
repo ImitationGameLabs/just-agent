@@ -262,7 +262,7 @@ fn unix_secs() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kallip_agora_common::ids::{ParticipantId, ParticipantKind};
+    use kallip_archeion_common::ids::{ParticipantId, ParticipantKind};
     use kallip_lesche_common::message::{HistoryEntry, Participant, TagmaReply};
     use tempfile::TempDir;
 

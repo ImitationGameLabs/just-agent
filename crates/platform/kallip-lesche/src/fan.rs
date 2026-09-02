@@ -13,7 +13,7 @@
 //! message on reconnect. The caller decides whether zero-delivered
 //! is a 503 (no one reachable).
 
-use kallip_agora_common::ids::ParticipantKind;
+use kallip_archeion_common::ids::ParticipantKind;
 use kallip_lesche_common::event::LescheEvent;
 use kallip_lesche_common::message::Envelope;
 use kallip_lesche_common::rooms::{MemberId, RoomId, RoomMember, RoomMembership};
@@ -116,8 +116,8 @@ mod tests {
 
     use super::*;
     use crate::test_support::make_state;
-    use kallip_agora_common::bytes::Ciphertext;
-    use kallip_agora_common::ids::{ChannelId, ParticipantId, TagmaId, TraceId, UserId};
+    use kallip_archeion_common::bytes::Ciphertext;
+    use kallip_archeion_common::ids::{ChannelId, ParticipantId, TagmaId, TraceId, UserId};
     use kallip_lesche_common::message::Participant;
     use time::OffsetDateTime;
 

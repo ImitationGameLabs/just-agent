@@ -1,7 +1,7 @@
 //! Programmatic sea-orm migrations for the tagma's chat-history SQLite store.
 //!
 //! One `MigrationTrait` per file, registered in [`Migrator`]. Applied at open
-//! via `Migrator::up`. Naming mirrors agora's `m_YYYYMMDD_NN_slug` (the `NN`
+//! via `Migrator::up`. Naming mirrors archeion's `m_YYYYMMDD_NN_slug` (the `NN`
 //! disambiguates multiple migrations on the same day). New schema changes are
 //! a new `m_*` file appended to [`MigratorTrait::migrations`], never an in-place
 //! edit to an applied migration.

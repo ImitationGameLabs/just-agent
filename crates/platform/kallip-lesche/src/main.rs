@@ -1,5 +1,5 @@
 //! `kallip-lesche`: the kallip data-plane relay (λέσχη -- the Greek conversation
-//! hall, beside the agora).
+//! hall, beside the archeion).
 //!
 //! The lesche owns every agent/human communication surface -- tagma tunnels,
 //! app event streams, envelope routing, key exchange, presence -- plus the
@@ -8,9 +8,9 @@
 //! the chat schema persists in the lesche's own Postgres. It authenticates
 //! requests, resolves tagma metadata, attests identity facts, and advances the
 //! tunnel-proof replay guard through a narrow `ControlPlane` trait implemented
-//! by an HTTP client (`HttpControlPlane`) that calls the agora's `/internal/*`
+//! by an HTTP client (`HttpControlPlane`) that calls the archeion's `/internal/*`
 //! API. All app<->tagma business evolution happens in this crate and the shared
-//! `kallip-agora-common` wire types, never in the registry.
+//! `kallip-archeion-common` wire types, never in the registry.
 
 mod args;
 mod auth;
@@ -56,8 +56,8 @@ async fn main() -> Result<()> {
     // human-paced, so uncached per-request RPC is negligible load. See
     // `control_plane_http`.
     let control = Arc::new(HttpControlPlane::new(
-        args.agora_internal_url.clone(),
-        args.agora_internal_token.clone(),
+        args.archeion_internal_url.clone(),
+        args.archeion_internal_token.clone(),
     ));
 
     // The durable room-message store, connected + migrated at boot. The state
@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
         .layer(axum::middleware::from_fn(middleware::csrf_guard));
 
     // Outermost layers: body limit, then CORS (explicit allowlist, never Any),
-    // then request tracing. Mirrors the agora's layer order.
+    // then request tracing. Mirrors the archeion's layer order.
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))

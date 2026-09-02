@@ -20,8 +20,8 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use kallip_agora_common::ids::ParticipantId;
-use kallip_agora_common::proof::ProofError;
+use kallip_archeion_common::ids::ParticipantId;
+use kallip_archeion_common::proof::ProofError;
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::event::LescheEvent;
 use kallip_lesche_common::proof::verify_tunnel_proof;
@@ -225,8 +225,8 @@ mod tests {
     use crate::test_support::make_state;
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
-    use kallip_agora_common::bytes::Ed25519PublicKey;
-    use kallip_agora_common::ids::{TagmaId, UserId};
+    use kallip_archeion_common::bytes::Ed25519PublicKey;
+    use kallip_archeion_common::ids::{TagmaId, UserId};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn now_ts() -> i64 {
@@ -249,7 +249,9 @@ mod tests {
     }
 
     fn as_tagma(t: &TagmaId) -> AuthPrincipal {
-        AuthPrincipal(kallip_agora_common::principal::Principal::Tagma(t.clone()))
+        AuthPrincipal(kallip_archeion_common::principal::Principal::Tagma(
+            t.clone(),
+        ))
     }
 
     /// The gate collapses unknown / revoked / pending (no pinned key) tagmas to

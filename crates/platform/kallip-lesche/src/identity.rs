@@ -14,7 +14,7 @@
 //! same-named agents stay distinguishable and a spoofed client-supplied handle
 //! never survives relay stamping.
 
-use kallip_agora_common::ids::ParticipantKind;
+use kallip_archeion_common::ids::ParticipantKind;
 
 /// The first chars of an id: the unforgeable short anchor shown alongside a
 /// display name so two same-named members stay distinct. The id is

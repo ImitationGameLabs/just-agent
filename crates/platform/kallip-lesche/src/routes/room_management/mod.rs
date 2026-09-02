@@ -1,5 +1,5 @@
 //! Room lifecycle + membership management: the `/v1/rooms` management surface,
-//! ported from the agora registry into lesche (the chat domain owns its
+//! ported from the archeion registry into lesche (the chat domain owns its
 //! membership graph -- database-per-service).
 //!
 //! A room is a persistent multi-member channel. Membership is stored in one
@@ -13,7 +13,7 @@
 //! audit entry.
 //!
 //! Identity facts (a user exists; a tagma is enrolled; a passkey is owned) are
-//! attested through the agora registry's `/internal/*` surface rather than
+//! attested through the archeion registry's `/internal/*` surface rather than
 //! local reads -- lesche never touches the identity tables. The agent-free
 //! boundary is preserved: a tagma member is identified on the room surface only
 //! by its derived `member_id` (a `ParticipantId`); the underlying `tagma_id`

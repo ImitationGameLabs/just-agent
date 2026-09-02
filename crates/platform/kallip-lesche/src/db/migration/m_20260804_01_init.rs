@@ -25,8 +25,8 @@
 //! external agents into one membership shape on the room surface, so the relay
 //! never stores or learns the underlying `user_id` / `tagma_id`. Every
 //! `*_user_id` / `passkey_id` is likewise a plain TEXT reference, NOT a FK,
-//! because the `users` / `passkeys` tables live in the agora registry. Identity
-//! existence is attested at write time via the agora `/internal/*` surface; the
+//! because the `users` / `passkeys` tables live in the archeion registry. Identity
+//! existence is attested at write time via the archeion `/internal/*` surface; the
 //! auth layer already cuts disabled users off. The agent-free boundary is
 //! preserved at the write path (`sender_kind ∈ {human, agent}`, never a
 //! daemon-internal agent id). The only FKs here are internal-to-lesche:
@@ -121,7 +121,7 @@ impl MigrationTrait for Migration {
         // `rooms` -- the room itself. Created FIRST so the ciphertext-history
         // tables and the membership graph can reference `rooms(id)` with
         // ON DELETE CASCADE FKs. Plain TEXT `created_by_user_id` reference (NOT
-        // a FK): the `users` table lives in the agora registry.
+        // a FK): the `users` table lives in the archeion registry.
         manager
             .create_table(
                 Table::create()
@@ -253,7 +253,7 @@ impl MigrationTrait for Migration {
         // `room_members` -- live membership, composite PK
         // `(room_id, member_id)`; `member_id` / `source_id` are plain TEXT. No
         // subject FK: `member_id` is a derived opaque id, and `source_id` is a
-        // plain string (the underlying user / tagma tables live in the agora
+        // plain string (the underlying user / tagma tables live in the archeion
         // registry). Member authenticity is enforced at auth time.
         manager
             .create_table(
@@ -383,7 +383,7 @@ impl MigrationTrait for Migration {
 
         // `room_invites` -- the pending invite/accept flow. No user FKs:
         // `invitee_user_id` / `invited_by_user_id` are plain TEXT references to
-        // the agora registry's `users`.
+        // the archeion registry's `users`.
         manager
             .create_table(
                 Table::create()

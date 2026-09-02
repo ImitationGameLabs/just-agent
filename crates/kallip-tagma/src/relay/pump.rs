@@ -57,7 +57,7 @@ impl RelayHandle {
             }
         };
         debug!("relay event pump started");
-        let trace = kallip_agora_common::ids::TraceId::from(PUMP_TRACE.to_owned());
+        let trace = kallip_archeion_common::ids::TraceId::from(PUMP_TRACE.to_owned());
         loop {
             tokio::select! {
                 biased;
@@ -73,14 +73,14 @@ impl RelayHandle {
                         // encrypts + posts under the cancel token (so a slow emit
                         // cannot stall a re-KEX). The agent sender is re-stamped
                         // per relay: the projector stamps it with the primary
-                        // agora's tagma id (its single-value stamp is a frontend
+                        // archeion's tagma id (its single-value stamp is a frontend
                         // cache key, not a wire identity), which would not match
-                        // this relay's participant on any secondary agora — so
+                        // this relay's participant on any secondary archeion — so
                         // Agent-kind senders are replaced with this relay's own
                         // agent sender, while Human-kind senders (the inbound
                         // echo's user) are data and pass through untouched.
                         let sender = if sender.kind ==
-                            kallip_agora_common::ids::ParticipantKind::Agent
+                            kallip_archeion_common::ids::ParticipantKind::Agent
                         {
                             self.agent_sender()
                         } else {

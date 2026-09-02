@@ -4,7 +4,7 @@
 //! the long-lived `DeviceKey`); the pure crypto lives in `kallip-e2ee`.
 
 use anyhow::{Context, Result};
-use kallip_agora_common::bytes::{Ed25519Signature, X25519PublicKey};
+use kallip_archeion_common::bytes::{Ed25519Signature, X25519PublicKey};
 use kallip_e2ee::{DeviceKey, SessionKey, derive_responder_session_key};
 use kallip_lesche_common::control::{KeyExchangeInit, KeyExchangeResponse};
 use kallip_lesche_common::proof::kex_transcript;
@@ -42,7 +42,7 @@ pub(crate) fn respond_key_exchange(
 #[cfg(test)]
 mod tests {
     use super::respond_key_exchange;
-    use kallip_agora_common::bytes::X25519PublicKey;
+    use kallip_archeion_common::bytes::X25519PublicKey;
     use kallip_e2ee::{DeviceKey, HKDF_INFO};
     use kallip_lesche_common::control::KeyExchangeInit;
     use kallip_lesche_common::proof::{kex_transcript, verify_kex_proof};

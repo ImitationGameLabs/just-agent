@@ -8,7 +8,7 @@
 //! driven by `dispatch` and by the pump (`pump.rs`).
 
 use super::*;
-use kallip_agora_common::ids::ChannelId;
+use kallip_archeion_common::ids::ChannelId;
 
 impl RelayHandle {
     /// Respond to a key exchange. This is also the re-KEX boundary: cancel any
@@ -54,7 +54,7 @@ impl RelayHandle {
         {
             warn!(conv = %conversation_id, "post key-exchange response: {e:#}");
         }
-        // `conv` is the relay-plane key (what agora/lesche index this KEX by),
+        // `conv` is the relay-plane key (what archeion/lesche index this KEX by),
         // so it carries the cross-service correlation value; the tagma id is a
         // constant 1:1 derivation of it and adds nothing per-line.
         info!(conv = %conversation_id, first, "relay KEX completed");
@@ -269,7 +269,7 @@ impl RelayHandle {
     /// not the tagma.
     pub(super) async fn emit(
         &self,
-        trace: &kallip_agora_common::ids::TraceId,
+        trace: &kallip_archeion_common::ids::TraceId,
         sender: Participant,
         reply: TagmaReply,
         cancel: Option<&CancellationToken>,

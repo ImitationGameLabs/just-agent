@@ -10,7 +10,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::auth::AuthPrincipal;
 use crate::state::AppState;
-use kallip_agora_common::principal::Principal;
+use kallip_archeion_common::principal::Principal;
 use kallip_common::protocol::ApiError;
 
 #[derive(Debug, Deserialize)]

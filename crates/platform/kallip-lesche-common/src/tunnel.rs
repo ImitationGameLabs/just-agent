@@ -5,7 +5,7 @@
 
 use crate::control::KeyExchangeInit;
 use crate::message::Envelope;
-use kallip_agora_common::ids::ConversationId;
+use kallip_archeion_common::ids::ConversationId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

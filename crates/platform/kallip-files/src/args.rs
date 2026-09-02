@@ -5,7 +5,7 @@ use clap::Parser;
 /// The service owns two stores: the content-addressed blob directory
 /// (local volume; the cloud object-store backend is a postponed trait
 /// sibling) and the metadata Postgres. Identity and enrollment facts stay
-/// in the agora, reached through the `/internal/*` ControlPlane API.
+/// in the archeion, reached through the `/internal/*` ControlPlane API.
 #[derive(Parser)]
 #[command(
     name = "kallip-files",
@@ -20,14 +20,14 @@ pub struct Args {
     /// demand by the store itself.
     #[arg(long, env = "KALLIP_FILES_BLOB_ROOT")]
     pub blob_root: String,
-    /// Agora internal base URL for `/internal/*` ControlPlane calls (e.g.
+    /// Archeion internal base URL for `/internal/*` ControlPlane calls (e.g.
     /// `http://127.0.0.1:7100`). Must NOT be publicly reachable.
-    #[arg(long, env = "KALLIP_FILES_AGORA_INTERNAL_URL")]
-    pub agora_internal_url: String,
-    /// Shared secret bearer for the agora `/internal/*` API. Must equal
-    /// the agora's `KALLIP_AGORA_INTERNAL_TOKEN`.
-    #[arg(long, env = "KALLIP_FILES_AGORA_TOKEN")]
-    pub agora_internal_token: String,
+    #[arg(long, env = "KALLIP_FILES_ARCHEION_INTERNAL_URL")]
+    pub archeion_internal_url: String,
+    /// Shared secret bearer for the archeion `/internal/*` API. Must equal
+    /// the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.
+    #[arg(long, env = "KALLIP_FILES_ARCHEION_TOKEN")]
+    pub archeion_internal_token: String,
     /// Postgres URL for the metadata store (e.g.
     /// `postgres://user:pass@host/db`). Required: records, refcounts, and
     /// the delivery log are the service's durable surface; a missing URL
@@ -42,8 +42,8 @@ pub struct Args {
     /// Comma-separated CORS allowed origins (the app's origin). Empty (the
     /// default) = no cross-origin allowed at all: the allowlist is
     /// `AllowOrigin::list` (never `Any`), so a misconfigured `*` yields an
-    /// empty allowlist rather than an open hole. Same shape as the agora's
-    /// `KALLIP_AGORA_CORS_ORIGINS`.
+    /// empty allowlist rather than an open hole. Same shape as the archeion's
+    /// `KALLIP_ARCHEION_CORS_ORIGINS`.
     #[arg(long, env = "KALLIP_FILES_CORS_ORIGINS", default_value = "")]
     pub cors_origins: String,
     /// Lesche internal base URL for the file-delivered event push (e.g.
@@ -54,7 +54,7 @@ pub struct Args {
     /// lesche's `KALLIP_LESCHE_INTERNAL_TOKEN`.
     #[arg(long, env = "KALLIP_FILES_NOTIFY_TOKEN", default_value = "")]
     pub notify_token: String,
-    /// Agora degrade posture (seventh approved default). `closed` (the
+    /// Archeion degrade posture (seventh approved default). `closed` (the
     /// default) fails every authorization decision with 503 when the
     /// registry cannot answer; `soft` degrades the enrollment lookup to an
     /// empty fact set, so tagma decisions deny with 403 instead of 503.

@@ -1,6 +1,6 @@
 //! Deliverer — consumes `Triggered` schedules and injects them into the target
 //! agent conversation via the tagma HTTP API. Replaces kairos's separate
-//! `kairos-herald` process: kallipai has no agora event hub, so the daemon
+//! `kairos-herald` process: kallipai has no archeion event hub, so the daemon
 //! owns delivery directly.
 //!
 //! Delivery is **serial, per-row fall-through** with **503-aware persisted

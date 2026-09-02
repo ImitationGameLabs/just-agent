@@ -8,9 +8,9 @@ license.workspace = true
 [dependencies]
 kallip-runtime = { workspace = true, features = ["landlock", "seccomp"] }
 kallip-common = { workspace = true, features = ["axum"] }
-kallip-agora-common = { workspace = true }
+kallip-archeion-common = { workspace = true }
 kallip-lesche-common = { workspace = true }
-kallip-agora-client = { workspace = true }
+kallip-archeion-client = { workspace = true }
 kallip-lesche-client = { workspace = true }
 kallip-e2ee = { workspace = true }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }

@@ -550,7 +550,7 @@ async fn send_validates_targets() {
     // Any recipient string that is not a live user id mints nothing —
     // user ids are opaque, so malformed and unknown look the same — and
     // no ledger event is written (the undeletable-record hole).
-    let stranger = kallip_agora_common::ids::UserId::from(uuid::Uuid::new_v4().to_string());
+    let stranger = kallip_archeion_common::ids::UserId::from(uuid::Uuid::new_v4().to_string());
     let response = send(
         &world,
         cookie_for(&world, 1),
@@ -688,8 +688,8 @@ async fn service_boots_and_answers_health() {
     let boot = kallip_files::state::BootConfig {
         listen_addr: addr.to_string(),
         database_url: db_url,
-        agora_internal_url: "http://127.0.0.1:1".to_owned(),
-        agora_internal_token: "unused".to_owned(),
+        archeion_internal_url: "http://127.0.0.1:1".to_owned(),
+        archeion_internal_token: "unused".to_owned(),
         notify_url: String::new(),
         notify_token: String::new(),
         blob_root: std::path::PathBuf::from(blob.path()),

@@ -1,20 +1,20 @@
-//! `kallip-admin`: a headless operator CLI for the agora relay. It is an HTTP
+//! `kallip-admin`: a headless operator CLI for the archeion relay. It is an HTTP
 //! client authenticated with the `sk-admin-` bearer, driving the `/v1/admin/*`
 //! surface (enrollment codes, users, passkeys).
 //!
-//! The admin token is read from the `KALLIP_AGORA_ADMIN_TOKEN` environment
+//! The admin token is read from the `KALLIP_ARCHEION_ADMIN_TOKEN` environment
 //! variable only (no `--admin-token` flag): a flag would leak the secret into
 //! `ps`, `/proc/<pid>/cmdline`, and shell history, while an env var does not.
-//! The agora URL may be passed as `--agora-url` or `KALLIP_AGORA_URL`.
+//! The archeion URL may be passed as `--archeion-url` or `KALLIP_ARCHEION_URL`.
 //!
 //! Example:
-//!   `KALLIP_AGORA_ADMIN_TOKEN=sk-admin-... kallip-admin users list`
+//!   `KALLIP_ARCHEION_ADMIN_TOKEN=sk-admin-... kallip-admin users list`
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use comfy_table::{ContentArrangement, Table};
-use kallip_agora_client::{AgoraClient, ApiError};
-use kallip_agora_common::admin::{
+use kallip_archeion_client::{ApiError, ArcheionClient};
+use kallip_archeion_common::admin::{
     CreateEnrollmentCodeRequest, Page, PageQuery, PasskeySummary, UpdateUserRequest, UserSummary,
 };
 
@@ -22,19 +22,19 @@ use kallip_agora_common::admin::{
 #[command(
     name = "kallip-admin",
     version,
-    about = "Headless admin CLI for kallip-agora (HTTP client)",
-    after_help = "The admin token (sk-admin-...) is read from the KALLIP_AGORA_ADMIN_TOKEN \
+    about = "Headless admin CLI for kallip-archeion (HTTP client)",
+    after_help = "The admin token (sk-admin-...) is read from the KALLIP_ARCHEION_ADMIN_TOKEN \
                   environment variable. It is deliberately not a CLI flag: a flag leaks into \
                   ps, /proc/<pid>/cmdline, and shell history, while an env var does not."
 )]
 struct Args {
-    /// Agora base URL.
+    /// Archeion base URL.
     #[arg(
         long,
-        env = "KALLIP_AGORA_URL",
+        env = "KALLIP_ARCHEION_URL",
         default_value = "http://127.0.0.1:7100"
     )]
-    agora_url: String,
+    archeion_url: String,
     /// Emit raw JSON instead of human-readable tables.
     #[arg(long, default_value_t = false)]
     json: bool,
@@ -101,13 +101,13 @@ async fn main() {
     let args = Args::parse();
     // The admin token is env-only (no flag) so it never lands in ps, cmdline,
     // or shell history. See the Args `after_help` for the rationale.
-    let admin_token = match std::env::var("KALLIP_AGORA_ADMIN_TOKEN") {
+    let admin_token = match std::env::var("KALLIP_ARCHEION_ADMIN_TOKEN") {
         Ok(t) => t,
         Err(_) => exit_err(&anyhow::anyhow!(
-            "KALLIP_AGORA_ADMIN_TOKEN required (the sk-admin- token)"
+            "KALLIP_ARCHEION_ADMIN_TOKEN required (the sk-admin- token)"
         )),
     };
-    let client = AgoraClient::builder(&args.agora_url)
+    let client = ArcheionClient::builder(&args.archeion_url)
         .admin_token(admin_token)
         .build();
     // Builder only fails on reqwest client construction; surface it like any
@@ -130,7 +130,7 @@ fn exit_err(e: &anyhow::Error) -> ! {
     std::process::exit(1);
 }
 
-async fn run(client: &AgoraClient, json: bool, cmd: Cmd) -> Result<()> {
+async fn run(client: &ArcheionClient, json: bool, cmd: Cmd) -> Result<()> {
     match cmd {
         Cmd::Ping => {
             client.healthz().await?;
@@ -138,7 +138,7 @@ async fn run(client: &AgoraClient, json: bool, cmd: Cmd) -> Result<()> {
             if json {
                 println!("{{\"ok\":true}}");
             } else {
-                println!("ok: agora reachable, admin token valid");
+                println!("ok: archeion reachable, admin token valid");
             }
         }
         Cmd::NewEnrollment { user_id } => {
