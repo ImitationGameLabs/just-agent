@@ -1,6 +1,7 @@
 /**
  * Single source for the shell breadcrumb trail: a route table keyed by
- * pathname pattern, rendered by AppShell's one chrome bar. A shell page gets
+ * pathname pattern, rendered by the desktop shell's one chrome bar. A
+ * shell page gets
  * its trail by adding a table entry, not by mounting a component -- so a new
  * page cannot forget the trail or drift from the chrome (the shell owns
  * divider, height, and segment style). A route with no entry renders no bar

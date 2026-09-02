@@ -1,5 +1,5 @@
-// Types for the shared app shell. Kept in a plain `.ts` module (not inside the
-// AppShell component) so consumers can import `NavItem` for type-only use.
+// Types for the shared app shell. Kept in a plain `.ts` module (not inside
+// the shell components) so consumers can import `NavItem` for type-only use.
 import type { Component } from "svelte";
 
 import {
@@ -10,8 +10,8 @@ import {
 } from "../paraglide/messages.js";
 
 // The indicator's visual tokens (dot classes + SR label) live HERE, not in
-// AppShell: both the sidebar (AppShell) and hub rows (HubRow) render the
-// same status dot, so the mapping must not fork.
+// the nav cells (NavLink): the shells' nav trees and hub rows (HubRow)
+// render the same status dot, so the mapping must not fork.
 export function navIndicatorDotClass(indicator: NavIndicator): string {
   switch (indicator) {
     case "live":
@@ -43,10 +43,10 @@ export function navIndicatorLabel(indicator: NavIndicator): string {
   }
 }
 
-/** A small status indicator AppShell renders as a leading dot instead of an
- * icon (e.g. per-chat liveness in the sidebar). The visual tokens live in
- * this module (see above); consumers map their domain state to the four
- * states. */
+/** A small status indicator that nav cells (NavLink) render as a leading
+ * dot instead of an icon (e.g. per-chat liveness in the sidebar). The
+ * visual tokens live in this module (see above); consumers map their
+ * domain state to the four states. */
 export type NavIndicator = "live" | "pending" | "down" | "error";
 
 // A single navigation entry. Exactly one leading mark: either an `icon`
@@ -77,5 +77,5 @@ export type NavItem =
     };
 
 // `badge` is the unread count for the entry (0 = absent; rendered through
-// `badgeLabel` in AppShell, so the display caps at "99+"). Purely additive:
+// `badgeLabel` in NavLink, so the display caps at "99+"). Purely additive:
 // the three leading-mark arms stay mutually exclusive.

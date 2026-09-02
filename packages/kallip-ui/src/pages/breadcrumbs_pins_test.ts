@@ -3,13 +3,17 @@ import { assert } from "@std/assert";
 // Source-read pins for the shell breadcrumb chrome (unified breadcrumbs
 // plan, E batch). Since the E batch the trail lives in the shell: the
 // route table (lib/shell/breadcrumbs.ts) owns the segments and the
-// AppShell chrome bar renders them. A typecheck cannot see that a page
-// still mounts its own trail, that the tagma segments point at the
-// details hub, or that the bar carries its divider -- these pins guard
-// exactly that, same rationale as chrome_pins_test.
+// desktop shell's chrome bar renders them (DesktopShell since the M1
+// split). A typecheck cannot see that a page still mounts its own
+// trail, that the tagma segments point at the details hub, or that the
+// bar carries its divider -- these pins guard exactly that, same
+// rationale as chrome_pins_test.
 
 const TRAIL_TABLE = new URL("../lib/shell/breadcrumbs.ts", import.meta.url);
-const APP_SHELL = new URL("../components/AppShell.svelte", import.meta.url);
+const DESKTOP_SHELL = new URL(
+  "../lib/shell/DesktopShell.svelte",
+  import.meta.url,
+);
 
 // Every page the E batch migrated off per-page trails. The negative pin
 // below keeps them mount-free: a trail comes from the table, never from
@@ -54,10 +58,10 @@ Deno.test(
 );
 
 Deno.test(
-  "AppShell renders the single chrome bar with its divider",
-  { permissions: { read: [APP_SHELL] } },
+  "the desktop shell renders the single chrome bar with its divider",
+  { permissions: { read: [DESKTOP_SHELL] } },
   () => {
-    const src = source(APP_SHELL);
+    const src = source(DESKTOP_SHELL);
     assert(src.includes("{#if trail}"), "the bar must be table-gated");
     assert(
       src.includes("<Breadcrumbs segments={trail} />"),
