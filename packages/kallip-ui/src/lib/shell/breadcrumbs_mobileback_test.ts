@@ -28,11 +28,21 @@ Deno.test("the tagma chat drills back to the chats hub", () => {
 Deno.test("the relay chat keeps its chats-hub back target", () => {
   assertEquals(mobileBack("/chat/c-1")?.href, "/chats");
 });
+Deno.test("the direct session keeps its chats-hub back target", () => {
+  assertEquals(mobileBack("/tagma/t-1/direct/p-1")?.href, "/chats");
+});
 
 Deno.test("the tagma details sections keep the bottom bar", () => {
   assertEquals(mobileBack("/tagma/t-1/details/overview"), null);
   assertEquals(mobileBack("/tagma/t-1/details/budget"), null);
   assertEquals(mobileBack("/tagma/t-1/details/agents"), null);
+});
+Deno.test("the profiles section keeps the bottom bar", () => {
+  assertEquals(mobileBack("/tagma/t-1/details/profiles"), null);
+});
+
+Deno.test("the schedules section keeps the bottom bar", () => {
+  assertEquals(mobileBack("/tagma/t-1/details/schedules"), null);
 });
 
 Deno.test("the agent detail stays a drill to its agents section", () => {
