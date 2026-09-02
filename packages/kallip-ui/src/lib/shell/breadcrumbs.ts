@@ -187,8 +187,21 @@ export function mobileBack(
   pathname: string,
 ): { href: string; label: string } | null {
   if (pathname === "/account") return null;
+  const segs = pathname.split("/").filter(Boolean);
+  // Conversations live in the chats domain wherever they route from: the
+  // relay chat and the tagma chat both drill back to the chats hub.
   if (pathname === "/chat" || pathname.startsWith("/chat/")) {
     return { href: "/chats", label: nav_chats() };
+  }
+  if (segs.length === 3 && segs[0] === "tagma" && segs[2] === "chat") {
+    return { href: "/chats", label: nav_chats() };
+  }
+  // The tagma details sections are manage-domain: they keep the bottom
+  // bar (with the manage cell lit, see RootLayout isActive) instead of
+  // a back row. The agent detail below them stays a drill (back = its
+  // agents section), and so does the tagma hub itself.
+  if (segs.length === 4 && segs[0] === "tagma" && segs[2] === "details") {
+    return null;
   }
   return backFromTrail(matchTrail(pathname));
 }

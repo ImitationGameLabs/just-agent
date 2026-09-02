@@ -334,8 +334,15 @@
     }),
   );
 
-  // Segment-boundary match so sibling /chat/{id} entries do not cross-highlight.
+  // Manage-domain mapping: the tagma details sections (and the agent
+  // detail beneath them) light the manage cell -- the bar cell and the
+  // sidebar's manage item share this one predicate, mirroring the
+  // mobileBack manage-domain rule in lib/shell/breadcrumbs.ts.
   function isActive(href: string): boolean {
+    if (href === "/tagmata") {
+      const segs = pathname.split("/").filter(Boolean);
+      if (segs[0] === "tagma" && segs[2] === "details") return true;
+    }
     return pathMatches(pathname, href);
   }
 
