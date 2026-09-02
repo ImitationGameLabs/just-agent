@@ -136,7 +136,8 @@ let
   # agora2./lesche2. subdomains to the host ports -- so the second stack is
   # reachable exactly where the old inline pair was. Bring up only agora +
   # lesche (plus their deps): caddy would fight the first stack for :80/:443,
-  # and instances/files own the loopback-only 7300/7400.
+  # and instances owns the loopback-only 7300 (files publishes on all
+  # host interfaces since the files page).
   envOrDefault =
     name: default:
     let
@@ -157,8 +158,9 @@ in
     # The files service's CORS gate: the browser (web origin) talks to
     # files.<devDomain> cross-origin for uploads/downloads; allowlist the
     # same app origin the agora uses. Set here (not in files.nix) so
-    # webOrigin stays defined in one place.
-    services.files.environment.KALLIP_FILES_CORS_ORIGINS = webOrigin;
+    # webOrigin stays defined in one place; the extra `.service` hop
+    # merges with the compose-style env the files module declares.
+    services.files.service.environment.KALLIP_FILES_CORS_ORIGINS = webOrigin;
     # Named volumes must be declared at the compose top level (compose rejects
     # a reference to an undeclared named volume). The project name
     # (`kallipai-dev` by default) prefixes every volume, so the internal

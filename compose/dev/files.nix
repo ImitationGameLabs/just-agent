@@ -49,9 +49,10 @@ in
     # Files: the content-transfer service. Content-addressed blobs (local
     # volume) + record metadata in its own Postgres; identity and enrollment
     # facts stay in the agora, reached through the /internal ControlPlane
-    # surface over the compose network. Reached by the `kallip file` CLI at
-    # the loopback-published 127.0.0.1:7400 (no browser face in v1 -- the
-    # Caddy files.<devDomain> route in the TLS shape fronts the same port).
+    # surface over the compose network. Reached by the `kallip file` CLI and,
+    # since the files page (F1) by the browser: published on all host
+    # interfaces (the lesche pattern); the Caddy files.<devDomain> route in
+    # the TLS shape fronts the same port.
     services.files = {
       service.depends_on = [
         "agora"
@@ -59,10 +60,10 @@ in
       ];
       service.useHostStore = true;
       service.command = [ "${workspace}/bin/kallip-files" ];
-      # Loopback-tight in both TLS shapes: callers are host-local (the CLI,
-      # agents on this host); the https shape's Caddy route binds the same
-      # loopback port from the host network namespace.
-      service.ports = [ "127.0.0.1:7400:7400" ];
+      # Open publish in both TLS shapes (the lesche pattern -- a platform
+      # microservice the browser reaches directly); the https shape's
+      # Caddy route fronts the same port from the host network namespace.
+      service.ports = [ "7400:7400" ];
       service.env_file = [ ".env" ];
       image.contents = [
         workspace
