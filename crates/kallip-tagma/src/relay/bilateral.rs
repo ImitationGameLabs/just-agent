@@ -84,11 +84,13 @@ impl RelayHandle {
             return;
         };
         let room = RoomId::from(envelope.channel_id.as_ref().to_string());
-        // The joined-rooms membership check below dispatches on the
-        // channel_id value domain (see the Envelope field doc): a room id
-        // is a v4 UUID, a 1:1 conversation id a v5 UUID, so the two string
-        // spaces are disjoint -- a 1:1 envelope never collides with a
-        // joined room and falls through to the bilateral path below.
+        // The membership checks below dispatch on the channel_id value domain
+        // (see the Envelope field doc): a room id is a v4 UUID, a 1:1
+        // conversation id a v5 UUID, so the two string spaces are disjoint --
+        // a 1:1 envelope never collides with a joined room. A direct-session
+        // id (a v5 hash normalized into the v4 form) shares the room's value
+        // domain, so the direct-session cache check that follows the joined-
+        // rooms check is what separates it from a room.
         //
         // Room path: a joined room's envelope payload IS the plaintext
         // `RoomMessage` JSON bytes (rooms are plaintext server-readable; the
@@ -104,7 +106,23 @@ impl RelayHandle {
                 sender_id: sender.id.as_ref().to_string(),
                 plaintext: envelope.ciphertext.0.clone(),
             };
-            self.handle_room_message(&state, &room, sender, payload)
+            self.handle_relay_message(&state, Surface::Room(&room), sender, payload)
+                .await;
+            return;
+        }
+        // Direct-session path: same plaintext tail as rooms, direct surface
+        // word (see `handle_relay_message`). The cache is warmed by the same
+        // poll pump as the rooms cache; a cold cache (first envelope before
+        // the first post-reconnect tick) falls through and is dropped here --
+        // the same inherited cold-window behavior as rooms, self-correcting
+        // via history pull and the next tick.
+        let session = DirectSessionId::from(envelope.channel_id.as_ref().to_string());
+        if state.direct_sessions.is_session(&session).await {
+            let payload = RoomPayload {
+                sender_id: sender.id.as_ref().to_string(),
+                plaintext: envelope.ciphertext.0.clone(),
+            };
+            self.handle_relay_message(&state, Surface::Direct(&session), sender, payload)
                 .await;
             return;
         }

@@ -80,6 +80,7 @@ pub fn canonical_pair<'a>(a: &'a TagmaId, b: &'a TagmaId) -> (&'a TagmaId, &'a T
 /// room, relay, and direct surfaces (plain serde, wire shape
 /// `{record_id, name, size}`; the shape test below pins it).
 pub use kallip_common::protocol::agent::FileAttachment;
+
 /// The direct-session message payload: the plaintext content one tagma sends
 /// to its direct-session peer. Mirrors the room payload's minimalism (a
 /// message is text plus an optional file link); stored opaquely by the lesche

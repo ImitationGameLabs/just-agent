@@ -1,6 +1,8 @@
-//! `POST /agents/{id}/lesche/messages` — the root agent's "speak to the user"
-//! primitive.
-//!
+//! `POST /agents/{id}/lesche/messages` — the root agent's user-facing send
+//! primitive: the bilateral 1:1 (default), a joined room (`room` set), or a
+//! peer tagma's direct session (`tagma` set). This module also hosts the
+//! room history read, the direct-session history read, and the unified
+//! session list the `kallip lesche` subcommands drive.
 //! The agent invokes `kallip lesche send` (a subcommand of the `kallip` CLI)
 //! via `bash_exec`; it authenticates with its own per-agent token and POSTs
 //! here. The tagma, holding the E2E key in-process, delivers the text as an
@@ -15,12 +17,13 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use kallip_agora_common::bytes::Ciphertext;
-use kallip_agora_common::ids::{ChannelId, TraceId};
+use kallip_agora_common::ids::{ChannelId, TagmaId, TraceId};
 use kallip_common::message::DeliveryResponse;
 use kallip_common::protocol::ApiError;
+use kallip_lesche_common::direct::{DirectMessage, DirectSessionId};
 use kallip_lesche_common::message::{Envelope, RoomMessage};
 use kallip_lesche_common::rooms::RoomId;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::relay::RelayMessageError;
@@ -36,6 +39,12 @@ pub(super) struct LescheMessageRequest {
     /// [`RoomId`] so this route owns the id-type boundary (the `kallip` CLI /
     /// `kallip-client` stay agora-id-free).
     pub room: Option<String>,
+    /// Optional peer tagma id. Present when the agent is sending into the
+    /// direct session with that tagma (create-or-get on first send, so
+    /// re-sends are idempotent). Attachments in a direct session must live
+    /// in a workspace the peer can read: a file record in a private area
+    /// fails the peer's fetch with 403.
+    pub tagma: Option<String>,
 }
 
 /// Self-only AND root-only guard shared by the lesche routes (the agent's
@@ -84,7 +93,7 @@ pub async fn list_joined_rooms(
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub(super) struct RoomHistoryQuery {
+pub(super) struct LescheHistoryQuery {
     /// Return messages with `seq > after_seq` (exclusive). Default 0 = from the
     /// start.
     pub after_seq: Option<i64>,
@@ -107,7 +116,7 @@ pub async fn read_room_messages(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
     Path((id, room)): Path<(AgentId, String)>,
-    Query(q): Query<RoomHistoryQuery>,
+    Query(q): Query<LescheHistoryQuery>,
 ) -> Result<String, ApiError> {
     require_root_self(&state, auth.identity(), &id).await?;
     let room = RoomId::from(room);
@@ -133,7 +142,7 @@ pub async fn read_room_messages(
     let rows = client
         .fetch_room_messages(&room, q.after_seq, q.limit)
         .await
-        .map_err(|e| map_room_error("room history fetch failed", &e))?;
+        .map_err(|e| map_lesche_error("room history fetch failed", &e))?;
     // Render each row. The payload IS the plaintext `RoomMessage` JSON; the
     // sender is the relay-authenticated envelope sender stamped on the stored
     // row. A row that fails to parse is skipped with a warn rather than failing
@@ -181,18 +190,36 @@ pub async fn post_message(
     Json(req): Json<LescheMessageRequest>,
 ) -> Result<Json<DeliveryResponse>, ApiError> {
     require_root_self(&state, auth.identity(), &id).await?;
-    // A room send bypasses the bilateral projector entirely: no chat_history
-    // row, no bilateral frame, no bilateral emit. The tagma posts the plaintext
-    // `RoomMessage` straight to the room envelope route. Rooms and the 1:1
-    // conversation are disjoint address spaces, so the two paths never share
-    // routing state.
-    if let Some(room) = req.room {
-        return send_room_message(&state, room, req.text).await.map(|_| {
-            Json(DeliveryResponse {
-                ok: true,
-                error: None,
-            })
-        });
+    // Exactly one target: the bilateral 1:1 (neither set), a joined room
+    // (`room`), or a peer tagma's direct session (`tagma`). Both set is a
+    // caller bug. Room and direct sends bypass the bilateral projector
+    // entirely: no chat_history row, no bilateral frame, no bilateral emit --
+    // the tagma posts the plaintext payload straight to the lesche envelope
+    // route (relay surfaces and the 1:1 conversation are disjoint address
+    // spaces, so the paths never share routing state).
+    match (req.room, req.tagma) {
+        (Some(_), Some(_)) => {
+            return Err(ApiError::bad_request(
+                "address exactly one target: room or tagma, not both",
+            ));
+        }
+        (Some(room), None) => {
+            return send_room_message(&state, room, req.text).await.map(|_| {
+                Json(DeliveryResponse {
+                    ok: true,
+                    error: None,
+                })
+            });
+        }
+        (None, Some(peer)) => {
+            return send_direct_message(&state, peer, req.text).await.map(|_| {
+                Json(DeliveryResponse {
+                    ok: true,
+                    error: None,
+                })
+            });
+        }
+        (None, None) => {}
     }
     // Persist once + publish via the single external projector. The projector
     // is the sole writer of chat content; whichever serving paths are active
@@ -282,19 +309,258 @@ async fn send_room_message(
     client
         .post_room_envelope(&room, &envelope)
         .await
-        .map_err(|e| map_room_error("room envelope post failed", &e))?;
+        .map_err(|e| map_lesche_error("room envelope post failed", &e))?;
     Ok(())
 }
 
-/// Map a lesche-client room-surface error to a precise [`ApiError`]: a
-/// member-gated 404 (unknown room / not a member) surfaces as `not_found`
-/// rather than a misleading 502 bad-gateway; everything else stays a 502 (the
-/// lesche itself is the transport in question).
-fn map_room_error(context: &str, e: &anyhow::Error) -> ApiError {
+/// Send a message into the direct session with a peer tagma (the
+/// `kallip lesche send --tagma <tagma-id>` path). Shares the per-tagma burst
+/// cap with the bilateral + room paths, then create-or-gets the session on
+/// the serving relay's lesche (a warm direct-session cache entry names it;
+/// a cold entry -- a first-ever send or a not-yet-ticked poll -- runs the
+/// create-or-get on the first installed relay, which a single-relay
+/// deployment makes identical) and posts the plaintext `DirectMessage`
+/// envelope to `/v1/direct-sessions/{id}/messages`. Like the room path it
+/// does NOT touch the bilateral projector -- no `chat_history` row (the
+/// lesche is the session's store of record), no bilateral frame, no `emit`.
+async fn send_direct_message(
+    state: &SharedState,
+    peer_str: String,
+    text: String,
+) -> Result<(), ApiError> {
+    // TagmaId parses leniently (an opaque id string); a peer the lesche does
+    // not know fails the create-or-get with a member-gated 404, not a 400.
+    let peer = TagmaId::from(peer_str);
+    // Shared burst cap with the bilateral path (the projector owns the limiter).
+    let projector = state
+        .external
+        .get()
+        .ok_or_else(|| ApiError::unavailable("external projector not initialized"))?;
+    if !projector.check_outbound_burst().await {
+        return Err(ApiError::too_many_requests("message burst cap exceeded"));
+    }
+    // The session id is derived from this tagma's enrolled id + the peer
+    // (the lesche-common derivation, the same bytes the lesche computes),
+    // so both endpoints agree with zero lookup. Every installed relay
+    // carries the same enrolled id, so any handle derives it.
+    let handles = state.relay_handles();
+    let Some(first) = handles.first() else {
+        return Err(ApiError::unavailable(
+            "no relay installed; cannot address a direct session",
+        ));
+    };
+    let session = DirectSessionId::for_pair(first.tagma_id(), &peer);
+    let handle = match state.direct_sessions.owner_of(&session).await {
+        Some(owner) => state.relay(&owner).ok_or_else(|| {
+            ApiError::unavailable("relay not online; cannot address a direct session")
+        })?,
+        None => first.clone(),
+    };
+    // create-or-get: idempotent on the lesche (the id derives from the
+    // pair), so a double-initiation race is safe.
+    handle
+        .lesche_client()
+        .create_direct_session(&peer)
+        .await
+        .map_err(|e| map_lesche_error("direct-session create failed", &e))?;
+    // The direct payload is a `DirectMessage` (text only from this route;
+    // the lesche stores + relays it opaquely and member-gates the route).
+    let plain = serde_json::to_vec(&DirectMessage {
+        text,
+        attachment: None,
+    })
+    .map_err(|e| ApiError::bad_gateway(format!("encode direct message: {e:#}")))?;
+    let envelope = Envelope {
+        // post_direct_session_envelope overwrites channel_id from the
+        // session id; mirror it for clarity, like the room send.
+        channel_id: ChannelId::from(session.as_ref().to_string()),
+        sender: handle.agent_sender(),
+        sequence_n: 0,
+        trace_id: TraceId::random(),
+        timestamp: OffsetDateTime::now_utc(),
+        ciphertext: Ciphertext(plain),
+    };
+    handle
+        .lesche_client()
+        .post_direct_session_envelope(&session, &envelope)
+        .await
+        .map_err(|e| map_lesche_error("direct-session envelope post failed", &e))?;
+    Ok(())
+}
+
+/// `GET /agents/{id}/lesche/direct-sessions/{peer}/messages` — the
+/// `kallip lesche read --tagma <peer>` path. The session id is derived
+/// locally from (self, peer) with the lesche-common derivation, so the
+/// agent never handles a session id: the peer is the tagma id copied from
+/// the inbound `[From: ... | direct <session>]` header's parens (or from
+/// `kallip lesche sessions`). Served by the relay whose poll warmed the
+/// direct-session cache; a cold cache is indistinguishable from "no relay
+/// knows this session" and surfaces as unavailable -- self-correcting on
+/// the next poll, same as the room read.
+pub async fn read_direct_session_messages(
+    State(state): State<SharedState>,
+    auth: crate::auth::AuthIdentity,
+    Path((id, peer_str)): Path<(AgentId, String)>,
+    Query(q): Query<LescheHistoryQuery>,
+) -> Result<String, ApiError> {
+    require_root_self(&state, auth.identity(), &id).await?;
+    // TagmaId parses leniently (an opaque id string); an unknown peer
+    // surfaces from the lesche history read as a 404, not a 400.
+    let peer = TagmaId::from(peer_str);
+    let Some(first) = state.relay_handles().first().cloned() else {
+        return Err(ApiError::unavailable(
+            "no relay installed; cannot read a direct session",
+        ));
+    };
+    let session = DirectSessionId::for_pair(first.tagma_id(), &peer);
+    let client = {
+        let Some(owner) = state.direct_sessions.owner_of(&session).await else {
+            return Err(ApiError::unavailable(
+                "no online relay knows this direct session; cannot read its history",
+            ));
+        };
+        let Some(handle) = state.relay(&owner) else {
+            return Err(ApiError::unavailable(
+                "relay not online; cannot read direct session history",
+            ));
+        };
+        handle.lesche_client()
+    };
+    let rows = client
+        .fetch_direct_messages(&session, q.after_seq, q.limit)
+        .await
+        .map_err(|e| map_lesche_error("direct session history fetch failed", &e))?;
+    // Render each row like the room history route: one bracketed block per
+    // message. The payload IS the plaintext `DirectMessage` JSON; the sender
+    // is the relay-authenticated envelope sender stamped on the stored row
+    // (the handle is advisory + sanitized, same rule as rooms). A row that
+    // fails to parse is skipped rather than failing the whole read.
+    let mut out = String::new();
+    for row in rows {
+        let request: DirectMessage = match serde_json::from_slice(&row.ciphertext.0) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(session = %session, seq = row.seq, "direct history parse skipped: {e}");
+                continue;
+            }
+        };
+        let DirectMessage { text, .. } = request;
+        let sender_id = row.sender.id.as_ref().to_string();
+        let kind = row.sender.kind.as_str();
+        let clean = crate::messaging::sanitize_handle(&row.sender.handle);
+        let handle_part = if clean.is_empty() {
+            String::new()
+        } else {
+            format!(" \"{clean}\"")
+        };
+        out.push_str(&format!(
+            "[seq={} from={}:{}{} at={}]\n{text}\n\n",
+            row.seq, kind, sender_id, handle_part, row.created_at
+        ));
+    }
+    Ok(out)
+}
+
+/// One row of the unified `GET /agents/{id}/lesche/sessions` list (the
+/// `kallip lesche sessions` data): every surface the agent can address with
+/// `kallip lesche send`, with its kind and target metadata.
+#[derive(Debug, Serialize)]
+pub(super) struct SessionListEntry {
+    /// `bilateral` (the fixed 1:1 with the operator), `room`, or `direct`.
+    pub kind: &'static str,
+    /// The surface id: conversation id, room id, or derived session id.
+    pub id: String,
+    /// Room display name (rooms only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The peer's tagma id (direct sessions only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_tagma: Option<String>,
+    /// The peer's server-stamped handle (direct sessions only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_handle: Option<String>,
+}
+
+/// `GET /agents/{id}/lesche/sessions` — every addressable surface in one
+/// list: the user bilateral conversation (the projector-owned conversation
+/// id, the default send target), the joined rooms, and the direct sessions.
+/// Aggregated from the online relays' `list_my_rooms` +
+/// `list_direct_sessions` (the lesche exposes no aggregate endpoint);
+/// best-effort per relay (a relay whose list fails is skipped and its
+/// surfaces reappear when it returns), duplicates collapsed by (kind, id)
+/// for two relays sharing one lesche.
+pub async fn list_lesche_sessions(
+    State(state): State<SharedState>,
+    auth: crate::auth::AuthIdentity,
+    Path(id): Path<AgentId>,
+) -> Result<Json<Vec<SessionListEntry>>, ApiError> {
+    require_root_self(&state, auth.identity(), &id).await?;
+    let mut out: Vec<SessionListEntry> = Vec::new();
+    // The bilateral 1:1 is a fixed member of the list.
+    if let Some(projector) = state.external.get()
+        && let Some(conv) = projector.conversation_id()
+    {
+        out.push(SessionListEntry {
+            kind: "bilateral",
+            id: conv,
+            name: None,
+            peer_tagma: None,
+            peer_handle: None,
+        });
+    }
+    let mut seen: std::collections::HashSet<(bool, String)> = Default::default();
+    for handle in state.relay_handles() {
+        let client = handle.lesche_client();
+        match client.list_my_rooms(handle.tagma_id()).await {
+            Ok(rooms) => {
+                for room in rooms {
+                    if seen.insert((false, room.room_id.as_ref().to_owned())) {
+                        out.push(SessionListEntry {
+                            kind: "room",
+                            id: room.room_id.as_ref().to_owned(),
+                            name: room.name,
+                            peer_tagma: None,
+                            peer_handle: None,
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "sessions: room list failed; skipping relay");
+            }
+        }
+        match client.list_direct_sessions().await {
+            Ok(sessions) => {
+                for view in sessions {
+                    if seen.insert((true, view.session_id.as_ref().to_owned())) {
+                        out.push(SessionListEntry {
+                            kind: "direct",
+                            id: view.session_id.as_ref().to_owned(),
+                            name: None,
+                            peer_tagma: Some(view.peer.tagma_id.as_ref().to_owned()),
+                            peer_handle: Some(view.peer.handle),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "sessions: direct list failed; skipping relay");
+            }
+        }
+    }
+    out.sort_by(|a, b| (a.kind, &a.id).cmp(&(b.kind, &b.id)));
+    Ok(Json(out))
+}
+
+/// Map a lesche-client error to a precise [`ApiError`]: a member-gated 404
+/// (unknown room/session / not a member) surfaces as `not_found` rather than
+/// a misleading 502 bad-gateway; everything else stays a 502 (the lesche
+/// itself is the transport in question).
+fn map_lesche_error(context: &str, e: &anyhow::Error) -> ApiError {
     if let Some(err) = e.downcast_ref::<kallip_lesche_client::LescheHttpError>()
         && err.status == reqwest::StatusCode::NOT_FOUND
     {
-        return ApiError::not_found(format!("{context}: unknown room or not a member"));
+        return ApiError::not_found(format!("{context}: unknown target or not a member"));
     }
     ApiError::bad_gateway(format!("{context}: {e:#}"))
 }
@@ -331,6 +597,7 @@ mod tests {
             Json(LescheMessageRequest {
                 text: "hi".into(),
                 room: None,
+                tagma: None,
             }),
         )
         .await
@@ -364,6 +631,7 @@ mod tests {
             Json(LescheMessageRequest {
                 text: "hi".into(),
                 room: Some("room-1".into()),
+                tagma: None,
             }),
         )
         .await
@@ -453,6 +721,7 @@ mod tests {
             Json(LescheMessageRequest {
                 text: "hi".into(),
                 room: None,
+                tagma: None,
             }),
         )
         .await
@@ -485,6 +754,7 @@ mod tests {
             Json(LescheMessageRequest {
                 text: "hi".into(),
                 room: None,
+                tagma: None,
             }),
         )
         .await
@@ -524,6 +794,7 @@ mod tests {
             Json(LescheMessageRequest {
                 text: "hi".into(),
                 room: None,
+                tagma: None,
             }),
         )
         .await
@@ -533,5 +804,123 @@ mod tests {
             "expected 403 forbidden, got {}",
             err.status
         );
+    }
+
+    /// A send naming BOTH targets (room + tagma) is a caller bug -> 400,
+    /// before any projector/relay work. Pins the three-addressing dispatch
+    /// invariant that the two optional targets are mutually exclusive.
+    #[tokio::test]
+    async fn direct_send_rejects_both_targets() {
+        let state = make_state();
+        let id = AgentId::random();
+        let entry = make_entry(None, "tok".to_string());
+        state
+            .registry
+            .write()
+            .await
+            .register(id.clone(), RegistryEntry::Live(entry));
+
+        let err = post_message(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: id.clone() }),
+            Path(id),
+            Json(LescheMessageRequest {
+                text: "hi".into(),
+                room: Some("room-1".into()),
+                tagma: Some("tagma-b".into()),
+            }),
+        )
+        .await
+        .expect_err("both targets -> bad request");
+        assert_eq!(err.status, 400, "expected 400, got {}", err.status);
+    }
+
+    /// A direct send takes the tagma branch before any relay work: without
+    /// the external projector (the shared burst-cap owner) it short-circuits
+    /// to 503, mirroring the room branch. Pins that `--tagma` routes through
+    /// `send_direct_message` rather than the bilateral projector path.
+    #[tokio::test]
+    async fn direct_send_unavailable_without_projector() {
+        let state = make_state();
+        let id = AgentId::random();
+        let entry = make_entry(None, "tok".to_string());
+        state
+            .registry
+            .write()
+            .await
+            .register(id.clone(), RegistryEntry::Live(entry));
+
+        let err = post_message(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: id.clone() }),
+            Path(id),
+            Json(LescheMessageRequest {
+                text: "hi".into(),
+                room: None,
+                tagma: Some("tagma-b".into()),
+            }),
+        )
+        .await
+        .expect_err("no projector -> unavailable");
+        assert_eq!(
+            err.status, 503,
+            "expected 503 unavailable, got {}",
+            err.status
+        );
+    }
+
+    /// The direct-session history read with no relay installed is 503 -- the
+    /// derivation needs the enrolled tagma id, which only a relay carries.
+    #[tokio::test]
+    async fn direct_read_unavailable_without_relay() {
+        let state = make_state();
+        let id = AgentId::random();
+        let entry = make_entry(None, "tok".to_string());
+        state
+            .registry
+            .write()
+            .await
+            .register(id.clone(), RegistryEntry::Live(entry));
+
+        let err = read_direct_session_messages(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: id.clone() }),
+            Path((id, "tagma-b".to_string())),
+            Query(LescheHistoryQuery {
+                after_seq: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect_err("no relay -> unavailable");
+        assert_eq!(
+            err.status, 503,
+            "expected 503 unavailable, got {}",
+            err.status
+        );
+    }
+
+    /// The unified session list with no relays and no projector returns an
+    /// empty list rather than 503: every member of the aggregate is
+    /// best-effort, mirroring the cold-cache room list.
+    #[tokio::test]
+    async fn sessions_with_cold_state_returns_empty() {
+        let state = make_state();
+        let id = AgentId::random();
+        let entry = make_entry(None, "tok".to_string());
+        state
+            .registry
+            .write()
+            .await
+            .register(id.clone(), RegistryEntry::Live(entry));
+
+        let Json(entries) = list_lesche_sessions(
+            State(state),
+            AuthIdentity::test_new(Identity::Agent { id: id.clone() }),
+            Path(id),
+        )
+        .await
+        .expect("cold state -> empty list, not 503");
+        assert!(entries.is_empty());
     }
 }

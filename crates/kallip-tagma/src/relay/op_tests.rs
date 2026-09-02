@@ -15,12 +15,12 @@ use kallip_agora_common::bytes::Ciphertext;
 use kallip_agora_common::ids::{
     ChannelId, ConversationId, ParticipantId, ParticipantKind, TagmaId, TraceId, UserId,
 };
+use kallip_common::protocol::agent::FileAttachment;
 use kallip_common::protocol::{AuthoredEvent, SignalEvent, SseEvent};
 use kallip_e2ee::{
     DIR_INITIATOR_TO_RESPONDER, DIR_RESPONDER_TO_INITIATOR, DeviceKey, SessionKey, nonce,
 };
 use kallip_lesche_common::control::KeyExchangeInit;
-use kallip_lesche_common::direct::FileAttachment;
 use kallip_lesche_common::message::{Envelope, Participant, RoomMessage, TagmaReply, TagmaRequest};
 use kallip_lesche_common::rooms::RoomId;
 use std::sync::Arc;

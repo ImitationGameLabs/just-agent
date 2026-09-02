@@ -25,9 +25,11 @@ pub use kallip_agora_common::participant::Participant;
 /// ([`crate::rooms::RoomId`], a v4 UUID) or the bilateral 1:1 conversation
 /// (`ConversationId`, a v5 UUID derived per tagma). The UUID version
 /// nibble keeps the two spaces disjoint, so a room envelope can never be
-/// mistaken for a 1:1 conversation and vice versa; the relay dispatches on
-/// its joined-rooms membership rather than a tag field. Serialized as
-/// `channel_id`; `conversation_id` remains readable as a serde alias for
+/// mistaken for a 1:1 conversation and vice versa. A direct-session id
+/// (a v5 hash normalized into the v4 form) shares the room's value domain;
+/// the relay dispatches on its joined-rooms / direct-session cache
+/// membership rather than a tag field. Serialized as `channel_id`;
+/// `conversation_id` remains readable as a serde alias for
 /// one rolling-deploy window (removal tracked in the debt ledger).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {

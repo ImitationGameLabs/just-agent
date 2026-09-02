@@ -35,7 +35,7 @@ pub async fn deliver_message(
     sender: Option<Participant>,
     id: &AgentId,
     text: &str,
-    attachment: Option<kallip_lesche_common::direct::FileAttachment>,
+    attachment: Option<kallip_common::protocol::agent::FileAttachment>,
 ) -> Result<MessageResponse, ApiError> {
     // Sanitize the wire sender's handle once, at ingest, so the persisted row
     // and the prompt header both see a clean value (format_incoming sanitizes
@@ -103,29 +103,39 @@ pub async fn deliver_message(
     Ok(response)
 }
 
-/// Deliver an inbound room message to the root agent's prompt channel (the
-/// inbound counterpart of the outbound `send_room_message` in `routes/lesche`).
-/// The room header carries the authenticated sender tagma id + the room id, so
-/// the agent can reply with `kallip lesche send --room <room>`. Unlike
-/// [`deliver_message`], this does NOT call `record_inbound`: rooms bypass the
-/// bilateral projector entirely (lesche is the room's store of record; the
-/// tagma is one member, not the transcript owner), so no local
-/// `chat_history` row is written and no bilateral `UserMessage` frame is
-/// published. The shared [`enqueue_prompt`] (fast path + reactivation) is reused
-/// so a room message wakes a dead root agent just like a bilateral one.
-pub async fn deliver_inbound_room_message(
+/// Deliver an inbound relay-surface message (room or direct session) to the
+/// root agent's prompt channel (the inbound counterpart of the outbound
+/// `send_room_message` / `send_direct_message` in `routes/lesche`). The
+/// header carries the authenticated sender id + the surface id (`room <id>`
+/// / `direct <id>`), so the agent can reply with `kallip lesche send --room
+/// <room>` / `send --tagma <tagma-id>`. Unlike [`deliver_message`], this does
+/// NOT call `record_inbound`: relay surfaces bypass the bilateral projector
+/// entirely (the lesche is the surface's store of record; the tagma is one
+/// member, not the transcript owner), so no local `chat_history` row is
+/// written and no bilateral `UserMessage` frame is published. The shared
+/// [`enqueue_prompt`] (fast path + reactivation) is reused so a relay
+/// message wakes a dead root agent just like a bilateral one.
+pub async fn deliver_inbound_relay_message(
     state: &SharedState,
     id: &AgentId,
-    room: &kallip_lesche_common::rooms::RoomId,
+    surface: crate::messaging::Surface<'_>,
     sender_kind: &str,
     sender_id: &str,
     sender_handle: String,
     text: &str,
 ) -> Result<MessageResponse, ApiError> {
-    info!(receiver = %id, room = %room, sender_kind, sender_id, "delivering room message");
-    let envelope =
-        crate::messaging::format_room_incoming(sender_kind, sender_id, sender_handle, room, text);
-    enqueue_prompt(state, id, envelope, "room").await
+    info!(
+        receiver = %id, surface = surface.label(), sender_kind, sender_id,
+        "delivering relay message"
+    );
+    let envelope = crate::messaging::format_relay_incoming(
+        sender_kind,
+        sender_id,
+        sender_handle,
+        surface,
+        text,
+    );
+    enqueue_prompt(state, id, envelope, surface.source()).await
 }
 
 /// Coarse human-readable duration for the kick turn ("45s", "3m 12s",

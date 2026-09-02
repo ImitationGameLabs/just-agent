@@ -67,6 +67,14 @@ pub fn router() -> Router<SharedState> {
             axum::routing::get(lesche::read_room_messages),
         )
         .route(
+            "/agents/{id}/lesche/direct-sessions/{peer}/messages",
+            axum::routing::get(lesche::read_direct_session_messages),
+        )
+        .route(
+            "/agents/{id}/lesche/sessions",
+            axum::routing::get(lesche::list_lesche_sessions),
+        )
+        .route(
             "/agents/{id}/events",
             axum::routing::get(message::sse_events),
         )

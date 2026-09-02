@@ -108,7 +108,7 @@ pub(crate) async fn append(
     username: Option<&str>,
     direction: &str,
     text: &str,
-    attachment: Option<&kallip_lesche_common::direct::FileAttachment>,
+    attachment: Option<&kallip_common::protocol::agent::FileAttachment>,
 ) -> Result<(i64, i64)> {
     let now = unix_secs();
     let attachment = attachment

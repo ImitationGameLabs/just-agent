@@ -4,7 +4,7 @@
 //!
 //! Extracted from `mod.rs`. A child module of `relay`, so `use super::*` reuses
 //! the parent's private imports and grants access to [`RelayHandle`]'s private
-//! fields/methods. The entry points (`handle_room_message`, `handle_agent_op`,
+//! fields/methods. The entry points (`handle_relay_message`, `handle_agent_op`,
 //! `handle_history`) are `pub(super)` because the bilateral path
 //! (`bilateral::handle_user_op`) calls into them; `handle_history_inner`,
 //! `execute_op`, and `interrupt_root` stay private (same-module callers only).
@@ -14,29 +14,44 @@
 use super::*;
 
 impl RelayHandle {
-    /// Dispatch a plaintext room message to the root agent -- the room path's
-    /// own tail (separate from the bilateral `handle_agent_op`). Parses the
-    /// payload as a `RoomMessage` (rooms and the bilateral 1:1 path are disjoint
-    /// address spaces; a room message is just text). Enqueues a room-annotated
-    /// prompt (`[From: ... | room <id>]`) so the agent can reply with `kallip
-    /// lesche send --room <room>`. Skips the bilateral `record_inbound` (rooms
+    /// Dispatch a plaintext relay-surface message (room or direct session) to
+    /// the root agent -- the relay path's own tail (separate from the bilateral
+    /// `handle_agent_op`). Parses the payload per surface (`RoomMessage` vs
+    /// `DirectMessage`; both relay surfaces are plaintext, disjoint from the
+    /// bilateral 1:1 address space) and enqueues a surface-annotated prompt
+    /// (`[From: ... | room <id>]` / `[From: ... | direct <id>]`) so the agent
+    /// can reply with `kallip lesche send --room <room>` / `send --tagma
+    /// <tagma-id>`. Skips the bilateral `record_inbound` (relay surfaces
     /// bypass the projector) and the bilateral `MessageAccepted` ACK emit
-    /// (lesche's synchronous 202 is the room ACK).
-    pub(super) async fn handle_room_message(
+    /// (lesche's synchronous 202 is the ACK).
+    pub(super) async fn handle_relay_message(
         &self,
         state: &SharedState,
-        room: &RoomId,
+        surface: crate::messaging::Surface<'_>,
         sender: Participant,
         payload: RoomPayload,
     ) {
-        let request: RoomMessage = match serde_json::from_slice(&payload.plaintext) {
-            Ok(r) => r,
+        // Both payload types are `{ text, attachment? }` with the same JSON
+        // shape, but each surface decodes its own type so a future field on
+        // one surface cannot silently leak into the other's decode.
+        let decoded: Result<String, _> = match surface {
+            crate::messaging::Surface::Room(_) => {
+                serde_json::from_slice::<RoomMessage>(&payload.plaintext).map(|r| r.text)
+            }
+            crate::messaging::Surface::Direct(_) => {
+                serde_json::from_slice::<DirectMessage>(&payload.plaintext).map(|r| r.text)
+            }
+        };
+        let text = match decoded {
+            Ok(text) => text,
             Err(e) => {
-                warn!(room = %room, "room message decode failed: {e}");
+                warn!(
+                    surface = surface.label(),
+                    "relay message decode failed: {e}"
+                );
                 return;
             }
         };
-        let RoomMessage { text, .. } = request;
         // The sender identity is non-forgeable: it is the relay-authenticated
         // `envelope.sender.id` (the lesche validates id + kind against the
         // authed principal before stamping the row), decoded here as the
@@ -47,13 +62,14 @@ impl RelayHandle {
         // The advisory `Participant` carries the kind + handle. The kind is
         // relay-authenticated transitively (a user credential cannot post an
         // `Agent` sender, and vice versa, or the lesche's require_* check
-        // rejects it); the handle is spoofable + sanitized in `format_room_incoming`.
+        // rejects it); the handle is spoofable + sanitized in
+        // `format_relay_incoming`.
         let sender_kind = sender.kind.as_str();
         let sender_handle = sender.handle.clone();
-        if let Err(e) = crate::delivery::deliver_inbound_room_message(
+        if let Err(e) = crate::delivery::deliver_inbound_relay_message(
             state,
             &self.inner.root_agent,
-            room,
+            surface,
             sender_kind,
             &sender_id,
             sender_handle,
@@ -61,7 +77,10 @@ impl RelayHandle {
         )
         .await
         {
-            warn!(room = %room, "room message deliver failed: {e:#}");
+            warn!(
+                surface = surface.label(),
+                "relay message deliver failed: {e:#}"
+            );
         }
     }
 

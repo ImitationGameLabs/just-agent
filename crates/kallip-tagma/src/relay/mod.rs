@@ -36,6 +36,7 @@ use kallip_agora_common::bytes::Ciphertext;
 use kallip_agora_common::ids::{ConversationId, ParticipantId, ParticipantKind, TagmaId};
 use kallip_e2ee::{self as e2e, DeviceKey};
 use kallip_lesche_client::LescheClient;
+use kallip_lesche_common::direct::{DirectMessage, DirectSessionId};
 use kallip_lesche_common::message::{
     Envelope, Participant, RoomMessage, TagmaControl, TagmaReply, TagmaRequest,
 };
@@ -50,6 +51,7 @@ use tracing::{debug, error, info, warn};
 use kallip_common::agentid::AgentId;
 
 use crate::auth::Identity;
+use crate::messaging::Surface;
 use crate::state::{AppState, SharedState};
 
 use crypto::CryptoState;

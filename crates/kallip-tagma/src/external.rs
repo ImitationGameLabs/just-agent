@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use kallip_agora_common::ids::{ConversationId, ParticipantId, ParticipantKind, TagmaId};
 use kallip_common::protocol::SseEvent;
-use kallip_lesche_common::direct::FileAttachment;
+use kallip_common::protocol::agent::FileAttachment;
 use kallip_lesche_common::message::{HistoryEntry, Participant, TagmaReply};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, broadcast};

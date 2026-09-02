@@ -9,7 +9,7 @@
 //! or the operator for `NULL`) — and passes it here. This module only maps
 //! `direction` + `text` onto the wire reply shape.
 
-use kallip_lesche_common::direct::FileAttachment;
+use kallip_common::protocol::agent::FileAttachment;
 use kallip_lesche_common::message::{HistoryEntry, Participant};
 
 /// One row returned for re-encryption + emit by the history pull paths.

@@ -110,6 +110,65 @@ impl JoinedRooms {
             .find_map(|(relay, set)| set.contains(room).then(|| relay.clone()))
     }
 }
+/// Direct-session routing cache: which of this tagma's direct sessions exist
+/// on which relay's lesche. Populated by the same poll pump as [`JoinedRooms`]
+/// (one tick, two calls: `list_my_rooms` then `list_direct_sessions`); keyed
+/// by relay entry name like the room cache, refreshed by full replace per
+/// tick. Best-effort in the same way: a cold or stale miss routes the send/
+/// read to the first installed relay or surfaces unavailable, and the next
+/// poll self-corrects -- the lesche member-gates every direct route, so a
+/// stale entry never leaks a session.
+#[derive(Default)]
+pub struct DirectSessions {
+    sessions: Mutex<HashMap<String, HashSet<kallip_lesche_common::direct::DirectSessionId>>>,
+}
+
+impl DirectSessions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether `session` is a direct session this tagma belongs to (union
+    /// across relays). The relay inbound fork dispatches on this before the
+    /// bilateral path, mirroring the joined-rooms check.
+    pub async fn is_session(
+        &self,
+        session: &kallip_lesche_common::direct::DirectSessionId,
+    ) -> bool {
+        self.sessions
+            .lock()
+            .await
+            .values()
+            .any(|set| set.contains(session))
+    }
+
+    /// Replace the named relay's direct-session set from a fresh
+    /// `list_direct_sessions` snapshot. Each relay's poll owns its slice;
+    /// other relays' slices are untouched.
+    pub async fn set_direct_sessions(
+        &self,
+        relay: &str,
+        sessions: impl IntoIterator<Item = kallip_lesche_common::direct::DirectSessionId>,
+    ) {
+        let mut g = self.sessions.lock().await;
+        g.insert(relay.to_owned(), sessions.into_iter().collect());
+    }
+
+    /// The relay whose lesche holds `session`, if any poll has warmed the
+    /// entry. Session ids are derived (not lesche-assigned), so the SAME id
+    /// can exist on several lesches; the first warmed owner wins (a
+    /// single-relay deployment -- today's only kind -- has exactly one).
+    pub async fn owner_of(
+        &self,
+        session: &kallip_lesche_common::direct::DirectSessionId,
+    ) -> Option<String> {
+        self.sessions
+            .lock()
+            .await
+            .iter()
+            .find_map(|(relay, set)| set.contains(session).then(|| relay.clone()))
+    }
+}
 
 pub struct AppState {
     /// Agent registry. **Lock order:** this RwLock must be acquired before
@@ -171,6 +230,9 @@ pub struct AppState {
     /// Populated by the room-membership pump; independent of the relay, so it
     /// stays usable even when the relay is not online. See [`JoinedRooms`].
     pub joined_rooms: Arc<JoinedRooms>,
+    /// Direct-session routing cache (the direct counterpart of
+    /// [`Self::joined_rooms`]). See [`DirectSessions`].
+    pub direct_sessions: Arc<DirectSessions>,
     /// Per-agent message inboxes (SQLite-backed). Installed at startup.
     /// The off-duty gate buffers messages here; the phase
     /// executor flushes them on wake-up.
@@ -587,6 +649,7 @@ impl AppState {
             direct: std::sync::OnceLock::new(),
             external: std::sync::OnceLock::new(),
             joined_rooms: Arc::new(JoinedRooms::new()),
+            direct_sessions: Arc::new(DirectSessions::new()),
             inboxes: std::sync::OnceLock::new(),
             duty: Arc::new(crate::duty::DutyStore::new()),
             work_schedules: std::sync::OnceLock::new(),
@@ -622,6 +685,7 @@ impl AppState {
             direct: std::sync::OnceLock::new(),
             external: std::sync::OnceLock::new(),
             joined_rooms: Arc::new(JoinedRooms::new()),
+            direct_sessions: Arc::new(DirectSessions::new()),
             inboxes: std::sync::OnceLock::new(),
             duty: Arc::new(crate::duty::DutyStore::new()),
             work_schedules: std::sync::OnceLock::new(),
@@ -649,6 +713,15 @@ impl AppState {
     pub fn relay(&self, name: &str) -> Option<crate::relay::RelayHandle> {
         let slots = self.relays.lock().unwrap_or_else(|e| e.into_inner());
         slots.get(name).map(|(handle, _)| handle.clone())
+    }
+
+    /// Clone every installed relay connector out (order: map iteration --
+    /// nondeterministic; a caller needing one specific relay uses
+    /// [`Self::relay`] with a cache-owner name instead). Guards dropped
+    /// before the caller awaits.
+    pub fn relay_handles(&self) -> Vec<crate::relay::RelayHandle> {
+        let slots = self.relays.lock().unwrap_or_else(|e| e.into_inner());
+        slots.values().map(|(handle, _)| handle.clone()).collect()
     }
 
     /// Take every relay connector + run-task handle out so graceful shutdown

@@ -39,6 +39,39 @@ impl RelayHandle {
         }
     }
 
+    /// Poll the lesche for this tagma's direct sessions and refresh the
+    /// direct-session cache (the direct counterpart of [`Self::poll_rooms`];
+    /// the two calls share one pump tick so both routing caches warm
+    /// together). Best-effort on the same terms: a failure logs and retries
+    /// on the next tick -- the lesche member-gates every direct route, so a
+    /// stale entry never leaks a session.
+    pub(super) async fn poll_direct_sessions(&self) {
+        let sessions = match self.inner.client.list_direct_sessions().await {
+            Ok(sessions) => sessions,
+            Err(e) => {
+                warn!(
+                    tagma = %self.inner.tagma_id, error = %e,
+                    "direct-session poll: list_direct_sessions failed; retry next tick"
+                );
+                return;
+            }
+        };
+        if let Some(state) = self.inner.state.upgrade() {
+            state
+                .direct_sessions
+                .set_direct_sessions(&self.inner.name, sessions.into_iter().map(|v| v.session_id))
+                .await;
+        }
+    }
+
+    /// One pump tick: both routing-cache sweeps (rooms + direct sessions),
+    /// cancel-selected as a unit so a tunnel-down aborts an in-flight sweep
+    /// instead of waiting out its HTTP timeout.
+    async fn poll_sweep(&self) {
+        self.poll_rooms().await;
+        self.poll_direct_sessions().await;
+    }
+
     /// Ensure the room-membership pump is running. Idempotent. Bounded to the
     /// tunnel session (started on tunnel-up, stopped on tunnel-down) like the
     /// status pump. The interval's first tick is immediate, so a reconnect
@@ -82,7 +115,7 @@ impl RelayHandle {
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => return,
-                _ = self.poll_rooms() => {}
+                _ = self.poll_sweep() => {}
             }
         }
     }
