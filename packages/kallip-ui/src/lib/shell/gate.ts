@@ -11,9 +11,11 @@
 //     `null` = resolved logged-out, object = signed in. `authError` is set when
 //     whoami failed with a non-auth error (e.g. agora unreachable). Online routes
 //     are /settings + /chat/{server-id} (relay conversations) + the mode-neutral
-//     /tagmata (the unified tagmata page: registry cards + local processes). `/`,
-//     /local/* (offline-only routes), and the retired `/chat/local` marker
-//     are not valid online destinations and redirect to /chats (the chats hub).
+//     /tagmata (the unified tagmata page: registry cards + local processes).
+//     `/` is the panorama home (the root route itself sends small screens
+//     to /chats). `/local/*` (offline-only routes) and the retired
+//     `/chat/local` marker are not valid online destinations and redirect
+//     to /chats (the chats hub).
 //   - "offline" -- no auth, no identity. `connected` reflects the local tagma
 //     transport. Offline routes are /local/* (chat + management) + the
 //     mode-neutral /tagmata; the pre-merge /instances route is gone (404).
@@ -99,6 +101,7 @@ export function appGateDecision(args: {
     ) {
       return { kind: "redirect", url: "/settings" };
     }
+    // Already signed in: the front door is the panorama home.
     if (
       (args.pathname === "/login" ||
         args.pathname === "/register" ||
@@ -106,7 +109,7 @@ export function appGateDecision(args: {
       args.user != null &&
       args.user !== undefined
     ) {
-      return { kind: "redirect", url: "/chats" };
+      return { kind: "redirect", url: "/" };
     }
     // /connect (the offline entry) renders for everyone -- signed-in or not.
     // Unsigned /login, /register render.
@@ -149,13 +152,13 @@ export function appGateDecision(args: {
   }
 
   // online protected
-  // `/` is the old root; `/chat/local` is a retired offline-only route
-  // marker; `/local/*` is the offline-only route tree (chat + management).
-  // None are valid online destinations, so go to the online home. Placed
-  // above the user checks so it also fires during the whoami-in-flight
-  // window; the next iteration on /chats then resolves auth.
+  // `/chat/local` is a retired offline-only route marker; `/local/*` is
+  // the offline-only route tree (chat + management). Neither is a valid
+  // online destination, so go to the online home. Placed above the user
+  // checks so it also fires during the whoami-in-flight window; the next
+  // iteration on /chats then resolves auth. `/` is a real destination now
+  // (the panorama home) and falls through to the user tri-state below.
   if (
-    args.pathname === "/" ||
     args.pathname === "/local" ||
     args.pathname.startsWith("/local/") ||
     args.pathname === "/chat/local"

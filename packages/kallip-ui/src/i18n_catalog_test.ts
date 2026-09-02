@@ -34,6 +34,7 @@ const FILES = [
   "manage_profiles",
   "manage_schedules",
   "manage_instances",
+  "panorama",
 ] as const;
 
 type Loader = () => Promise<Record<string, string>>;
@@ -123,6 +124,10 @@ const loaders: Record<string, Loader> = {
     import("../i18n/project.inlang/messages/en/manage_instances.json", {
       with: { type: "json" },
     }).then((m) => m.default as Record<string, string>),
+  "en|panorama": () =>
+    import("../i18n/project.inlang/messages/en/panorama.json", {
+      with: { type: "json" },
+    }).then((m) => m.default as Record<string, string>),
   "zh|common": () =>
     import("../i18n/project.inlang/messages/zh/common.json", {
       with: { type: "json" },
@@ -205,6 +210,10 @@ const loaders: Record<string, Loader> = {
     }).then((m) => m.default as Record<string, string>),
   "zh|manage_instances": () =>
     import("../i18n/project.inlang/messages/zh/manage_instances.json", {
+      with: { type: "json" },
+    }).then((m) => m.default as Record<string, string>),
+  "zh|panorama": () =>
+    import("../i18n/project.inlang/messages/zh/panorama.json", {
       with: { type: "json" },
     }).then((m) => m.default as Record<string, string>),
 };
@@ -315,6 +324,7 @@ const PREFIXES = new Set([
   "manage_profiles",
   "manage_schedules",
   "manage_instances",
+  "panorama",
 ]);
 const BARE_MANAGE_KEYS = new Set(["manage_opening", "manage_backend_failed"]);
 
@@ -379,6 +389,7 @@ const PREFIX_FILES: Record<string, string> = {
   manage_profiles: "manage_profiles",
   manage_schedules: "manage_schedules",
   manage_instances: "manage_instances",
+  panorama: "panorama",
 };
 
 Deno.test(

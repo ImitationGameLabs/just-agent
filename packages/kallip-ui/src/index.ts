@@ -104,6 +104,7 @@ export { default as ManageHubPage } from "./pages/manage/ManageHubPage.svelte";
 export { default as LocalHomePage } from "./pages/LocalHomePage.svelte";
 export { default as AccountHubPage } from "./pages/account/AccountHubPage.svelte";
 export { default as ChatsHubPage } from "./pages/ChatsHubPage.svelte";
+export { default as PanoramaPage } from "./pages/PanoramaPage.svelte";
 export { default as BudgetPage } from "./pages/manage/BudgetPage.svelte";
 export { default as AgentsPage } from "./pages/manage/AgentsPage.svelte";
 export { default as AgentDetailPage } from "./pages/manage/AgentDetailPage.svelte";
@@ -126,6 +127,7 @@ export {
 
 // App chrome
 export { default as AppShell } from "./components/AppShell.svelte";
+export { desktopQuery } from "./lib/shell/breakpoint.ts";
 export { default as Banner } from "./components/Banner.svelte";
 export { type BannerTone, bannerTones } from "./components/Banner.svelte";
 export { default as Brand } from "./components/Brand.svelte";

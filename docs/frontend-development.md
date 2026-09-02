@@ -64,6 +64,23 @@ UI copy lives in per-domain paraglide catalogs under
 `packages/kallip-ui/i18n/project.inlang/messages/`. Key naming, the guard test,
 and the edit workflow are documented in [docs/i18n.md](./i18n.md).
 
+## Form-to-URL map
+
+Which form renders each URL, and where the other form lands. The twin
+hosts share one route tree; the gate owns mode and auth redirects, the
+root route owns the small-screen handoff:
+
+| URL                  | Desktop (>= 48rem)              | Small screen (< 48rem)       |
+| -------------------- | ------------------------------- | ---------------------------- |
+| `/`                  | panorama home                   | redirect to `/chats`         |
+| `/chats`             | full conversation list          | chats tab hub                |
+| `/tagmata`           | manage                          | manage tab hub               |
+| `/tagma/[id]/*`      | tagma subtree                   | tagma subtree                |
+| `/local`, `/local/*` | offline only (gate to `/local`) | offline only                 |
+
+`/files` (user-scope file management) lands with its own batch and
+inherits the same contract then.
+
 ## Tauri Android app (`kallip-app`)
 
 `kallip-app` is the Tauri Android target (desktop is intentionally not built;

@@ -306,20 +306,23 @@ Deno.test("online + /chat/{id} + logged-out -> redirect /login", () => {
   );
 });
 
-Deno.test("online + /login + signed-in -> redirect /chats", () => {
+Deno.test("online + /login + signed-in -> redirect / (home front door)", () => {
   assertEquals(decide({ mode: "online", pathname: "/login", user: USER }), {
     kind: "redirect",
-    url: "/chats",
+    url: "/",
   });
 });
 
-Deno.test("online + /auth/signup + signed-in -> redirect /chats", () => {
-  // A signed-in user has no business on the OAuth signup step; mirror /register.
-  assertEquals(
-    decide({ mode: "online", pathname: "/auth/signup", user: USER }),
-    { kind: "redirect", url: "/chats" },
-  );
-});
+Deno.test(
+  "online + /auth/signup + signed-in -> redirect / (home front door)",
+  () => {
+    // A signed-in user has no business on the OAuth signup step; mirror /register.
+    assertEquals(
+      decide({ mode: "online", pathname: "/auth/signup", user: USER }),
+      { kind: "redirect", url: "/" },
+    );
+  },
+);
 
 Deno.test("online + /auth/signup + logged-out -> render", () => {
   assertEquals(
@@ -345,10 +348,22 @@ Deno.test("online + /login + logged-out -> render", () => {
 
 // --- online protected ---
 
-Deno.test("online + / -> redirect /chats (the hub lands first)", () => {
+Deno.test("online + / -> render (the panorama home)", () => {
   assertEquals(decide({ mode: "online", pathname: "/", user: USER }), {
+    kind: "render",
+  });
+});
+
+Deno.test("online + / + resolving -> skeleton", () => {
+  assertEquals(decide({ mode: "online", pathname: "/", user: undefined }), {
+    kind: "skeleton",
+  });
+});
+
+Deno.test("online + / + logged-out -> /login?next=%2F", () => {
+  assertEquals(decide({ mode: "online", pathname: "/", user: null }), {
     kind: "redirect",
-    url: "/chats",
+    url: "/login?next=%2F",
   });
 });
 

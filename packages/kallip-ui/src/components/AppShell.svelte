@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { NavSection } from "../lib/shell/links.ts";
+  import { desktopQuery } from "../lib/shell/breakpoint.ts";
   import type { ErrorView } from "../lib/errors.ts";
 
   let {
@@ -48,7 +49,7 @@
   // listener used to enforce. The dynamic imports keep each shell in
   // its own chunk, so a session on one form does not pay for the
   // other's markup.
-  const mdQuery = matchMedia("(min-width: 48rem)");
+  const mdQuery = matchMedia(desktopQuery);
   let desktop = $state(mdQuery.matches);
   $effect(() => {
     const onChange = (event: MediaQueryListEvent) => {

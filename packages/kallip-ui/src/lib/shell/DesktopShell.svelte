@@ -57,7 +57,9 @@
       {#if brand}
         {@render brand()}
       {:else}
-        <span class="px-2"><Brand /></span>
+        <!-- The wordmark doubles as the home link: `/` is the panorama, so
+        the sidebar header is the always-visible way back. -->
+        <a href="/" class="px-2 block w-fit"><Brand /></a>
       {/if}
     </Navigation.Header>
     <Navigation.Content>

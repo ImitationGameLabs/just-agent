@@ -28,7 +28,8 @@
       "./project.inlang/messages/{locale}/manage_budget.json",
       "./project.inlang/messages/{locale}/manage_profiles.json",
       "./project.inlang/messages/{locale}/manage_schedules.json",
-      "./project.inlang/messages/{locale}/manage_instances.json"
+      "./project.inlang/messages/{locale}/manage_instances.json",
+      "./project.inlang/messages/{locale}/panorama.json"
     ]
   }
 }

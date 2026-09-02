@@ -70,8 +70,9 @@ const sectionLabels: Record<TagmaDetailsSection, () => string> = {
 
 // Operator-set IA rule: every entry opens with the Home segment (target
 // /) and the middle layers follow the real hierarchy (domain hub,
-// object, subpage). Transitional: online "/" still redirects to /chats
-// until the home page lands; offline "/" falls to /local via the gate.
+// object, subpage). Online "/" itself stays off-table (the panorama is
+// the root: no parent to fall back to); offline "/" falls to /local via
+// the gate.
 export const trailTable: TrailEntry[] = [
   entry("/tagmata", () => [
     { label: nav_home(), href: "/" },
