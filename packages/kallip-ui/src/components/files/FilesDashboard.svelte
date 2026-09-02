@@ -2,7 +2,7 @@
   // The files page surface (design D1-D8): one list(space=self, limit=500)
   // call, client-side grouping and prefix filter (filesView), download via
   // the shared saveBlob, delete behind ConfirmDialog, upload through a
-  // small dialog (read-only name, free-form prefix prefilled shared/).
+  // small dialog (read-only name, area dropdown defaulting to shared/).
   // No optimistic updates (D8): every mutation reloads the list -- at the
   // 500 cap the refetch is cheap and the state stays simple. Row density
   // and dialog width ride the CSS 48rem variants (the one breakpoint).
@@ -102,6 +102,19 @@
     // Unenrolled tagma groups keep the raw id segment (D4: never explode).
     return files_group_tagma({ label: label ?? group.tagmaId ?? "" });
   }
+  // The upload areas (D5-A): the three server-legal prefixes only, so
+  // the dialog cannot emit a path the files service would 400. An
+  // unenrolled tagma has no source to appear from; the hint says so.
+  function uploadAreas() {
+    return [
+      { value: "shared/", label: files_group_shared() },
+      { value: "inbox/", label: files_group_inbox() },
+      ...agoraSession.enrolledCards.map((t) => ({
+        value: `tagmas/${t.tagmaId}/`,
+        label: files_group_tagma({ label: t.label ?? t.tagmaId }),
+      })),
+    ];
+  }
 
   function clearRowError(): void {
     errorRowId = null;
@@ -170,13 +183,11 @@
     if (!uploadFile) return;
     uploading = true;
     uploadError = null;
-    // Normalize the free-form prefix: no leading slash, exactly one
-    // trailing slash; empty = the space root (server-permitted, D5).
-    let prefix = uploadPrefix.trim().replace(/^\/+/, "");
-    if (prefix.length > 0 && !prefix.endsWith("/")) prefix += "/";
+    // The dropdown offers only the server's three legal areas (shared/,
+    // inbox/, or tagmas/<id>/ for enrolled tagmata); others 400.
     try {
       const minted: PutResponse = await filesClientOrFail().put(
-        `${selfPrefix}${prefix}${uploadFile.name}`,
+        `${selfPrefix}${uploadPrefix}${uploadFile.name}`,
         uploadFile,
       );
       uploadOpen = false;
@@ -321,7 +332,11 @@
         </label>
         <label class="flex flex-col gap-1 text-sm">
           <span class="opacity-80">{files_upload_prefix_label()}</span>
-          <input class="input text-sm" type="text" bind:value={uploadPrefix} />
+          <select class="input text-sm" bind:value={uploadPrefix}>
+            {#each uploadAreas() as area (area.value)}
+              <option value={area.value}>{area.label}</option>
+            {/each}
+          </select>
           <span class="text-xs opacity-60">{files_upload_prefix_hint()}</span>
         </label>
         {#if uploadError}

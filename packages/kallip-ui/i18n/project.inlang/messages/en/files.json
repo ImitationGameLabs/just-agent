@@ -17,7 +17,7 @@
   "files_upload_title": "Upload a file",
   "files_upload_name_label": "File",
   "files_upload_prefix_label": "Location prefix",
-  "files_upload_prefix_hint": "Stored under shared/ by default. Valid areas: shared/, inbox/, or tagmas/<id>/ for your enrolled tagmas.",
+  "files_upload_prefix_hint": "Pick the area from the list; only shared/, your inbox, and enrolled tagmas can receive uploads.",
   "files_upload_failed": "Upload failed",
   "files_download_aria": "Download {name}",
   "files_download_failed": "Download failed",

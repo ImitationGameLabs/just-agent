@@ -114,6 +114,30 @@ Deno.test("filesPath builds the global files route", () => {
   assertEquals(filesPath(), "/files");
 });
 
+const FILES_PAGE = new URL("../../pages/FilesPage.svelte", import.meta.url);
+const ROOT_LAYOUT = new URL("./RootLayout.svelte", import.meta.url);
+
+Deno.test(
+  "/files rides the bar-destination shell-row form",
+  // N3 parity: the shell's mobileTitles row carries the small-screen
+  // heading (a page h1 under the system bar strands it on edge-to-edge
+  // PWAs), and the in-page h1 shows only from md+.
+  { permissions: { read: [FILES_PAGE, ROOT_LAYOUT] } },
+  () => {
+    const page = new TextDecoder().decode(Deno.readFileSync(FILES_PAGE));
+    assert(page.includes("hidden md:block"), "h1 yields to the shell row");
+    assert(
+      page.includes("px-2 py-4 md:p-6"),
+      "container follows the N3 small-screen padding",
+    );
+    const layout = new TextDecoder().decode(Deno.readFileSync(ROOT_LAYOUT));
+    assert(
+      layout.includes('\"/files\": nav_files'),
+      "mobileTitles must carry the /files entry",
+    );
+  },
+);
+
 const FILES_SHELLS = [
   new URL(
     "../../../../kallip-app/src/routes/files/+page.svelte",

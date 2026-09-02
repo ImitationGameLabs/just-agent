@@ -44,12 +44,19 @@ Deno.test(
 );
 
 Deno.test(
-  "upload prefills shared/ and normalizes the free-form prefix",
+  "upload picks the area from a dropdown that defaults to shared/",
   { permissions: { read: [DASHBOARD] } },
   () => {
     const src = source(DASHBOARD);
     assert(src.includes('uploadPrefix = $state("shared/")'));
-    assert(src.includes('replace(/^\\/+/, "")'));
+    // D5-A: the free-form input is retired; the select offers only the
+    // server-legal areas and the 400 stays as the client-side fallback.
+    assert(src.includes("<select"));
+    assert(src.includes("uploadAreas()"));
+    assert(
+      !src.includes('type="text" bind:value={uploadPrefix}'),
+      "the free-form prefix input must not return",
+    );
     assert(src.includes("files_upload_prefix_hint()"));
   },
 );

@@ -39,6 +39,7 @@
     manage_overview_heading,
     manage_profiles_heading,
     manage_schedules_heading,
+    nav_files,
     nav_home,
     nav_manage,
     room_label_fallback,
@@ -424,7 +425,7 @@
   });
   // Mobile top-row titles: static i18n headings mapped by route (the
   // pages keep their own h1 for md+; see AppShell `title`). Covers
-  // the manage hub and sub-pages plus the three bar-destination
+  // the manage hub and sub-pages plus the four bar-destination
   // pages, whose small-screen headings render here, not in-page.
   const mobileTitles: Record<string, () => string> = {
     "/local/manage": nav_manage,
@@ -434,6 +435,7 @@
     "/local/manage/profiles": manage_profiles_heading,
     "/local/manage/schedules": manage_schedules_heading,
     "/tagmata": nav_manage,
+    "/files": nav_files,
     "/settings": settings_heading,
     "/account": account_menu,
   };

@@ -12,8 +12,10 @@
 </svelte:head>
 
 <div class="h-full overflow-y-auto">
-  <div class="p-4 md:p-6 max-w-6xl mx-auto">
-    <h1 class="text-xl font-semibold mb-4">{files_heading()}</h1>
+  <div class="px-2 py-4 md:p-6 max-w-6xl mx-auto">
+    <h1 class="text-xl font-semibold mb-4 hidden md:block">
+      {files_heading()}
+    </h1>
     <FilesDashboard />
   </div>
 </div>
