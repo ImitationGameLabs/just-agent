@@ -114,6 +114,20 @@ Deno.test("get returns the bytes and list maps the entries array", async () => {
   assertEquals(entries[0].path, "/users/u1/shared/report.pdf");
 });
 
+Deno.test(
+  "delete issues DELETE /v1/files/{id} with the CSRF marker and maps 204",
+  async () => {
+    const seen = stubFetch(() => new Response(null, { status: 204 }));
+    const client = new FilesClient("http://files.test");
+    await client.delete("01890a5d-ac96-774b-bcce-b302099a8057");
+    assertEquals(seen[0].method, "DELETE");
+    assert(
+      seen[0].url.endsWith("/v1/files/01890a5d-ac96-774b-bcce-b302099a8057"),
+    );
+    assert(seen[0].headers.get("X-Requested-With") === CSRF_MARKER);
+  },
+);
+
 Deno.test("non-2xx becomes FilesApiError with the server message", async () => {
   stubFetch(
     () =>
@@ -141,4 +155,19 @@ Deno.test("non-2xx becomes FilesApiError with the server message", async () => {
     FilesApiError,
   );
   assertEquals(tooLarge.status, 413);
+
+  stubFetch(
+    () =>
+      new Response(
+        JSON.stringify({
+          error: { message: "not allowed to delete this record" },
+        }),
+        { status: 403 },
+      ),
+  );
+  const deniedDelete = await assertRejects(
+    () => client.delete("01890a5d-ac96-774b-bcce-b302099a8057"),
+    FilesApiError,
+  );
+  assertEquals(deniedDelete.status, 403);
 });

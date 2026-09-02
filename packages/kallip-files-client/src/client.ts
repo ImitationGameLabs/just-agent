@@ -1,7 +1,8 @@
-// The thin browser client for the files service. One class, five verbs,
+// The thin browser client for the files service. One class, six verbs,
 // mirroring the server routes (kallip-files/src/state.rs): streaming upload
 // (PUT ?path=), download (GET /{id}), metadata (HEAD /{id}), listing
-// (GET ?space=), and delivery to another principal's inbox (POST /{id}/send).
+// (GET ?space=), delivery to another principal's inbox (POST /{id}/send),
+// and deletion (DELETE /{id}).
 
 import { filesFetch } from "./http.ts";
 import type {
@@ -78,5 +79,14 @@ export class FilesClient {
       }),
     });
     return response.json();
+  }
+
+  /** Delete the record: the server releases the reference (a zeroed
+   * refcount only stamps `freed_at`; the GC unlinks later). 204 with no
+   * body on success. */
+  async delete(id: string): Promise<void> {
+    await filesFetch(this.base, `/v1/files/${id}`, {
+      method: "DELETE",
+    });
   }
 }
