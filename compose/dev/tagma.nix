@@ -1,26 +1,26 @@
 # Dev tagma composition: the agent host (tagma) + its in-process relay
 # connector, plus the kallip-cron timer daemon that fires schedules and injects
 # them into the tagma's conversations. Split from arion-compose.nix so tagma-side
-# operations don't drag the agora side along and there is no COMPOSE_PROFILES
+# operations don't drag the archeion side along and there is no COMPOSE_PROFILES
 # dance. Cron lives here (not as its own project) because it is a tagma-side
 # component: it talks to the tagma over the host network at 127.0.0.1:<tagmaPort>.
 #
 # Invoke from the repo root (so .env resolves):
 #   arion -f compose/dev/tagma.nix up -d
 #
-# Bring-up order: start the agora side first (`arion up -d`), sign up and mint a
+# Bring-up order: start the archeion side first (`arion up -d`), sign up and mint a
 # `sk-enroll-...` code into `.env` as KALLIP_TAGMA_RELAY_ENROLLMENT_CODE, then
 # start this. On a missing/empty enrollment code the tagma degrades to
 # local-only and keeps serving local agents.
 #
-# Runs on the host network (`network_mode: host`) and reaches the agora/lesche
+# Runs on the host network (`network_mode: host`) and reaches the archeion/lesche
 # at 127.0.0.1:7100 / :7200 -- the host-published ports of arion-compose.nix --
 # mirroring how the caddy service reaches them. KALLIP_TAGMA_ADDR binds host
 # :<tagmaPort> directly (no `ports:` mapping; ignored under host net anyway). The
 # landlock/seccomp shell sandbox still needs SYS_ADMIN + seccomp=unconfined.
 #
 # Separate compose project (`kallipai-dev-tagma`) so its containers/volumes are
-# distinct from the agora-side `kallipai-dev` project. NOTE: if you previously
+# distinct from the archeion-side `kallipai-dev` project. NOTE: if you previously
 # ran tagma via the old `kallipai-dev` profile, its named volumes
 # (`kallipai-dev_tagma_data` / `_workspace`) are orphaned by this split -- use
 # the KALLIP_ARION_*_PATH bind overrides (or `docker volume` migration) if you
@@ -124,11 +124,11 @@ in
         # (ensure_workspace_disjoint rejects the overlap).
         KALLIP_WORKSPACE_ROOT = "/workspace";
         KALLIP_TAGMA_ADDR = "0.0.0.0:${tagmaPort}";
-        # In-process relay connector: enroll at the agora, tunnel to the lesche
+        # In-process relay connector: enroll at the archeion, tunnel to the lesche
         # -- both via the host-published ports (host network), not compose DNS.
         # KALLIP_TAGMA_RELAY_ENROLLMENT_CODE comes from .env (minted after
         # signup); until then the tagma runs local-only.
-        KALLIP_TAGMA_RELAY_AGORA_URL = "http://127.0.0.1:7100";
+        KALLIP_TAGMA_RELAY_ARCHEION_URL = "http://127.0.0.1:7100";
         KALLIP_TAGMA_RELAY_LESCHE_URL = "http://127.0.0.1:7200";
         # Seed source for <data_dir>/skills/ on first boot (read-only bundled
         # defaults). Set here rather than baked into the image because dev

@@ -11,7 +11,7 @@ let
     ;
 
   # One crane build recipe for a chosen cargo command, on the shared workspace
-  # deps cache. `workspace` builds every binary in one derivation; `agora` /
+  # deps cache. `workspace` builds every binary in one derivation; `archeion` /
   # `tagma` build per-crate subsets so the purpose-built docker images carry
   # only the binaries they need (lighter closures -- see docker-images/).
   #
@@ -51,21 +51,21 @@ in
         --set-default KALLIP_SKILLS_SEED ${sharedSkills}/share/kallip/skills
     '';
   });
-  # The agora control-plane server (pure HTTP/Postgres; no shell-out deps).
-  agora = buildCrate "cargo build --release -p kallip-agora";
-  # The headless agora admin CLI (HTTP client; runs on the operator host). A
+  # The archeion control-plane server (pure HTTP/Postgres; no shell-out deps).
+  archeion = buildCrate "cargo build --release -p kallip-archeion";
+  # The headless archeion admin CLI (HTTP client; runs on the operator host). A
   # separate attr so it can be built/deployed without the server. Not baked into
-  # the agora image -- the image is deliberately minimal; operators run this
-  # against any reachable agora.
+  # the archeion image -- the image is deliberately minimal; operators run this
+  # against any reachable archeion.
   admin = buildCrate "cargo build --release -p kallip-admin";
   # The lesche data-plane relay (tagma relay tunnels, app SSE, envelope
-  # routing; pure HTTP, no shell-out deps). Its own image so the agora and
+  # routing; pure HTTP, no shell-out deps). Its own image so the archeion and
   # lesche services deploy independently -- see
   # nix/packages/docker-images/lesche.nix.
   lesche = buildCrate "cargo build --release -p kallip-lesche";
   # The files transfer service (content-addressed blobs, ACL'd spaces;
   # pure HTTP/Postgres, no shell-out deps). Its own image so it deploys
-  # independently of the agora/lesche pair -- see
+  # independently of the archeion/lesche pair -- see
   # nix/packages/docker-images/files.nix.
   files = buildCrate "cargo build --release -p kallip-files";
   # The host/"tagma" side: the tagma service (agent host + in-process relay
@@ -74,7 +74,7 @@ in
   # beats many. The container image (docker-images/tagma.nix) and the dev
   # compose inject KALLIP_SKILLS_SEED explicitly, so this build stays bare
   # -- the seed wrapper lives on `workspace` above.
-  # Excludes agora.
+  # Excludes archeion.
   tagma = buildCrate "cargo build --release -p kallip-tagma -p kallip";
   # The timer/notification daemon: fires schedules and injects them into agent
   # conversations via the tagma HTTP API. Separate attrs for the daemon and its

@@ -5,7 +5,7 @@
 # non-public TLD, so automatic issuance cannot succeed and is not wanted.
 #
 # The domain comes from {$KALLIP_DOMAIN} (Caddy's native env substitution),
-# set on the caddy service by arion-compose.nix from the same var the agora/
+# set on the caddy service by arion-compose.nix from the same var the archeion/
 # lesche env and the web app use (code default kallipai.com; .env sets
 # kallipai.lan for dev). See docs/development.md for the one-time host setup
 # (mkcert cert into <repo>/dev-certs, host trust, LAN DNS).
@@ -33,9 +33,9 @@
 		reverse_proxy 127.0.0.1:5173
 	}
 
-	@agora host agora.{$KALLIP_DOMAIN}
-	handle @agora {
-		# agora is published on the host at :7100
+	@archeion host archeion.{$KALLIP_DOMAIN}
+	handle @archeion {
+		# archeion is published on the host at :7100
 		reverse_proxy 127.0.0.1:7100
 	}
 
@@ -51,15 +51,15 @@
 	}
 
 
-	@agora2 host agora2.{$KALLIP_DOMAIN}
-	handle @agora2 {
-		# second dev agora instance (dual-agora tagma acceptance)
+	@archeion2 host archeion2.{$KALLIP_DOMAIN}
+	handle @archeion2 {
+		# second dev archeion instance (dual-archeion tagma acceptance)
 		reverse_proxy 127.0.0.1:7101
 	}
 
 	@lesche2 host lesche2.{$KALLIP_DOMAIN}
 	handle @lesche2 {
-		# second dev lesche instance, paired with agora2
+		# second dev lesche instance, paired with archeion2
 		reverse_proxy 127.0.0.1:7201 {
 			flush_interval -1
 		}

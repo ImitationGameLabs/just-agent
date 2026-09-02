@@ -5,7 +5,7 @@
 }:
 let
   inherit (common) gitVersion;
-  # The lesche builds a reqwest Client at startup (HttpControlPlane -> agora
+  # The lesche builds a reqwest Client at startup (HttpControlPlane -> archeion
   # /internal); rustls-platform-verifier loads the system trust store eagerly at
   # .build(), so without the CA bundle at the Debian/RHEL standard paths the
   # lesche panics "No CA certificates were loaded from the system" -- even though
@@ -15,10 +15,10 @@ let
   inherit (shared) cacert;
 in
 # The minimal lesche image: just the binary + the CA trust store. The lesche is
-# a pure HTTP service (axum) like the agora -- no shell-out toolset, no baked env
+# a pure HTTP service (axum) like the archeion -- no shell-out toolset, no baked env
 # (it reads everything from its env at runtime). The compose service
-# (compose/prod/agora.nix, arion-compose.nix dev) supplies the command +
-# environment. A separate image from the agora so the two services can be
+# (compose/prod/archeion.nix, arion-compose.nix dev) supplies the command +
+# environment. A separate image from the archeion so the two services can be
 # rebuilt/redeployed independently (the point of the control/data-plane split).
 pkgs.dockerTools.buildImage {
   name = "kallip-lesche";

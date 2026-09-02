@@ -56,8 +56,8 @@ let
   # standard paths, ignoring SSL_CERT_FILE and cacert's own $out path -- finds
   # the bundle. A thin wrapper around pkgs.cacert, named after it. Consumed by
   # every service that builds a reqwest/rustls client at startup:
-  #   - agora (oauth client)
-  #   - lesche (-> agora /internal)
+  #   - archeion (oauth client)
+  #   - lesche (-> archeion /internal)
   #   - tagma (relay connector)
   # Consumers compose it directly into image.contents / copyToRoot rather than
   # via an aggregator, e.g.

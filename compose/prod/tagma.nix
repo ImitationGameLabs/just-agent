@@ -8,7 +8,7 @@
 # This is a single-purpose file: every service is declared directly, no mode
 # switch or mkIf/mkMerge. The .env at the repo root supplies KALLIP_AUTH_TOKEN (the tagma
 # operator token), KALLIP_TAGMA_RELAY_ENROLLMENT_CODE (first boot only),
-# KALLIP_TAGMA_RELAY_AGORA_URL (the prod-agora deploy's public HTTPS URL;
+# KALLIP_TAGMA_RELAY_ARCHEION_URL (the prod-archeion deploy's public HTTPS URL;
 # ENROLLMENT ONLY -- the stored tagma token is reused thereafter), and
 # KALLIP_TAGMA_RELAY_LESCHE_URL (the prod-lesche deploy's public HTTPS URL; the tagma
 # holds its tunnel here and posts envelopes / key-exchange responses here), and
@@ -57,10 +57,10 @@ in
       service.command = [ "${tagma}/bin/kallip-tagma" ];
       service.restart = "unless-stopped";
       # The relay's first-boot enroll() is NOT retried in code: on a missing or
-      # unreachable agora it degrades to local-only (logs an error, keeps serving
+      # unreachable archeion it degrades to local-only (logs an error, keeps serving
       # local agents, the lesche message route returns 503).
       # `restart: unless-stopped`
-      # brings it back once the code is supplied / the agora is reachable.
+      # brings it back once the code is supplied / the archeion is reachable.
       service.environment = {
         HOME = "/var/lib/kallip";
         KALLIP_DATA_DIR = "/var/lib/kallip";
@@ -68,10 +68,10 @@ in
         KALLIP_TAGMA_ADDR = "0.0.0.0:3000";
         RUST_LOG = "info";
         # KALLIP_AUTH_TOKEN (operator token), KALLIP_TAGMA_RELAY_ENROLLMENT_CODE
-        # (first run only), KALLIP_TAGMA_RELAY_AGORA_URL (enroll-only), and
+        # (first run only), KALLIP_TAGMA_RELAY_ARCHEION_URL (enroll-only), and
         # KALLIP_TAGMA_RELAY_LESCHE_URL (tunnel + envelopes + KEX responses) come from
-        # .env. Per the per-service subdomain topology the agora and lesche are
-        # two distinct origins (e.g. https://agora.kallipai.com and
+        # .env. Per the per-service subdomain topology the archeion and lesche are
+        # two distinct origins (e.g. https://archeion.kallipai.com and
         # https://lesche.kallipai.com) sharing the parent domain.
       };
     };

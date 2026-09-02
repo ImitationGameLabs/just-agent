@@ -100,11 +100,11 @@
             in
             {
               default = workspace;
-              # Per-crate binaries (agora; lesche; files; tagma). Cross-platform:
+              # Per-crate binaries (archeion; lesche; files; tagma). Cross-platform:
               # plain Rust builds. Their docker images are Linux-only (see
-              # kallip-agora-image / kallip-lesche-image / kallip-files-image /
+              # kallip-archeion-image / kallip-lesche-image / kallip-files-image /
               # kallip-tagma-image below).
-              kallip-agora = builds.agora;
+              kallip-archeion = builds.archeion;
               kallip-admin = builds.admin;
               kallip-lesche = builds.lesche;
               kallip-files = builds.files;
@@ -131,15 +131,15 @@
             # nix/packages/docker-images/.
             // (lib.optionalAttrs pkgs.stdenv.isLinux {
               # Purpose-built prod images for the split deploy
-              # (compose/prod/agora.nix / tagma.nix): agora, lesche, and
+              # (compose/prod/archeion.nix / tagma.nix): archeion, lesche, and
               # files are the server-side services (co-located, independent images);
               # carries no tagma-specific baked env.
-              kallip-agora-image = import ./nix/packages/docker-images/agora.nix {
+              kallip-archeion-image = import ./nix/packages/docker-images/archeion.nix {
                 inherit
                   pkgs
                   common
                   ;
-                inherit (builds) agora admin;
+                inherit (builds) archeion admin;
               };
               kallip-lesche-image = import ./nix/packages/docker-images/lesche.nix {
                 inherit
