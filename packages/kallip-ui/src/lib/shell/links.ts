@@ -94,6 +94,15 @@ export interface NavRoom {
   badge?: number;
 }
 
+/** One direct session (agent↔agent on the relay) as a sidebar chat entry:
+ *  /tagma/{tagmaId}/direct/{peerId}. The fetch-through daemon is the
+ *  canonical min side; the label resolves through the store. */
+export interface NavDirect {
+  tagmaId: string;
+  peerId: string;
+  label: string;
+}
+
 /** Derive a sidebar NavIndicator from OUR channel transport state.
  *  Channel-transport-first: when the realtime SSE is broken, presence is
  *  unknown, so a presence-driven dot would mislabel every tagma "offline".
@@ -143,10 +152,11 @@ export function navFor(args: {
   icons: NavIcons;
   tagmata?: NavTagma[];
   rooms?: NavRoom[];
+  directs?: NavDirect[];
   /** The chats total for the small-screen hub cell (the Chats bar badge). */
   chatsBadge?: number;
 }): NavSection[] {
-  const { mode, icons, tagmata, rooms } = args;
+  const { mode, icons, tagmata, rooms, directs } = args;
   if (mode === "offline") {
     return [
       {
@@ -218,6 +228,11 @@ export function navFor(args: {
           href: `/rooms/${r.roomId}`,
           label: r.label,
           badge: r.badge,
+          icon: icons.rooms,
+        })),
+        ...(directs ?? []).map((d) => ({
+          href: `/tagma/${d.tagmaId}/direct/${d.peerId}`,
+          label: d.label,
           icon: icons.rooms,
         })),
       ],

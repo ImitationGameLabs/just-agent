@@ -15,6 +15,7 @@ import {
   LescheApiError,
   type FileAttachment,
   openRelayChannel,
+  type RelayChannel,
   type SignalEvent,
 } from "@kallipai/kallip-lesche-client";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
@@ -180,6 +181,18 @@ export class ChannelsStore {
       case "error":
         return { kind: "error", conversationId: conv.conversationId };
     }
+  }
+
+  /** The open relay channel for a tagma, or null (absent / still KEXing /
+   * not open). For the non-stream ops that ride the channel's control plane
+   * (the direct-session store's session/history pulls via the manage
+   * bridge); reach for nothing else here -- the channel lifecycle stays
+   * owned by ensureOpen/close. */
+  relayChannelOf(tagmaId: string): RelayChannel | null {
+    const conv = this.findByTagma(tagmaId);
+    return conv instanceof RelayConversation && conv.status === "open"
+      ? conv.relayTransport.relayChannel
+      : null;
   }
 
   get(id: string): ConversationBase | undefined {

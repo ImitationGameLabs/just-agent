@@ -51,8 +51,8 @@ Deno.test(
       "the chat path must not appear in the table (R2: one target per label)",
     );
     assert(
-      src.split("entry(").length - 1 === 12,
-      "the table must cover exactly the twelve migrated routes",
+      src.split("entry(").length - 1 === 13,
+      "the table must cover the twelve migrated routes + the B3 direct-session route",
     );
   },
 );

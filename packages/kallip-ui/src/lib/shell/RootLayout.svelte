@@ -11,6 +11,7 @@
   import { channelsStore } from "../session/channels.svelte";
   import { statusCardStore } from "../session/statusCard.svelte.ts";
   import { roomsStore } from "../session/rooms.svelte";
+  import { directSessionsStore } from "../session/directSessions.svelte";
   import { instancesStore } from "../instances/instances.svelte.ts";
   import { realtimeStore } from "../session/realtime.svelte";
   import { roomConversationsStore } from "../session/roomConversations.svelte";
@@ -233,6 +234,20 @@
     void roomsStore.refresh();
   });
 
+  // The direct-session poller (lesche T↔T): online-only, signed-in. The
+  // store skips tagmas without an open channel, so this costs nothing
+  // beyond the channels the boot sweep already opens. Same keying
+  // discipline as the rooms effect: user_id + mode.
+  $effect(() => {
+    const uid = agoraSession.user?.user_id;
+    if (mode !== "online" || !uid) {
+      directSessionsStore.stop();
+      return;
+    }
+    directSessionsStore.start();
+    return () => directSessionsStore.stop();
+  });
+
   // Load the signed-in user's passkeys (devices). Gated on `!passkeysLoaded` so
   // it cooperates with SettingsPage's own passkey-load effect (whichever fires
   // first loads; the other no-ops) -- two triggers with the SAME guard, not a
@@ -309,6 +324,11 @@
         roomId: r.room_id,
         label: r.name || room_label_fallback({ id: r.room_id.slice(0, 8) }),
         badge: unreadStore.countOf(roomKey(r.room_id)),
+      })),
+      directs: directSessionsStore.list().map((s) => ({
+        tagmaId: s.tagmaId,
+        peerId: s.peerId,
+        label: directSessionsStore.peerLabel(s.peerId, s.peerHandle),
       })),
       chatsBadge: unreadStore.total(),
     }),

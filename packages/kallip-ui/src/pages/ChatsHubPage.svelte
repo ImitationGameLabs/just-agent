@@ -19,6 +19,7 @@
     tagmaKey,
   } from "../lib/session/unread.svelte.ts";
   import { tagmaNavIndicator } from "../lib/shell/links.ts";
+  import { directSessionsStore } from "../lib/session/directSessions.svelte";
   import {
     nav_chats,
     nav_chats_empty,
@@ -27,6 +28,7 @@
     nav_tagmata,
     tagma_profile_unnamed,
     room_label_fallback,
+    chat_direct_section,
   } from "../paraglide/messages.js";
 
   const tagmaRows = $derived(
@@ -38,6 +40,12 @@
         realtimeStore.resolved && !realtimeStore.has(c.tagmaId),
       ),
       badge: unreadStore.countOf(tagmaKey(c.tagmaId)),
+    })),
+  );
+  const directRows = $derived(
+    directSessionsStore.list().map((s) => ({
+      href: `/tagma/${s.tagmaId}/direct/${s.peerId}`,
+      label: directSessionsStore.peerLabel(s.peerId, s.peerHandle),
     })),
   );
   const roomRows = $derived(
@@ -92,8 +100,20 @@
       </div>
     </section>
   {/if}
+  {#if directRows.length > 0}
+    <section class="space-y-3" aria-label={chat_direct_section()}>
+      <h2 class="text-sm font-semibold uppercase tracking-wide opacity-60">
+        {chat_direct_section()}
+      </h2>
+      <div class="card preset-tonal-surface divide-y divide-surface-200-800">
+        {#each directRows as row (row.href)}
+          <HubRow href={row.href} label={row.label} />
+        {/each}
+      </div>
+    </section>
+  {/if}
 
-  {#if tagmaRows.length === 0 && roomRows.length === 0}
+  {#if tagmaRows.length === 0 && roomRows.length === 0 && directRows.length === 0}
     <!-- First-run empty state: explain, then two CTAs (enroll a tagma on the
          combined manage page, or find rooms). -->
     <div class="card preset-tonal-surface">

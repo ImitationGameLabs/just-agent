@@ -17,6 +17,7 @@ import { agoraSession } from "../session/agora.svelte.ts";
 import { channelsStore } from "../session/channels.svelte.ts";
 import { roomsStore } from "../session/rooms.svelte.ts";
 import { RelayConversation } from "../session/conversation.svelte.ts";
+import { directSessionsStore } from "../session/directSessions.svelte.ts";
 import {
   tagmaDetailsPath,
   tagmaDetailsSectionPath,
@@ -142,6 +143,14 @@ export const trailTable: TrailEntry[] = [
       { label, current: true },
     ];
   }),
+  // The direct-session transcript: chat-domain (the entering section is the
+  // chats hub, which the trail chain yields as the mobile back target).
+  entry("/tagma/:id/direct/:peer", ({ peer }: With<"id" | "peer">) => [
+    { label: nav_chats(), href: "/chats" },
+    // `id` (the fetch-through daemon) is deliberately not in the label:
+    // the peer is what the breadcrumb names.
+    { label: directSessionsStore.peerLabel(peer), current: true },
+  ]),
   entry("/settings", () => [
     { label: nav_tagmata(), href: "/tagmata" },
     { label: settings_heading(), current: true },

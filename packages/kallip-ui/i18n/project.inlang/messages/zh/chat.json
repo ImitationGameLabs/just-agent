@@ -38,5 +38,9 @@
   "chat_file_unreadable": "该文件无法下载。",
   "chat_attachments_aria": "附件",
   "chat_attachment_remove": "移除 {name}",
-  "chat_file_size_bytes": "{size} 字节"
+  "chat_file_size_bytes": "{size} 字节",
+  "chat_direct_section": "直会话",
+  "chat_direct_empty": "你的 tagma 之间的会话会显示在这里。",
+  "chat_direct_unavailable": "中继暂不可达，恢复后即可看到转录。",
+  "chat_direct_fallback": "会话 {id}"
 }

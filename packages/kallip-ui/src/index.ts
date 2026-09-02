@@ -85,6 +85,7 @@ export {
 // Route page bodies (consumed by each app's thin +page.svelte wrappers).
 export { default as ChannelChatPage } from "./pages/ChannelChatPage.svelte";
 export { default as TagmaChatPage } from "./pages/TagmaChatPage.svelte";
+export { default as DirectSessionPage } from "./pages/DirectSessionPage.svelte";
 export { default as TagmataPage } from "./pages/TagmataPage.svelte";
 export { default as RoomsPage } from "./pages/RoomsPage.svelte";
 export { default as RoomConversationPage } from "./pages/RoomConversationPage.svelte";

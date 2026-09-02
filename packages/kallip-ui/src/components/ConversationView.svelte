@@ -42,7 +42,9 @@
     lines: ConversationLine[];
     status: ConversationTranscript["status"];
     error?: string;
-    composer: ComposerModel;
+    /** Optional: omitted by a read-only transcript consumer (the direct-
+     * session page), which renders no composer at all. */
+    composer?: ComposerModel;
     disabled: boolean;
     pendingCount: number;
     /** Optional lazy-window pager: when present, a sentinel above the first
@@ -163,7 +165,7 @@
         aria-hidden="true"
       ></div>
     {/if}
-    {#if lines.length === 0 && !busy}
+    {#if lines.length === 0 && !busy && composer}
       <p class="text-sm opacity-60 text-center mt-8">
         {chat_send_to_start()}
       </p>
@@ -226,4 +228,6 @@
     {@render notice?.()}
   </div>
 </div>
-<Composer {composer} {disabled} {pendingCount} {attachmentBar} {fileButton} />
+{#if composer}
+  <Composer {composer} {disabled} {pendingCount} {attachmentBar} {fileButton} />
+{/if}

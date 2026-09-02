@@ -38,5 +38,9 @@
   "chat_file_unreadable": "This file is not available for download.",
   "chat_attachments_aria": "Attachments",
   "chat_attachment_remove": "Remove {name}",
-  "chat_file_size_bytes": "{size} bytes"
+  "chat_file_size_bytes": "{size} bytes",
+  "chat_direct_section": "Direct sessions",
+  "chat_direct_empty": "Sessions between your tagmas will appear here.",
+  "chat_direct_unavailable": "The relay is unreachable right now. The transcript appears once it returns.",
+  "chat_direct_fallback": "Session {id}"
 }
