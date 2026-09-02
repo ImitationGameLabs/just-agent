@@ -3,7 +3,11 @@
 // names are snake_case here (matching serde), and every base64 string is
 // STANDARD base64 (padded, +//).
 
-import type { HistoryEntry } from "@kallipai/kallip-common";
+import type {
+  FileAttachment,
+  HistoryEntry,
+  Participant,
+} from "@kallipai/kallip-common";
 /** Agent lifecycle state, serialized snake_case by the tagma's `AgentState`
  * enum. All six values reach every state-bearing surface (agent list
  * summaries, status responses, the realtime `tagma_status` snapshot), so
@@ -419,4 +423,37 @@ export interface PutWorkScheduleRequest {
   /** Absent keeps the stored value; "" clears back to the default. */
   readonly final_warn_prompt?: string;
   readonly status?: "active" | "paused";
+}
+
+// --- Lesche session surfaces (the root agent's relay conversation data) ---
+// All verified against the Rust handlers (kallip-tagma routes/lesche.rs).
+// The `format=json` history variant is the console UI's transcript contract;
+// the no-param text render stays the CLI/prompt contract.
+
+/** One row of `GET /agents/{id}/lesche/sessions`: every surface the agent
+ * can address with `kallip lesche send`, with its kind and target metadata. */
+export interface LescheSessionEntry {
+  /** `bilateral` (the fixed 1:1 with the operator), `room`, or `direct`. */
+  readonly kind: "bilateral" | "room" | "direct";
+  /** The surface id: conversation id, room id, or derived session id. */
+  readonly id: string;
+  /** Room display name (rooms only). */
+  readonly name?: string;
+  /** The peer's tagma id (direct sessions only). */
+  readonly peer_tagma?: string;
+  /** The peer's server-stamped handle (direct sessions only). */
+  readonly peer_handle?: string;
+}
+
+/** One row of the direct-session history read in its `format=json` variant:
+ * the decoded payload flattened to the top level next to the row's envelope
+ * metadata. `created_at` is ISO 8601. */
+export interface DirectMessageRow {
+  readonly seq: number;
+  readonly sender: Participant;
+  readonly text: string;
+  /** Reference-style attachment: the bytes stay in the files service; the
+   * peer fetches `record_id` in its own authorized space. */
+  readonly attachment?: FileAttachment;
+  readonly created_at: string;
 }

@@ -7,6 +7,7 @@ import {
 import type { AgentId, FileAttachment } from "@kallipai/kallip-common";
 import type {
   AgentStatusResponse,
+  DirectMessageRow,
   BudgetResponse,
   BudgetUpdateRequest,
   DeleteSetResponse,
@@ -20,6 +21,7 @@ import type {
   ProfileProbeRequest,
   ProfileProbeResponse,
   PutWorkScheduleRequest,
+  LescheSessionEntry,
   UpdateAgentMetadataRequest,
   UpdateDutyRequest,
   WireAgentSummary,
@@ -157,6 +159,33 @@ export class TagmaClient {
     const qs = params.toString();
     const path = `/agents/${id}/external/history${qs ? `?${qs}` : ""}`;
     return this.json<ExternalHistoryResponse>(path);
+  }
+
+  // --- lesche session surfaces (the root agent's relay conversation data) ---
+
+  /** GET /agents/{id}/lesche/sessions — every relay surface the agent can
+   * address (`bilateral` / `room` / `direct`), aggregated best-effort across
+   * the online relays. */
+  lescheSessions(id: AgentId): Promise<LescheSessionEntry[]> {
+    return this.json(`/agents/${id}/lesche/sessions`);
+  }
+
+  /** GET /agents/{id}/lesche/direct-sessions/{peer}/messages?format=json —
+   * the direct session with `peer` as typed rows (the console UI's
+   * transcript contract). `after` is exclusive (rows ascend by `seq`);
+   * `limit` defaults server-side to a conservative page sized for the
+   * manage bridge's response cap. */
+  directSessionHistory(
+    id: AgentId,
+    peer: string,
+    opts: { after?: number | null; limit?: number } = {},
+  ): Promise<DirectMessageRow[]> {
+    const params = new URLSearchParams({ format: "json" });
+    if (opts.after != null) params.set("after_seq", String(opts.after));
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    return this.json(
+      `/agents/${id}/lesche/direct-sessions/${peer}/messages?${params}`,
+    );
   }
 
   // --- management: budget ---
