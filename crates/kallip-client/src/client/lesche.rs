@@ -9,18 +9,21 @@ use anyhow::{Context, Result};
 use kallip_common::agentid::AgentId;
 
 impl TagmaClient {
-    /// Deliver a message to the user via the tagma's relay (`POST
+    /// Deliver a message via the tagma's relay (`POST
     /// /agents/{id}/lesche/messages`). The agent's `kallip lesche send`
     /// subcommand calls this; the tagma posts an `AssistantContent` envelope.
     /// Returns the tagma's delivery verdict.
     ///
     /// `room` is the optional room id (a reply into a multi-member room);
-    /// `None` is the bilateral 1:1 send (no room target).
+    /// `tagma` the optional peer tagma id (a send into that tagma's direct
+    /// session; create-or-get on first send). Exactly one may be set; both
+    /// `None` is the bilateral 1:1 send.
     pub async fn post_message_delivery(
         &self,
         id: &AgentId,
         text: &str,
         room: Option<&str>,
+        tagma: Option<&str>,
     ) -> Result<crate::types::LescheMessageResponse> {
         self.handle_response(
             self.with_auth(
@@ -30,6 +33,7 @@ impl TagmaClient {
                     .json(&crate::types::LescheMessageRequest {
                         text: text.to_owned(),
                         room: room.map(str::to_owned),
+                        tagma: tagma.map(str::to_owned),
                     }),
             )
             .send()
@@ -93,6 +97,68 @@ impl TagmaClient {
             .text()
             .await
             .context("failed to read room history body")
+    }
+
+    /// Read a direct session's history (`GET
+    /// /agents/{id}/lesche/direct-sessions/{peer}/messages`), as a readable
+    /// text block the tagma renders server-side. The agent's `kallip lesche
+    /// read --tagma <peer>` subcommand calls this; the session id is derived
+    /// tagma-side from (self, peer). Returns the raw text body (one bracketed
+    /// block per message), NOT JSON.
+    pub async fn read_direct_session_messages(
+        &self,
+        id: &AgentId,
+        peer: &str,
+        after_seq: Option<i64>,
+        limit: Option<u64>,
+    ) -> Result<String> {
+        let mut query = Vec::new();
+        if let Some(a) = after_seq {
+            query.push(("after_seq", a.to_string()));
+        }
+        if let Some(l) = limit {
+            query.push(("limit", l.to_string()));
+        }
+        let response = self
+            .with_auth(
+                self.inner
+                    .http
+                    .get(self.url(&format!(
+                        "/agents/{id}/lesche/direct-sessions/{peer}/messages"
+                    )))
+                    .query(&query),
+            )
+            .send()
+            .await
+            .context("failed to read direct session history")?;
+        if !response.status().is_success() {
+            return Err(super::error_from_response(response).await);
+        }
+        response
+            .text()
+            .await
+            .context("failed to read direct session history body")
+    }
+
+    /// List every addressable surface (bilateral + rooms + direct sessions,
+    /// `GET /agents/{id}/lesche/sessions`). The agent's `kallip lesche
+    /// sessions` subcommand calls this.
+    pub async fn list_lesche_sessions(
+        &self,
+        id: &AgentId,
+    ) -> Result<Vec<crate::types::LescheSessionEntry>> {
+        self.handle_response(
+            self.with_auth(
+                self.inner
+                    .http
+                    .get(self.url(&format!("/agents/{id}/lesche/sessions"))),
+            )
+            .send()
+            .await
+            .context("failed to list sessions")?,
+            "failed to parse sessions response",
+        )
+        .await
     }
 }
 

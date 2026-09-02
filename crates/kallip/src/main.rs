@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
                 let id = agent_id_from_env()?;
                 let text = read_text_stdin()?;
                 client
-                    .post_message_delivery(&id, &text, args.room.as_deref())
+                    .post_message_delivery(&id, &text, args.room.as_deref(), args.tagma.as_deref())
                     .await?;
                 println!("{}", kallip_common::message::marker_line(&text));
             }
@@ -186,14 +186,53 @@ async fn main() -> Result<()> {
                 }
             }
             LescheCommand::Read(args) => {
-                // Self-only: read one room's decrypted history. The tagma route
-                // renders a text block (one bracketed block per message), so
-                // print it verbatim (no trailing newline added).
+                // Self-only: read one conversation's history (room or direct
+                // session). The tagma route renders a text block (one bracketed
+                // block per message), so print it verbatim (no trailing newline
+                // added).
                 let id = agent_id_from_env()?;
-                let text = client
-                    .read_room_messages(&id, &args.room, args.after_seq, args.limit)
-                    .await?;
+                let text = match (&args.room, &args.tagma) {
+                    (Some(room), _) => {
+                        client
+                            .read_room_messages(&id, room, args.after_seq, args.limit)
+                            .await?
+                    }
+                    (_, Some(peer)) => {
+                        client
+                            .read_direct_session_messages(&id, peer, args.after_seq, args.limit)
+                            .await?
+                    }
+                    // clap enforces exactly-one (`required_unless_present` +
+                    // `conflicts_with`), so this arm is unreachable via the CLI.
+                    (None, None) => anyhow::bail!("--room or --tagma is required"),
+                };
                 print!("{text}");
+            }
+            LescheCommand::Sessions => {
+                // Self-only: every addressable surface in one list. The tagma
+                // aggregates (bilateral + rooms + direct sessions); print one
+                // line per surface so the ids are copy-pastable into
+                // `send --room` / `send --tagma` / `read --tagma`.
+                let id = agent_id_from_env()?;
+                let entries = client.list_lesche_sessions(&id).await?;
+                if entries.is_empty() {
+                    println!("(no sessions)");
+                }
+                for entry in entries {
+                    match entry.kind.as_str() {
+                        "room" => match &entry.name {
+                            Some(name) => println!("room {} ({name})", entry.id),
+                            None => println!("room {}", entry.id),
+                        },
+                        "direct" => println!(
+                            "direct {} peer={} \"{}\"",
+                            entry.id,
+                            entry.peer_tagma.as_deref().unwrap_or(""),
+                            entry.peer_handle.as_deref().unwrap_or(""),
+                        ),
+                        kind => println!("{kind} {}", entry.id),
+                    }
+                }
             }
         },
         Commands::Subagent(cmd) => {
