@@ -25,11 +25,9 @@
   const mode = $derived(shellMode());
 </script>
 
-<!-- pt: calc keeps the browser value (1rem) when the inset is 0 and adds the system-bar height under edge-to-edge; these hub pages have no shell top row of their own. -->
-<div
-  class="px-2 pt-[calc(1rem+env(safe-area-inset-top))] pb-4 md:p-6 max-w-2xl space-y-6"
->
-  <h1 class="text-xl font-semibold text-center md:text-left">
+<!-- The shell's mobile top row carries this page's heading below md (title prop in RootLayout); this container's padding is plain -- the shell row owns the safe-area inset. -->
+<div class="px-2 py-4 md:p-6 max-w-2xl space-y-6">
+  <h1 class="text-xl font-semibold hidden md:block">
     {account_menu()}
   </h1>
 

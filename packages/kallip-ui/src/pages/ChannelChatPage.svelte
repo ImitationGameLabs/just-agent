@@ -44,12 +44,13 @@
 
   let {
     conversationId,
-    statusHeaderMobile = true,
+    statusHeaderMobile = false,
   }: {
     conversationId: string;
-    /** Keep this page's own status header below md. The offline /local/chat
-     * route lifts it into the shell's mobile top row instead (RootLayout
-     * renders a second instance there) and passes false here. */
+    /** This page's own status header is desktop-only (md+): on small
+     * screens the shell's mobile top row carries the status line for
+     * every chat route (RootLayout lifts it there), so the header
+     * defaults to hidden below md and no route needs to opt out. */
     statusHeaderMobile?: boolean;
   } = $props();
 

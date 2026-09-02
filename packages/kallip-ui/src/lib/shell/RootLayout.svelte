@@ -32,6 +32,7 @@
   import { mobileBack } from "./breadcrumbs.ts";
   import { isOfflineOnlyShell, navigate, shellMode } from "./port.ts";
   import {
+    account_menu,
     manage_agents_heading,
     manage_budget_heading,
     manage_overview_heading,
@@ -40,6 +41,7 @@
     nav_home,
     nav_manage,
     room_label_fallback,
+    settings_heading,
   } from "../../paraglide/messages.js";
 
   let {
@@ -407,17 +409,38 @@
         : null
       : mobileBack(pathname),
   );
-  // Mobile top-row title for manage pages: static i18n headings mapped by
-  // route (the pages keep their own h1 for md+; see AppShell `title`).
-  const manageTitles: Record<string, () => string> = {
+  // The chat deep pages (/chat/:id, /tagma/:id/chat, and the offline
+  // /local/chat): their status line lives in the shell's mobile top
+  // row, beside the back chevron -- one row, not page chrome plus
+  // shell row.
+  const chatId = $derived.by(() => {
+    if (pathname === "/local/chat") return "local";
+    if (pathname.startsWith("/chat/")) {
+      const id = pathname.slice("/chat/".length);
+      return id && !id.includes("/") ? id : undefined;
+    }
+    if (pathname.startsWith("/tagma/") && pathname.endsWith("/chat")) {
+      const id = pathname.slice("/tagma/".length, -"/chat".length);
+      return id && !id.includes("/") ? id : undefined;
+    }
+    return undefined;
+  });
+  // Mobile top-row titles: static i18n headings mapped by route (the
+  // pages keep their own h1 for md+; see AppShell `title`). Covers
+  // the manage hub and sub-pages plus the three bar-destination
+  // pages, whose small-screen headings render here, not in-page.
+  const mobileTitles: Record<string, () => string> = {
     "/local/manage": nav_manage,
     "/local/manage/overview": manage_overview_heading,
     "/local/manage/budget": manage_budget_heading,
     "/local/manage/agents": manage_agents_heading,
     "/local/manage/profiles": manage_profiles_heading,
     "/local/manage/schedules": manage_schedules_heading,
+    "/tagmata": nav_manage,
+    "/settings": settings_heading,
+    "/account": account_menu,
   };
-  const manageTitle = $derived(manageTitles[pathname]?.());
+  const mobileTitle = $derived(mobileTitles[pathname]?.());
   // Mobile status expansion owned by the shell's topPanel pair (chat only).
   let statusExpanded = $state(false);
   // Hoisted state survives navigation; reset on route change so returning
@@ -433,14 +456,15 @@
   <AccountMenu />
 {/snippet}
 
-<!-- Mobile top row for offline /local/chat: a one-line status summary
-     (TagmaStatusLine) rides beside the back chevron; the expanded half
-     (budget + agent rows) renders as the shell's topPanel below the row,
-     so the row stays one line tall in both states. -->
+<!-- Mobile top row for the chat deep pages: a one-line status
+     summary (TagmaStatusLine) rides beside the back chevron; the
+     expanded half (budget + agent rows) renders as the shell's
+     topPanel below the row, so the row stays one line tall in both
+     states. -->
 {#snippet topRowSnippet()}
-  {#if mode === "offline" && pathname === "/local/chat"}
+  {#if chatId}
     <TagmaStatusLine
-      status={channelsStore.get("local")?.statusSnapshot}
+      status={channelsStore.get(chatId)?.statusSnapshot}
       expanded={statusExpanded}
       onToggle={() => (statusExpanded = !statusExpanded)}
     />
@@ -448,9 +472,9 @@
 {/snippet}
 
 {#snippet topPanelSnippet()}
-  {#if mode === "offline" && pathname === "/local/chat" && statusExpanded}
+  {#if chatId && statusExpanded}
     <TagmaStatusPanel
-      status={channelsStore.get("local")?.statusSnapshot}
+      status={channelsStore.get(chatId)?.statusSnapshot}
       agentRows={{
         rootRow: statusCardStore.rootRow,
         subRows: statusCardStore.subRows,
@@ -467,9 +491,9 @@
     {pathname}
     {isActive}
     {back}
-    topRow={back && !manageTitle ? topRowSnippet : undefined}
-    topPanel={back && !manageTitle ? topPanelSnippet : undefined}
-    title={manageTitle}
+    topRow={back && !mobileTitle ? topRowSnippet : undefined}
+    topPanel={back && !mobileTitle ? topPanelSnippet : undefined}
+    title={mobileTitle}
     error={errorView}
     status={statusSnippet}
   >
