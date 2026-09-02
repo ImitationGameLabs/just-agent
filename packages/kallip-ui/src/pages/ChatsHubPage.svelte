@@ -3,9 +3,9 @@
   // enrolled tagma chat (indicator dots) followed by the caller's rooms, in
   // the same shape links.ts derives for the sidebar. Pure conversation rows:
   // no manage chip (rooms management lives on the combined /tagmata page).
-  // Reached from the bottom bar's Chats cell and the online gate landing;
-  // no `back` prop, so the bar stays visible. Rows read the stores the same
-  // way RootLayout does; the page owns no fetches of its own.
+  // Reached from the bottom bar's Chats cell and the panorama's view-all
+  // link; no `back` prop, so the bar stays visible. Rows read the stores
+  // the same way RootLayout does; the page owns no fetches of its own.
   import { Cpu, Users } from "@lucide/svelte";
   import HubRow from "../components/HubRow.svelte";
   import { agoraSession } from "../lib/session/agora.svelte";

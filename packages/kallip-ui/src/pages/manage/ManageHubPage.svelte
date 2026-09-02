@@ -12,5 +12,7 @@
 <div class="px-2 py-4 md:p-6 max-w-2xl space-y-6">
   <h1 class="text-xl font-semibold">{nav_manage()}</h1>
 
-  <nav class="card preset-tonal-surface" aria-label={nav_manage()}></nav>
+  <nav class="card preset-tonal-surface" aria-label={nav_manage()}>
+    <ManageGrid />
+  </nav>
 </div>
