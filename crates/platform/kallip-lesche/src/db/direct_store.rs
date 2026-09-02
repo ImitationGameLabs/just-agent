@@ -70,9 +70,11 @@ pub async fn find_session(db: &Db, id: &str) -> Result<Option<DirectSessionRow>,
 
 /// Create-or-get the session `(id, a, b)` and return the stored row. The
 /// caller derives the canonical order and the id (`kallip_lesche_common::
-/// direct`); this only guarantees one row per pair. Idempotent: an existing
-/// row (either member initiating, a retry, a double-initiation race) returns
-/// the stored row unchanged.
+/// direct`); this only guarantees one row per pair. The create-or-ignore is
+/// a single statement: even a TRUE double-initiation race is idempotent (the
+/// loser's insert is a no-op under the winner's row lock; the re-select in
+/// the same transaction returns the stored row), so both callers observe the
+/// one session and neither errors.
 pub async fn ensure_session(
     db: &Db,
     id: &str,
@@ -85,25 +87,25 @@ pub async fn ensure_session(
             let a = member_a.to_string();
             let b = member_b.to_string();
             Box::pin(async move {
-                if let Some(existing) = direct_sessions::Entity::find_by_id(id.clone())
+                // One create-or-ignore statement (the next_seq upsert idiom):
+                // a TRUE double-initiation race serializes on the PK insert,
+                // the loser lands as a no-op, and the re-select in the same
+                // transaction returns the winner's row to both callers --
+                // idempotent end to end, no unique-violation error path.
+                txn.execute(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "INSERT INTO direct_sessions (id, member_a, member_b, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (id) DO NOTHING",
+                    [id.clone().into(), a.into(), b.into()],
+                ))
+                .await?;
+                let row = direct_sessions::Entity::find_by_id(id)
                     .one(txn)
                     .await?
-                {
-                    return Ok(DirectSessionRow {
-                        id: existing.id,
-                        member_a: existing.member_a,
-                        member_b: existing.member_b,
-                        created_at: existing.created_at,
-                    });
-                }
-                let row = direct_sessions::ActiveModel {
-                    id: Set(id),
-                    member_a: Set(a),
-                    member_b: Set(b),
-                    created_at: Set(OffsetDateTime::now_utc()),
-                }
-                .insert(txn)
-                .await?;
+                    .ok_or_else(|| {
+                        sea_orm::DbErr::Custom(
+                            "direct session row missing after create-or-ignore".into(),
+                        )
+                    })?;
                 Ok(DirectSessionRow {
                     id: row.id,
                     member_a: row.member_a,
@@ -284,6 +286,33 @@ mod tests {
         assert!(first.has_member(&a) && first.has_member(&b));
         assert_eq!(first.peer_of(&a), b);
         assert_eq!(first.peer_of(&b), a);
+    }
+
+    #[tokio::test]
+    async fn concurrent_double_creation_lands_one_row_for_both() {
+        let db = fresh_db().await;
+        let (a, b) = pair(1);
+        // True concurrent creation, each side initiating with its own pair
+        // order: the PK conflict must resolve into a no-op + re-select, not
+        // a unique-violation error, and both callers get the SAME row.
+        let mut handles = Vec::new();
+        for (x, y) in [(a.clone(), b.clone()), (b.clone(), a.clone())] {
+            let db = db.clone();
+            handles.push(tokio::spawn(async move {
+                ensure_session(&db, "s-1", &x, &y).await
+            }));
+        }
+        let one = handles
+            .swap_remove(0)
+            .await
+            .unwrap()
+            .expect("initiator create");
+        let two = handles.swap_remove(0).await.unwrap().expect("peer create");
+        assert_eq!(one.id, "s-1");
+        assert_eq!(two.id, "s-1");
+        assert_eq!(one.created_at, two.created_at);
+        assert_eq!(one.member_a, two.member_a);
+        assert_eq!(one.member_b, two.member_b);
     }
 
     #[tokio::test]

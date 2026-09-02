@@ -2,6 +2,7 @@
 //! so the relay's routing/KEX/presence logic is tested without Docker.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use kallip_agora_common::bytes::Ed25519PublicKey;
@@ -26,6 +27,7 @@ pub struct MockControlPlane {
     /// `tagma_profiles` resolver derives each tagma's `owner_disabled` from its
     /// owner's entry here, matching prod (the disabled bit lives on the user).
     users: Mutex<HashMap<UserId, MockUser>>,
+    fail_tagma_profiles: AtomicBool,
 }
 
 struct MockTagma {
@@ -52,6 +54,7 @@ impl MockControlPlane {
             sessions: Mutex::new(HashMap::new()),
             replay_ts: Mutex::new(HashMap::new()),
             users: Mutex::new(HashMap::new()),
+            fail_tagma_profiles: AtomicBool::new(false),
         }
     }
 
@@ -111,6 +114,12 @@ impl MockControlPlane {
             .get_mut(tagma)
             .expect("set_tagma_label: tagma must be enrolled first");
         t.label = label;
+    }
+
+    /// Flip `tagma_profiles` into a registry outage (a `Backend` error), so a
+    /// test can drive the degrade paths that must survive a registry blip.
+    pub fn set_tagma_profiles_failure(&self, fail: bool) {
+        self.fail_tagma_profiles.store(fail, Ordering::SeqCst);
     }
 
     /// Seed a known user account with the mock's default identity: username =
@@ -210,6 +219,11 @@ impl ControlPlane for MockControlPlane {
         // UNFILTERED, matching prod: return every existing input tagma with its
         // raw facts. `owner_disabled` is derived from the owner's seeded user
         // entry (default false when the owner is unseeded).
+        if self.fail_tagma_profiles.load(Ordering::SeqCst) {
+            return Err(ControlPlaneError::Backend(
+                "injected registry outage".into(),
+            ));
+        }
         let tagmas = self.tagmas.lock().unwrap();
         let users = self.users.lock().unwrap();
         let mut out = Vec::new();

@@ -173,6 +173,9 @@ impl MigrationTrait for Migration {
                             .to(DirectSessions::Table, DirectSessions::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
+                    // The first seq is 1 (the counter advances before the
+                    // insert): a 0/negative seq is never legitimate.
+                    .check(Expr::col(DirectMessages::Seq).gt(0))
                     .to_owned(),
             )
             .await?;

@@ -109,6 +109,10 @@ async fn create_rejects_unknown_cross_owner_self_and_unusable_uniformly() {
     enroll(&control, &other_owner, "bob", "tok-other");
     enroll(&control, &unpinned, "alice", "tok-unpinned");
     control.set_pinned_key(&unpinned, None);
+    // A PEER who is enrolled but not tunnel-usable (no pinned key).
+    let peer_unusable = TagmaId::from("t-peer-unusable".to_string());
+    enroll(&control, &peer_unusable, "alice", "tok-peer-unusable");
+    control.set_pinned_key(&peer_unusable, None);
 
     // Unknown peer and cross-owner peer are the SAME 404 (existence-oracle).
     let err = create(&state, &t1, "tagma-nonexistent").await.unwrap_err();
@@ -117,6 +121,11 @@ async fn create_rejects_unknown_cross_owner_self_and_unusable_uniformly() {
     assert_eq!(err.status, 404);
     // An initiator without a usable pinned key is the same 404.
     let err = create(&state, &unpinned, t1.as_ref()).await.unwrap_err();
+    assert_eq!(err.status, 404);
+    // A peer-side unusable tagma is the same 404 from the initiator's side.
+    let err = create(&state, &t1, peer_unusable.as_ref())
+        .await
+        .unwrap_err();
     assert_eq!(err.status, 404);
     // Self-session is a 400 (the caller DID name a real id: itself).
     let err = create(&state, &t1, t1.as_ref()).await.unwrap_err();
@@ -319,4 +328,78 @@ async fn cursor_write_is_member_gated_and_returns_no_content() {
     assert_eq!(mine.len(), 1);
     assert_eq!(mine[0].session_id, view.session_id);
     assert_eq!(mine[0].peer.tagma_id, t2);
+}
+
+#[tokio::test]
+async fn history_clamps_the_page_to_the_server_limit() {
+    let (state, control) = db_state().await;
+    let t1 = TagmaId::from("t-1".to_string());
+    let t2 = TagmaId::from("t-2".to_string());
+    enroll(&control, &t1, "alice", "tok-1");
+    enroll(&control, &t2, "alice", "tok-2");
+    let view = create(&state, &t1, t2.as_ref()).await.expect("created");
+    let db = state.require_db().expect("db").clone();
+    // 201 rows straight through the store: the ROUTE's clamp is under test,
+    // not the row volume.
+    for i in 0..201u32 {
+        direct_store::append(&db, view.session_id.as_ref(), t1.as_ref(), &[i as u8])
+            .await
+            .expect("append");
+    }
+    // A client asking for 1000 gets the server's 200-row page, from the start.
+    let page = get_direct_session_messages(
+        State(state),
+        as_tagma(&t2),
+        Path(view.session_id.as_ref().to_string()),
+        axum::extract::Query(HistoryQuery {
+            after_seq: None,
+            limit: Some(1000),
+        }),
+    )
+    .await
+    .expect("history");
+    assert_eq!(page.len(), 200);
+    assert_eq!(page[0].seq, 1);
+    assert_eq!(page[199].seq, 200);
+}
+
+#[tokio::test]
+async fn history_degrades_handles_when_the_registry_blips() {
+    let (state, control) = db_state().await;
+    let t1 = TagmaId::from("t-1".to_string());
+    let t2 = TagmaId::from("t-2".to_string());
+    enroll(&control, &t1, "alice", "tok-1");
+    enroll(&control, &t2, "alice", "tok-2");
+    let view = create(&state, &t1, t2.as_ref()).await.expect("created");
+    post_direct_session_envelope(
+        State(state.clone()),
+        as_tagma(&t1),
+        Path(view.session_id.as_ref().to_string()),
+        Json(envelope_text(&t1, &view.session_id, b"hello")),
+    )
+    .await
+    .expect("accepted");
+    // Inject a registry outage: the batched resolve the history read depends
+    // on fails wholesale.
+    control.set_tagma_profiles_failure(true);
+    let page = get_direct_session_messages(
+        State(state),
+        as_tagma(&t2),
+        Path(view.session_id.as_ref().to_string()),
+        axum::extract::Query(HistoryQuery::default()),
+    )
+    .await
+    .expect("history still served");
+    // The pull is never blanked: the row comes back, its sender degraded to
+    // the unforgeable id-prefix handle with no deep link.
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].seq, 1);
+    assert_eq!(
+        page[0].sender.handle,
+        degraded_handle(
+            &MemberId::from(ParticipantId::for_tagma(&t1)),
+            ParticipantKind::Agent,
+        )
+    );
+    assert_eq!(page[0].sender.tagma_id, None);
 }

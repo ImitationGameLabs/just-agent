@@ -820,6 +820,164 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_direct_session_posts_the_peer_and_decodes_the_view() {
+        use wiremock::matchers::body_partial_json;
+        let server = MockServer::start().await;
+        let peer = TagmaId::from("tagma-2".to_string());
+        Mock::given(method("POST"))
+            .and(path("/v1/direct-sessions"))
+            .and(header("authorization", "Bearer sk-tagma-test"))
+            .and(body_partial_json(serde_json::json!({ "peer": "tagma-2" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "session_id": "s-derived",
+                "peer": { "tagma_id": "tagma-2", "handle": "tagma-2@alice" },
+                "created_at": "2026-09-01T00:00:00Z",
+            })))
+            .mount(&server)
+            .await;
+        let view = client(&server)
+            .create_direct_session(&peer)
+            .await
+            .expect("created");
+        assert_eq!(view.session_id.as_ref(), "s-derived");
+        assert_eq!(view.peer.tagma_id, peer);
+    }
+
+    #[tokio::test]
+    async fn list_direct_sessions_decodes_the_view_list() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/direct-sessions"))
+            .and(header("authorization", "Bearer sk-tagma-test"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "session_id": "s-1",
+                    "peer": { "tagma_id": "tagma-2", "handle": "tagma-2@alice" },
+                    "created_at": "2026-09-01T00:00:00Z",
+                }
+            ])))
+            .mount(&server)
+            .await;
+        let rows = client(&server)
+            .list_direct_sessions()
+            .await
+            .expect("listed");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].peer.tagma_id.as_ref(), "tagma-2");
+    }
+
+    #[tokio::test]
+    async fn post_direct_session_envelope_stamps_channel_id_from_session() {
+        use wiremock::matchers::body_partial_json;
+        let server = MockServer::start().await;
+        let session = DirectSessionId::from("s-1".to_string());
+        Mock::given(method("POST"))
+            .and(path(format!("/v1/direct-sessions/{session}/messages")))
+            .and(body_partial_json(
+                serde_json::json!({ "channel_id": "s-1" }),
+            ))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+        // The sample envelope carries a bilateral conversation id -- NOT
+        // "s-1". The stamp must replace it (the route 400s any mismatch, so
+        // a caller cannot address a session with a stale id).
+        client(&server)
+            .post_direct_session_envelope(&session, &sample_envelope(0))
+            .await
+            .expect("accepted with stamped channel_id");
+    }
+
+    #[tokio::test]
+    async fn post_direct_session_envelope_retries_on_503_then_succeeds() {
+        let server = MockServer::start().await;
+        let session = DirectSessionId::from("s-1".to_string());
+        let url = format!("/v1/direct-sessions/{session}/messages");
+        Mock::given(method("POST"))
+            .and(path(url.clone()))
+            .and(header("authorization", "Bearer sk-tagma-test"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(url))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&server)
+            .await;
+        client(&server)
+            .post_direct_session_envelope(&session, &sample_envelope(0))
+            .await
+            .expect("succeeds after one 503");
+    }
+
+    #[tokio::test]
+    async fn post_direct_session_envelope_bails_on_non_503() {
+        let server = MockServer::start().await;
+        let session = DirectSessionId::from("s-1".to_string());
+        Mock::given(method("POST"))
+            .and(path(format!("/v1/direct-sessions/{session}/messages")))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        let err = client(&server)
+            .post_direct_session_envelope(&session, &sample_envelope(0))
+            .await
+            .expect_err("401");
+        assert!(err.to_string().contains("401"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn fetch_direct_messages_sends_query_and_decodes_rows() {
+        use wiremock::matchers::query_param;
+        let server = MockServer::start().await;
+        let session = DirectSessionId::from("s-1".to_string());
+        // The direct row has no epoch; the sender carries the deep-link
+        // tagma_id the room row does not.
+        let body = serde_json::json!([{
+            "seq": 4,
+            "sender": {"id": "p-tagma-1", "kind": "agent", "handle": "Tagma", "tagma_id": "tagma-1"},
+            "ciphertext": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "created_at": "2026-08-02T00:00:00Z",
+        }]);
+        Mock::given(method("GET"))
+            .and(path("/v1/direct-sessions/s-1/messages"))
+            .and(query_param("after_seq", "3"))
+            .and(query_param("limit", "10"))
+            .and(header("authorization", "Bearer sk-tagma-test"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        let rows = client(&server)
+            .fetch_direct_messages(&session, Some(3), Some(10))
+            .await
+            .expect("history fetched");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].seq, 4);
+        assert_eq!(rows[0].ciphertext.0.len(), 32);
+        assert_eq!(
+            rows[0].sender.tagma_id.as_ref().map(|t| t.as_ref()),
+            Some("tagma-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn put_direct_read_cursor_puts_the_session_cursor_path() {
+        let server = MockServer::start().await;
+        let session = DirectSessionId::from("s-1".to_string());
+        Mock::given(method("PUT"))
+            .and(path(format!("/v1/direct-sessions/{session}/read-cursor")))
+            .and(header("authorization", "Bearer sk-tagma-test"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        client(&server)
+            .put_direct_read_cursor(&session, 7)
+            .await
+            .expect("cursor advanced");
+    }
+
+    #[tokio::test]
     async fn post_status_posts_payload_to_tagma_status_path() {
         let server = MockServer::start().await;
         let tagma_id = TagmaId::from("tagma-1".to_string());
