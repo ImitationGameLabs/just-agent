@@ -12,6 +12,7 @@ const ROOM_PAGE = new URL(
   "../pages/RoomConversationPage.svelte",
   import.meta.url,
 );
+const APP_SHELL = new URL("./AppShell.svelte", import.meta.url);
 
 function source(url: URL): string {
   return new TextDecoder().decode(Deno.readFileSync(url));
@@ -73,5 +74,35 @@ Deno.test(
       assert(next > at, `region must render in order: ${marker}`);
       at = next;
     }
+  },
+);
+
+Deno.test(
+  "the shell branch degrades visibly when a lazy chunk fails",
+  { permissions: { read: [APP_SHELL] } },
+  () => {
+    const src = source(APP_SHELL);
+    // A stale deploy can 404 the other shell's hashed chunk for an old
+    // session crossing the breakpoint. Both branch arms must catch and
+    // render the fallback (a manual reload) -- never die silently, and
+    // never reload on their own.
+    const first = src.indexOf("{:catch}");
+    assert(first !== -1, "the desktop arm needs a catch");
+    assert(
+      src.indexOf("{:catch}", first + 1) !== -1,
+      "the mobile arm needs a catch too",
+    );
+    assert(
+      src.split("{@render chunkFallback()}").length - 1 === 2,
+      "both catch arms render the shared fallback",
+    );
+    assert(
+      src.includes("location.reload()"),
+      "the fallback offers a manual reload",
+    );
+    assert(
+      src.split("location.reload").length - 1 === 1,
+      "reload is manual-only (no auto-reload loop)",
+    );
   },
 );

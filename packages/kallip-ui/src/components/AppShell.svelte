@@ -76,12 +76,31 @@
   });
 </script>
 
+{#snippet chunkFallback()}
+  <!-- A failed lazy import is a stale-deploy edge: the other shell's
+       hashed chunk is gone for this session. One manual reload
+       re-bootstraps from the fresh index; no auto-reload, so a
+       persistent failure cannot loop. Plain text like the Loading…
+       chrome exception (no new i18n keys). -->
+  <div class="p-4">
+    <p class="opacity-60">
+      The interface failed to load.
+      <button type="button" class="underline" onclick={() => location.reload()}>
+        Reload
+      </button>
+    </p>
+  </div>
+{/snippet}
 {#if desktop}
   {#await import("../lib/shell/DesktopShell.svelte") then { default: DesktopShell }}
     <DesktopShell {...shellProps} />
+  {:catch}
+    {@render chunkFallback()}
   {/await}
 {:else}
   {#await import("../lib/shell/MobileShell.svelte") then { default: MobileShell }}
     <MobileShell {...shellProps} />
+  {:catch}
+    {@render chunkFallback()}
   {/await}
 {/if}
