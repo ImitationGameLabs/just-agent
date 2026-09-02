@@ -28,6 +28,7 @@
     type NavIcons,
   } from "./links.ts";
   import { appGateDecision, isPublicRoute } from "./gate.ts";
+  import { mobileBack } from "./breadcrumbs.ts";
   import { isOfflineOnlyShell, navigate, shellMode } from "./port.ts";
   import {
     manage_agents_heading,
@@ -367,16 +368,17 @@
   $effect(() => {
     if (offlineError) console.error(offlineError);
   });
-  // Offline content pages (any /local/* below the home itself) swap the
-  // small-screen bottom bar for the back row above; the home and every
-  // online route keep the bar. Desktop is unaffected (the row is md:hidden
-  // and the sidebar always renders).
+  // The small-screen back row's target. Offline content pages (any
+  // /local/* below the home itself) swap the bottom bar for the row and
+  // drill home; online deep pages drill the same way, with the target
+  // derived from the trail table (mobileBack in lib/shell/breadcrumbs.ts).
+  // Desktop is unaffected: the row renders only in the mobile shell.
   const back = $derived(
-    mode === "offline" &&
-      pathname.startsWith("/local/") &&
-      pathname !== "/local"
-      ? { href: "/local", label: nav_home() }
-      : null,
+    mode === "offline"
+      ? pathname.startsWith("/local/") && pathname !== "/local"
+        ? { href: "/local", label: nav_home() }
+        : null
+      : mobileBack(pathname),
   );
   // Mobile top-row title for manage pages: static i18n headings mapped by
   // route (the pages keep their own h1 for md+; see AppShell `title`).

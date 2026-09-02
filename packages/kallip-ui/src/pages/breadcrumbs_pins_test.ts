@@ -91,3 +91,26 @@ Deno.test(
     }
   },
 );
+
+Deno.test(
+  "the mobile back row keeps its route policy in the wired module",
+  { permissions: { read: [TRAIL_TABLE] } },
+  () => {
+    const src = source(TRAIL_TABLE);
+    // backFromTrail (the pure walk) lives in trailMatch.ts; the policy
+    // -- /account keeps the bar, conversations drill to the chats hub
+    // -- lives with the wired table, next to the data it polices.
+    assert(
+      src.includes("backFromTrail(matchTrail(pathname))"),
+      "the back row target must be trail-derived",
+    );
+    assert(
+      src.includes('pathname === "/account"'),
+      "the account hub must be excluded (a bar cell destination)",
+    );
+    assert(
+      src.includes('pathname.startsWith("/chat/")'),
+      "conversations must drill to the chats hub, not the desktop chain",
+    );
+  },
+);

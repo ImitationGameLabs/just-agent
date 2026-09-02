@@ -1,10 +1,16 @@
 import { assertEquals } from "@std/assert";
-import { entry, matchTrail, type TrailEntry } from "./trailMatch.ts";
+import {
+  backFromTrail,
+  entry,
+  matchTrail,
+  type TrailEntry,
+} from "./trailMatch.ts";
 
 // Behavior tests for the matcher engine, on a synthetic table (the real
 // table's resolvers pull session stores in, which a deno test cannot load).
 // Covered here: segment-count strictness, first-match precedence, capture
-// decoding (including malformed escapes), and the off-table null.
+// decoding (including malformed escapes), the off-table null, and the
+// backFromTrail walk to the deepest linked segment.
 
 const table: TrailEntry[] = [
   entry("/tagmata", () => [{ label: "tagmata", current: true }]),
@@ -71,5 +77,32 @@ Deno.test(
     assertEquals(matchTrail(table, "/local/chat"), null);
     assertEquals(matchTrail(table, "/"), null);
     assertEquals(matchTrail(table, ""), null);
+  },
+);
+
+Deno.test("backFromTrail walks to the deepest linked segment", () => {
+  assertEquals(
+    backFromTrail([
+      { label: "rooms", href: "/rooms" },
+      { label: "r1", href: "/rooms/r1" },
+      { label: "settings", current: true },
+    ]),
+    { href: "/rooms/r1", label: "r1" },
+  );
+  // A chain with a middle link stops at the last link, skipping the pure tail.
+  assertEquals(
+    backFromTrail([
+      { label: "tagma", href: "/tagma/t1/details" },
+      { label: "chat", current: true },
+    ]),
+    { href: "/tagma/t1/details", label: "tagma" },
+  );
+});
+
+Deno.test(
+  "backFromTrail yields null when no segment links (a destination, not a drill)",
+  () => {
+    assertEquals(backFromTrail([{ label: "tagmata", current: true }]), null);
+    assertEquals(backFromTrail([]), null);
   },
 );

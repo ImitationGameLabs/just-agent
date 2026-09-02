@@ -92,3 +92,20 @@ export function matchTrail(
   }
   return null;
 }
+
+/** The mobile back-row target derived from a matched trail: the deepest
+ * linked segment is the parent -- the last chain link the desktop bar
+ * renders as a link. A trail with no linked segment (a pure tail) marks a
+ * destination, not a drill, and yields null so the caller keeps the bar.
+ * Dependency-free like the matcher itself: route policy (which paths drill
+ * and which keep the bar) lives with the wired table in breadcrumbs.ts. */
+export function backFromTrail(
+  segments: readonly BreadcrumbSegment[] | null,
+): { href: string; label: string } | null {
+  if (!segments) return null;
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i];
+    if (seg?.href) return { href: seg.href, label: seg.label };
+  }
+  return null;
+}

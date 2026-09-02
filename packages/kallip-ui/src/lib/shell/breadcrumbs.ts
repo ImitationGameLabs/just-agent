@@ -29,6 +29,7 @@ import {
   nav_breadcrumb_agents,
   nav_breadcrumb_tagma,
   nav_chat,
+  nav_chats,
   nav_overview,
   nav_profiles,
   nav_rooms,
@@ -41,6 +42,7 @@ import {
 import {
   entry,
   matchTrail as matchTable,
+  backFromTrail,
   type TrailEntry,
   type With,
 } from "./trailMatch.ts";
@@ -161,4 +163,23 @@ export const trailTable: TrailEntry[] = [
  * shell renders no bar there). */
 export function matchTrail(pathname: string) {
   return matchTable(trailTable, pathname);
+}
+
+/** The small-screen back row's target: trail-derived (the deepest linked
+ * segment is the parent, the same chain the desktop bar renders), with
+ * the route policy the pure engine must not own. Conversations are the
+ * one override: their mobile parent is the chats hub the bar cell lists
+ * them under, not the manage registry the desktop chain names. /account
+ * is excluded: it is a bar cell destination -- swapping the bar for a
+ * back row there would strand the other cells. The hubs yield null by
+ * construction (/tagmata is a pure tail, /chats is off-table) and keep
+ * the bar. */
+export function mobileBack(
+  pathname: string,
+): { href: string; label: string } | null {
+  if (pathname === "/account") return null;
+  if (pathname === "/chat" || pathname.startsWith("/chat/")) {
+    return { href: "/chats", label: nav_chats() };
+  }
+  return backFromTrail(matchTrail(pathname));
 }
