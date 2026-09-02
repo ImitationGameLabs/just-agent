@@ -19,7 +19,7 @@ declare global {
 (globalThis as Record<string, unknown>)["$state"] = (v: unknown) => v;
 (globalThis as Record<string, unknown>)["$derived"] = (v: unknown) => v;
 
-const { assertEquals } = await import("@std/assert");
+const { assertEquals, assertRejects } = await import("@std/assert");
 const { DirectSessionsStore } = await import("./directSessions.svelte.ts");
 type DirectSessionEntry =
   import("./directSessions.svelte.ts").DirectSessionEntry;
@@ -43,26 +43,24 @@ class Harness extends DirectSessionsStore {
   /** manage responses, popped per call. */
   manageScript: Array<{ status: number; body?: unknown }> = [];
 
-  override async fetchDirectRows(
-    tagmaId: string,
-  ): Promise<DirectSessionEntry[]> {
+  override fetchDirectRows(tagmaId: string): Promise<DirectSessionEntry[]> {
     const next = this.script.get(tagmaId);
     if (next instanceof Error) throw next;
-    return next ?? [];
+    return Promise.resolve(next ?? []);
   }
 
-  override async manage(
+  override manage(
     _tagmaId: string,
     _method: string,
     path: string,
   ): Promise<{ status: number; body: unknown }> {
     this.calls.push(path);
     const step = this.manageScript.shift() ?? { status: 200, body: [] };
-    return { status: step.status, body: step.body ?? [] };
+    return Promise.resolve({ status: step.status, body: step.body ?? [] });
   }
 
-  override async rootId(_tagmaId: string): Promise<string> {
-    return "root-1";
+  override rootId(_tagmaId: string): Promise<string> {
+    return Promise.resolve("root-1");
   }
 }
 
@@ -125,10 +123,10 @@ Deno.test("a dead daemon's fetch error is swallowed by the sweep", async () => {
   assertEquals(h.list().length, 0);
 });
 
-Deno.test("peerLabel falls back to handle then short id", () => {
+Deno.test("peerLabel falls back to handle then the fallback label", () => {
   const h = new Harness();
   assertEquals(h.peerLabel(B, "b@owner"), "b@owner");
-  assertEquals(h.peerLabel(B, ""), B.slice(0, 8));
+  assertEquals(h.peerLabel(B, ""), `Session ${B.slice(0, 8)}`);
 });
 
 Deno.test(
@@ -157,8 +155,7 @@ Deno.test(
   async () => {
     const h = new Harness();
     h.manageScript = Array.from({ length: 10 }, () => ({ status: 502 }));
-    const rows = await h.fetchTranscript(A, B, 0);
-    assertEquals(rows.length, 0);
+    await assertRejects(() => h.fetchTranscript(A, B, 0));
     const limits = h.calls.map(
       (p) => new URL("http://x/" + p).searchParams.get("limit") ?? "",
     );

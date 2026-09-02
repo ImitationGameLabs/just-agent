@@ -42,5 +42,6 @@
   "chat_direct_section": "直会话",
   "chat_direct_empty": "你的 tagma 之间的会话会显示在这里。",
   "chat_direct_unavailable": "中继暂不可达，恢复后即可看到转录。",
-  "chat_direct_fallback": "会话 {id}"
+  "chat_direct_fallback": "会话 {id}",
+  "chat_direct_title": "{name} · 直会话"
 }

@@ -17,6 +17,7 @@
   import { directSessionsStore } from "../lib/session/directSessions.svelte";
   import {
     chat_direct_empty,
+    chat_direct_title,
     chat_direct_unavailable,
     chat_opening,
     common_retry,
@@ -131,7 +132,7 @@
 </script>
 
 <svelte:head>
-  <title>{peerLabel} · Direct</title>
+  <title>{chat_direct_title({ name: peerLabel })}</title>
 </svelte:head>
 <div class="h-full flex flex-col">
   <div class="flex-1 min-h-0 flex flex-col">

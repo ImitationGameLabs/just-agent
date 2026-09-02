@@ -22,6 +22,7 @@ import type {
 } from "@kallipai/kallip-client";
 import { agoraSession } from "./agora.svelte";
 import { channelsStore } from "./channels.svelte";
+import { chat_direct_fallback } from "../../paraglide/messages.js";
 
 /** One deduped direct session as the console lists it: the pair (two of this
  * owner's tagmas) plus the daemon to fetch through (the canonical min side
@@ -78,7 +79,7 @@ export class DirectSessionsStore {
     );
     if (enrolled?.label) return enrolled.label;
     if (peerHandle) return peerHandle;
-    return peerId.slice(0, 8);
+    return chat_direct_fallback({ id: peerId.slice(0, 8) });
   }
 
   /** Start polling (signed-in online). Idempotent. */
@@ -156,7 +157,11 @@ export class DirectSessionsStore {
         }
         return res.body as DirectMessageRow[];
       }
-      if (attempt <= 1) return [];
+      if (attempt <= 1) {
+        throw new Error(
+          "direct history unavailable: 502 held at the floor limit",
+        );
+      }
       attempt = Math.max(1, Math.floor(attempt / 2));
     }
   }

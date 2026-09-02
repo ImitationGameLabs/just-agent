@@ -42,5 +42,6 @@
   "chat_direct_section": "Direct sessions",
   "chat_direct_empty": "Sessions between your tagmas will appear here.",
   "chat_direct_unavailable": "The relay is unreachable right now. The transcript appears once it returns.",
-  "chat_direct_fallback": "Session {id}"
+  "chat_direct_fallback": "Session {id}",
+  "chat_direct_title": "{name} · Direct"
 }
