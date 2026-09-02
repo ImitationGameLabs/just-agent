@@ -7,7 +7,7 @@
   // Rows mix links (settings) and mode actions — HubRow renders each as an
   // anchor or a button. Icons are imported directly here (not injected via
   // NavIcons) because page components already depend on @lucide/svelte
-  // directly (ManageHubPage precedent).
+  // directly (PanoramaPage precedent).
   import { LogOut, Settings } from "@lucide/svelte";
   import HubRow from "../../components/HubRow.svelte";
   import { configStore } from "../../lib/config/config.svelte";
