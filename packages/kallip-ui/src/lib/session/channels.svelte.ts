@@ -183,6 +183,20 @@ export class ChannelsStore {
     }
   }
 
+  /** The store key a chat page delegates to ChannelChatPage with, for a
+   * tagma id: the conversation id once the channel settled, undefined
+   * while absent/pending/unavailable. The shell's mobile top row reads
+   * this to lift the status line -- the pathname carries the tagma id,
+   * the store keys by conversation id (the same resolution the tagma
+   * chat page performs before delegating). */
+  conversationIdForTagma(tagmaId: string): string | undefined {
+    const state = this.getTagmaChannelState(tagmaId);
+    return state.kind === "open" ||
+      state.kind === "offline" ||
+      state.kind === "error"
+      ? state.conversationId
+      : undefined;
+  }
   /** The open relay channel for a tagma, or null (absent / still KEXing /
    * not open). For the non-stream ops that ride the channel's control plane
    * (the direct-session store's session/history pulls via the manage

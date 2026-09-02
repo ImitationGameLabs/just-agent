@@ -29,6 +29,7 @@
     type NavIcons,
   } from "./links.ts";
   import { appGateDecision, isPublicRoute } from "./gate.ts";
+  import { chatRoute } from "./chatRoute.ts";
   import { mobileBack } from "./breadcrumbs.ts";
   import { isOfflineOnlyShell, navigate, shellMode } from "./port.ts";
   import {
@@ -409,21 +410,17 @@
         : null
       : mobileBack(pathname),
   );
-  // The chat deep pages (/chat/:id, /tagma/:id/chat, and the offline
-  // /local/chat): their status line lives in the shell's mobile top
-  // row, beside the back chevron -- one row, not page chrome plus
-  // shell row.
+  // The chat deep routes: their status line lives in the shell's mobile
+  // top row, beside the back chevron -- one row, not page chrome plus
+  // shell row. /chat/:id and /local/chat carry the store key directly;
+  // the /tagma/:id/chat shape carries a tagma id, resolved through the
+  // store (the pathname id is NOT the conversation id).
   const chatId = $derived.by(() => {
-    if (pathname === "/local/chat") return "local";
-    if (pathname.startsWith("/chat/")) {
-      const id = pathname.slice("/chat/".length);
-      return id && !id.includes("/") ? id : undefined;
-    }
-    if (pathname.startsWith("/tagma/") && pathname.endsWith("/chat")) {
-      const id = pathname.slice("/tagma/".length, -"/chat".length);
-      return id && !id.includes("/") ? id : undefined;
-    }
-    return undefined;
+    const route = chatRoute(pathname);
+    if (!route) return undefined;
+    return route.kind === "conversation"
+      ? route.conversationId
+      : channelsStore.conversationIdForTagma(route.tagmaId);
   });
   // Mobile top-row titles: static i18n headings mapped by route (the
   // pages keep their own h1 for md+; see AppShell `title`). Covers
