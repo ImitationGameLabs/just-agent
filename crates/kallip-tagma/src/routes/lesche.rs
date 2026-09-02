@@ -16,12 +16,15 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::response::{IntoResponse, Response};
 use kallip_agora_common::bytes::Ciphertext;
 use kallip_agora_common::ids::{ChannelId, TagmaId, TraceId};
 use kallip_common::message::DeliveryResponse;
 use kallip_common::protocol::ApiError;
-use kallip_lesche_common::direct::{DirectMessage, DirectSessionId};
-use kallip_lesche_common::message::{Envelope, RoomMessage};
+use kallip_lesche_common::direct::{
+    DirectMessage, DirectMessageView, DirectSessionId, FileAttachment,
+};
+use kallip_lesche_common::message::{Envelope, Participant, RoomMessage};
 use kallip_lesche_common::rooms::RoomId;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -31,7 +34,7 @@ use crate::state::SharedState;
 use kallip_common::agentid::AgentId;
 
 #[derive(Debug, Deserialize)]
-pub(super) struct LescheMessageRequest {
+pub(crate) struct LescheMessageRequest {
     pub text: String,
     /// Optional room id. Present when the agent is sending into a multi-member
     /// room (the tagma posts the plaintext to `/v1/rooms/{room}/envelopes`);
@@ -45,6 +48,14 @@ pub(super) struct LescheMessageRequest {
     /// in a workspace the peer can read: a file record in a private area
     /// fails the peer's fetch with 403.
     pub tagma: Option<String>,
+    /// Optional file reference for a direct-session send (the `tagma` branch
+    /// only): `{record_id, name, size}` — the bytes stay in the files service
+    /// and the peer fetches the record in its own authorized space (a
+    /// private-area record fails the peer's fetch with 403, the same caveat
+    /// the CLI's `--tagma` help documents). Any non-tagma branch carrying an
+    /// attachment is a 400.
+    #[serde(default)]
+    pub attachment: Option<FileAttachment>,
 }
 
 /// Self-only AND root-only guard shared by the lesche routes (the agent's
@@ -72,6 +83,32 @@ async fn require_root_self(
     Ok(())
 }
 
+/// Read-side variant of [`require_root_self`] for the two lesche read
+/// routes the console UI reaches through the daemon manage bridge (the
+/// bridge authenticates as the operator): the operator may read the root
+/// agent's lesche surfaces on the owner's behalf, but the write paths
+/// stay [`require_root_self`]-guarded -- an operator posting as the
+/// agent would forge the agent's voice.
+async fn require_root_self_or_operator(
+    state: &SharedState,
+    identity: &crate::auth::Identity,
+    id: &AgentId,
+) -> Result<(), ApiError> {
+    let is_root = {
+        let registry = state.registry.read().await;
+        registry.require_self_or_operator(identity, id)?;
+        registry
+            .root_agent()
+            .is_some_and(|(root_id, _)| root_id == id)
+    };
+    if !is_root {
+        return Err(ApiError::forbidden(
+            "reading lesche surfaces requires the root agent",
+        ));
+    }
+    Ok(())
+}
+
 /// `GET /agents/{id}/lesche/rooms` -- the rooms this tagma can address with
 /// `kallip lesche send --room <id>`, from the joined-rooms cache (maintained
 /// by the relay's room-membership poll).
@@ -93,7 +130,7 @@ pub async fn list_joined_rooms(
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub(super) struct LescheHistoryQuery {
+pub(crate) struct LescheHistoryQuery {
     /// Return messages with `seq > after_seq` (exclusive). Default 0 = from the
     /// start.
     pub after_seq: Option<i64>,
@@ -204,6 +241,11 @@ pub async fn post_message(
             ));
         }
         (Some(room), None) => {
+            if req.attachment.is_some() {
+                return Err(ApiError::bad_request(
+                    "attachments ride direct-session sends only; a room send is text",
+                ));
+            }
             return send_room_message(&state, room, req.text).await.map(|_| {
                 Json(DeliveryResponse {
                     ok: true,
@@ -212,14 +254,22 @@ pub async fn post_message(
             });
         }
         (None, Some(peer)) => {
-            return send_direct_message(&state, peer, req.text).await.map(|_| {
-                Json(DeliveryResponse {
-                    ok: true,
-                    error: None,
-                })
-            });
+            return send_direct_message(&state, peer, req.text, req.attachment)
+                .await
+                .map(|_| {
+                    Json(DeliveryResponse {
+                        ok: true,
+                        error: None,
+                    })
+                });
         }
-        (None, None) => {}
+        (None, None) => {
+            if req.attachment.is_some() {
+                return Err(ApiError::bad_request(
+                    "attachments ride direct-session sends only; the bilateral send is text",
+                ));
+            }
+        }
     }
     // Persist once + publish via the single external projector. The projector
     // is the sole writer of chat content; whichever serving paths are active
@@ -327,6 +377,7 @@ async fn send_direct_message(
     state: &SharedState,
     peer_str: String,
     text: String,
+    attachment: Option<FileAttachment>,
 ) -> Result<(), ApiError> {
     // TagmaId parses leniently (an opaque id string); a peer the lesche does
     // not know fails the create-or-get with a member-gated 404, not a 400.
@@ -363,13 +414,11 @@ async fn send_direct_message(
         .create_direct_session(&peer)
         .await
         .map_err(|e| map_lesche_error("direct-session create failed", &e))?;
-    // The direct payload is a `DirectMessage` (text only from this route;
-    // the lesche stores + relays it opaquely and member-gates the route).
-    let plain = serde_json::to_vec(&DirectMessage {
-        text,
-        attachment: None,
-    })
-    .map_err(|e| ApiError::bad_gateway(format!("encode direct message: {e:#}")))?;
+    // The direct payload is a `DirectMessage` (the lesche stores + relays
+    // it opaquely and member-gates the route); the attachment, when set, is
+    // a reference the peer resolves against the files service.
+    let plain = serde_json::to_vec(&DirectMessage { text, attachment })
+        .map_err(|e| ApiError::bad_gateway(format!("encode direct message: {e:#}")))?;
     let envelope = Envelope {
         // post_direct_session_envelope overwrites channel_id from the
         // session id; mirror it for clarity, like the room send.
@@ -388,6 +437,44 @@ async fn send_direct_message(
     Ok(())
 }
 
+/// Query for `GET /agents/{id}/lesche/direct-sessions/{peer}/messages`: the
+/// room history's paging fields plus `format=json` — the console UI's
+/// structured variant. No `format` (any other value → 400) keeps the text
+/// render, so the CLI contract does not move.
+#[derive(Debug, Deserialize)]
+pub(crate) struct DirectHistoryQuery {
+    /// Return messages with `seq > after_seq` (exclusive). Default 0 = from
+    /// the start.
+    pub after_seq: Option<i64>,
+    /// Max messages to return. Server-clamped by lesche.
+    pub limit: Option<u64>,
+    /// `json` switches the response from the bracketed text render to typed
+    /// rows ([`DirectMessageJsonRow`]).
+    pub format: Option<String>,
+}
+
+/// The json variant's default page (no `limit` query): small enough that a
+/// full page fits the manage bridge's 256 KiB response cap with headroom,
+/// large enough to spare a request per render. The text render keeps the
+/// lesche's own default (the CLI contract does not move).
+pub(crate) const DIRECT_JSON_DEFAULT_LIMIT: u64 = 25;
+
+/// One row of the `format=json` direct history read (the console UI's
+/// transcript contract): the decoded `DirectMessage` payload flattened to
+/// the top level next to the row's envelope metadata. The handle is
+/// advisory server-stamped data the client renders (and escapes); unlike
+/// the text render there is no prompt-injection surface here.
+#[derive(Debug, Serialize)]
+struct DirectMessageJsonRow {
+    pub seq: i64,
+    pub sender: Participant,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<FileAttachment>,
+    #[serde(with = "time::serde::iso8601")]
+    pub created_at: OffsetDateTime,
+}
+
 /// `GET /agents/{id}/lesche/direct-sessions/{peer}/messages` — the
 /// `kallip lesche read --tagma <peer>` path. The session id is derived
 /// locally from (self, peer) with the lesche-common derivation, so the
@@ -401,9 +488,20 @@ pub async fn read_direct_session_messages(
     State(state): State<SharedState>,
     auth: crate::auth::AuthIdentity,
     Path((id, peer_str)): Path<(AgentId, String)>,
-    Query(q): Query<LescheHistoryQuery>,
-) -> Result<String, ApiError> {
-    require_root_self(&state, auth.identity(), &id).await?;
+    Query(q): Query<DirectHistoryQuery>,
+) -> Result<Response, ApiError> {
+    require_root_self_or_operator(&state, auth.identity(), &id).await?;
+    // Only `json` is accepted: a future format must not silently mean the
+    // text render.
+    let json = match q.format.as_deref() {
+        None => false,
+        Some("json") => true,
+        Some(other) => {
+            return Err(ApiError::bad_request(format!(
+                "unsupported format: {other} (only json)"
+            )));
+        }
+    };
     // TagmaId parses leniently (an opaque id string); an unknown peer
     // surfaces from the lesche history read as a 404, not a 400.
     let peer = TagmaId::from(peer_str);
@@ -426,28 +524,48 @@ pub async fn read_direct_session_messages(
         };
         handle.lesche_client()
     };
+    // The json variant pins a smaller default page (DIRECT_JSON_DEFAULT_LIMIT):
+    // the console UI pulls conservatively because the manage bridge caps
+    // responses at 256 KiB and drops an oversized page whole. An explicit
+    // limit always wins.
+    let limit = q
+        .limit
+        .or_else(|| json.then_some(DIRECT_JSON_DEFAULT_LIMIT));
     let rows = client
-        .fetch_direct_messages(&session, q.after_seq, q.limit)
+        .fetch_direct_messages(&session, q.after_seq, limit)
         .await
         .map_err(|e| map_lesche_error("direct session history fetch failed", &e))?;
-    // Render each row like the room history route: one bracketed block per
-    // message. The payload IS the plaintext `DirectMessage` JSON; the sender
-    // is the relay-authenticated envelope sender stamped on the stored row
-    // (the handle is advisory + sanitized, same rule as rooms). A row that
-    // fails to parse is skipped rather than failing the whole read.
+    if json {
+        // Typed rows for the console UI; unparseable rows are skipped, never
+        // fatal (same rule as the text render).
+        let view: Vec<DirectMessageJsonRow> = rows
+            .into_iter()
+            .filter_map(|row| direct_json_row(&session, row))
+            .collect();
+        Ok(Json(view).into_response())
+    } else {
+        Ok(render_direct_text(&session, rows).into_response())
+    }
+}
+
+/// The text render (no `format` query): the CLI/prompt contract, one
+/// bracketed block per message, byte-compatible with the pre-json route.
+fn render_direct_text(session: &DirectSessionId, rows: Vec<DirectMessageView>) -> String {
     let mut out = String::new();
     for row in rows {
-        let request: DirectMessage = match serde_json::from_slice(&row.ciphertext.0) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!(session = %session, seq = row.seq, "direct history parse skipped: {e}");
-                continue;
-            }
+        let Some(DirectMessageJsonRow {
+            seq,
+            sender,
+            text,
+            attachment: _,
+            created_at,
+        }) = direct_json_row(session, row)
+        else {
+            continue;
         };
-        let DirectMessage { text, .. } = request;
-        let sender_id = row.sender.id.as_ref().to_string();
-        let kind = row.sender.kind.as_str();
-        let clean = crate::messaging::sanitize_handle(&row.sender.handle);
+        let sender_id = sender.id.as_ref().to_string();
+        let kind = sender.kind.as_str();
+        let clean = crate::messaging::sanitize_handle(&sender.handle);
         let handle_part = if clean.is_empty() {
             String::new()
         } else {
@@ -455,17 +573,42 @@ pub async fn read_direct_session_messages(
         };
         out.push_str(&format!(
             "[seq={} from={}:{}{} at={}]\n{text}\n\n",
-            row.seq, kind, sender_id, handle_part, row.created_at
+            seq, kind, sender_id, handle_part, created_at
         ));
     }
-    Ok(out)
+    out
+}
+
+/// Flatten one stored row into the json view: the decoded `DirectMessage`
+/// payload at the top level (text + optional attachment) next to the row's
+/// envelope metadata, so the browser never handles the ciphertext wrapper.
+/// `None` for a row whose payload no longer parses (skipped, never fatal).
+fn direct_json_row(
+    session: &DirectSessionId,
+    row: DirectMessageView,
+) -> Option<DirectMessageJsonRow> {
+    let request: DirectMessage = match serde_json::from_slice(&row.ciphertext.0) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(session = %session, seq = row.seq, "direct history parse skipped: {e}");
+            return None;
+        }
+    };
+    let DirectMessage { text, attachment } = request;
+    Some(DirectMessageJsonRow {
+        seq: row.seq,
+        sender: row.sender,
+        text,
+        attachment,
+        created_at: row.created_at,
+    })
 }
 
 /// One row of the unified `GET /agents/{id}/lesche/sessions` list (the
 /// `kallip lesche sessions` data): every surface the agent can address with
 /// `kallip lesche send`, with its kind and target metadata.
 #[derive(Debug, Serialize)]
-pub(super) struct SessionListEntry {
+pub(crate) struct SessionListEntry {
     /// `bilateral` (the fixed 1:1 with the operator), `room`, or `direct`.
     pub kind: &'static str,
     /// The surface id: conversation id, room id, or derived session id.
@@ -494,7 +637,7 @@ pub async fn list_lesche_sessions(
     auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
 ) -> Result<Json<Vec<SessionListEntry>>, ApiError> {
-    require_root_self(&state, auth.identity(), &id).await?;
+    require_root_self_or_operator(&state, auth.identity(), &id).await?;
     let mut out: Vec<SessionListEntry> = Vec::new();
     // The bilateral 1:1 is a fixed member of the list.
     if let Some(projector) = state.external.get()
@@ -600,6 +743,7 @@ mod tests {
                 text: "hi".into(),
                 room: None,
                 tagma: None,
+                attachment: None,
             }),
         )
         .await
@@ -634,6 +778,7 @@ mod tests {
                 text: "hi".into(),
                 room: Some("room-1".into()),
                 tagma: None,
+                attachment: None,
             }),
         )
         .await
@@ -724,6 +869,7 @@ mod tests {
                 text: "hi".into(),
                 room: None,
                 tagma: None,
+                attachment: None,
             }),
         )
         .await
@@ -757,6 +903,7 @@ mod tests {
                 text: "hi".into(),
                 room: None,
                 tagma: None,
+                attachment: None,
             }),
         )
         .await
@@ -797,6 +944,7 @@ mod tests {
                 text: "hi".into(),
                 room: None,
                 tagma: None,
+                attachment: None,
             }),
         )
         .await
@@ -830,6 +978,7 @@ mod tests {
                 text: "hi".into(),
                 room: Some("room-1".into()),
                 tagma: Some("tagma-b".into()),
+                attachment: None,
             }),
         )
         .await
@@ -860,6 +1009,7 @@ mod tests {
                 text: "hi".into(),
                 room: None,
                 tagma: Some("tagma-b".into()),
+                attachment: None,
             }),
         )
         .await
@@ -888,9 +1038,10 @@ mod tests {
             State(state),
             AuthIdentity::test_new(Identity::Agent { id: id.clone() }),
             Path((id, "tagma-b".to_string())),
-            Query(LescheHistoryQuery {
+            Query(DirectHistoryQuery {
                 after_seq: None,
                 limit: None,
+                format: None,
             }),
         )
         .await
@@ -924,6 +1075,65 @@ mod tests {
         .await
         .expect("cold state -> empty list, not 503");
         assert!(entries.is_empty());
+    }
+
+    /// The console reads the session list through the manage bridge, which
+    /// authenticates as the operator: the read routes accept the operator
+    /// identity (read-side narrowing of `require_root_self`), so a cold
+    /// state yields the same empty list it yields for the agent.
+    #[tokio::test]
+    async fn sessions_readable_by_operator() {
+        let state = make_state();
+        let id = AgentId::random();
+        let entry = make_entry(None, "tok".to_string());
+        state
+            .registry
+            .write()
+            .await
+            .register(id.clone(), RegistryEntry::Live(entry));
+
+        let Json(entries) = list_lesche_sessions(
+            State(state),
+            AuthIdentity::test_new(Identity::Operator),
+            Path(id),
+        )
+        .await
+        .expect("operator reads the session list");
+        assert!(entries.is_empty());
+    }
+
+    /// The operator passes the direct-history read guard and reaches the
+    /// relay-dependent leg: with no relay installed the route fails with
+    /// 503 (unavailable), NOT 403 -- pinning that the guard relaxation
+    /// covers the bridge identity the console actually presents.
+    #[tokio::test]
+    async fn direct_read_passes_guard_for_operator() {
+        let state = make_state();
+        let id = AgentId::random();
+        let entry = make_entry(None, "tok".to_string());
+        state
+            .registry
+            .write()
+            .await
+            .register(id.clone(), RegistryEntry::Live(entry));
+
+        let err = read_direct_session_messages(
+            State(state),
+            AuthIdentity::test_new(Identity::Operator),
+            Path((id, "tagma-b".to_string())),
+            Query(DirectHistoryQuery {
+                after_seq: None,
+                limit: None,
+                format: None,
+            }),
+        )
+        .await
+        .expect_err("no relay -> 503, guard passed");
+        assert_eq!(
+            err.status, 503,
+            "expected 503 unavailable, got {}",
+            err.status
+        );
     }
 
     /// The direct-send branch shares the per-tagma burst cap with the
@@ -965,6 +1175,7 @@ mod tests {
                 text: "hi".into(),
                 room: None,
                 tagma: Some("tagma-peer".into()),
+                attachment: None,
             }),
         )
         .await

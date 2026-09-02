@@ -45,6 +45,8 @@ the full authorization matrix, see [auth.md](auth.md).
 | `POST`   | `/agents/{id}/interrupt`          | Interrupt current agent operation          | operator / superior          |
 | `POST`   | `/agents/{id}/message`            | Send a user message (inbound)              | any (peer-to-peer)           |
 | `POST`   | `/agents/{id}/lesche/messages`    | Deliver an agent-authored message (root)   | self (root agent)            |
+| `GET`    | `/agents/{id}/lesche/sessions`    | List addressable lesche surfaces (root)    | self (root) / operator       |
+| `GET`    | `/agents/{id}/lesche/direct-sessions/{peer}/messages` | Read a direct session's history (root) | self (root) / operator       |
 | `GET`    | `/agents/{id}/events`             | Internal event stream (SSE, rich vocab)    | any                          |
 | `GET`    | `/agents/{id}/external/events`    | External chat-room stream (SSE, frontend)  | any                          |
 | `GET`    | `/agents/{id}/status`             | Get context usage and retry history        | any                          |

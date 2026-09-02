@@ -7,7 +7,7 @@ pub(crate) mod approval;
 mod approval;
 pub(crate) mod context;
 mod inbox;
-mod lesche;
+pub(crate) mod lesche;
 mod message;
 pub(crate) mod profile_probe;
 pub(crate) mod profiles;

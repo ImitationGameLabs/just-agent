@@ -10,10 +10,13 @@
 //! and no HTTP loopback, token, or SSRF is involved. The single caller is the
 //! manage dispatch arm in bilateral::handle_user_op; handle_manage is
 //! pub(super).
+//! The subset includes the root agent's lesche voice (the session list,
+//! direct-session history, and send): owner-console conversation data
+//! served under the same trust model (the relay is the operator-equivalent).
 
 use super::RelayHandle;
 use crate::auth::AuthIdentity;
-use crate::routes::{agent, budget, context, profile_probe, profiles};
+use crate::routes::{agent, budget, context, lesche, profile_probe, profiles};
 use crate::state::SharedState;
 use crate::work_schedule;
 use axum::Router;
@@ -61,6 +64,15 @@ fn manage_router() -> Router<SharedState> {
             "/work-schedule",
             get(work_schedule::get_work_schedule).put(work_schedule::put_work_schedule),
         )
+        .route(
+            "/agents/{id}/lesche/sessions",
+            get(lesche::list_lesche_sessions),
+        )
+        .route(
+            "/agents/{id}/lesche/direct-sessions/{peer}/messages",
+            get(lesche::read_direct_session_messages),
+        )
+        .route("/agents/{id}/lesche/messages", post(lesche::post_message))
         .fallback(manage_fallback)
 }
 
