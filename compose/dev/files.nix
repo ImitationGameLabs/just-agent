@@ -24,6 +24,18 @@ let
   # HTTP. Same reason the lesche service carries the CA layer.
   shared = import ../../nix/packages/container-shared.nix { inherit pkgs; };
   inherit (shared) cacert;
+
+  # Host-side publish override, the same env pattern as agora.nix's
+  # envOrDefault (the lesche convention): unset -> the default
+  # all-interfaces publish on 7400; set -> a second-stack files instance
+  # can live beside the first.
+  envOrDefault =
+    name: default:
+    let
+      v = builtins.getEnv name;
+    in
+    if v == "" then default else v;
+  filesHostPort = envOrDefault "KALLIP_ARION_FILES_PORT" "7400";
 in
 {
   config = {
@@ -63,7 +75,7 @@ in
       # Open publish in both TLS shapes (the lesche pattern -- a platform
       # microservice the browser reaches directly); the https shape's
       # Caddy route fronts the same port from the host network namespace.
-      service.ports = [ "7400:7400" ];
+      service.ports = [ "${filesHostPort}:7400" ];
       service.env_file = [ ".env" ];
       image.contents = [
         workspace

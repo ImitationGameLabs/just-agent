@@ -163,7 +163,9 @@ topology, so no `.env` override is needed for normal LAN dev.
 agora and lesche also publish `7100` / `7200` to the host for plain-HTTP
 tooling — `kallip-admin` and curl keep using `http://localhost:7100` /
 `http://localhost:7200` directly, bypassing Caddy. The files service
-publishes `127.0.0.1:7400` the same way (loopback-only): the `kallip file`
+publishes `7400` on all host interfaces (the lesche pattern -- browser-
+direct through Caddy in the TLS shape; the host port is overridable via
+`KALLIP_ARION_FILES_PORT`): the `kallip file`
 CLI points `KALLIP_FILES_URL` at `http://127.0.0.1:7400` and presents a
 tagma bearer (`KALLIP_FILES_TOKEN`); see docs/reference/files-api.md.
 

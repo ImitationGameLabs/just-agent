@@ -45,8 +45,9 @@ let
   # and lesche still publish 7100/7200 for host-side tooling (kallip-admin,
   # curl) AND for the dev tagma (compose/dev/tagma.nix, host network), which
   # reaches them at 127.0.0.1:7100 / :7200 rather than via compose DNS. files
-  # publishes 127.0.0.1:7400 for the same host-side tooling (the `kallip
-  # file` CLI).
+  # publishes on all host interfaces (:7400; host port overridable via
+  # KALLIP_ARION_FILES_PORT) since the files page -- the same shape the
+  # browser uses; the kallip file CLI keeps using the loopback side.
 
   # The stack shape switch: KALLIP_TLS=on (default) keeps the Caddy-fronted
   # https+domain topology below; KALLIP_TLS=off is the plain-http direct

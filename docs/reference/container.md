@@ -90,7 +90,7 @@ loaded into the shell by direnv's `dotenv`) so dev never clashes with
 production. Caddy runs on the host network and proxies the dev subdomains to
 `127.0.0.1`: `web.kallipai.lan` -> the host vite dev server (`:5173`);
 `agora.kallipai.lan` / `lesche.kallipai.lan` -> the host-published `:7100` /
-`:7200`; `files.kallipai.lan` -> the loopback-published `:7400` (the `kallip file` CLI face). The session cookie carries `Domain=kallipai.lan`
+`:7200`; `files.kallipai.lan` -> the host-published `:7400` (browser-direct, the lesche pattern). The session cookie carries `Domain=kallipai.lan`
 (`KALLIP_AGORA_SESSION_COOKIE_DOMAIN`), so the cookie set at login on the agora
 is sent to the lesche too — both subdomains share the registrable domain
 `kallipai.lan` (same-site under `SameSite=Strict`) — and CORS on each service
