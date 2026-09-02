@@ -33,11 +33,12 @@ export type Participant = {
 
 /** A file attached to a chat message: where it lives in the files service (the
  * record the sender uploaded/delivered) plus the display facts a file card
- * needs without a round trip. Mirrors the Rust `RoomAttachment`
- * (kallip-lesche-common/src/message.rs) -- same-commit contract. Rides the
- * bilateral `send_message` op (relay) and the `POST /agents/{id}/message` body
- * (direct), and comes back on `MessageAccepted`/`UserMessage`. */
-export type MessageAttachment = {
+ * needs without a round trip. Mirrors the Rust `FileAttachment`
+ * (kallip-common/src/protocol/agent.rs) -- same-commit contract. Rides the
+ * room envelope, the bilateral `send_message` op (relay), and the
+ * `POST /agents/{id}/message` body (direct); comes back on
+ * `MessageAccepted`/`UserMessage`. */
+export type FileAttachment = {
   readonly record_id: string;
   readonly name: string;
   readonly size: number;
@@ -108,7 +109,7 @@ export type TagmaReply =
       /** The request's attachment, echoed so the app can stamp its optimistic
        * user line with the authoritative reference. Absent on un-attached sends
        * and on acks serialized before the field existed. */
-      readonly attachment?: MessageAttachment;
+      readonly attachment?: FileAttachment;
     }
   | { readonly kind: "interrupted"; readonly req_id: number }
   | {
@@ -138,7 +139,7 @@ export type TagmaReply =
       readonly created_at?: string;
       /** The row's attachment, when the inbound message carried one. Absent on
        * rows persisted before the field existed (replayed as no file). */
-      readonly attachment?: MessageAttachment;
+      readonly attachment?: FileAttachment;
     }
   | {
       readonly kind: "history_batch_end";

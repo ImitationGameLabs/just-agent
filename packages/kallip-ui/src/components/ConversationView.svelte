@@ -22,7 +22,7 @@
   } from "../lib/transcript.ts";
   import type { ComposerModel } from "../lib/composer.svelte.ts";
   import type { Snippet } from "svelte";
-  import type { MessageAttachment } from "@kallipai/kallip-lesche-client";
+  import type { FileAttachment } from "@kallipai/kallip-lesche-client";
 
   let {
     lines,
@@ -62,7 +62,7 @@
     fileButton?: { onFilesPicked: (files: File[]) => void };
     /** The page-supplied download I/O for message file cards, forwarded
      *  verbatim (omitted = the cards render without a download button). */
-    downloadAttachment?: (attachment: MessageAttachment) => Promise<void>;
+    downloadAttachment?: (attachment: FileAttachment) => Promise<void>;
 
     /** Optional page-supplied notice rendered inside the scrollable transcript
      *  (after the inline error), so it scrolls with the messages. Used for the

@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import type { MessageAttachment } from "@kallipai/kallip-common";
+import type { FileAttachment } from "@kallipai/kallip-common";
 // The per-device IndexedDB cache of already-loaded chat lines: a durable
 // mirror of what the app has rendered, so a refresh/reopen restores the
 // conversation from local state and only asks the tagma for an incremental
@@ -37,7 +37,7 @@ export interface CachedLine {
   readonly createdAt?: string;
   /** The message's file attachment, when the sender shared one; absent on
    *  rows cached before the field existed (reads tolerate `undefined`). */
-  readonly attachment?: MessageAttachment;
+  readonly attachment?: FileAttachment;
 }
 
 const DB_NAME = "kallip-relay";

@@ -4,7 +4,7 @@ import {
   parseSseStream,
   readApiError,
 } from "@kallipai/kallip-common";
-import type { AgentId, MessageAttachment } from "@kallipai/kallip-common";
+import type { AgentId, FileAttachment } from "@kallipai/kallip-common";
 import type {
   AgentStatusResponse,
   BudgetResponse,
@@ -89,7 +89,7 @@ export class TagmaClient {
   postMessage(
     id: AgentId,
     text: string,
-    attachment?: MessageAttachment,
+    attachment?: FileAttachment,
   ): Promise<MessageResponse> {
     return this.json<MessageResponse>(`/agents/${id}/message`, {
       method: "POST",

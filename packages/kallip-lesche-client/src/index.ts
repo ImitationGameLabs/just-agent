@@ -32,7 +32,7 @@ export type {
   AuthoredEvent,
   Envelope,
   HistoryEntry,
-  MessageAttachment,
+  FileAttachment,
   Participant,
   RoomMessageView,
   SignalEvent,

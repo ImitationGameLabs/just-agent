@@ -1,5 +1,5 @@
 //! Add the nullable `attachment` column to `chat_history`: the JSON-serialized
-//! `RoomAttachment` an inbound user message carried, or `NULL`. Additive —
+//! `FileAttachment` an inbound user message carried, or `NULL`. Additive —
 //! `ALTER TABLE ... ADD COLUMN` keeps every existing row (they replay as
 //! attachment-less), matching the wire contract where the field is
 //! `serde(default)` both ways.

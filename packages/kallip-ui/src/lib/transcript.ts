@@ -25,7 +25,7 @@
 import type {
   AuthoredEvent,
   HistoryEntry,
-  MessageAttachment,
+  FileAttachment,
   Participant,
   SignalEvent,
   TagmaReply,
@@ -95,7 +95,7 @@ export interface ConversationLine {
   /** The file attached to this message, when the sender shared one (an
    *  optimistic user line that carries it, or a replayed user row). Rendered
    *  as a file card; absent on plain-text lines and system/error lines. */
-  readonly attachment?: MessageAttachment;
+  readonly attachment?: FileAttachment;
 }
 
 type ConversationStatus = "idle" | "busy" | "error";
@@ -122,7 +122,7 @@ function line(
   text: string,
   sender: ConversationSender | undefined,
   createdAt?: string,
-  attachment?: MessageAttachment,
+  attachment?: FileAttachment,
 ): ConversationTranscript {
   const trimmed = text.trim();
   if (trimmed === "" && attachment === undefined) return state;
@@ -360,7 +360,7 @@ export function withUserLine(
   text: string,
   localId: number,
   sender: ConversationSender,
-  attachment?: MessageAttachment,
+  attachment?: FileAttachment,
   now: Date = new Date(),
 ): ConversationTranscript {
   const trimmed = text.trim();
@@ -493,7 +493,7 @@ export function cacheLineOf(
   text: string;
   sender?: ConversationSender;
   createdAt?: string;
-  attachment?: MessageAttachment;
+  attachment?: FileAttachment;
 } | null {
   const cs = sender ? toSender(sender) : undefined;
   if (reply.kind === "user_message") {

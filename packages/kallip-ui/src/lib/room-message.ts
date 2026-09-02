@@ -3,7 +3,7 @@
 // disjoint address spaces; text plus an optional attachment -- no
 // `req_id`/ack), per
 // crates/platform/kallip-lesche-common/src/message.rs:
-//   pub struct RoomMessage { pub text: String, pub attachment: Option<RoomAttachment> }
+//   pub struct RoomMessage { pub text: String, pub attachment: Option<FileAttachment> }
 // The tagma's room inbound (`relay/mod.rs::handle_room_message`) does
 // `serde_json::from_slice::<RoomMessage>`. So a browser sending into a room
 // serializes `{ text }`, and a browser rendering an inbound room frame decodes
@@ -15,15 +15,7 @@
 // wire shape is a coordinated Rust+TS contract: a Rust change is a same-commit
 // change on both sides.
 
-/** A file the sender attached: where it lives in the files service (the
- * record the sender uploaded/delivered) plus the display facts a file card
- * needs without a round trip. Mirrors the Rust `RoomAttachment`
- * (kallip-lesche-common/src/message.rs) -- same-commit contract. */
-export interface RoomAttachment {
-  readonly record_id: string;
-  readonly name: string;
-  readonly size: number;
-}
+import type { FileAttachment } from "@kallipai/kallip-common";
 
 /** A decoded inbound room message. A payload that is not a `{ text }` object
  * (malformed JSON, or a future fielded shape) is surfaced as `unknown` so the
@@ -32,7 +24,7 @@ export type RoomMessage =
   | {
       readonly op: "message";
       readonly text: string;
-      readonly attachment?: RoomAttachment;
+      readonly attachment?: FileAttachment;
     }
   | { readonly op: "unknown"; readonly raw: string };
 
@@ -40,7 +32,7 @@ export type RoomMessage =
  * the sender base64s into the envelope. */
 export function encodeRoomSendMessage(
   text: string,
-  attachment?: RoomAttachment,
+  attachment?: FileAttachment,
 ): string {
   return JSON.stringify(attachment ? { text, attachment } : { text });
 }
@@ -60,7 +52,7 @@ export function decodeRoomMessage(plaintext: Uint8Array): RoomMessage {
     return { op: "unknown", raw };
   }
   if (typeof value.text === "string") {
-    const att = value.attachment as RoomAttachment | undefined;
+    const att = value.attachment as FileAttachment | undefined;
     if (
       att !== undefined &&
       att !== null &&

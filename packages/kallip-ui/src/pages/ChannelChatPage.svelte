@@ -27,7 +27,7 @@
     newAttachment,
     type AttachmentItem,
   } from "../lib/attachments.ts";
-  import type { MessageAttachment } from "@kallipai/kallip-lesche-client";
+  import type { FileAttachment } from "@kallipai/kallip-lesche-client";
   import { ConversationBase } from "../lib/session/conversation.svelte.ts";
   import { unreadStore, tagmaKey } from "../lib/session/unread.svelte.ts";
   import { navigate } from "../lib/shell/port.ts";
@@ -146,9 +146,7 @@
   // The card's download I/O: pull the referenced inbox copy (the user
   // keeps full read on it, Row1) and hand the bytes to the browser as a
   // named download. The bubble renders any failure inline.
-  async function downloadAttachment(
-    attachment: MessageAttachment,
-  ): Promise<void> {
+  async function downloadAttachment(attachment: FileAttachment): Promise<void> {
     const bytes = await filesClientOrFail().get(attachment.record_id);
     const url = URL.createObjectURL(new Blob([bytes]));
     const a = document.createElement("a");
@@ -163,7 +161,7 @@
       // One message per ready file; the composer text rides the first and
       // the rest go out attachment-only (an empty text with an attachment
       // is a real line on the wire and in the transcript).
-      const ready: MessageAttachment[] = [];
+      const ready: FileAttachment[] = [];
       for (const item of attachments) {
         if (item.recordId !== undefined) {
           ready.push({

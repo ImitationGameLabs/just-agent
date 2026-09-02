@@ -31,7 +31,8 @@ use std::time::Duration;
 
 use kallip_agora_common::ids::{ConversationId, ParticipantId, ParticipantKind, TagmaId};
 use kallip_common::protocol::SseEvent;
-use kallip_lesche_common::message::{HistoryEntry, Participant, RoomAttachment, TagmaReply};
+use kallip_lesche_common::direct::FileAttachment;
+use kallip_lesche_common::message::{HistoryEntry, Participant, TagmaReply};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
@@ -321,7 +322,7 @@ impl ExternalProjector {
         &self,
         partition: Option<Participant>,
         text: String,
-        attachment: Option<RoomAttachment>,
+        attachment: Option<FileAttachment>,
     ) {
         *self.inner.partition.lock().await = partition.clone();
         let sender = partition.clone().unwrap_or_else(operator_sender);
@@ -364,7 +365,7 @@ impl ExternalProjector {
         &self,
         sender: Participant,
         text: String,
-        attachment: Option<RoomAttachment>,
+        attachment: Option<FileAttachment>,
     ) {
         self.publish(ExternalFrame::Authored {
             sender,

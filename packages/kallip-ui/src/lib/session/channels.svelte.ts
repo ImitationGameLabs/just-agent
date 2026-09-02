@@ -13,7 +13,7 @@ import { type TagmaView } from "@kallipai/kallip-agora-client";
 import {
   type Envelope,
   LescheApiError,
-  type MessageAttachment,
+  type FileAttachment,
   openRelayChannel,
   type SignalEvent,
 } from "@kallipai/kallip-lesche-client";
@@ -468,7 +468,7 @@ export class ChannelsStore {
   send(
     conversationId: string,
     text: string,
-    attachment?: MessageAttachment,
+    attachment?: FileAttachment,
   ): void {
     const conv = this.conversations.get(conversationId);
     if (!conv || !conv.connected) return;

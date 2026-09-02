@@ -44,7 +44,7 @@ import type {
 import type {
   CachedLine,
   HistoryEntry,
-  MessageAttachment,
+  FileAttachment,
   Participant,
   TagmaReply,
 } from "@kallipai/kallip-lesche-client";
@@ -124,7 +124,7 @@ export abstract class ConversationBase {
    *  already in `transcript` (status "sending"); the single-in-flight send pump
    *  drains this one ack at a time. */
   pending = $state<
-    { localId: number; text: string; attachment?: MessageAttachment }[]
+    { localId: number; text: string; attachment?: FileAttachment }[]
   >([]);
   /** The ONE in-flight POST (its `user_message` frame has not landed): its
    *  synthetic id + sent text, or null when the pump is idle. The text lets the
@@ -184,7 +184,7 @@ export abstract class ConversationBase {
   /** Send a user message. Renders the optimistic line and hands off to the
    *  shared single-in-flight send pump (the in-flight POST's `user_message` frame
    *  promotes the line via `applyReplyCore`). */
-  send(text: string, attachment?: MessageAttachment): void {
+  send(text: string, attachment?: FileAttachment): void {
     const trimmed = text.trim();
     if (!this.transport) return;
     if (trimmed === "" && attachment === undefined) return;

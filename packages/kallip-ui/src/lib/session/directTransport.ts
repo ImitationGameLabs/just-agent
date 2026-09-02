@@ -12,7 +12,7 @@
 // no `history_id`, so the store renders the optimistic user line as sent once
 // the POST resolves.
 import { KallipError, TransportError } from "@kallipai/kallip-common";
-import type { MessageAttachment } from "@kallipai/kallip-common";
+import type { FileAttachment } from "@kallipai/kallip-common";
 
 import type { TagmaClient } from "@kallipai/kallip-client";
 import type {
@@ -164,7 +164,7 @@ export class DirectTransport implements Transport {
     }
   }
 
-  async send(text: string, attachment?: MessageAttachment): Promise<void> {
+  async send(text: string, attachment?: FileAttachment): Promise<void> {
     await this.client.postMessage(this.agentId, text, attachment);
   }
 

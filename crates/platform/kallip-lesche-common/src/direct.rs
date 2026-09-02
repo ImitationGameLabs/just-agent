@@ -75,19 +75,11 @@ pub fn canonical_pair<'a>(a: &'a TagmaId, b: &'a TagmaId) -> (&'a TagmaId, &'a T
     }
 }
 
-/// The neutral file-attachment descriptor for a [`DirectMessage`]: where the
-/// file lives in the files service (the record the sender uploaded/delivered)
-/// plus the display facts a file card needs. Deliberately room-agnostic --
-/// the shape is identical to `crate::message::RoomAttachment` on the wire (a
-/// test below pins the byte identity), so the room surface can switch to this
-/// neutral type later without a wire migration.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FileAttachment {
-    pub record_id: Uuid,
-    pub name: String,
-    pub size: u64,
-}
-
+/// The neutral file-attachment descriptor for a [`DirectMessage`], canonical
+/// in `kallip_common::protocol::agent` -- the one attachment type shared by
+/// room, relay, and direct surfaces (plain serde, wire shape
+/// `{record_id, name, size}`; the shape test below pins it).
+pub use kallip_common::protocol::agent::FileAttachment;
 /// The direct-session message payload: the plaintext content one tagma sends
 /// to its direct-session peer. Mirrors the room payload's minimalism (a
 /// message is text plus an optional file link); stored opaquely by the lesche
@@ -139,7 +131,6 @@ pub struct DirectMessageView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::RoomAttachment;
 
     fn tagma(s: &str) -> TagmaId {
         TagmaId::from(s.to_string())
@@ -190,25 +181,21 @@ mod tests {
     }
 
     #[test]
-    fn file_attachment_is_byte_identical_to_the_room_shape() {
-        // The neutral type exists so the room surface can switch to it later
-        // without a wire migration -- which only holds if the serde forms are
-        // byte-for-byte identical. This test is that guarantee.
-        let rid = Uuid::from_u128(42);
+    fn file_attachment_serializes_to_the_shared_wire_shape() {
+        // One attachment type across every surface (room, relay, direct): the
+        // wire contract is the plain {record_id, name, size} JSON, pinned here
+        // so no serde attribute can silently drift it.
         let fa = FileAttachment {
-            record_id: rid,
+            record_id: Uuid::from_u128(42),
             name: "notes.txt".to_string(),
             size: 11,
         };
-        let ra = RoomAttachment {
-            record_id: rid,
-            name: "notes.txt".to_string(),
-            size: 11,
-        };
+        let bytes = serde_json::to_vec(&fa).unwrap();
         assert_eq!(
-            serde_json::to_vec(&fa).unwrap(),
-            serde_json::to_vec(&ra).unwrap()
+            bytes,
+            br#"{"record_id":"00000000-0000-0000-0000-00000000002a","name":"notes.txt","size":11}"#
         );
+        assert_eq!(fa, serde_json::from_slice(&bytes).unwrap());
     }
 
     #[test]

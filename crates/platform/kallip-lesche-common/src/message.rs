@@ -4,6 +4,7 @@
 //! The [`TagmaRequest`] / [`TagmaReply`] inside is the E2E payload shared
 //! between app and tagma; the agora never decrypts it.
 
+use crate::direct::FileAttachment;
 use crate::event::AuthoredEvent;
 use kallip_agora_common::bytes::Ciphertext;
 use kallip_agora_common::ids::{ChannelId, TraceId};
@@ -66,17 +67,7 @@ pub struct RoomMessage {
     /// attachment keep the historical wire shape byte-for-byte and older
     /// readers (which ignore unknown fields) are none the wiser.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub attachment: Option<RoomAttachment>,
-}
-
-/// The structured descriptor of [`RoomMessage::attachment`]: where the file
-/// lives in the files service (the record the sender uploaded/delivered)
-/// plus the display facts a file card needs without a round trip.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoomAttachment {
-    pub record_id: uuid::Uuid,
-    pub name: String,
-    pub size: u64,
+    pub attachment: Option<FileAttachment>,
 }
 
 /// App -> tagma: one semantic operation against the tagma, encrypted inside an
@@ -94,7 +85,7 @@ pub enum TagmaRequest {
         /// pattern): sends without an attachment keep the historical wire shape
         /// byte-for-byte, and older readers ignore the unknown field.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        attachment: Option<RoomAttachment>,
+        attachment: Option<FileAttachment>,
     },
     /// Interrupt the tagma's in-flight turn.
     Interrupt { req_id: u64 },
@@ -170,7 +161,7 @@ pub enum TagmaReply {
         /// user line with the authoritative reference. Absent on un-attached
         /// sends and on acks serialized before the field existed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        attachment: Option<RoomAttachment>,
+        attachment: Option<FileAttachment>,
     },
     /// `Interrupt` was delivered.
     Interrupted { req_id: u64 },
@@ -215,7 +206,7 @@ pub enum TagmaReply {
         /// The row's attachment, when the inbound message carried one. Absent
         /// on rows persisted before the field existed (replayed as no file).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        attachment: Option<RoomAttachment>,
+        attachment: Option<FileAttachment>,
     },
     /// The sole completion signal for a `TagmaControl::History` batch. The
     /// relay emits the batch's rows (each as `Event` or `UserMessage`) and then
@@ -331,7 +322,7 @@ mod tests {
         // With an attachment: the full shape round-trips.
         let msg = RoomMessage {
             text: "report".into(),
-            attachment: Some(RoomAttachment {
+            attachment: Some(FileAttachment {
                 record_id: uuid::Uuid::nil(),
                 name: "report.pdf".into(),
                 size: 1234,
@@ -374,7 +365,7 @@ mod tests {
         let json = serde_json::to_string(&TagmaRequest::SendMessage {
             req_id: 2,
             text: "hi".into(),
-            attachment: Some(RoomAttachment {
+            attachment: Some(FileAttachment {
                 record_id: uuid::Uuid::nil(),
                 name: "report.pdf".into(),
                 size: 1234,

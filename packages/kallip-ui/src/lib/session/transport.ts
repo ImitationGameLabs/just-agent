@@ -19,7 +19,7 @@
 
 import type {
   Participant,
-  MessageAttachment,
+  FileAttachment,
   SignalEvent,
   TagmaReply,
 } from "@kallipai/kallip-lesche-client";
@@ -62,7 +62,7 @@ export interface Transport {
    *  transport has one (relay channel; direct has none, resolves void) -- the
    *  conversation correlates the eventual `error` reply on it. The tagma's
    *  reply (ack/error/authored) flows via {@link replies}. */
-  send(text: string, attachment?: MessageAttachment): Promise<number | void>;
+  send(text: string, attachment?: FileAttachment): Promise<number | void>;
   /** Tear down the underlying stream(s) synchronously. */
   close(): void;
 }

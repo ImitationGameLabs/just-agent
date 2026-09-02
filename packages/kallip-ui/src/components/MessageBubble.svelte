@@ -15,7 +15,7 @@
   import CopyButton from "./CopyButton.svelte";
   import RawToggleButton from "./RawToggleButton.svelte";
   import type { TogglePin } from "../lib/transcript.svelte.ts";
-  import type { MessageAttachment } from "@kallipai/kallip-lesche-client";
+  import type { FileAttachment } from "@kallipai/kallip-lesche-client";
   import {
     chat_file_download_aria,
     chat_file_unreadable,
@@ -49,10 +49,10 @@
     pin?: TogglePin;
     /** Optional file reference riding the message: present, the bubble
      *  renders a file card above the text. Absent, nothing changes. */
-    attachment?: MessageAttachment;
+    attachment?: FileAttachment;
     /** The page-supplied download I/O (files get -> blob -> anchor). The
      *  card stays a dumb renderer; without it the card has no button. */
-    downloadAttachment?: (attachment: MessageAttachment) => Promise<void>;
+    downloadAttachment?: (attachment: FileAttachment) => Promise<void>;
   } = $props();
 
   // Per-bubble raw-source view: ephemeral, resets when the bubble unmounts.

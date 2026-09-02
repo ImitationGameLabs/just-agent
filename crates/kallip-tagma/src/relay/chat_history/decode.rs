@@ -9,7 +9,8 @@
 //! or the operator for `NULL`) — and passes it here. This module only maps
 //! `direction` + `text` onto the wire reply shape.
 
-use kallip_lesche_common::message::{HistoryEntry, Participant, RoomAttachment};
+use kallip_lesche_common::direct::FileAttachment;
+use kallip_lesche_common::message::{HistoryEntry, Participant};
 
 /// One row returned for re-encryption + emit by the history pull paths.
 /// `direction` tells the replay loop which wire reply shape to reconstruct from
@@ -55,7 +56,7 @@ pub(crate) fn decode_row(row: HistoryRow, sender: Participant) -> Option<History
         "inbound" => {
             let attachment =
                 row.attachment.as_deref().and_then(|json| {
-                    match serde_json::from_str::<RoomAttachment>(json) {
+                    match serde_json::from_str::<FileAttachment>(json) {
                         Ok(att) => Some(att),
                         Err(e) => {
                             tracing::warn!(

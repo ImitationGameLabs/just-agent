@@ -35,7 +35,7 @@ pub async fn deliver_message(
     sender: Option<Participant>,
     id: &AgentId,
     text: &str,
-    attachment: Option<kallip_lesche_common::message::RoomAttachment>,
+    attachment: Option<kallip_lesche_common::direct::FileAttachment>,
 ) -> Result<MessageResponse, ApiError> {
     // Sanitize the wire sender's handle once, at ingest, so the persisted row
     // and the prompt header both see a clean value (format_incoming sanitizes

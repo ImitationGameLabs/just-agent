@@ -20,9 +20,8 @@ use kallip_e2ee::{
     DIR_INITIATOR_TO_RESPONDER, DIR_RESPONDER_TO_INITIATOR, DeviceKey, SessionKey, nonce,
 };
 use kallip_lesche_common::control::KeyExchangeInit;
-use kallip_lesche_common::message::{
-    Envelope, Participant, RoomAttachment, RoomMessage, TagmaReply, TagmaRequest,
-};
+use kallip_lesche_common::direct::FileAttachment;
+use kallip_lesche_common::message::{Envelope, Participant, RoomMessage, TagmaReply, TagmaRequest};
 use kallip_lesche_common::rooms::RoomId;
 use std::sync::Arc;
 use std::time::Duration;
@@ -670,7 +669,7 @@ async fn send_message_attachment_persists_and_replays() {
     let (handle, key, capture, _prompt_rx, _root_id, _state, db, _dir) =
         setup_with_history(8).await;
     let conv = conv_of(&handle);
-    let att = RoomAttachment {
+    let att = FileAttachment {
         record_id: uuid::Uuid::nil(),
         name: "report.pdf".into(),
         size: 1234,
@@ -706,7 +705,7 @@ async fn send_message_attachment_persists_and_replays() {
         .unwrap();
     assert_eq!(rows.len(), 1);
     let blob = rows[0].attachment.as_deref().expect("attachment persisted");
-    let stored: RoomAttachment = serde_json::from_str(blob).unwrap();
+    let stored: FileAttachment = serde_json::from_str(blob).unwrap();
     assert_eq!(stored.size, 1234);
 
     // It replays as a UserMessage carrying the attachment.

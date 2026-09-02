@@ -10,7 +10,7 @@
 // signals from one uniform interface regardless of transport.
 
 import type {
-  MessageAttachment,
+  FileAttachment,
   RelayChannel,
   SignalEvent,
 } from "@kallipai/kallip-lesche-client";
@@ -61,7 +61,7 @@ export class RelayTransport implements Transport {
     this.signalQueue.push(event);
   }
 
-  send(text: string, attachment?: MessageAttachment): Promise<number> {
+  send(text: string, attachment?: FileAttachment): Promise<number> {
     return this.channel.send(text, attachment);
   }
 

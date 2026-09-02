@@ -373,11 +373,11 @@ pub struct AgentStatusResponse {
 
 /// A file attached to a message: where it lives in the files service (the
 /// record the sender uploaded/delivered) plus the display facts a file card
-/// needs without a round trip. Wire shape `{record_id, name, size}`, mirroring
-/// `kallip-lesche-common::message::RoomAttachment` (a coordinated change: this
-/// crate cannot depend on the platform crate).
+/// needs without a round trip. Wire shape `{record_id, name, size}`; the
+/// single attachment type shared by every surface (room, relay, direct) --
+/// platform and app crates both resolve it from this base crate.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct MessageAttachment {
+pub struct FileAttachment {
     pub record_id: uuid::Uuid,
     pub name: String,
     pub size: u64,
@@ -392,7 +392,7 @@ pub struct MessageRequest {
     /// attachment keep the historical wire shape and older servers are none
     /// the wiser (they ignore the unknown field).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub attachment: Option<MessageAttachment>,
+    pub attachment: Option<FileAttachment>,
 }
 
 /// Response body for sending a message to an agent.
