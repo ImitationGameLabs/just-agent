@@ -442,3 +442,118 @@ Deno.test("a renumbered stream still notifies after a reconnect", async () => {
     globalThis.fetch = real;
   }
 });
+
+// Regression (review round): the last unsubscribe detaches the
+// document-level visibilitychange listener; a revived feed must
+// re-arm it, or frames seen while hidden would pend with no one
+// left to flush them.
+Deno.test(
+  "revival re-arms the visibility flush after full detach",
+  async () => {
+    // A real listener set: add/remove mutate it, dispatch walks
+    // it, so a detached listener is observably gone.
+    const listeners = new Set<() => void>();
+    const doc = {
+      hidden: false,
+      addEventListener: (_type: string, fn: () => void) => {
+        listeners.add(fn);
+      },
+      removeEventListener: (_type: string, fn: () => void) => {
+        listeners.delete(fn);
+      },
+    };
+    const dispatch = (): void => {
+      for (const fn of [...listeners]) fn();
+    };
+    let stream = 0;
+    const real = globalThis.fetch;
+    const realDoc = globalThis.document;
+    globalThis.fetch = (() => {
+      stream += 1;
+      if (stream === 1) {
+        // First stint idles open: the pre-detach subscription
+        // sees no frames, keeping the subject on the revival
+        // connection.
+        return Promise.resolve(
+          new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      }
+      if (stream === 2) {
+        // Revival connection: a visible frame (leading nudge)
+        // then a hidden one (pends behind pendingWhileHidden).
+        const encoder = new TextEncoder();
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode('data: {"tagma_id":"t-a","seq":5}\n\n'),
+                );
+                setTimeout(() => {
+                  controller.enqueue(
+                    encoder.encode('data: {"tagma_id":"t-a","seq":6}\n\n'),
+                  );
+                }, 150);
+              },
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        );
+      }
+      // Later connections idle open so the chain cannot re-notify.
+      return Promise.resolve(
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+    }) as typeof fetch;
+    globalThis.document = doc as unknown as typeof globalThis.document;
+    try {
+      const backend = new OnlineBackend(
+        {} as unknown as ManageRestClient,
+        "t-a",
+        new ProjectionClient("http://lesche.test"),
+      );
+      let nudges = 0;
+      const first = backend.projectionFeed!.subscribe(() => {
+        nudges += 1;
+      });
+      await new Promise((r) => setTimeout(r, 40));
+      first(); // full detach takes the document listener along
+      assertEquals(
+        listeners.size,
+        0,
+        "the detach really removed the visibility listener",
+      );
+      const second = backend.projectionFeed!.subscribe(() => {
+        nudges += 1;
+      });
+      // Revival stream, frame one (visible): leading nudge.
+      await new Promise((r) => setTimeout(r, 60));
+      assertEquals(nudges, 1, "the revived feed notifies while visible");
+      doc.hidden = true;
+      // Frame two (hidden): pends, no notify.
+      await new Promise((r) => setTimeout(r, 120));
+      assertEquals(nudges, 1, "hidden swallows the frame");
+      doc.hidden = false;
+      dispatch();
+      await new Promise((r) => setTimeout(r, 10));
+      assertEquals(
+        nudges,
+        2,
+        "the flip after revival flushes the pending nudge",
+      );
+      second();
+    } finally {
+      globalThis.fetch = real;
+      globalThis.document = realDoc;
+    }
+  },
+);

@@ -242,6 +242,11 @@ export class OnlineBackend implements ManagementBackend {
         listeners.add(onDirty);
         backoff.reset();
         if (!controller) {
+          // Revival re-arms the visibility flush: the last unsubscribe
+          // detached the document-level listener, so a resurrected feed
+          // must re-add it (idempotent per DOM) or hidden frames would
+          // pend with no one left to flush them.
+          document.addEventListener("visibilitychange", onVisibility);
           controller = new AbortController();
           void runLoop();
         }
