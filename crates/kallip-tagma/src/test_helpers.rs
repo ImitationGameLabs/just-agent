@@ -428,6 +428,21 @@ pub fn ensure_test_data_dir() {
     });
 }
 
+/// Register a live agent bound to the `alt` set (the dangling-bindings
+/// scenarios' subject). Returns the agent id.
+pub(crate) async fn alt_bound_sub(state: &SharedState) -> AgentId {
+    let sub = AgentId::random();
+    let supervisor = AgentId::random();
+    let (mut entry, rx) = make_entry_with_rx(Some(supervisor), format!("agent-{sub}"));
+    entry.identity.config.profile_set = Some("alt".into());
+    drop(rx);
+    state
+        .registry
+        .write()
+        .await
+        .register(sub.clone(), RegistryEntry::Live(entry));
+    sub
+}
 #[cfg(test)]
 mod guard_tests {
     use super::*;

@@ -626,7 +626,7 @@ pub async fn delete_profile_set(
 mod tests {
     use super::*;
     use crate::state::RegistryEntry;
-    use crate::test_helpers::{make_entry_with_rx, make_state, make_state_two_sets};
+    use crate::test_helpers::{alt_bound_sub, make_entry_with_rx, make_state, make_state_two_sets};
     use kallip_common::agentid::AgentId;
 
     fn op_auth() -> AuthIdentity {
@@ -641,20 +641,6 @@ mod tests {
         assert_eq!(value["endpoints"]["test"]["api_key"], "********");
         // Non-key fields are untouched.
         assert_eq!(value["endpoints"]["test"]["family"], "deepseek");
-    }
-
-    async fn alt_bound_sub(state: &SharedState) -> AgentId {
-        let sub = AgentId::random();
-        let supervisor = AgentId::random();
-        let (mut entry, rx) = make_entry_with_rx(Some(supervisor), format!("agent-{sub}"));
-        entry.identity.config.profile_set = Some("alt".into());
-        drop(rx);
-        state
-            .registry
-            .write()
-            .await
-            .register(sub.clone(), RegistryEntry::Live(entry));
-        sub
     }
 
     #[test]

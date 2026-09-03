@@ -221,7 +221,7 @@ async fn extract_response(response: axum::response::Response) -> TagmaReply {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::make_state;
+    use crate::test_helpers::{alt_bound_sub, make_state, make_state_two_sets};
 
     async fn manage_get(state: &SharedState, uri: &str) -> Response {
         let request = Request::builder()
@@ -258,6 +258,46 @@ mod tests {
             .expect("small body");
         let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
         assert_eq!(body["error"]["message"], "unknown management route");
+    }
+
+    #[tokio::test]
+    async fn manage_relay_409_keeps_structured_dangling() {
+        // The online shell keys its confirm flow off body.error.dangling;
+        // pin that the manage channel relays the full envelope verbatim. A
+        // flattened message-only body would regress the confirm dialog to
+        // the raw error text (the P2 acceptance failure).
+        let state = make_state_two_sets();
+        let _sub = alt_bound_sub(&state).await;
+        let wire = serde_json::json!({
+            "endpoints": { "test": { "id": "test", "family": "deepseek", "api_key": null, "base_url": null } },
+            "sets": [{ "name": "default", "profiles": [{ "id": "test", "endpoint": "test", "model": "test", "max_context_window": 128000 }] }],
+            "default": "default"
+        });
+        let request = Request::builder()
+            .method(Method::PUT)
+            .uri("/profiles")
+            .extension(AuthIdentity::operator())
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(wire.to_string()))
+            .expect("static parts");
+        let response = manage_router()
+            .with_state(state.clone())
+            .oneshot(request)
+            .await
+            .unwrap_or_else(|infallible| match infallible {});
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let bytes = to_bytes(response.into_body(), MAX_RESPONSE_BYTES)
+            .await
+            .expect("small body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
+        let dangling = body["error"]["dangling"]
+            .as_array()
+            .expect("structured dangling list present");
+        assert!(
+            dangling
+                .iter()
+                .any(|s| s.as_str().unwrap_or_default().contains("'alt'"))
+        );
     }
 
     #[tokio::test]
