@@ -127,7 +127,11 @@ impl RelayHandle {
                 method,
                 path,
                 body,
-            } => self.handle_manage_rest(req_id, &method, &path, body).await,
+                trace,
+            } => {
+                self.handle_manage_rest(req_id, &method, &path, &trace, body)
+                    .await
+            }
         }
     }
 }
@@ -176,14 +180,16 @@ impl RelayHandle {
     async fn handle_manage_rest(
         &self,
         req_id: u64,
+        frame_path: &str,
         method: &str,
-        path: &str,
+        trace: &kallip_archeion_common::ids::TraceId,
         body: serde_json::Value,
     ) {
-        if !frame_allowed(method, path) {
+        if !frame_allowed(method, frame_path) {
             warn!(
                 req_id,
-                method, path, "manage-rest frame denied by allowlist"
+                method, frame_path = %frame_path, trace = %trace,
+                "manage-rest frame denied by allowlist"
             );
             let reply = ManageRestReply {
                 req_id,
@@ -193,7 +199,7 @@ impl RelayHandle {
             let _ = self.inner.client.post_manage_reply(&reply).await;
             return;
         }
-        let reply: TagmaReply = AssertUnwindSafe(self.dispatch_manage(method, path, body))
+        let reply: TagmaReply = AssertUnwindSafe(self.dispatch_manage(method, frame_path, body))
             .catch_unwind()
             .await
             .unwrap_or_else(|_| TagmaReply::ManageResult {

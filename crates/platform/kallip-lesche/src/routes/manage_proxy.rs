@@ -82,9 +82,33 @@ async fn proxy_manage(
         }
     };
 
-    // Contract (root-approved): no query string on the frame surface.
-    if uri.query().is_some() {
-        return (StatusCode::NOT_FOUND, "query not allowed on the frame").into_response();
+    // Contract (root-approved): the frame path stays query-free. The one
+    // sanctioned client filter is `?include=` on /agents -- the proxy parses
+    // it here and forwards the keys inside the frame body instead; any
+    // other query key is still a 404.
+    let mut body = body
+        .map(|axum::Json(v)| v)
+        .unwrap_or(serde_json::Value::Null);
+    if let Some(q) = uri.query() {
+        // hand-rolled: only include=key,key lists ride this path, and the
+        // lesche has no form-encoding dependency.
+        let pairs: Vec<(String, String)> = q
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+        let unknown = pairs.iter().any(|(k, _)| k != "include");
+        let only_agents = uri.path() == "/agents";
+        if unknown || !only_agents {
+            return (StatusCode::NOT_FOUND, "query not allowed on the frame").into_response();
+        }
+        let include: Vec<String> = pairs
+            .iter()
+            .filter(|(k, _)| k == "include")
+            .flat_map(|(_, v)| v.split(',').map(str::trim).map(str::to_owned))
+            .filter(|s| !s.is_empty())
+            .collect();
+        body = serde_json::json!({ "include": include });
     }
     let path = uri.path();
     let req_id = next_req_id();
@@ -99,9 +123,9 @@ async fn proxy_manage(
         req_id,
         method: method.as_str().to_ascii_uppercase(),
         path: path.to_owned(),
-        body: body
-            .map(|axum::Json(v)| v)
-            .unwrap_or(serde_json::Value::Null),
+        // Fresh UUID per proxied request: collision-free across reconnects.
+        trace: kallip_archeion_common::ids::TraceId::random(),
+        body,
     };
     if tx.send(frame).is_err() {
         pending().lock().await.remove(&(tagma_id, req_id));
@@ -141,6 +165,7 @@ mod tests {
             req_id: 7,
             method: "GET".to_owned(),
             path: "/agents".to_owned(),
+            trace: kallip_archeion_common::ids::TraceId::random(),
             body: serde_json::Value::Null,
         };
         let encoded = serde_json::to_string(&frame).expect("frame encodes");
@@ -330,6 +355,66 @@ mod proxy_tests {
             resolver
         );
         assert_eq!(status_of(&resp), StatusCode::OK);
+    }
+
+    /// P1-c nail: `?include=` rides the frame BODY (the frame path stays
+    /// query-free) and every frame carries a fresh UUID trace, so traces
+    /// from two requests never collide even across reconnects.
+    #[tokio::test]
+    async fn include_query_rides_body_with_unique_traces() {
+        let (state, _control) = db_state().await;
+        let tagma = TagmaId::from("t-a".to_string());
+        let owner = uid("alice");
+        let mut rx = enroll_tunnel(&state, &tagma, &owner).await;
+        let uri = uri_of("/agents?include=status");
+        let first = tokio::join!(call(&state, &owner, "t-a", "GET", &uri, None), async {
+            match rx.recv().await.expect("frame 1") {
+                TunnelInbound::ManageRest {
+                    req_id,
+                    method: _,
+                    path,
+                    body,
+                    trace,
+                } => {
+                    assert_eq!(path, "/agents");
+                    assert_eq!(body["include"], serde_json::json!(["status"]));
+                    assert!(!trace.as_ref().is_empty());
+                    crate::routes::manage_proxy::resolve(
+                        &tagma,
+                        req_id,
+                        ManageRestReply {
+                            req_id,
+                            status: 200,
+                            body: serde_json::json!({}),
+                        },
+                    )
+                    .await;
+                    trace
+                }
+                _ => panic!("expected ManageRest"),
+            }
+        });
+        assert_eq!(status_of(&first.0), StatusCode::OK);
+        let second = tokio::join!(call(&state, &owner, "t-a", "GET", &uri, None), async {
+            match rx.recv().await.expect("frame 2") {
+                TunnelInbound::ManageRest { req_id, trace, .. } => {
+                    crate::routes::manage_proxy::resolve(
+                        &tagma,
+                        req_id,
+                        ManageRestReply {
+                            req_id,
+                            status: 200,
+                            body: serde_json::json!({}),
+                        },
+                    )
+                    .await;
+                    trace
+                }
+                _ => panic!("expected ManageRest"),
+            }
+        });
+        assert_eq!(status_of(&second.0), StatusCode::OK);
+        assert_ne!(first.1, second.1, "traces must be unique per request");
     }
     #[tokio::test]
     async fn offline_tagma_is_not_found() {

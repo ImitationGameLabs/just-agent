@@ -78,12 +78,72 @@ fn manage_router() -> Router<SharedState> {
 
 /// `list_agents` with the manage plane's historical query semantics: a
 /// missing or unparsable query string yields the default struct (axum's
+/// One-registry-pass aggregate: every agent's summary, optionally joined
+/// with its live status snapshot. This is the N+1 killer for the operator
+/// UI -- one frame instead of one status GET per agent.
+async fn aggregate_agents(state: &SharedState, with_status: bool) -> Response {
+    let registry = state.registry.read().await;
+    let mut agents = Vec::new();
+    for (id, entry) in registry.iter() {
+        let mut summary =
+            serde_json::to_value(state.summarize(id, entry)).unwrap_or(serde_json::Value::Null);
+        if with_status {
+            let live = entry.as_live().is_some();
+            summary["status"] = if live {
+                // Reuse the real handler in-process: one function call per
+                // agent, not one HTTP round-trip per agent.
+                let resp = crate::routes::context::agent_status(
+                    State(state.clone()),
+                    crate::auth::AuthIdentity::operator(),
+                    axum::extract::Path(id.clone()),
+                )
+                .await
+                .into_response();
+                let bytes = if resp.status().is_success() {
+                    axum::body::to_bytes(resp.into_body(), 1 << 20)
+                        .await
+                        .unwrap_or_default()
+                } else {
+                    axum::body::Bytes::new()
+                };
+                serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            };
+        }
+        agents.push(summary);
+    }
+    drop(registry);
+    axum::Json(serde_json::json!({ "agents": agents })).into_response()
+}
+
 /// `Query` extractor would reject with 400 instead).
 async fn list_agents_lenient(
     State(state): State<SharedState>,
     auth: AuthIdentity,
     uri: Uri,
+    body: axum::body::Bytes,
 ) -> Response {
+    // Aggregated shape (P1-c): the reverse proxy turns the HTTP-side
+    // `?include=` filter into this frame-body field -- the frame path
+    // itself stays query-free. Include keys are a closed allowlist;
+    // unknown keys are rejected (400) rather than ignored, matching the
+    // frame surface's fail-closed stance.
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    if let Some(inc) = parsed.get("include") {
+        let includes: Vec<String> = match serde_json::from_value(inc.clone()) {
+            Ok(v) => v,
+            Err(_) => {
+                return axum::http::StatusCode::BAD_REQUEST.into_response();
+            }
+        };
+        const ALLOWED: [&str; 1] = ["status"];
+        if includes.iter().any(|k| !ALLOWED.contains(&k.as_str())) {
+            return axum::http::StatusCode::BAD_REQUEST.into_response();
+        }
+        return aggregate_agents(&state, includes.contains(&"status".to_string())).await;
+    }
     let q: ListAgentsQuery =
         serde_urlencoded::from_str(uri.query().unwrap_or("")).unwrap_or_default();
     agent::list_agents(State(state), auth, axum::extract::Query(q))
@@ -235,6 +295,26 @@ mod tests {
             .oneshot(request)
             .await
             .unwrap_or_else(|infallible| match infallible {})
+    }
+
+    /// P1-c nail: the aggregate include list is a closed allowlist -- an
+    /// unknown key is a 400 (fail-closed), not an ignored filter.
+    #[tokio::test]
+    async fn aggregate_rejects_unknown_include_key() {
+        let state = make_state();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/agents")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .extension(AuthIdentity::operator())
+            .body(Body::from(r#"{"include":["bogus"]}"#))
+            .expect("static parts");
+        let response = manage_router()
+            .with_state(state)
+            .oneshot(request)
+            .await
+            .unwrap_or_else(|infallible| match infallible {});
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

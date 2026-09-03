@@ -37,9 +37,14 @@ pub enum TunnelInbound {
     /// (low/medium-sensitivity routes only; anything unlisted is a 404) so
     /// prompt-bearing routes never traverse this frame in plaintext.
     ManageRest {
+        /// Distributed-trace id minted by the lesche reverse proxy per
+        /// proxied request -- a fresh UUID, so traces stay collision-free
+        /// across tunnel reconnects (req_id restarts at zero on
+        /// reconnect; a trace must not).
         req_id: u64,
         method: String,
         path: String,
+        trace: kallip_archeion_common::ids::TraceId,
         body: serde_json::Value,
     },
 }
