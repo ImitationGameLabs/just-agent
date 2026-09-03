@@ -25,14 +25,16 @@ use crate::auth::AuthPrincipal;
 use crate::state::SharedConvState;
 
 /// How long the proxy waits for the tagma's plaintext reply before giving up
-/// (504). Shorter than the old envelope-path 15s blind wait by design.
+/// (504).
 const REPLY_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// In-flight (tagma, req_id) -> reply channel. A request is registered before
-/// the frame is fanned and resolved by the `/v1/tunnel/manage-reply` POST.
-fn pending() -> &'static Mutex<HashMap<(TagmaId, u64), oneshot::Sender<ManageRestReply>>> {
-    static PENDING: OnceLock<Mutex<HashMap<(TagmaId, u64), oneshot::Sender<ManageRestReply>>>> =
-        OnceLock::new();
+type PendingMap = HashMap<(TagmaId, u64), oneshot::Sender<ManageRestReply>>;
+
+/// (tagma, req_id) -> the reply oneshot, registered by the proxy before
+/// fanning the frame and resolved by the manage-reply POST.
+fn pending() -> &'static Mutex<PendingMap> {
+    static PENDING: OnceLock<Mutex<PendingMap>> = OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -191,5 +193,172 @@ mod tests {
             .await
         );
         let _ = rx.await;
+    }
+
+    /// arch nail: pending keys are tenant-bound -- tagma B cannot resolve
+    /// tagma A's in-flight request even for the same req_id.
+    #[tokio::test]
+    async fn pending_resolution_is_tenant_bound() {
+        let a = TagmaId::from("t-a".to_string());
+        let b = TagmaId::from("t-b".to_string());
+        let (tx, rx) = oneshot::channel();
+        pending().lock().await.insert((a.clone(), 9), tx);
+        assert!(
+            !resolve(
+                &b,
+                9,
+                ManageRestReply {
+                    req_id: 9,
+                    status: 200,
+                    body: serde_json::json!({})
+                },
+            )
+            .await
+        );
+        assert!(
+            resolve(
+                &a,
+                9,
+                ManageRestReply {
+                    req_id: 9,
+                    status: 200,
+                    body: serde_json::json!({})
+                },
+            )
+            .await
+        );
+        let _ = rx.await;
+    }
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::*;
+    use crate::routes::test_support::{as_user, db_state};
+    use axum::extract::{Path, State};
+    use axum::http::{Method, StatusCode, Uri};
+    use kallip_archeion_common::ids::UserId;
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    fn uid(s: &str) -> UserId {
+        UserId::from(s.to_string())
+    }
+
+    fn uri_of(s: &str) -> Uri {
+        Uri::from_str(s).expect("test uri")
+    }
+
+    async fn call(
+        state: &SharedConvState,
+        user: &UserId,
+        agent: &str,
+        method: &str,
+        uri: &Uri,
+        body: Option<serde_json::Value>,
+    ) -> axum::response::Response {
+        let principal = AuthPrincipal(Principal::User(user.clone()));
+        proxy_manage(
+            State(state.clone()),
+            principal,
+            Path(agent.to_string()),
+            Method::from_bytes(method.as_bytes()).expect("valid method"),
+            uri.clone(),
+            body.map(axum::Json),
+        )
+        .await
+        .expect("handler infallible")
+    }
+
+    async fn enroll_tunnel(
+        state: &SharedConvState,
+        tagma: &TagmaId,
+        owner: &UserId,
+    ) -> tokio::sync::broadcast::Receiver<TunnelInbound> {
+        let mut reg = state.registry.write().unwrap();
+        let (tx, rx) = tokio::sync::broadcast::channel(8);
+        reg.register_presence(tagma, owner.clone(), tx, std::sync::Arc::new(()));
+        rx
+    }
+
+    fn status_of(resp: &axum::response::Response) -> StatusCode {
+        resp.status()
+    }
+
+    #[tokio::test]
+    async fn cross_tenant_request_is_forbidden() {
+        let (state, _control) = db_state().await;
+        let tagma = TagmaId::from("t-a".to_string());
+        let owner = uid("alice");
+        let other = uid("mallory");
+        let _rx = enroll_tunnel(&state, &tagma, &owner).await;
+        let resp = call(&state, &other, "t-a", "GET", &uri_of("/agents"), None).await;
+        assert_eq!(status_of(&resp), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn owner_request_fans_uppercase_frame_and_resolves() {
+        let (state, _control) = db_state().await;
+        let tagma = TagmaId::from("t-a".to_string());
+        let owner = uid("alice");
+        let mut rx = enroll_tunnel(&state, &tagma, &owner).await;
+        let resolver = {
+            let tagma = tagma.clone();
+            async move {
+                let frame = rx.recv().await.expect("frame fanned");
+                match frame {
+                    TunnelInbound::ManageRest { req_id, method, .. } => {
+                        assert_eq!(method, "GET"); // upper-case contract
+                        crate::routes::manage_proxy::resolve(
+                            &tagma,
+                            req_id,
+                            ManageRestReply {
+                                req_id,
+                                status: 200,
+                                body: serde_json::json!({}),
+                            },
+                        );
+                    }
+                    _ => panic!("expected ManageRest"),
+                }
+            }
+        };
+        // join!: drives the handler and the frame resolver concurrently so
+        // the reply round-trip cannot deadlock on a single-threaded test
+        // runtime.
+        let uri = uri_of("/agents");
+        let (resp, ()) = tokio::join!(
+            call(
+                &state, &owner, "t-a", "get", // lower-case input must be normalized
+                &uri, None,
+            ),
+            resolver
+        );
+    }
+
+    #[tokio::test]
+    async fn offline_tagma_is_not_found() {
+        let (state, _control) = db_state().await;
+        let resp = call(
+            &state,
+            &uid("alice"),
+            "t-ghost",
+            "GET",
+            &uri_of("/agents"),
+            None,
+        )
+        .await;
+        assert_eq!(status_of(&resp), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn query_string_is_rejected() {
+        let (state, _control) = db_state().await;
+        let tagma = TagmaId::from("t-a".to_string());
+        let owner = uid("alice");
+        let _rx = enroll_tunnel(&state, &tagma, &owner).await;
+        let uri = Uri::from_static("/agents?state=idle");
+        let resp = call(&state, &owner, "t-a", "GET", &uri, None).await;
+        assert_eq!(status_of(&resp), StatusCode::NOT_FOUND);
     }
 }

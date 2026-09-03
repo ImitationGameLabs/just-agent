@@ -141,6 +141,9 @@ impl RelayHandle {
 /// manage_router would happily serve it -- fail-closed by construction.
 fn frame_allowed(method: &str, path: &str) -> bool {
     let p = path.trim_end_matches('/');
+    let sub = p
+        .strip_prefix("/agents/")
+        .and_then(|rest| rest.split_once('/'));
     match (method, p) {
         ("GET", "/agents")
         | ("GET", "/budget")
@@ -151,11 +154,7 @@ fn frame_allowed(method: &str, path: &str) -> bool {
         | ("POST", "/profiles/apply")
         | ("PUT", "/profiles/default") => true,
         // Per-agent subroutes: match the {id} segment explicitly.
-        _ => match (
-            method,
-            p.strip_prefix("/agents/")
-                .and_then(|rest| rest.split_once('/')),
-        ) {
+        _ => match (method, sub) {
             ("GET", Some((_, "status"))) => true,
             ("POST", Some((_, "interrupt"))) => true,
             ("PUT", Some((_, "duty" | "metadata" | "profile-set"))) => true,
@@ -169,7 +168,8 @@ impl RelayHandle {
     /// allowlist, then execute against the same manage router the envelope
     /// path uses, replying over the plaintext manage-reply POST (the E2E
     /// emit loop is unreadable to the lesche proxy, which needs the reply
-    /// to answer the HTTP caller). The trace id is synthesized for logging.
+    /// to answer the HTTP caller). Replies are keyed by req_id; trace ids
+    /// are only for logging.
     async fn handle_manage_rest(
         &self,
         req_id: u64,
