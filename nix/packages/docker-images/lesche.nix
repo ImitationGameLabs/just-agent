@@ -17,7 +17,7 @@ in
 # The minimal lesche image: just the binary + the CA trust store. The lesche is
 # a pure HTTP service (axum) like the archeion -- no shell-out toolset, no baked env
 # (it reads everything from its env at runtime). The compose service
-# (compose/prod/archeion.nix, arion-compose.nix dev) supplies the command +
+# (compose/prod/polis.nix, arion-compose.nix dev) supplies the command +
 # environment. A separate image from the archeion so the two services can be
 # rebuilt/redeployed independently (the point of the control/data-plane split).
 pkgs.dockerTools.buildImage {

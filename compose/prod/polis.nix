@@ -6,7 +6,7 @@
 # official postgres:17.5 image for production parity and isolation.
 #
 # Invoke from the repo root (so .env resolves):
-#   arion -f compose/prod/archeion.nix up -d
+#   arion -f compose/prod/polis.nix up -d
 #
 # This is a single-purpose file: every service is declared directly, no mode
 # switch or mkIf/mkMerge. Secret-bearing deploy env (DB url incl.

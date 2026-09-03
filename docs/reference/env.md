@@ -356,7 +356,7 @@ env always win, and a spawn with no relay signal at all gets nothing.
 
 ## Dev stack shape
 
-Two variables drive the dev compose (`compose/dev/archeion.nix`) and the web dev
+Two variables drive the dev compose (`compose/dev/polis.nix`) and the web dev
 server together (both flow from the root `.env` via direnv):
 
 | Variable        | Default                                     | Purpose                                                                                                                         |

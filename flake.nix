@@ -131,7 +131,7 @@
             # nix/packages/docker-images/.
             // (lib.optionalAttrs pkgs.stdenv.isLinux {
               # Purpose-built prod images for the split deploy
-              # (compose/prod/archeion.nix / tagma.nix): archeion, lesche, and
+              # (compose/prod/polis.nix / tagma.nix): archeion, lesche, and
               # files are the server-side services (co-located, independent images);
               # carries no tagma-specific baked env.
               kallip-archeion-image = import ./nix/packages/docker-images/archeion.nix {

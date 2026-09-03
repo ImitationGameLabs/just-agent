@@ -2,7 +2,7 @@
 # archeion-postgres + lesche-postgres + files-postgres + instances. The default
 # dev stack -- a plain `arion up` brings it up via the `arion-compose.nix` shim
 # at the repo root (which just re-exports this module); invoke directly with
-# `arion -f compose/dev/archeion.nix ...` for the same result.
+# `arion -f compose/dev/polis.nix ...` for the same result.
 #
 # The dev tagma (compose/dev/tagma.nix) and the integration-test runner
 # (compose/dev/test.nix) are NOT here: each is its own single-purpose
@@ -233,7 +233,7 @@ in
     # host-side tooling (kallip-admin, curl). The browser reaches it via Caddy
     # at https://archeion.<devDomain>. dev WebAuthn / CORS / cookie values all
     # derive from the `devDomain` nix binding. (prod-archeion is its own
-    # composition: compose/prod/archeion.nix, behind the operator's TLS
+    # composition: compose/prod/polis.nix, behind the operator's TLS
     # reverse proxy, no published port.)
     services.archeion = {
       service.depends_on = [ "archeion-postgres" ];

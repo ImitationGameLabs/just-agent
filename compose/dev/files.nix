@@ -1,5 +1,5 @@
 # Dev files-side composition fragment: files + files-postgres. Imported by
-# compose/dev/archeion.nix (the default dev stack) -- the files service belongs
+# compose/dev/polis.nix (the default dev stack) -- the files service belongs
 # to the archeion-side stack, not its own single-purpose composition, because it
 # leans on the archeion's /internal ControlPlane surface over the compose
 # network (the same dependency shape as the lesche).
@@ -13,7 +13,7 @@
 let
   # Load via git+file URL (not a bare path) so getFlake applies fetchGit's VCS
   # filtering and the resolved packages match `nix build .#*` bit-for-bit --
-  # the same resolution compose/dev/archeion.nix performs.
+  # the same resolution compose/dev/polis.nix performs.
   flake = builtins.getFlake "git+file://${toString ../..}";
   workspace = flake.packages.x86_64-linux.default;
 
@@ -25,7 +25,7 @@ let
   shared = import ../../nix/packages/container-shared.nix { inherit pkgs; };
   inherit (shared) cacert;
 
-  # Host-side publish override, the same env pattern as archeion.nix's
+  # Host-side publish override, the same env pattern as polis.nix's
   # envOrDefault (the lesche convention): unset -> the default
   # all-interfaces publish on 7400; set -> a second-stack files instance
   # can live beside the first.
@@ -41,7 +41,7 @@ in
   config = {
     # Named volumes must be declared at the compose top level (compose rejects
     # a reference to an undeclared named volume); declaring them HERE (not in
-    # archeion.nix) keeps the files-side storage self-contained. The project name
+    # polis.nix) keeps the files-side storage self-contained. The project name
     # prefixes every volume, so the internal name carries the suffix only.
     docker-compose.volumes = {
       files_pgdata = { };

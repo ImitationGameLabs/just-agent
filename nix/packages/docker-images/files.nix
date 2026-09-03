@@ -18,7 +18,7 @@ in
 # The minimal files image: just the binary + the CA trust store. The files
 # service is a pure HTTP service (axum) like the archeion and the lesche -- no
 # shell-out toolset, no baked env (it reads everything from its env at
-# runtime). The compose service (compose/prod/archeion.nix) supplies the command
+# runtime). The compose service (compose/prod/polis.nix) supplies the command
 # and the environment. A separate image so the three server-side services
 # rebuild/redeploy independently.
 pkgs.dockerTools.buildImage {

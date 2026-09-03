@@ -8,9 +8,9 @@ import { defineConfig } from "vite";
 // vite.config.ts lives in this package; the shared UI source is a sibling.
 const here = import.meta.dirname;
 
-// The dev domain (see compose/dev/archeion.nix `devDomain`). The same env var drives
+// The dev domain (see compose/dev/polis.nix `devDomain`). The same env var drives
 // the archeion/lesche env and the Caddyfile, so the whole stack agrees on one
-// name; override it in `.env`. Default must match compose/dev/archeion.nix
+// name; override it in `.env`. Default must match compose/dev/polis.nix
 // and +layout.svelte.
 const tlsOff = process.env.KALLIP_TLS === "off";
 const devDomain =

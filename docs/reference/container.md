@@ -20,7 +20,7 @@ The recommended way to run them is [Arion](https://docs.hercules-ci.com/arion/)
 (a Nix-native docker-compose). Each composition is a flat, single-purpose file
 under `compose/` (dev: `compose/dev/`, prod: `compose/prod/`); the repo-root
 `arion-compose.nix` is just a one-line shim that re-exports
-`compose/dev/archeion.nix`, so arion's auto-discovery still makes a plain
+`compose/dev/polis.nix`, so arion's auto-discovery still makes a plain
 `arion up` bring up the dev archeion side. The others are invoked with `arion -f`:
 
 | Composition   | Command                                      | Services                          | Image source                                    |
@@ -36,7 +36,7 @@ Production is split into two **standalone compositions** under
 | Composition | Command                                      | Services         | Image source                                    |
 | ----------- | -------------------------------------------- | ---------------- | ----------------------------------------------- |
 | **tagma**   | `arion -f compose/prod/tagma.nix up -d` | tagma            | `packages.kallip-tagma-image` (pre-built)       |
-| **archeion**   | `arion -f compose/prod/archeion.nix up -d` | archeion + lesche + archeion-postgres + lesche-postgres | `packages.kallip-archeion-image` + `packages.kallip-lesche-image` + `postgres:17.5` |
+| **archeion**   | `arion -f compose/prod/polis.nix up -d` | archeion + lesche + archeion-postgres + lesche-postgres | `packages.kallip-archeion-image` + `packages.kallip-lesche-image` + `postgres:17.5` |
 
 The two prod halves run on **separate hosts** (the tagma host and the archeion
 server) and carry distinct compose project names (`kallipai-tagma` /
@@ -135,7 +135,7 @@ arion -f compose/prod/tagma.nix logs -f
 Secure the tagma's published `3000` port (the operator API) — do not expose it
 on a public host without a firewall / TLS reverse proxy in front.
 
-### archeion — `arion -f compose/prod/archeion.nix up -d`
+### archeion — `arion -f compose/prod/polis.nix up -d`
 
 Brings up the archeion (from `packages.kallip-archeion-image`) + lesche (from
 `packages.kallip-lesche-image`) + files (from `packages.kallip-files-image`) +
@@ -152,8 +152,8 @@ operational env (listen addr, files blob root, internal hop URL) is
 pinned inline in `service.environment`, which overrides `env_file`.
 
 ```sh
-arion -f compose/prod/archeion.nix up -d
-arion -f compose/prod/archeion.nix logs -f
+arion -f compose/prod/polis.nix up -d
+arion -f compose/prod/polis.nix logs -f
 ```
 
 ## Relay bootstrap

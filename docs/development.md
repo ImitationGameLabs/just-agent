@@ -2,7 +2,7 @@
 
 Local development runs the full kallip stack under
 [Arion](https://docs.hercules-ci.com/arion/) (a Nix-native docker-compose). The
-dev archeion side lives at `compose/dev/archeion.nix`; the repo-root
+dev archeion side lives at `compose/dev/polis.nix`; the repo-root
 `arion-compose.nix` is a one-line shim that re-exports it for arion's
 auto-discovery, so a plain `arion up` brings it up.
 
@@ -70,7 +70,7 @@ derives from this one variable.
    `*.<devDomain>` + the bare domain, and creates the mkcert root CA at
    `~/.local/share/mkcert/rootCA.pem` on first use. It does **not** install the
    root into any trust store — that step is OS-specific (step 2).
-   `compose/dev/archeion.nix` defaults the cert dir to `<repo>/compose/dev/.certs`,
+   `compose/dev/polis.nix` defaults the cert dir to `<repo>/compose/dev/.certs`,
    so arion finds them with nothing further to do.
 2. Install the mkcert root CA into the host trust store, so the leaf cert is
    accepted by the browser (no warning, and WebAuthn runs in a real secure

@@ -9,7 +9,7 @@ let
 in
 # The minimal archeion image: the binary + the CA trust store + the `kallip-admin`
 # CLI for in-container operator tasks. No shell toolset; archeion reads everything
-# else from its env at runtime. The compose service (compose/prod/archeion.nix)
+# else from its env at runtime. The compose service (compose/prod/polis.nix)
 # supplies the command + environment.
 pkgs.dockerTools.buildImage {
   name = "kallip-archeion";
