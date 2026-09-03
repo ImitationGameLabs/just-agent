@@ -87,3 +87,23 @@ Deno.test(
     assertEquals(err.api.message, "not your tagma");
   },
 );
+
+Deno.test(
+  "the agent id is URL-encoded in the relayed manage path",
+  async () => {
+    // The backend path builders embed the agent id directly; pin that
+    // what reaches the rest client is the encoded form, not the raw
+    // id (a stray "/" or "?" would warp the frame path).
+    const captured: Array<{ path: string }> = [];
+    const rest = {
+      manage: (_agent: string, _method: string, path: string) => {
+        captured.push({ path });
+        return Promise.resolve({ status: 200, body: {} });
+      },
+    } as unknown as ManageRestClient;
+    const backend = new OnlineBackend(rest, "t-a");
+    await backend.getAgentStatus("a/b c");
+    assertEquals(captured.length, 1);
+    assertEquals(captured[0]!.path, "/agents/a%2Fb%20c/status");
+  },
+);
