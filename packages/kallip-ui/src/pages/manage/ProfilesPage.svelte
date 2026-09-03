@@ -52,7 +52,10 @@
   } from "@kallipai/kallip-client";
   import {
     common_remove,
+    common_save,
     manage_profiles_apply,
+    manage_profiles_dangling_desc,
+    manage_profiles_dangling_title,
     manage_profiles_apply_desc,
     manage_profiles_apply_desc_parked,
     manage_profiles_apply_title,
@@ -88,6 +91,12 @@
 
   async function onSave() {
     await profilesStore.save().catch(() => {});
+    providerReports.clear();
+    profileReports.clear();
+  }
+
+  async function onConfirmDanglingSave() {
+    await profilesStore.save(true).catch(() => {});
     providerReports.clear();
     profileReports.clear();
   }
@@ -598,4 +607,17 @@
   onCancel={() => (parkingDialog.open = false)}
   onTest={onParkingTest}
   onRemove={parkingDialog.mode === "edit" ? onParkingRemove : null}
+/>
+
+<ConfirmDialog
+  open={profilesStore.pendingDangling !== null}
+  title={manage_profiles_dangling_title()}
+  description={manage_profiles_dangling_desc({
+    count: profilesStore.pendingDangling?.length ?? 0,
+    list: profilesStore.pendingDangling?.join("\n") ?? "",
+  })}
+  confirmLabel={common_save()}
+  tone="primary"
+  onConfirm={onConfirmDanglingSave}
+  onCancel={() => profilesStore.dismissDangling()}
 />

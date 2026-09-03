@@ -59,6 +59,8 @@
   "manage_profiles_set_actions_aria": "Set actions",
   "manage_profiles_set_as_default": "Set as default",
   "manage_profiles_set_default_badge": "default",
+  "manage_profiles_dangling_desc": "Saving will leave $count agent binding(s) pointing at a removed set:\n$list\n\nSave anyway, or cancel to keep editing.",
+  "manage_profiles_dangling_title": "Save with dangling references?",
   "manage_profiles_remove_set_confirm_title": "Remove set",
   "manage_profiles_remove_set_confirm_desc": "Agents bound to this set's name keep a dangling binding until their next spawn resolves it. Discard reverts this draft.",
   "manage_profiles_remove_set_confirm_users_desc": "Bound agents ({users}) are interrupted and keep a dangling binding until rebound. The set is removed from the server immediately.",

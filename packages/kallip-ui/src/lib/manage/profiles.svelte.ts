@@ -19,6 +19,7 @@ import {
   singleProviderProbeRequest as singleProviderProbeRequestFn,
 } from "./compute.ts";
 import { type ManagementBackend, managementBackend } from "./client.ts";
+import { KallipError } from "@kallipai/kallip-common";
 import { displayError } from "./errors.ts";
 import {
   manage_profiles_apply_failed,
@@ -40,6 +41,9 @@ export class ProfilesStore {
   draft = $state<ProfileConfig | null>(null);
   isLoading = $state(false);
   isSaving = $state(false);
+  /** Stranded profile-set bindings from the last 409, awaiting operator
+   * confirmation. Non-null renders the confirm dialog. */
+  pendingDangling = $state<readonly string[] | null>(null);
   error = $state<string | null>(null);
   isProbing = $state(false);
 
@@ -71,23 +75,38 @@ export class ProfilesStore {
     }
   }
 
-  /** Save changes to the server (PUT /profiles). Does NOT affect running agents. */
-  async save(): Promise<void> {
+  /** Save changes to the server (PUT /profiles). Does NOT affect running
+   * agents. With `force`, a dangling-bindings 409 is overridden; without
+   * it, a 409 parks the stranded list in `pendingDangling` for the
+   * confirm dialog instead of surfacing a generic error. */
+  async save(force = false): Promise<void> {
     if (!this.draft) return;
     this.isSaving = true;
     this.error = null;
+    this.pendingDangling = null;
     try {
+      const wire = profileConfigToWireFn(this.draft);
       const resp = await this.backend.updateProfiles(
-        profileConfigToWireFn(this.draft),
+        force ? { ...wire, force: true } : wire,
       );
       this.config = resp;
       this.draft = structuredClone(resp);
     } catch (e) {
-      this.error = displayError("profiles", e, manage_profiles_save_failed());
+      if (e instanceof KallipError && e.api.dangling) {
+        // Structured 409: ask the operator before stranding bindings.
+        this.pendingDangling = e.api.dangling;
+      } else {
+        this.error = displayError("profiles", e, manage_profiles_save_failed());
+      }
       throw e;
     } finally {
       this.isSaving = false;
     }
+  }
+
+  /** Drop the pending dangling list, keeping the edit state as-is. */
+  dismissDangling(): void {
+    this.pendingDangling = null;
   }
 
   /** Apply the current registry to all live agents (POST /profiles/apply). */
