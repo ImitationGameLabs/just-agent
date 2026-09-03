@@ -28,6 +28,20 @@ pub enum TunnelInbound {
     /// on reconnect. Fanned to every live tagma of the changed room. Carries no
     /// payload: the tagma re-fetches its full joined-rooms set on receipt.
     Wake,
+    /// A manage-plane REST request relayed from the app (via the lesche
+    /// reverse-proxy) for the tagma to execute against its manage router.
+    /// Unlike [`TunnelInbound::Envelope`], this frame is NOT E2E-encrypted:
+    /// manage metadata is deliberately visible to the relay (TLS transport +
+    /// device-proof tunnel auth is the trust base; message content stays on
+    /// the envelope path). The tagma enforces a frame-surface allowlist
+    /// (low/medium-sensitivity routes only; anything unlisted is a 404) so
+    /// prompt-bearing routes never traverse this frame in plaintext.
+    ManageRest {
+        req_id: u64,
+        method: String,
+        path: String,
+        body: serde_json::Value,
+    },
 }
 
 #[cfg(test)]

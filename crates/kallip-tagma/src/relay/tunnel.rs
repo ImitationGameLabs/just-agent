@@ -122,6 +122,111 @@ impl RelayHandle {
                 // acceptable at the expected volume.
                 self.poll_rooms().await;
             }
+            TunnelInbound::ManageRest {
+                req_id,
+                method,
+                path,
+                body,
+            } => self.handle_manage_rest(req_id, &method, &path, body).await,
+        }
+    }
+}
+
+/// The frame-surface allowlist: which manage routes may ride a ManageRest
+/// frame. This is the enforcement point for the encryption-scope decision:
+/// prompt-bearing routes must NOT traverse the tunnel in plaintext, so the
+/// allowlist is fail-closed -- anything not explicitly listed is a 404,
+/// even though the underlying manage_router would happily serve it.
+/// Message/session routes are structurally excluded (they are not on the
+/// manage router at all).
+fn frame_allowed(method: &str, path: &str) -> bool {
+    let m = matches!(method, "GET" | "PUT" | "POST");
+    let p = path.trim_end_matches('/');
+    let top = matches!(
+        p,
+        "/agents" | "/budget" | "/work-schedule" | "/approvals" | "/profiles" | "/profiles/default"
+    );
+    let under = [
+        "/agents/",
+        "/budget",
+        "/work-schedule",
+        "/approvals",
+        "/profiles/apply",
+    ]
+    .iter()
+    .any(|prefix| p.starts_with(prefix));
+    m
+        && (top || under)
+        // Never expose prompt-bearing profile-set bodies or the provider
+        // probe through the plaintext frame surface.
+        && !p.starts_with("/profiles/sets")
+        && p != "/profiles/probe"
+}
+
+impl RelayHandle {
+    /// A ManageRest frame from the lesche reverse-proxy: run the frame-surface
+    /// allowlist, then execute against the same manage router the envelope
+    /// path uses, replying over the existing emit loop. The trace id is
+    /// synthesized (frames carry no trace context).
+    async fn handle_manage_rest(
+        &self,
+        req_id: u64,
+        method: &str,
+        path: &str,
+        body: serde_json::Value,
+    ) {
+        let trace = kallip_archeion_common::ids::TraceId::from(format!("manage-rest:{req_id}"));
+        if !frame_allowed(method, path) {
+            warn!(
+                req_id,
+                method, path, "manage-rest frame denied by allowlist"
+            );
+            let reply = TagmaReply::ManageResult {
+                req_id,
+                status: 404,
+                body: serde_json::json!({"error":{"message":"not on the manage frame surface"}}),
+            };
+            let _ = self.emit(&trace, self.agent_sender(), reply, None).await;
+            return;
+        }
+        self.handle_manage(&trace, req_id, method, path, body).await;
+    }
+}
+
+#[cfg(test)]
+mod manage_rest_tests {
+    use super::frame_allowed;
+
+    #[test]
+    fn allowlist_admits_low_and_medium_sensitive_routes() {
+        for (method, path) in [
+            ("GET", "/agents"),
+            ("GET", "/agents/root"),
+            ("GET", "/agents/x/status"),
+            ("PUT", "/budget"),
+            ("GET", "/work-schedule"),
+            ("GET", "/approvals"),
+            ("GET", "/profiles"),
+            ("GET", "/profiles/default"),
+            ("POST", "/profiles/apply"),
+        ] {
+            assert!(frame_allowed(method, path), "{method} {path}");
+        }
+    }
+
+    #[test]
+    fn allowlist_denies_prompt_and_unlisted_routes() {
+        // arch C4: prompt-bearing bodies must never ride the frame surface.
+        for (method, path) in [
+            ("GET", "/profiles/sets/main"),
+            ("PUT", "/profiles/sets/main"),
+            ("POST", "/profiles/probe"),
+            // Unlisted = fail-closed.
+            ("GET", "/messages"),
+            ("DELETE", "/agents/x"),
+            ("GET", "/completely/unknown"),
+        ] {
+            assert!(!frame_allowed(method, path), "{method} {path}");
         }
     }
 }
