@@ -65,10 +65,10 @@ fn work_schedule_projection(
     use kallip_lesche_common::projection::WorkScheduleProjection;
     WorkScheduleProjection {
         id: ws.id.clone(),
-        spec: serde_json::to_value(&ws.spec).unwrap_or(serde_json::Value::Null),
+        spec: serde_json::to_value(&ws.spec).expect("spec serializes"),
         pre_warn_minutes: ws.pre_warn_minutes,
         final_warn_minutes: ws.final_warn_minutes,
-        status: serde_json::to_value(ws.status).unwrap_or(serde_json::Value::Null),
+        status: serde_json::to_value(ws.status).expect("status serializes"),
         created_at: ws.created_at,
     }
 }
@@ -83,9 +83,6 @@ impl RelayHandle {
         if slot.is_some() {
             return;
         }
-        // A fresh pump generation starts its push counter at zero: the
-        // lesche keys its same-generation replay rejection on this seq.
-        self.inner.projection_push_seq.store(0, Ordering::Relaxed);
         let cancel = CancellationToken::new();
         let task = tokio::spawn(self.clone().run_projection_pump(cancel.clone()));
         *slot = Some(super::PumpHandle { task, cancel });
@@ -191,7 +188,13 @@ impl RelayHandle {
             Some(store) => match store.get_singleton().await {
                 Ok(Some(ws)) => Some(work_schedule_projection(&ws)),
                 Ok(None) => None,
-                Err(_) => None,
+                Err(e) => {
+                    // The projection is prompt-free by construction; a store
+                    // read failure degrades this push to no-schedule rather
+                    // than blocking the whole snapshot.
+                    warn!(error = ?e, "work-schedule read failed; pushing without it");
+                    None
+                }
             },
             None => None,
         };
@@ -315,6 +318,7 @@ mod tests {
         handle.start_projection_pump().await;
         let got = wait_for(&capture, 1).await;
         assert_eq!(got.len(), 1, "tunnel-up first shot");
+        assert_eq!(got[0].push_seq, 1, "first shot is seq 1");
         assert_eq!(
             got[0].agents.len(),
             1,
@@ -331,9 +335,12 @@ mod tests {
         handle.start_projection_pump().await;
         let got = wait_for(&capture, 2).await;
         assert_eq!(got.len(), 2, "restart pushes a fresh full snapshot");
+        // c-Major-1: the counter is monotonic across a pump restart -- the
+        // second shot continues the sequence (2) rather than replaying 1,
+        // which the lesche's same-generation check would reject.
+        assert_eq!(got[1].push_seq, 2, "seq continues across restart");
         handle.stop_projection_pump().await;
     }
-
     /// §9.7 suppression + hierarchical hint consumption: with the pump
     /// started but the last hint `false`, wakes do not push; the `false ->
     /// true` flip restarts the pump (whose first shot lands); `true -> false`
@@ -401,5 +408,34 @@ mod tests {
         let got = capture.lock().await.clone();
         assert_eq!(got.len(), 2, "fallback tick pushed once more");
         handle.stop_projection_pump().await;
+    }
+
+    /// q-M-2 content nail: the work-schedule projection is prompt-free by
+    /// construction -- `wake_prompt`/`final_warn_prompt` never reach the
+    /// wire, and the projected fields round-trip faithfully.
+    #[tokio::test]
+    async fn work_schedule_projection_is_prompt_free() {
+        let ws: crate::work_schedule::WorkSchedule = serde_json::from_value(serde_json::json!({
+            "id": "ws-1",
+            "spec": { "mode": "always" },
+            "pre_warn_minutes": 5,
+            "final_warn_minutes": 2,
+            "final_warn_prompt": "SECRET-FINAL",
+            "wake_prompt": "SECRET-WAKE",
+            "status": "paused",
+            "created_at": "2026-01-01T00:00:00Z"
+        }))
+        .expect("schedule parses");
+        let projected = super::work_schedule_projection(&ws);
+        let json = serde_json::to_value(&projected).expect("projection serializes");
+        let obj = json.as_object().expect("projection is an object");
+        for forbidden in ["wake_prompt", "final_warn_prompt", "message"] {
+            assert!(!obj.contains_key(forbidden), "{forbidden} must not leak");
+        }
+        assert_eq!(obj["id"], "ws-1");
+        assert_eq!(obj["spec"]["mode"], "always");
+        assert_eq!(obj["pre_warn_minutes"], 5);
+        assert_eq!(obj["final_warn_minutes"], 2);
+        assert_eq!(obj["status"], "paused");
     }
 }

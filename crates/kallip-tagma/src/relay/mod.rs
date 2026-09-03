@@ -139,9 +139,10 @@ struct Inner {
     /// after a `false`, the fail-toward-saving-resources default). Read by
     /// the pump before each push; written only from the tunnel dispatch.
     projection_active: std::sync::atomic::AtomicBool,
-    /// Per-connection push counter for the projection pump (reset on
-    /// tunnel-up, incremented per push): lets the lesche reject
-    /// same-generation out-of-order replays.
+    /// Connection-lifetime monotonic push counter for the projection pump
+    /// (never reset by a pump restart -- the lesche keys same-generation
+    /// replay rejection on it; a fresh tunnel session is a new generation,
+    /// which the lesche accepts unconditionally). Incremented per push.
     projection_push_seq: std::sync::atomic::AtomicU64,
     /// Fallback tick cadence for the projection pump, in milliseconds
     /// (30000 in production; tests shorten it).

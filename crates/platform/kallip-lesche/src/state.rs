@@ -161,6 +161,9 @@ pub struct Registry {
     /// tagma's presence (MIN3): offline tags keep serving stale reads.
     projections: HashMap<ParticipantId, ProjectionEntry>,
     projection_streams: HashMap<(ParticipantId, ParticipantId), broadcast::Sender<ProjectionDirty>>,
+    /// Teardown lag for projection SSE unsubscribes, in milliseconds (30s
+    /// in production; tests shorten it). Read by the SSE OnDrop cleanup.
+    projection_unsub_lag_ms: std::sync::atomic::AtomicU64,
 }
 
 /// One live tunnel: the outbound broadcast, the owning user (for presence
@@ -213,6 +216,7 @@ impl Registry {
             app_streams: HashMap::new(),
             projections: HashMap::new(),
             projection_streams: HashMap::new(),
+            projection_unsub_lag_ms: std::sync::atomic::AtomicU64::new(30_000),
         }
     }
 
@@ -359,6 +363,8 @@ impl Registry {
             let _ = entry.tx.send(TunnelInbound::SubscriptionHint { active });
         }
     }
+
+    /// Remove the (user, tagma) projection channel when `sender` is its last
     /// subscriber, mirroring [`Self::remove_app_stream_if_last`]. Returns
     /// whether the entry was removed (the 1 -> 0 edge; the caller fans
     /// `SubscriptionHint { active: false }` after the lag window).
@@ -372,13 +378,29 @@ impl Registry {
             ParticipantId::for_user(user),
             ParticipantId::for_tagma(tagma),
         );
-        if sender.receiver_count() == 1 {
+        // By the time the OnDrop cleanup runs, the dying stream's own rx is
+        // already gone, so `receiver_count() == 0` means "nobody left"; a
+        // new subscriber that arrived inside the lag window keeps the
+        // channel (and the hint) alive.
+        if sender.receiver_count() == 0 {
             self.projection_streams.remove(&key);
             self.send_subscription_hint(tagma, false);
             true
         } else {
             false
         }
+    }
+    /// The projection SSE teardown lag (ms). Production is 30s; tests
+    /// shorten it so the hint-flap window is observable.
+    pub fn projection_unsub_lag_ms(&self) -> u64 {
+        self.projection_unsub_lag_ms
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(test)] // consumed by the SSE OnDrop teardown test only
+    /// Shorten the teardown lag (test injection only).
+    pub fn set_projection_unsub_lag_ms(&self, ms: u64) {
+        self.projection_unsub_lag_ms
+            .store(ms, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Whether any client currently holds a live projection stream for

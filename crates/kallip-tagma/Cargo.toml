@@ -78,8 +78,6 @@ kallip-shell = { workspace = true }
 chacha20poly1305 = { workspace = true }
 getrandom = { workspace = true }
 x25519-dalek = { workspace = true, features = ["reusable_secrets"] }
-# tokio time pause/advance for the projection pump's fallback-tick nail.
-tokio = { workspace = true, features = ["test-util"] }
 # KEX unit tests (relay::kex): initiator-side HKDF to assert both sides agree.
 hkdf = { workspace = true }
 sha2 = { workspace = true }

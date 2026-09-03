@@ -8,8 +8,6 @@
 //! caller) so cross-tenant reads are 403; the write route authenticates the
 //! tagma itself and pins the push to its own id.
 
-use std::time::Duration;
-
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -19,7 +17,6 @@ use axum::routing::{get, post};
 use kallip_archeion_common::ids::{ParticipantId, TagmaId};
 use kallip_archeion_common::principal::{Principal, require_tagma, require_user};
 use kallip_lesche_common::projection::{ProjectionDirty, ProjectionSnapshot};
-use kallip_lesche_common::tunnel::TunnelInbound;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
@@ -27,11 +24,6 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use crate::auth::AuthPrincipal;
 use crate::sse::{BoxEventStream, OnDrop};
 use crate::state::SharedConvState;
-
-/// How long the last departing subscriber's slot lingers before the
-/// `SubscriptionHint { active: false }` goes out (§9.7 lag window: absorbs
-/// subscribe/unsubscribe flapping). Implementation constant, not protocol.
-const UNSUB_LAG: Duration = Duration::from_secs(30);
 
 pub fn router() -> Router<SharedConvState> {
     Router::new()
@@ -222,15 +214,23 @@ async fn projection_events(
     AuthPrincipal(principal): AuthPrincipal,
     Path(agent): Path<String>,
 ) -> Result<Sse<OnDrop>, StatusCode> {
-    let user_id = match require_user(&principal) {
-        Ok(u) => u.clone(),
-        Err(_) => return Err(StatusCode::UNAUTHORIZED),
-    };
+    // q-M-1: the SSE plane is owner-gated like the read plane -- a
+    // cross-tenant subscriber must not be able to flip the tagma's
+    // subscription hint (remote pump start) or probe existence.
     let tagma_id = TagmaId::from(agent);
+    let user_id = match require_owner(&principal, &state, &tagma_id) {
+        Ok(()) => match require_user(&principal) {
+            Ok(u) => u.clone(),
+            Err(_) => return Err(StatusCode::UNAUTHORIZED),
+        },
+        Err(resp) => return Err(resp.status()),
+    };
     let handle = tokio::runtime::Handle::try_current().ok();
-    let (tx, rx, _was_first) = {
+    let (tx, rx, _was_first, unsub_lag) = {
         let mut registry = state.registry.write().expect("registry lock");
-        registry.open_projection_stream(&user_id, &tagma_id)
+        let stream = registry.open_projection_stream(&user_id, &tagma_id);
+        let lag = std::time::Duration::from_millis(registry.projection_unsub_lag_ms());
+        (stream.0, stream.1, stream.2, lag)
     };
     let stream: BoxEventStream = Box::pin(
         BroadcastStream::new(rx)
@@ -247,8 +247,9 @@ async fn projection_events(
                 )
             }),
     );
-    // tx is the Sender cloned from the map; `receiver_count()` includes our
-    // own subscribed rx, so `> 1` == "another subscriber still live". The lag
+    // tx is the Sender cloned from the map. By the time this closure runs,
+    // the stream (and our rx inside it) is already dropped, so
+    // `receiver_count() > 1` == "another subscriber still live". The lag
     // window delays the teardown so a quick reconnect does not flap the hint.
     let cleanup_state = state.clone();
     let cleanup_user = user_id.clone();
@@ -265,21 +266,13 @@ async fn projection_events(
             return;
         };
         h.spawn(async move {
-            tokio::time::sleep(UNSUB_LAG).await;
-            let removed = {
-                let Ok(mut registry) = st.write() else {
-                    return;
-                };
-                registry.remove_projection_stream_if_last(&user, &tagma, &tx)
+            tokio::time::sleep(unsub_lag).await;
+            // remove_if_last fans the `SubscriptionHint { active: false }`
+            // itself on the 1 -> 0 edge -- no duplicate send here.
+            let Ok(mut registry) = st.write() else {
+                return;
             };
-            if removed {
-                let registry = st.read().expect("registry lock");
-                if let Some(entry) = registry.presence.get(&ParticipantId::for_tagma(&tagma)) {
-                    let _ = entry
-                        .tx
-                        .send(TunnelInbound::SubscriptionHint { active: false });
-                }
-            }
+            registry.remove_projection_stream_if_last(&user, &tagma, &tx);
         });
     });
     Ok(Sse::new(cleaned))
@@ -292,6 +285,7 @@ mod tests {
     use axum::extract::{Path, State};
     use axum::http::StatusCode;
     use kallip_archeion_common::ids::UserId;
+    use kallip_lesche_common::tunnel::TunnelInbound;
     use std::sync::Arc;
 
     pub(super) fn uid(s: &str) -> UserId {
@@ -437,6 +431,7 @@ mod generation_tests {
     use super::tests::{enroll, owner_principal, push, tagma_of, uid};
     use super::*;
     use crate::routes::test_support::db_state;
+    use kallip_lesche_common::tunnel::TunnelInbound;
 
     /// M1: a reconnecting tagma's push counter restarted, so the first push
     /// of the new generation is accepted unconditionally even though its
@@ -492,11 +487,165 @@ mod generation_tests {
             hint_rx.try_recv(),
             Err(tokio::sync::broadcast::error::TryRecvError::Empty)
         ));
+        // OnDrop semantics: the dying stream's own rx is dropped before the
+        // cleanup runs, which is what makes receiver_count() hit zero.
+        drop(_rx);
         let removed = {
             let mut reg = state.registry.write().unwrap();
             reg.remove_projection_stream_if_last(&owner, &tagma, &tx)
         };
         assert!(removed, "last unsubscribe is the 1 -> 0 edge");
-        drop(_rx);
+        // q-M-2: the false half of the flip actually reaches the tunnel.
+        assert!(matches!(
+            hint_rx.try_recv(),
+            Ok(TunnelInbound::SubscriptionHint { active: false })
+        ));
+    }
+
+    /// q-M-2: the teardown lag gates the false flip. A subscriber that
+    /// re-subscribes inside the window re-arms the hint (its open is the
+    /// new 0 -> 1 edge) and the pending teardown no-ops; only the true
+    /// last departure fans `false` and removes the channel.
+    #[tokio::test]
+    async fn unsub_lag_window_gates_the_false_flip() {
+        let (state, _control) = db_state().await;
+        let tagma = tagma_of("t-a");
+        let owner = uid("alice");
+        let mut hint_rx = enroll(&state, &tagma, &owner).await;
+        let (tx, rx, was_first) = {
+            let mut reg = state.registry.write().unwrap();
+            reg.open_projection_stream(&owner, &tagma)
+        };
+        assert!(was_first);
+        hint_rx
+            .try_recv()
+            .expect("hint true fanned on the open edge");
+        drop(rx);
+        // A new subscriber inside the lag window: re-arms the hint.
+        let (tx2, rx2, was_first_again) = {
+            let mut reg = state.registry.write().unwrap();
+            reg.open_projection_stream(&owner, &tagma)
+        };
+        assert!(was_first_again, "re-subscribe re-arms the hint");
+        let removed = {
+            let mut reg = state.registry.write().unwrap();
+            reg.remove_projection_stream_if_last(&owner, &tagma, &tx)
+        };
+        assert!(!removed, "a live subscriber survives the teardown");
+        assert!(matches!(
+            hint_rx.try_recv(),
+            Ok(TunnelInbound::SubscriptionHint { active: true })
+        ));
+        // After the true departure: teardown + false hint.
+        drop(rx2);
+        let removed = {
+            let mut reg = state.registry.write().unwrap();
+            reg.remove_projection_stream_if_last(&owner, &tagma, &tx2)
+        };
+        assert!(removed, "the last unsubscribe tears the channel down");
+        assert!(matches!(
+            hint_rx.try_recv(),
+            Ok(TunnelInbound::SubscriptionHint { active: false })
+        ));
+    }
+
+    /// q-M-2: the offline arm of the read plane -- with the tagma's
+    /// presence gone, the stored projection still serves the owner
+    /// (MIN3), flagged `stale`, at the same seq the online read showed.
+    #[tokio::test]
+    async fn offline_tagma_serves_stale_projection() {
+        let (state, _control) = db_state().await;
+        let tagma = tagma_of("t-a");
+        let owner = uid("alice");
+        let generation = {
+            let mut reg = state.registry.write().unwrap();
+            let (tx, _rx) = tokio::sync::broadcast::channel(8);
+            let id = std::sync::Arc::new(());
+            reg.register_presence(&tagma, owner.clone(), tx, id.clone());
+            id
+        };
+        let first = push(
+            &state,
+            AuthPrincipal(Principal::Tagma(tagma.clone())),
+            "t-a",
+            1,
+        )
+        .await;
+        assert_eq!(first.status(), StatusCode::OK);
+        // The tunnel drops: presence is gone, the projection table stays.
+        {
+            let mut reg = state.registry.write().unwrap();
+            assert!(reg.take_presence_if_owned(&tagma, &generation));
+        }
+        let body = read_agents(
+            State(state.clone()),
+            owner_principal(&owner),
+            Path("t-a".to_string()),
+        )
+        .await;
+        assert_eq!(body.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(body.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["seq"], 1);
+        assert_eq!(json["stale"], true, "offline tagma reads as stale");
+    }
+
+    /// q-M-1: the SSE plane is owner-gated like the read plane -- a
+    /// cross-tenant subscriber gets 403 and can neither start the tagma's
+    /// pump remotely nor probe the tagma's existence.
+    #[tokio::test]
+    async fn cross_tenant_events_subscription_is_forbidden() {
+        let (state, _control) = db_state().await;
+        let tagma = tagma_of("t-a");
+        let owner = uid("alice");
+        let other = uid("mallory");
+        let _rx = enroll(&state, &tagma, &owner).await;
+        let err = projection_events(
+            State(state.clone()),
+            owner_principal(&other),
+            Path("t-a".to_string()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, StatusCode::FORBIDDEN);
+    }
+
+    /// q-M-2 end-to-end: the real OnDrop path -- drop the SSE response,
+    /// the injected lag elapses, then the false hint reaches the tunnel
+    /// and the channel is torn down (this is what consumes the setter).
+    #[tokio::test]
+    async fn on_drop_teardown_fans_false_after_injected_lag() {
+        let (state, _control) = db_state().await;
+        let tagma = tagma_of("t-a");
+        let owner = uid("alice");
+        let mut hint_rx = enroll(&state, &tagma, &owner).await;
+        {
+            let reg = state.registry.read().unwrap();
+            reg.set_projection_unsub_lag_ms(50);
+        }
+        let sse = projection_events(
+            State(state.clone()),
+            owner_principal(&owner),
+            Path("t-a".to_string()),
+        )
+        .await
+        .expect("owner subscribes");
+        assert!(matches!(
+            hint_rx.try_recv(),
+            Ok(TunnelInbound::SubscriptionHint { active: true })
+        ));
+        drop(sse); // OnDrop fires: lag, then teardown + false hint
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(matches!(
+            hint_rx.try_recv(),
+            Ok(TunnelInbound::SubscriptionHint { active: false })
+        ));
+        let live = {
+            let reg = state.registry.read().unwrap();
+            reg.projection_stream_live_for_tagma(&tagma)
+        };
+        assert!(!live, "the channel is gone after the lag window");
     }
 }
