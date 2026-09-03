@@ -445,7 +445,7 @@ mod guard_tests {
         );
 
         let state = make_state_two_sets();
-        crate::routes::profiles::set_default_profile_set(
+        let _result = crate::routes::profiles::set_default_profile_set(
             axum::extract::State(state),
             crate::auth::AuthIdentity::test_new(crate::auth::Identity::Operator),
             axum::Json(kallip_common::protocol::SetDefaultRequest {

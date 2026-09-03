@@ -80,7 +80,7 @@ pub async fn put_profiles(
     if !stranded.is_empty() && !force {
         return Err(ApiError::conflict_dangling(
             format!(
-                "config drops sets still bound by agents: {}",
+                "config drops sets still bound by agents: {}; re-PUT with force=true, or use DELETE /profiles/sets/{{name}} to remove a referenced set",
                 stranded.join(", ")
             ),
             stranded,

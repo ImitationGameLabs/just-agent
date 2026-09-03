@@ -185,4 +185,5 @@ export {
   manage_profiles_unsaved_body,
   manage_profiles_unsaved_save,
   manage_profiles_unsaved_title,
+  // deno-lint-ignore no-sloppy-imports
 } from "./paraglide/messages.js";

@@ -14,6 +14,7 @@
   } from "@kallipai/kallip-ui";
   import { Dialog, Portal } from "@skeletonlabs/skeleton-svelte";
 
+  import { beforeNavigate, goto } from "$app/navigation";
   let leaveGuard = $state<{ open: boolean; to: string | null }>({
     open: false,
     to: null,
