@@ -60,7 +60,6 @@
           <button
             type="button"
             class="btn flex-1 preset-outlined-surface-500 hover:preset-filled-surface-500"
-            disabled={busy}
             onclick={onCancel}
           >
             {common_cancel()}
