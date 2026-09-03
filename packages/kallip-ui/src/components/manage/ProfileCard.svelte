@@ -3,7 +3,7 @@
   // language). The card only reports the raw drag lifecycle and menu
   // intents; payloads and mutations stay with the owning page/section.
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
-  import { FlaskConical, MoreVertical, Pencil } from "@lucide/svelte";
+  import { FlaskConical, MoreVertical, Pencil, Trash } from "@lucide/svelte";
   import type {
     ProfileModel,
     ProfileModelProbeReport,
@@ -15,6 +15,7 @@
   } from "../../lib/manage/profiles-view.ts";
   import {
     common_edit,
+    common_remove,
     manage_profiles_max_context_label,
     manage_profiles_profile_actions_aria,
     manage_profiles_profile_model_label,
@@ -30,6 +31,7 @@
     onDragEnd,
     onTest,
     onEdit,
+    onRemove,
   }: {
     profile: ProfileModel;
     report?: ProfileModelProbeReport;
@@ -38,6 +40,7 @@
     onDragEnd: () => void;
     onTest: () => void;
     onEdit: () => void;
+    onRemove: (() => void) | null;
   } = $props();
 </script>
 
@@ -62,6 +65,7 @@
       onSelect={(e) => {
         if (e.value === "test") onTest();
         else if (e.value === "edit") onEdit();
+        else if (e.value === "remove" && onRemove) onRemove();
       }}
     >
       <Menu.Trigger
@@ -89,6 +93,16 @@
               {common_edit()}
             </Menu.Item>
           </Menu.Content>
+          {#if onRemove}
+            <Menu.Separator class="my-1 border-t border-surface-300" />
+            <Menu.Item
+              value="remove"
+              class="flex items-center gap-2 px-3 py-2 rounded-base text-sm text-error-500 dark:text-error-400 cursor-pointer hover:preset-filled-error-500"
+            >
+              <Trash class="size-4" />
+              {common_remove()}
+            </Menu.Item>
+          {/if}
         </Menu.Positioner>
       </Portal>
     </Menu>

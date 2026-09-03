@@ -67,6 +67,7 @@
     onRemoveSet,
     onSetDefault,
     onAddSet,
+    onRemoveProfile,
   }: {
     /** Draft sets as name/value pairs (Object.entries order). */
     sets: readonly [string, ProfileSet][];
@@ -91,6 +92,11 @@
     onRemoveSet: (setName: string) => void;
     onSetDefault: (setName: string) => void;
     onAddSet: () => void;
+    onRemoveProfile: (
+      setName: string,
+      profileIdx: number,
+      profileId: string,
+    ) => void;
   } = $props();
 </script>
 
@@ -204,6 +210,7 @@
           onDragEnd={onCardDragEnd}
           onTest={() => onTestProfile(setName, profileIdx)}
           onEdit={() => onEditSet(setName)}
+          onRemove={() => onRemoveProfile(setName, profileIdx, profile.id)}
         />
       {/each}
       {#if set.profiles.length === 0}

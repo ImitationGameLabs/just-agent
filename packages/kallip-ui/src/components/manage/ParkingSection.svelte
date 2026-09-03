@@ -30,6 +30,7 @@
     onTest,
     onEdit,
     onAdd,
+    onRemove,
   }: {
     parking: readonly ProfileModel[];
     reports: SvelteMap<string, ProfileModelProbeReport>;
@@ -43,6 +44,7 @@
     onTest: (idx: number) => void;
     onEdit: (idx: number) => void;
     onAdd: () => void;
+    onRemove: (idx: number, profileId: string) => void;
   } = $props();
 </script>
 
@@ -79,6 +81,7 @@
         onDragEnd={onCardDragEnd}
         onTest={() => onTest(idx)}
         onEdit={() => onEdit(idx)}
+        onRemove={() => onRemove(idx, profile.id)}
       />
     {/each}
     <button

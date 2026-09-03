@@ -42,6 +42,7 @@
     mergeProfileScopeAll,
     mergeProviderScope,
     occupiedIdsOf,
+    profileKey,
     providerIdsOf,
   } from "../../lib/manage/profiles-view.ts";
   import type {
@@ -409,6 +410,26 @@
     void refreshParkedLive();
   }
 
+  function onRemoveSetProfile(
+    setName: string,
+    profileIdx: number,
+    profileId: string,
+  ) {
+    profilesStore.removeProfile(setName, profileIdx);
+    profileReports.delete(profileKey(setName, profileId));
+  }
+
+  function onRemoveParked(idx: number, profileId: string) {
+    const draft = profilesStore.draft;
+    if (!draft) return;
+    profilesStore.draft = replaceParkingProfiles(
+      draft,
+      (draft.parking ?? []).filter((_, i) => i !== idx),
+    );
+    profileReports.delete(`p:${profileId}`);
+    void refreshParkedLive();
+  }
+
   function onParkingRemove() {
     const draft = profilesStore.draft;
     if (draft && parkingDialog.mode === "edit") {
@@ -529,6 +550,7 @@
           if (draft) profilesStore.draft = setDefaultSet(draft, setName);
         }}
         onAddSet={() => profilesStore.addSet()}
+        onRemoveProfile={onRemoveSetProfile}
       />
 
       <ParkingSection
@@ -545,6 +567,7 @@
         onTest={onTestParking}
         onEdit={openParkingEdit}
         onAdd={openParkingNew}
+        onRemove={onRemoveParked}
       />
     {/if}
   </div>

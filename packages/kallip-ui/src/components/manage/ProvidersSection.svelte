@@ -9,7 +9,7 @@
     MoreVertical,
     Pencil,
     Plus,
-    Trash2,
+    Trash,
   } from "@lucide/svelte";
   import type {
     ProfileProvider,
@@ -24,7 +24,7 @@
   import {
     common_edit,
     manage_profiles_add_provider,
-    manage_profiles_remove_provider,
+    common_remove,
     manage_profiles_provider_base_url_default,
     manage_profiles_provider_card_base_url_label,
     manage_profiles_profile_provider_label,
@@ -103,8 +103,8 @@
                     value="remove"
                     class="flex items-center gap-2 px-3 py-2 rounded-base text-sm text-error-500 dark:text-error-400 cursor-pointer hover:preset-filled-error-500"
                   >
-                    <Trash2 class="size-4" />
-                    {manage_profiles_remove_provider()}
+                    <Trash class="size-4" />
+                    {common_remove()}
                   </Menu.Item>
                 </Menu.Content>
               </Menu.Positioner>
