@@ -157,6 +157,17 @@ async fn tunnel(
                 tagma_id: tagma_id.clone(),
             });
         }
+        // Re-send the projection subscription hint on every reconnect (the
+        // hint itself is unbuffered, so a tagma that was offline when a
+        // flip happened would otherwise come back with a stale active
+        // flag; api-redesign §9.7). Live subscribers only.
+        if reg.projection_stream_live_for_tagma(&tagma_id)
+            && let Some(presence) = reg.presence_by_tagma(&tagma_id)
+        {
+            let _ = presence
+                .tx
+                .send(TunnelInbound::SubscriptionHint { active: true });
+        }
     }
     // Announce room-member presence to peers (best-effort, off the request path).
     // Presence is soft state; a dropped frame self-heals on the viewer's roster

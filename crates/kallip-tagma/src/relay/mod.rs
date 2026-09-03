@@ -139,6 +139,13 @@ struct Inner {
     /// after a `false`, the fail-toward-saving-resources default). Read by
     /// the pump before each push; written only from the tunnel dispatch.
     projection_active: std::sync::atomic::AtomicBool,
+    /// Per-connection push counter for the projection pump (reset on
+    /// tunnel-up, incremented per push): lets the lesche reject
+    /// same-generation out-of-order replays.
+    projection_push_seq: std::sync::atomic::AtomicU64,
+    /// Fallback tick cadence for the projection pump, in milliseconds
+    /// (30000 in production; tests shorten it).
+    projection_fallback_ms: std::sync::atomic::AtomicU64,
     /// In-flight per-envelope op tasks, so shutdown can abort and drain them
     /// rather than leaving them fire-and-forget. See [`RelayHandle::stop_dispatch`].
     dispatch: Mutex<tokio::task::JoinSet<()>>,
@@ -173,6 +180,8 @@ impl RelayHandle {
                 room_pump: Mutex::new(None),
                 projection_pump: Mutex::new(None),
                 projection_active: std::sync::atomic::AtomicBool::new(false),
+                projection_push_seq: std::sync::atomic::AtomicU64::new(0),
+                projection_fallback_ms: std::sync::atomic::AtomicU64::new(30_000),
                 dispatch: Mutex::new(tokio::task::JoinSet::new()),
                 state,
             }),

@@ -36,18 +36,15 @@ use crate::state::AppState;
 /// intermediate states, §9.2). Implementation constant, not protocol.
 const PROJECTION_DEBOUNCE: Duration = Duration::from_secs(1);
 
-/// Fallback cadence for changes that never reach the external bus (roster
-/// spawn/remove, duty flips, budget writes, work-schedule edits). Bounds the
-/// projection staleness for those to this interval; turn-state transitions
-/// still propagate near-instantly via Signal.
-const PROJECTION_FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
-
 /// Build the full projection snapshot from the current registry + token
-/// budget. Lock-free like `snapshot_status`: the registry read-guard is
-/// dropped before any await happens (the caller holds no lock across POSTs).
+/// budget + work-schedule singleton. Lock-free like `snapshot_status`: the
+/// registry read-guard is dropped before any await happens (the caller
+/// holds no lock across POSTs).
 fn snapshot_projection(
     state: &AppState,
     registry: &crate::state::AgentRegistry,
+    push_seq: u64,
+    work_schedule: Option<kallip_lesche_common::projection::WorkScheduleProjection>,
 ) -> ProjectionSnapshot {
     ProjectionSnapshot {
         agents: registry
@@ -55,6 +52,24 @@ fn snapshot_projection(
             .map(|(id, entry)| state.summarize(id, entry))
             .collect(),
         status: snapshot_status(registry, &state.token_budget),
+        push_seq,
+        work_schedule,
+    }
+}
+
+/// Project the tagma's work-schedule singleton into its prompt-free wire
+/// form (MIN1: `wake_prompt`/`final_warn_prompt` are dropped here).
+fn work_schedule_projection(
+    ws: &crate::work_schedule::WorkSchedule,
+) -> kallip_lesche_common::projection::WorkScheduleProjection {
+    use kallip_lesche_common::projection::WorkScheduleProjection;
+    WorkScheduleProjection {
+        id: ws.id.clone(),
+        spec: serde_json::to_value(&ws.spec).unwrap_or(serde_json::Value::Null),
+        pre_warn_minutes: ws.pre_warn_minutes,
+        final_warn_minutes: ws.final_warn_minutes,
+        status: serde_json::to_value(ws.status).unwrap_or(serde_json::Value::Null),
+        created_at: ws.created_at,
     }
 }
 
@@ -68,6 +83,9 @@ impl RelayHandle {
         if slot.is_some() {
             return;
         }
+        // A fresh pump generation starts its push counter at zero: the
+        // lesche keys its same-generation replay rejection on this seq.
+        self.inner.projection_push_seq.store(0, Ordering::Relaxed);
         let cancel = CancellationToken::new();
         let task = tokio::spawn(self.clone().run_projection_pump(cancel.clone()));
         *slot = Some(super::PumpHandle { task, cancel });
@@ -117,7 +135,9 @@ impl RelayHandle {
         // its stored projection while the hint stayed logically `true`).
         self.push_projection(&state, &cancel).await;
 
-        let mut ticker = tokio::time::interval(PROJECTION_FALLBACK_INTERVAL);
+        let fallback =
+            Duration::from_millis(self.inner.projection_fallback_ms.load(Ordering::Relaxed));
+        let mut ticker = tokio::time::interval(fallback);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
@@ -162,9 +182,22 @@ impl RelayHandle {
     /// tunnel-down aborts the in-flight POST instead of waiting out the 30s
     /// HTTP timeout (mirrors the status pump).
     async fn push_projection(&self, state: &AppState, cancel: &CancellationToken) {
+        let push_seq = self
+            .inner
+            .projection_push_seq
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        let work_schedule = match state.work_schedules.get() {
+            Some(store) => match store.get_singleton().await {
+                Ok(Some(ws)) => Some(work_schedule_projection(&ws)),
+                Ok(None) => None,
+                Err(_) => None,
+            },
+            None => None,
+        };
         let snapshot = {
             let registry = state.registry.read().await;
-            snapshot_projection(state, &registry)
+            snapshot_projection(state, &registry, push_seq, work_schedule)
         };
         let post = self
             .inner
@@ -342,6 +375,31 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(1600)).await;
         let got = capture.lock().await.clone();
         assert_eq!(got.len(), 2, "3-signal burst -> exactly one extra push");
+        handle.stop_projection_pump().await;
+    }
+
+    /// Quality m-3: with a shortened fallback interval, the tick alone (no
+    /// signals) drives additional pushes while the hint is active -- the
+    /// coverage for registry changes that never reach the external bus
+    /// (roster/duty/budget/schedule).
+    #[tokio::test]
+    async fn fallback_tick_drives_a_push_without_signals() {
+        let (handle, capture, _state) = setup().await;
+        handle
+            .inner
+            .projection_fallback_ms
+            .store(150, Ordering::Relaxed);
+        handle.handle_projection_hint(true).await;
+        let got = wait_for(&capture, 1).await;
+        assert_eq!(got.len(), 1, "first shot on pump start");
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if capture.lock().await.len() >= 2 {
+                break;
+            }
+        }
+        let got = capture.lock().await.clone();
+        assert_eq!(got.len(), 2, "fallback tick pushed once more");
         handle.stop_projection_pump().await;
     }
 }

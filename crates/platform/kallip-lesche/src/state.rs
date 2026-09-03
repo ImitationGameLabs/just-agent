@@ -33,6 +33,7 @@ use kallip_archeion_common::ids::{ConversationId, ParticipantId, TagmaId, UserId
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::control::KeyExchangeResponse;
 use kallip_lesche_common::event::LescheEvent;
+use kallip_lesche_common::projection::{ProjectionDirty, ProjectionSnapshot};
 use kallip_lesche_common::rooms::MemberId;
 use kallip_lesche_common::tunnel::TunnelInbound;
 use tokio::sync::{broadcast, oneshot};
@@ -154,6 +155,12 @@ pub struct Registry {
     /// envelopes and presence events. Private: mutate only via
     /// [`Registry::open_app_stream`] / [`Registry::remove_app_stream_if_last`].
     app_streams: HashMap<ParticipantId, broadcast::Sender<LescheEvent>>,
+    /// Per-tagma projection cache (api-redesign §9.5: registry bypass) and
+    /// per-(user, tagma) projection SSE channels. Private: mutated only via
+    /// the projection methods below. The projection table outlives the
+    /// tagma's presence (MIN3): offline tags keep serving stale reads.
+    projections: HashMap<ParticipantId, ProjectionEntry>,
+    projection_streams: HashMap<(ParticipantId, ParticipantId), broadcast::Sender<ProjectionDirty>>,
 }
 
 /// One live tunnel: the outbound broadcast, the owning user (for presence
@@ -169,6 +176,29 @@ pub struct PresenceEntry {
     pub id: Arc<()>,
 }
 
+/// One tagma's stored projection: the latest accepted push plus the
+/// bookkeeping the accept/replay logic needs. `generation` records which
+/// tunnel connection the snapshot came in on (an `Arc::ptr_eq` against the
+/// live [`PresenceEntry::id`]): a push from a different generation is a
+/// reconnect whose push counter restarted, so it is accepted
+/// unconditionally (M1); a same-generation push must carry a strictly
+/// newer `push_seq` or it is an out-of-order replay.
+#[derive(Clone)]
+pub struct ProjectionEntry {
+    /// Store-side seq: increments once per accepted push.
+    pub seq: u64,
+    /// The owning user, captured at accept time from the tagma's presence:
+    /// offline tags keep serving stale reads (MIN3), and this is what makes
+    /// the C1 owner check possible without a live presence entry.
+    pub owner: UserId,
+    /// The tagma-side push counter at accept time.
+    pub last_push_seq: u64,
+    /// Wall-clock unix seconds when the push was accepted.
+    pub updated_at: i64,
+    pub generation: Arc<()>,
+    pub snapshot: ProjectionSnapshot,
+}
+
 #[derive(Debug, Clone)]
 pub struct ConversationRecord {
     pub owner: UserId,
@@ -181,6 +211,8 @@ impl Registry {
             conversations: HashMap::new(),
             presence: HashMap::new(),
             app_streams: HashMap::new(),
+            projections: HashMap::new(),
+            projection_streams: HashMap::new(),
         }
     }
 
@@ -234,6 +266,141 @@ impl Registry {
     pub fn has_app_stream(&self, user: &UserId) -> bool {
         self.app_streams
             .contains_key(&ParticipantId::for_user(user))
+    }
+
+    // --- Projection store & streams (api-redesign §9.1/§9.5/§9.7) ---
+
+    /// Accept a projection push from `tagma` (whose live presence
+    /// connection token is `generation`). Returns the new store seq, or
+    /// `None` when the push is a same-generation replay (its `push_seq` is
+    /// not newer than the accepted one) -- such a push is dropped without
+    /// touching the store or bumping the seq.
+    pub fn accept_projection(
+        &mut self,
+        tagma: &TagmaId,
+        generation: &Arc<()>,
+        push_seq: u64,
+        owner: UserId,
+        snapshot: ProjectionSnapshot,
+    ) -> Option<u64> {
+        let pid = ParticipantId::for_tagma(tagma);
+        let next_seq = match self.projections.get(&pid) {
+            Some(stored) => {
+                let same = Arc::ptr_eq(&stored.generation, generation);
+                if same && push_seq <= stored.last_push_seq {
+                    return None; // out-of-order replay within a generation
+                }
+                // Store seq keeps climbing across generations: clients use
+                // it to detect a reset, so only the tagma push_seq
+                // expectation is voided by a new generation (M1).
+                stored.seq + 1
+            }
+            None => 1,
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.projections.insert(
+            pid,
+            ProjectionEntry {
+                owner,
+                seq: next_seq,
+                last_push_seq: push_seq,
+                updated_at: now,
+                generation: generation.clone(),
+                snapshot,
+            },
+        );
+        Some(next_seq)
+    }
+
+    /// The stored projection for `tagma`, if any push was ever accepted.
+    /// Outlives the tagma's presence (MIN3): offline tags keep serving
+    /// stale reads from this.
+    pub fn projection(&self, tagma: &TagmaId) -> Option<&ProjectionEntry> {
+        self.projections.get(&ParticipantId::for_tagma(tagma))
+    }
+
+    /// Open (or join) the (user, tagma) projection SSE channel. Returns the
+    /// receiver plus whether this subscribe is the stream's 0 -> 1 edge (the
+    /// caller fans a `SubscriptionHint { active: true }` on that edge only).
+    pub fn open_projection_stream(
+        &mut self,
+        user: &UserId,
+        tagma: &TagmaId,
+    ) -> (
+        broadcast::Sender<ProjectionDirty>,
+        broadcast::Receiver<ProjectionDirty>,
+        bool,
+    ) {
+        let key = (
+            ParticipantId::for_user(user),
+            ParticipantId::for_tagma(tagma),
+        );
+        let sender = self
+            .projection_streams
+            .entry(key)
+            .or_insert_with(|| broadcast::channel::<ProjectionDirty>(BROADCAST_CAPACITY).0)
+            .clone();
+        let was_first = sender.receiver_count() == 0;
+        let rx = sender.subscribe();
+        if was_first {
+            self.send_subscription_hint(tagma, true);
+        }
+        (sender, rx, was_first)
+    }
+
+    /// Fan `SubscriptionHint { active }` down the tagma's tunnel. Best-effort:
+    /// an offline tagma misses it; the tunnel handler re-sends the current
+    /// state on every reconnect so the flag can never go stale for long.
+    pub fn send_subscription_hint(&self, tagma: &TagmaId, active: bool) {
+        if let Some(entry) = self.presence.get(&ParticipantId::for_tagma(tagma)) {
+            let _ = entry.tx.send(TunnelInbound::SubscriptionHint { active });
+        }
+    }
+    /// subscriber, mirroring [`Self::remove_app_stream_if_last`]. Returns
+    /// whether the entry was removed (the 1 -> 0 edge; the caller fans
+    /// `SubscriptionHint { active: false }` after the lag window).
+    pub fn remove_projection_stream_if_last(
+        &mut self,
+        user: &UserId,
+        tagma: &TagmaId,
+        sender: &broadcast::Sender<ProjectionDirty>,
+    ) -> bool {
+        let key = (
+            ParticipantId::for_user(user),
+            ParticipantId::for_tagma(tagma),
+        );
+        if sender.receiver_count() == 1 {
+            self.projection_streams.remove(&key);
+            self.send_subscription_hint(tagma, false);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Whether any client currently holds a live projection stream for
+    /// `tagma`. Consulted on tunnel reconnect so the lesche re-sends the
+    /// current hint (the tagma may have missed a flip while offline).
+    pub fn projection_stream_live_for_tagma(&self, tagma: &TagmaId) -> bool {
+        let tp = ParticipantId::for_tagma(tagma);
+        self.projection_streams
+            .iter()
+            .any(|((_, t), s)| *t == tp && s.receiver_count() > 0)
+    }
+
+    /// Fan a `ProjectionDirty` frame to `(user, tagma)`'s projection stream,
+    /// if any client is subscribed. Best-effort: no subscribers is fine (the
+    /// hint suppression means this is the normal unread case).
+    pub fn fan_projection_dirty(&self, user: &UserId, tagma: &TagmaId, dirty: ProjectionDirty) {
+        if let Some(sender) = self.projection_streams.get(&(
+            ParticipantId::for_user(user),
+            ParticipantId::for_tagma(tagma),
+        )) {
+            let _ = sender.send(dirty);
+        }
     }
 
     /// Ensure the soft-state conversation record exists for `tagma_id` owned by

@@ -15,12 +15,15 @@
 //! its prompt fields (`wake_prompt`, `final_warn_prompt`) cannot leak in.
 
 use crate::event::TagmaStatusPayload;
+use kallip_archeion_common::ids::TagmaId;
 use kallip_common::protocol::AgentSummary;
 use serde::{Deserialize, Serialize};
 
-/// One full-projection push from a tagma. `generated_at` is the tagma-side
-/// wall clock (RFC 3339) -- informational; the lesche stamps its own
-/// `updated_at` and `seq` on receipt, since those are per-lesche-store.
+/// One full-projection push from a tagma. `push_seq` is the tagma's
+/// per-connection push counter (reset on tunnel-up): the lesche uses it to
+/// reject out-of-order replays within the same connection generation.
+/// The lesche stamps its own store-side `seq` and `updated_at` on receipt;
+/// those are per-lesche-store, not per-tagma.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionSnapshot {
     /// The full agent roster, registry metadata only (no prompt text).
@@ -29,6 +32,39 @@ pub struct ProjectionSnapshot {
     /// subagent totals, token budget/consumed. Kept as the existing wire
     /// type so the status pump's payload shape is reused verbatim.
     pub status: TagmaStatusPayload,
+
+    /// The tagma's per-connection push counter; see the type doc.
+    pub push_seq: u64,
+
+    /// The tagma's work schedule, prompt-free projection (MIN1: the
+    /// `wake_prompt`/`final_warn_prompt` texts never ride the projection).
+    /// `None` while the tagma has no schedule.
+    pub work_schedule: Option<WorkScheduleProjection>,
+}
+
+/// The prompt-free work-schedule projection. `spec` and `status` ride as
+/// opaque JSON: the concrete enums are tagma-local and the lesche only
+/// stores and relays them, never interprets them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkScheduleProjection {
+    pub id: String,
+    pub spec: serde_json::Value,
+    pub pre_warn_minutes: u32,
+    pub final_warn_minutes: u32,
+    pub status: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: time::OffsetDateTime,
+}
+
+/// One change-notification frame on the `/projection/{agent}/events` SSE
+/// stream: the lesche tells subscribed clients *that* a tagma's projection
+/// moved (and to which store seq), never *what* moved -- clients re-pull
+/// via GET. `tagma_id` is carried even on the per-tagma stream so a future
+/// global multiplexed stream keeps the same frame shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectionDirty {
+    pub tagma_id: TagmaId,
+    pub seq: u64,
 }
 
 #[cfg(test)]
@@ -49,6 +85,8 @@ mod tests {
                 "token_budget": 1,
                 "token_consumed": 0,
             },
+            "push_seq": 7,
+            "work_schedule": null,
         });
         let snap: ProjectionSnapshot = serde_json::from_value(json).expect("parses");
         assert!(snap.agents.is_empty());
@@ -57,5 +95,7 @@ mod tests {
             kallip_common::protocol::AgentState::Idle
         );
         assert_eq!(snap.status.subagents_total, 0);
+        assert_eq!(snap.push_seq, 7);
+        assert!(snap.work_schedule.is_none());
     }
 }
