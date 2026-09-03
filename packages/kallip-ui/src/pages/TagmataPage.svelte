@@ -23,6 +23,7 @@
   import { openRelayChannel } from "@kallipai/kallip-lesche-client";
   import { type ProviderSummary } from "@kallipai/kallip-archeion-client";
   import { OnlineBackend } from "../lib/manage/backend.ts";
+  import { ManageRestClient } from "@kallipai/kallip-lesche-client";
   import { shellMode } from "../lib/shell/port.ts";
   import {
     isLocked,
@@ -248,7 +249,10 @@
         user.display_name ?? user.username ?? user.user_id,
         info.pinned_public_key,
       );
-      const backend = new OnlineBackend(channel);
+      const backend = new OnlineBackend(
+        new ManageRestClient(lescheBaseUrlOrFail()),
+        channel.tagmaId,
+      );
       const ports: PushPorts = {
         fetchLive: () => backend.getProfiles(),
         put: (body) => backend.updateProfiles(body),

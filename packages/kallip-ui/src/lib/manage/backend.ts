@@ -8,7 +8,7 @@
 // manage_result status+body) and TransportError on network/transport failures.
 
 import type { TagmaClient } from "@kallipai/kallip-client";
-import type { RelayChannel } from "@kallipai/kallip-lesche-client";
+import { ManageRestClient } from "@kallipai/kallip-lesche-client";
 import {
   KallipError,
   type ApiError,
@@ -118,6 +118,16 @@ export class OfflineBackend implements ManagementBackend {
  * carries for the confirm flow.
  */
 function parseError(status: number, body: unknown): Error {
+  switch (typeof body) {
+    case "string": {
+      // The reverse proxy emits plain-text bodies on its own error
+      // paths (403/404/502/504); fold into the same KallipError shape.
+      return new KallipError({
+        status,
+        message: body || "management request failed",
+      });
+    }
+  }
   const { message, dangling } = parseErrorEnvelope(body);
   return new KallipError({
     status,
@@ -127,14 +137,16 @@ function parseError(status: number, body: unknown): Error {
 }
 
 export class OnlineBackend implements ManagementBackend {
-  constructor(private readonly channel: RelayChannel) {}
-
+  constructor(
+    private readonly rest: ManageRestClient,
+    private readonly agent: string,
+  ) {}
   private async req<T>(
     method: string,
     path: string,
     body?: unknown,
   ): Promise<T> {
-    const result = await this.channel.manage(method, path, body ?? null);
+    const result = await this.rest.manage(this.agent, method, path, body);
     if (result.status >= 400) throw parseError(result.status, result.body);
     return result.body as T;
   }
@@ -144,7 +156,7 @@ export class OnlineBackend implements ManagementBackend {
     path: string,
     body?: unknown,
   ): Promise<void> {
-    const result = await this.channel.manage(method, path, body ?? null);
+    const result = await this.rest.manage(this.agent, method, path, body);
     if (result.status >= 400) throw parseError(result.status, result.body);
   }
 

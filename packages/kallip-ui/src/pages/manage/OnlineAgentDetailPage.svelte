@@ -9,6 +9,8 @@
   import { channelsStore } from "../../lib/session/channels.svelte.ts";
   import { realtimeStore } from "../../lib/session/realtime.svelte.ts";
   import { OnlineBackend } from "../../lib/manage/backend.ts";
+  import { ManageRestClient } from "@kallipai/kallip-lesche-client";
+  import { lescheBaseUrlOrFail } from "../../lib/session/archeion.svelte.ts";
   import { manageChannelStalled } from "../../lib/manage/channelStalled.ts";
   import AgentDetailPage from "./AgentDetailPage.svelte";
   import { tagmaDetailsPath } from "../../lib/shell/routes.ts";
@@ -55,7 +57,10 @@
       // conv.kind === "relay" narrows to RelayConversation
       const relayConv =
         conv as import("../../lib/session/conversation.svelte.ts").RelayConversation;
-      backend = new OnlineBackend(relayConv.relayTransport.relayChannel);
+      backend = new OnlineBackend(
+        new ManageRestClient(lescheBaseUrlOrFail()),
+        relayConv.relayTransport.relayChannel.tagmaId,
+      );
     } catch (e) {
       console.error("[agent detail] backend wiring failed:", e);
       backend = null;

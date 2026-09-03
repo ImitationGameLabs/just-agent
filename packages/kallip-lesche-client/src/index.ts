@@ -14,15 +14,16 @@ export const PACKAGE_NAME = "@kallipai/kallip-lesche-client";
 
 export { LescheClient } from "./http.ts";
 export { openRelayChannel, RelayChannel } from "./channel.ts";
+export { ManageRestClient } from "./manageRest.ts";
 export {
-  clear as clearConvCache,
   type CachedLine,
-  put,
-  readTail,
-  readTailBefore,
+  clear as clearConvCache,
   clearReadWatermarks,
   getReadWatermark,
+  put,
   putReadWatermark,
+  readTail,
+  readTailBefore,
 } from "./cache.ts";
 
 // Data-plane wire types the UI consumes. The remaining wire types
@@ -31,8 +32,8 @@ export {
 export type {
   AuthoredEvent,
   Envelope,
-  HistoryEntry,
   FileAttachment,
+  HistoryEntry,
   Participant,
   RoomMessageView,
   SignalEvent,

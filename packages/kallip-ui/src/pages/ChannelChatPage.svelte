@@ -15,6 +15,8 @@
   import { RelayConversation } from "../lib/session/conversation.svelte.ts";
   import { statusCardStore } from "../lib/session/statusCard.svelte.ts";
   import { OnlineBackend } from "../lib/manage/backend.ts";
+  import { ManageRestClient } from "@kallipai/kallip-lesche-client";
+  import { lescheBaseUrlOrFail } from "../lib/session/archeion.svelte.ts";
   import { managementBackend } from "../lib/manage/client.ts";
   import { convDraftKey, tagmaDraftKey } from "../lib/session/drafts.ts";
   import { channelsStore } from "../lib/session/channels.svelte";
@@ -242,7 +244,10 @@
     try {
       if (conv instanceof RelayConversation) {
         statusCardStore.attach(
-          new OnlineBackend(conv.relayTransport.relayChannel),
+          new OnlineBackend(
+            new ManageRestClient(lescheBaseUrlOrFail()),
+            conv.relayTransport.relayChannel.tagmaId,
+          ),
         );
       } else {
         statusCardStore.attach(managementBackend());
