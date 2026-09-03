@@ -18,6 +18,7 @@ pub mod control;
 pub mod direct;
 pub mod event;
 pub mod message;
+pub mod projection;
 pub mod proof;
 pub mod rooms;
 pub mod tunnel;

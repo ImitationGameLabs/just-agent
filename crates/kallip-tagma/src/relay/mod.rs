@@ -23,6 +23,7 @@ mod dispatch;
 mod kex;
 mod manage;
 pub(crate) mod ops;
+mod projection_pump;
 mod pump;
 pub(crate) mod room_poll;
 pub(crate) mod status_pump;
@@ -127,6 +128,17 @@ struct Inner {
     /// tick warms the joined-rooms cache after a reconnect), stopped on
     /// tunnel-down so a reconnect installs a fresh pump.
     room_pump: Mutex<Option<PumpHandle>>,
+    /// The running projection push pump, if any. Bounded to the tunnel
+    /// session like the other pumps (started on tunnel-up with an
+    /// unconditional full first shot, stopped on tunnel-down), and
+    /// additionally gated by the lesche's subscription hint so an unread
+    /// projection costs nothing (api-redesign §9.7).
+    projection_pump: Mutex<Option<PumpHandle>>,
+    /// Whether the lesche currently has at least one projection subscriber
+    /// (the last `SubscriptionHint` received; `false` until one arrives and
+    /// after a `false`, the fail-toward-saving-resources default). Read by
+    /// the pump before each push; written only from the tunnel dispatch.
+    projection_active: std::sync::atomic::AtomicBool,
     /// In-flight per-envelope op tasks, so shutdown can abort and drain them
     /// rather than leaving them fire-and-forget. See [`RelayHandle::stop_dispatch`].
     dispatch: Mutex<tokio::task::JoinSet<()>>,
@@ -159,6 +171,8 @@ impl RelayHandle {
                 pump: Mutex::new(None),
                 status_pump: Mutex::new(None),
                 room_pump: Mutex::new(None),
+                projection_pump: Mutex::new(None),
+                projection_active: std::sync::atomic::AtomicBool::new(false),
                 dispatch: Mutex::new(tokio::task::JoinSet::new()),
                 state,
             }),

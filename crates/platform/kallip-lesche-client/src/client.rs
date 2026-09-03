@@ -330,6 +330,33 @@ impl LescheClient {
         Ok(())
     }
 
+    /// Post a full projection snapshot (roster + aggregate status) to the
+    /// lesche's internal projection surface (api-redesign §9.1). Same
+    /// best-effort contract as [`post_status`](Self::post_status): not
+    /// retried -- the projection is a pure cache, so the next push (signal
+    /// nudge or fallback tick) supersedes a dropped POST, and a tunnel-down
+    /// cancels the in-flight POST rather than waiting out the HTTP timeout.
+    pub async fn post_projection(
+        &self,
+        tagma_id: &TagmaId,
+        snapshot: &kallip_lesche_common::projection::ProjectionSnapshot,
+    ) -> Result<()> {
+        let url = self.url(&format!("/v1/tagmata/{tagma_id}/projection"));
+        let resp = self
+            .inner
+            .http_post
+            .post(&url)
+            .bearer_auth(&self.inner.tagma_token)
+            .json(snapshot)
+            .send()
+            .await
+            .context("lesche POST failed")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("lesche POST returned {}", resp.status());
+        }
+        Ok(())
+    }
+
     /// Post a tagma runtime signal (busy/idle presence, turn terminals,
     /// errors) for plaintext rebroadcast as a `LescheEvent::TagmaSignal`. Like
     /// [`post_status`](Self::post_status), not retried: a dropped signal just
@@ -1081,6 +1108,7 @@ mod tests {
             TunnelInbound::Envelope { .. } => panic!("expected KeyExchange"),
             TunnelInbound::Wake => panic!("expected KeyExchange"),
             TunnelInbound::ManageRest { .. } => panic!("expected KeyExchange"),
+            TunnelInbound::SubscriptionHint { .. } => panic!("expected KeyExchange"),
         }
     }
 

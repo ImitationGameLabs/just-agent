@@ -47,6 +47,18 @@ pub enum TunnelInbound {
         trace: kallip_archeion_common::ids::TraceId,
         body: serde_json::Value,
     },
+    /// A best-effort hint that the lesche's projection subscription count
+    /// crossed the zero <-> non-zero boundary: `true` means at least one
+    /// client is reading the projection (the tagma should push projection
+    /// updates), `false` means nobody is listening (skip the push, save the
+    /// work). Like [`TunnelInbound::Wake`], the hint is transient and NOT
+    /// buffered: an offline tagma misses it, so the lesche re-sends the
+    /// current state when the tunnel re-establishes, and the tagma treats
+    /// tunnel-up as implicitly active (full first snapshot) regardless of
+    /// hint history. The tagma-side default is `false` (fail toward saving
+    /// resources). Carries no projection data: the tagma recomputes the
+    /// snapshot itself on the next push.
+    SubscriptionHint { active: bool },
 }
 
 /// The plaintext reply to a [`TunnelInbound::ManageRest`] frame: the tagma
@@ -70,5 +82,22 @@ mod tests {
         assert!(json.contains("\"kind\":\"wake\""), "{json}");
         let back: TunnelInbound = serde_json::from_str(&json).unwrap();
         assert!(matches!(back, TunnelInbound::Wake));
+    }
+
+    /// The subscription hint round-trips with its snake_case kind tag and
+    /// carries the active flag (the fifth inbound frame).
+    #[test]
+    fn subscription_hint_round_trips() {
+        let frame = TunnelInbound::SubscriptionHint { active: true };
+        let json = serde_json::to_string(&frame).unwrap();
+        assert!(
+            json.contains("\"kind\":\"subscription_hint\"") && json.contains("\"active\":true"),
+            "{json}"
+        );
+        let back: TunnelInbound = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            back,
+            TunnelInbound::SubscriptionHint { active: true }
+        ));
     }
 }

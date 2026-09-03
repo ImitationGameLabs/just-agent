@@ -269,7 +269,7 @@ impl ExternalProjector {
     /// Publish a frame; a `Send` error means there are currently no subscribers,
     /// which is benign (the frame is live-only and needs no durable echo — the
     /// persisted rows are re-pullable via history).
-    fn publish(&self, frame: ExternalFrame) {
+    pub(crate) fn publish(&self, frame: ExternalFrame) {
         let _ = self.inner.frames_tx.send(frame);
     }
 

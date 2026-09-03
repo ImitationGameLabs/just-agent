@@ -48,6 +48,7 @@ impl RelayHandle {
         self.stop_pump().await;
         self.stop_status_pump().await;
         self.stop_room_pump().await;
+        self.stop_projection_pump().await;
         self.stop_dispatch().await;
     }
 
@@ -75,6 +76,7 @@ impl RelayHandle {
             .await?;
         self.start_status_pump().await;
         self.start_room_pump().await;
+        self.start_projection_pump().await;
         tokio::pin!(stream);
         while let Some(item) = stream.next().await {
             match item {
@@ -89,6 +91,7 @@ impl RelayHandle {
             }
         }
         self.stop_status_pump().await;
+        self.stop_projection_pump().await;
         self.stop_room_pump().await;
         Ok(())
     }
@@ -131,6 +134,9 @@ impl RelayHandle {
             } => {
                 self.handle_manage_rest(req_id, &path, &method, &trace, body)
                     .await
+            }
+            TunnelInbound::SubscriptionHint { active } => {
+                self.handle_projection_hint(active).await;
             }
         }
     }
