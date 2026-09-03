@@ -132,35 +132,36 @@ impl RelayHandle {
     }
 }
 
-/// The frame-surface allowlist: which manage routes may ride a ManageRest
-/// frame. This is the enforcement point for the encryption-scope decision:
-/// prompt-bearing routes must NOT traverse the tunnel in plaintext, so the
-/// allowlist is fail-closed -- anything not explicitly listed is a 404,
-/// even though the underlying manage_router would happily serve it.
-/// Message/session routes are structurally excluded (they are not on the
-/// manage router at all).
+/// The frame-surface allowlist: the exact manage_router routes that may
+/// ride a ManageRest frame, enumerated one by one. This is the enforcement
+/// point for the encryption-scope decision: prompt-bearing routes
+/// (/profiles/sets/{name}), the provider probe, session content (the lesche
+/// message posts) and destructive deletes stay OFF the plaintext frame.
+/// Anything not listed here is a 404, even though the underlying
+/// manage_router would happily serve it -- fail-closed by construction.
 fn frame_allowed(method: &str, path: &str) -> bool {
-    let m = matches!(method, "GET" | "PUT" | "POST");
     let p = path.trim_end_matches('/');
-    let top = matches!(
-        p,
-        "/agents" | "/budget" | "/work-schedule" | "/approvals" | "/profiles" | "/profiles/default"
-    );
-    let under = [
-        "/agents/",
-        "/budget",
-        "/work-schedule",
-        "/approvals",
-        "/profiles/apply",
-    ]
-    .iter()
-    .any(|prefix| p.starts_with(prefix));
-    m
-        && (top || under)
-        // Never expose prompt-bearing profile-set bodies or the provider
-        // probe through the plaintext frame surface.
-        && !p.starts_with("/profiles/sets")
-        && p != "/profiles/probe"
+    match (method, p) {
+        ("GET", "/agents")
+        | ("GET", "/budget")
+        | ("POST", "/budget")
+        | ("GET", "/work-schedule")
+        | ("PUT", "/work-schedule")
+        | ("GET", "/profiles")
+        | ("POST", "/profiles/apply")
+        | ("PUT", "/profiles/default") => true,
+        // Per-agent subroutes: match the {id} segment explicitly.
+        _ => match (
+            method,
+            p.strip_prefix("/agents/")
+                .and_then(|rest| rest.split_once('/')),
+        ) {
+            ("GET", Some((_, "status"))) => true,
+            ("POST", Some((_, "interrupt"))) => true,
+            ("PUT", Some((_, "duty" | "metadata" | "profile-set"))) => true,
+            _ => false,
+        },
+    }
 }
 
 impl RelayHandle {
@@ -201,14 +202,18 @@ mod manage_rest_tests {
     fn allowlist_admits_low_and_medium_sensitive_routes() {
         for (method, path) in [
             ("GET", "/agents"),
-            ("GET", "/agents/root"),
             ("GET", "/agents/x/status"),
-            ("PUT", "/budget"),
+            ("POST", "/budget"),
             ("GET", "/work-schedule"),
-            ("GET", "/approvals"),
+            ("PUT", "/work-schedule"),
             ("GET", "/profiles"),
-            ("GET", "/profiles/default"),
+            ("PUT", "/profiles/default"),
             ("POST", "/profiles/apply"),
+            ("GET", "/agents/x/status"),
+            ("POST", "/agents/x/interrupt"),
+            ("PUT", "/agents/x/duty"),
+            ("PUT", "/agents/x/metadata"),
+            ("PUT", "/agents/x/profile-set"),
         ] {
             assert!(frame_allowed(method, path), "{method} {path}");
         }
@@ -221,7 +226,14 @@ mod manage_rest_tests {
             ("GET", "/profiles/sets/main"),
             ("PUT", "/profiles/sets/main"),
             ("POST", "/profiles/probe"),
-            // Unlisted = fail-closed.
+            // Session CONTENT riding the manage router: denied.
+            ("POST", "/agents/x/lesche/messages"),
+            ("POST", "/agents/x/lesche/rooms/r/messages"),
+            ("POST", "/agents/x/lesche/direct-sessions/p/messages"),
+            ("GET", "/agents/x/lesche/sessions"),
+            ("PUT", "/budget"), // drift: the router serves POST, not PUT
+            ("GET", "/agents/x/lesche/direct-sessions/p/messages"), // history read
+            ("DELETE", "/profiles/sets/main"),
             ("GET", "/messages"),
             ("DELETE", "/agents/x"),
             ("GET", "/completely/unknown"),
