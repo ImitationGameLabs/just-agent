@@ -253,6 +253,9 @@
         info.pinned_public_key,
       );
       const backend = new OnlineBackend(
+        // The projection drives the status card's read plane (roster, budget,
+        // work schedule, SSE feed); the profile push ports below still go
+        // through the write-plane manage client.
         new ManageRestClient(lescheBaseUrlOrFail()),
         channel.tagmaId,
         new ProjectionClient(lescheBaseUrlOrFail()),

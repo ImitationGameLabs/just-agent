@@ -164,18 +164,60 @@ export class OnlineBackend implements ManagementBackend {
     const listeners = new Set<() => void>();
     const backoff = new LinearBackoff();
     let controller: AbortController | null = null;
+    let warnedThisStreak = false;
+    // P2-c review round: dirty-frame traffic shaping, shared by every
+    // subscriber. A stream storm (one dirty frame per mutation) must
+    // not multiply into one GET per frame.
+    let lastSeq = 0; // seq gate: a frame at or below the last notified
+    // seq is a replay or echo, not news
+    let windowTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingWhileHidden = false;
+    const notifyListeners = (): void => {
+      for (const fn of [...listeners]) fn();
+    };
+    // First frame in the window fires immediately; frames landing
+    // within the next 750ms collapse into the in-flight window rather
+    // than scheduling another pull (750ms sits well under any human
+    // perceivable lag yet absorbs a burst of same-tick mutations).
+    const onFrame = (seq: number): void => {
+      if (seq <= lastSeq) return;
+      lastSeq = seq;
+      if (document.hidden) {
+        pendingWhileHidden = true;
+        return;
+      }
+      if (windowTimer === null) {
+        notifyListeners();
+        windowTimer = setTimeout(() => {
+          windowTimer = null;
+        }, 750);
+      }
+    };
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && pendingWhileHidden) {
+        pendingWhileHidden = false;
+        notifyListeners();
+      }
+    });
     const runLoop = async (): Promise<void> => {
       while (controller && !controller.signal.aborted) {
         try {
-          for await (const _ of projection.events(
+          for await (const frame of projection.events(
             this.agent,
             controller.signal,
           )) {
             backoff.reset();
-            for (const fn of [...listeners]) fn();
+            warnedThisStreak = false;
+            onFrame(frame.seq);
           }
-        } catch {
-          // stream error: fall through to the backoff
+        } catch (e) {
+          // Stream error: fall through to the backoff. Warn once per
+          // streak (a flapping endpoint must not spam the console at
+          // the reconnect pace); the next clean frame re-arms it.
+          if (!warnedThisStreak) {
+            console.warn("[projection feed] stream dropped:", e);
+            warnedThisStreak = true;
+          }
         }
         if (!controller || controller.signal.aborted) return;
         await new Promise((r) => setTimeout(r, backoff.next()));

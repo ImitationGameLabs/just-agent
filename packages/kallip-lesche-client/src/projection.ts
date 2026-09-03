@@ -79,7 +79,13 @@ export class ProjectionClient {
     );
     if (!resp.ok) throw new Error(`projection events: ${resp.status}`);
     for await (const ev of parseSseStream(resp, signal)) {
-      yield JSON.parse(ev.data) as ProjectionDirty;
+      // A torn or non-JSON frame is skipped: dirty frames are pure
+      // nudges, so a lost frame only costs one debounced re-pull.
+      try {
+        yield JSON.parse(ev.data) as ProjectionDirty;
+      } catch {
+        continue;
+      }
     }
   }
 

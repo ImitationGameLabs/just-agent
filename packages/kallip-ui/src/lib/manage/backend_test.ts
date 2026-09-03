@@ -12,6 +12,16 @@ import {
 } from "@kallipai/kallip-lesche-client";
 import { OnlineBackend } from "./backend.ts";
 
+// The projection feed consults document.hidden and binds a
+// visibilitychange listener at backend construction; deno test has
+// no DOM, so stand in a minimal visible document unless a test
+// installs its own.
+if (typeof globalThis.document === "undefined") {
+  globalThis.document = {
+    hidden: false,
+    addEventListener: () => {},
+  } as unknown as typeof globalThis.document;
+}
 import { classifySaveFailure } from "./profiles-view.ts";
 function restWith(body: unknown): ManageRestClient {
   return {
@@ -184,21 +194,42 @@ Deno.test(
 );
 
 // Regression (review round): the stop handle must only retire its own
-// callback -- a sibling subscriber keeps receiving nudges, and a
-// fresh subscribe after everyone left revives the loop.
+// callback -- a sibling keeps receiving nudges, and a fresh subscribe
+// after everyone left revives the loop. Frames are timed across the
+// 750ms shaping window so each one is a fresh, uncollapsed nudge.
 Deno.test(
   "stopping one subscriber leaves siblings and revival intact",
   async () => {
-    const sse =
-      'data: {"tagma_id":"t-a","seq":1}\n\n' +
-      'data: {"tagma_id":"t-a","seq":2}\n\n';
+    const enc = new TextEncoder();
+    const frame = (seq: number) =>
+      enc.encode('data: {"tagma_id":"t-a","seq":' + seq + "}\n\n");
     const real = globalThis.fetch;
     globalThis.fetch = (() =>
       Promise.resolve(
-        new Response(sse, {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        }),
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(frame(1));
+              // Later frames ride timers; if the stream is torn down by
+              // an unsubscribe first, the enqueue throws and is swallowed.
+              setTimeout(() => {
+                try {
+                  controller.enqueue(frame(2));
+                } catch {
+                  // stream torn down by an unsubscribe
+                }
+              }, 850);
+              setTimeout(() => {
+                try {
+                  controller.enqueue(frame(3));
+                } catch {
+                  // stream torn down by an unsubscribe
+                }
+              }, 1700);
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
       )) as typeof fetch;
     try {
       const backend = new OnlineBackend(
@@ -214,25 +245,119 @@ Deno.test(
       const stopB = backend.projectionFeed!.subscribe(() => {
         bCount += 1;
       });
-      await new Promise((r) => setTimeout(r, 40));
-      const bBefore = bCount;
+      // seq 1 notifies both subscribers immediately.
+      await new Promise((r) => setTimeout(r, 60));
+      assertEquals(aCount, 1);
+      assertEquals(bCount, 1);
       stopA();
-      const aFrozen = aCount;
-      await new Promise((r) => setTimeout(r, 40));
-      assertEquals(bCount > bBefore, true, "sibling keeps receiving");
-      assertEquals(aCount, aFrozen, "stopped subscriber stays stopped");
+      // seq 2 arrives past the shaping window: only the sibling hears
+      // it; the stopped callback stays retired.
+      await new Promise((r) => setTimeout(r, 900));
+      assertEquals(aCount, 1, "stopped subscriber stays stopped");
+      assertEquals(bCount, 2, "sibling keeps receiving");
 
-      // Everyone unsubscribes (the loop aborts), then a fresh subscriber
-      // revives it with a new stream.
+      // Everyone unsubscribes (the loop aborts), then a fresh
+      // subscriber revives it with a new stream; the first frame past
+      // the seq gate reaches it.
       stopB();
       let cCount = 0;
       backend.projectionFeed!.subscribe(() => {
         cCount += 1;
       });
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 1800));
       assertEquals(cCount >= 1, true, "fresh subscribe revives the loop");
     } finally {
       globalThis.fetch = real;
+    }
+  },
+);
+// Regression (review round): dirty-frame traffic shaping. A burst of
+// frames inside the 750ms window must collapse into the single nudge
+// the first frame already fired, and a frame at or below the last
+// notified seq is a replay, not news.
+Deno.test(
+  "a frame burst collapses into one nudge; stale seq frames drop",
+  async () => {
+    const sse =
+      'data: {"tagma_id":"t-a","seq":5}\n\n' +
+      'data: {"tagma_id":"t-a","seq":6}\n\n' +
+      'data: {"tagma_id":"t-a","seq":5}\n\n';
+    const real = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(sse, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      )) as typeof fetch;
+    try {
+      const backend = new OnlineBackend(
+        {} as unknown as ManageRestClient,
+        "t-a",
+        new ProjectionClient("http://lesche.test"),
+      );
+      let nudges = 0;
+      const stop = backend.projectionFeed!.subscribe(() => {
+        nudges += 1;
+      });
+      // seq 5 fires immediately; seq 6 lands inside the window; the
+      // trailing seq 5 sits at the notified seq and drops.
+      await new Promise((r) => setTimeout(r, 60));
+      assertEquals(nudges, 1, "burst collapsed into the first nudge");
+      await new Promise((r) => setTimeout(r, 800));
+      assertEquals(nudges, 1, "window expiry fires nothing extra");
+      stop();
+    } finally {
+      globalThis.fetch = real;
+    }
+  },
+);
+// Regression (review round): frames arriving while the page is hidden
+// must not notify; they stay pending and flush exactly once when the
+// page turns visible again.
+Deno.test(
+  "frames seen while hidden stay pending until the page turns visible",
+  async () => {
+    let visListener: (() => void) | null = null;
+    const doc = {
+      hidden: true,
+      addEventListener: (_type: string, fn: () => void) => {
+        visListener = fn;
+      },
+    };
+    const real = globalThis.fetch;
+    const realDoc = globalThis.document;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response('data: {"tagma_id":"t-a","seq":3}\n\n', {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      )) as typeof fetch;
+    globalThis.document = doc as unknown as typeof globalThis.document;
+    try {
+      const backend = new OnlineBackend(
+        {} as unknown as ManageRestClient,
+        "t-a",
+        new ProjectionClient("http://lesche.test"),
+      );
+      let nudges = 0;
+      const stop = backend.projectionFeed!.subscribe(() => {
+        nudges += 1;
+      });
+      await new Promise((r) => setTimeout(r, 60));
+      assertEquals(nudges, 0, "hidden swallows the frame");
+      doc.hidden = false;
+      visListener!();
+      await new Promise((r) => setTimeout(r, 10));
+      assertEquals(nudges, 1, "the flip flushes the pending nudge");
+      visListener!();
+      await new Promise((r) => setTimeout(r, 10));
+      assertEquals(nudges, 1, "a flip with nothing pending is inert");
+      stop();
+    } finally {
+      globalThis.fetch = real;
+      globalThis.document = realDoc;
     }
   },
 );
