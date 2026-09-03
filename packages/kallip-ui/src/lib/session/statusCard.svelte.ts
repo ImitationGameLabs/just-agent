@@ -16,6 +16,9 @@ import { startVisibleInterval } from "../visibleInterval.ts";
 
 /** One rendered row. `contextTokens` is null until the slow poll lands (or
  * forever, for faulted/parked agents). */
+/** Failed context pulls retry at most once per this window; the 30s
+ * poll remains the unconditional backstop. */
+const CONTEXT_RETRY_COOLDOWN_MS = 30_000;
 export interface StatusCardRow {
   readonly id: string;
   readonly state: AgentState;
@@ -63,6 +66,11 @@ class StatusCardStore {
   // must not stack a second concurrent round on a still-running one.
   private rosterRunning = false;
   private contextsRunning = false;
+  // Gap-fill state: agents whose context pull failed cool down before a
+  // roster-triggered retry (the 30s tick remains the final backstop),
+  // so a persistently failing agent cannot recurse with the roster.
+  private contextCooldown = new Map<string, number>();
+  private gapPullRunning = false;
   /** Set once the first contexts round has been attempted (success or
    * not): the roster-triggered first pull must fire exactly once even
    * when every getAgentStatus fails, or the two recurse. */
@@ -88,6 +96,7 @@ class StatusCardStore {
     this.profileIds.clear();
     this.lastSubSignature = "";
     this.contextsPrimed = false;
+    this.contextCooldown.clear();
   }
 
   attach(backend: ManagementBackend): void {
@@ -164,6 +173,10 @@ class StatusCardStore {
         void this.refreshContexts();
         this.contextsPrimed = true;
       }
+      // Gap fill: agents that appeared after the first pull (or whose
+      // pull failed and left cooldown) get an incremental retry here,
+      // so a late joiner never waits a full 30s period for its number.
+      void this.refreshMissingContexts();
     } catch {
       /* transient poll failure: keep the last roster */
     } finally {
@@ -198,7 +211,9 @@ class StatusCardStore {
             const pid = status.profile?.profile_id;
             if (pid) this.profileIds.set(row.id, pid);
           } catch {
-            /* agent gone or not yet responsive: leave the stale value */
+            // agent gone or not yet responsive: it cools down like any
+            // other failure, so the gap fill does not hot-loop on it
+            this.contextCooldown.set(row.id, Date.now());
           }
         }),
       );
@@ -208,6 +223,52 @@ class StatusCardStore {
     }
   }
 
+  /** Incremental gap fill, triggered from every roster merge: pull only
+   * the live agents whose context is missing (late joiners, and agents
+   * whose earlier pull failed). Failed ids cool down so a persistently
+   * failing agent retries at most once per cooldown window instead of
+   * recursing with the roster (the 30s poll stays the backstop). */
+  private async refreshMissingContexts(): Promise<void> {
+    if (this.gapPullRunning || !this.backend) return;
+    const backend = this.backend;
+    const now = Date.now();
+    const targets = [
+      ...(this.rootRow ? [this.rootRow] : []),
+      ...this.subRows,
+    ].filter(
+      (r) =>
+        r.state !== "faulted" &&
+        r.state !== "parked" &&
+        !this.contexts.has(r.id) &&
+        (this.contextCooldown.get(r.id) ?? 0) <=
+          now - CONTEXT_RETRY_COOLDOWN_MS,
+    );
+    if (targets.length === 0) return;
+    this.gapPullRunning = true;
+    try {
+      await Promise.all(
+        targets.map(async (row) => {
+          try {
+            const status = await backend.getAgentStatus(row.id);
+            if (this.backend !== backend) return;
+            this.contexts.set(
+              row.id,
+              status.context.turn_tokens +
+                status.context.pinned_items.reduce((sum, [, n]) => sum + n, 0),
+            );
+            this.contextCooldown.delete(row.id);
+            const pid = status.profile?.profile_id;
+            if (pid) this.profileIds.set(row.id, pid);
+          } catch {
+            this.contextCooldown.set(row.id, Date.now());
+          }
+        }),
+      );
+      this.refreshRoster();
+    } finally {
+      this.gapPullRunning = false;
+    }
+  }
   private contextOf(a: { id: string; state: AgentState }): number | null {
     if (a.state === "faulted" || a.state === "parked") return null;
     return this.contexts.get(a.id) ?? null;

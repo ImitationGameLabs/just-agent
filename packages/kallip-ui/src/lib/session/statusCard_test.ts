@@ -99,6 +99,9 @@ Deno.test(
       statusCardStore.nudge();
       await flush();
       assertEquals(stub.rosterCalls, 3);
+      // Two agents x (first pull + one cooldown-sealed gap retry) = 4
+      // calls total; a growing count would mean roster<->gap recursion.
+      assertEquals(stub.statusCalls, 4);
     } finally {
       statusCardStore.detach();
     }
