@@ -44,8 +44,6 @@ pub fn router() -> Router<SharedConvState> {
 }
 
 /// The tagma's plaintext reply to a ManageRest frame: resolves the pending
-
-/// The tagma's plaintext reply to a ManageRest frame: resolves the pending
 /// proxy waiter (see [`crate::routes::manage_proxy`]). Tagma-bearer auth.
 async fn manage_reply(
     AuthPrincipal(principal): AuthPrincipal,
@@ -309,4 +307,26 @@ mod tests {
         assert_eq!(e_unknown.message, e_revoked.message);
         assert_eq!(e_unknown.message, e_pending.message);
     }
+}
+
+/// arch nail (P1-b): the manage-reply endpoint only accepts tagma
+/// bearers -- an operator session (or anonymous) caller is 401.
+#[tokio::test]
+async fn manage_reply_rejects_non_tagma_principals() {
+    let (_state, _control) = make_state(60, std::time::Duration::from_secs(2));
+    use crate::test_support::make_state;
+    use kallip_archeion_common::ids::UserId;
+    let reply = axum::Json(ManageRestReply {
+        req_id: 1,
+        status: 200,
+        body: serde_json::json!({}),
+    });
+    let err = manage_reply(
+        crate::auth::AuthPrincipal(kallip_archeion_common::principal::Principal::User(
+            UserId::from("op".to_string()),
+        )),
+        reply,
+    )
+    .await;
+    assert_eq!(err, StatusCode::UNAUTHORIZED);
 }

@@ -154,12 +154,15 @@ fn frame_allowed(method: &str, path: &str) -> bool {
         | ("POST", "/profiles/apply")
         | ("PUT", "/profiles/default") => true,
         // Per-agent subroutes: match the {id} segment explicitly.
-        _ => match (method, sub) {
-            ("GET", Some((_, "status"))) => true,
-            ("POST", Some((_, "interrupt"))) => true,
-            ("PUT", Some((_, "duty" | "metadata" | "profile-set"))) => true,
-            _ => false,
-        },
+        _ => {
+            let (m, s) = (method, sub);
+            matches!(
+                (m, s),
+                ("GET", Some((_, "status")))
+                    | ("POST", Some((_, "interrupt")))
+                    | ("PUT", Some((_, "duty" | "metadata" | "profile-set")))
+            )
+        }
     }
 }
 

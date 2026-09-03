@@ -59,11 +59,11 @@ async fn proxy_manage(
     method: axum::http::Method,
     uri: axum::http::Uri,
     body: Option<axum::Json<serde_json::Value>>,
-) -> Result<axum::response::Response, ApiErr> {
+) -> axum::response::Response {
     let user = match principal {
         Principal::User(user_id) => user_id,
         // Tagma-bearer callers have no business on the operator proxy.
-        _ => return Ok((StatusCode::FORBIDDEN, "operator session required").into_response()),
+        _ => return (StatusCode::FORBIDDEN, "operator session required").into_response(),
     };
     let tagma_id = TagmaId::from(agent.clone());
 
@@ -74,17 +74,17 @@ async fn proxy_manage(
         match registry.presence.get(&ParticipantId::for_tagma(&tagma_id)) {
             Some(entry) if entry.owner == user => entry.tx.clone(),
             Some(_) => {
-                return Ok((StatusCode::FORBIDDEN, "not your tagma").into_response());
+                return (StatusCode::FORBIDDEN, "not your tagma").into_response();
             }
             None => {
-                return Ok((StatusCode::NOT_FOUND, "tagma not online").into_response());
+                return (StatusCode::NOT_FOUND, "tagma not online").into_response();
             }
         }
     };
 
     // Contract (root-approved): no query string on the frame surface.
     if uri.query().is_some() {
-        return Ok((StatusCode::NOT_FOUND, "query not allowed on the frame").into_response());
+        return (StatusCode::NOT_FOUND, "query not allowed on the frame").into_response();
     }
     let path = uri.path();
     let req_id = next_req_id();
@@ -105,20 +105,20 @@ async fn proxy_manage(
     };
     if tx.send(frame).is_err() {
         pending().lock().await.remove(&(tagma_id, req_id));
-        return Ok((StatusCode::BAD_GATEWAY, "tagma tunnel offline").into_response());
+        return (StatusCode::BAD_GATEWAY, "tagma tunnel offline").into_response();
     }
 
     match tokio::time::timeout(REPLY_WAIT, reply_rx).await {
-        Ok(Ok(reply)) => Ok((
+        Ok(Ok(reply)) => (
             StatusCode::from_u16(reply.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             axum::Json(reply.body),
         )
-            .into_response()),
+            .into_response(),
         _ => {
             // Slow-leak guard: a timed-out or dropped waiter must not leave
             // its entry in the pending map (req_id never repeats).
             pending().lock().await.remove(&(tagma_id, req_id));
-            Ok((StatusCode::GATEWAY_TIMEOUT, "manage reply not received").into_response())
+            (StatusCode::GATEWAY_TIMEOUT, "manage reply not received").into_response()
         }
     }
 }
@@ -128,10 +128,6 @@ static REQ_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 fn next_req_id() -> u64 {
     REQ_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
-
-// Placeholder to keep the error alias referenced; the real response error type
-// is fully inline above (every path returns a concrete Response).
-type ApiErr = (StatusCode, &'static str);
 
 #[cfg(test)]
 mod tests {
@@ -234,12 +230,11 @@ mod tests {
 #[cfg(test)]
 mod proxy_tests {
     use super::*;
-    use crate::routes::test_support::{as_user, db_state};
+    use crate::routes::test_support::db_state;
     use axum::extract::{Path, State};
     use axum::http::{Method, StatusCode, Uri};
     use kallip_archeion_common::ids::UserId;
     use std::str::FromStr;
-    use std::sync::Arc;
 
     fn uid(s: &str) -> UserId {
         UserId::from(s.to_string())
@@ -267,7 +262,6 @@ mod proxy_tests {
             body.map(axum::Json),
         )
         .await
-        .expect("handler infallible")
     }
 
     async fn enroll_tunnel(
@@ -317,7 +311,8 @@ mod proxy_tests {
                                 status: 200,
                                 body: serde_json::json!({}),
                             },
-                        );
+                        )
+                        .await;
                     }
                     _ => panic!("expected ManageRest"),
                 }
@@ -334,8 +329,8 @@ mod proxy_tests {
             ),
             resolver
         );
+        assert_eq!(status_of(&resp), StatusCode::OK);
     }
-
     #[tokio::test]
     async fn offline_tagma_is_not_found() {
         let (state, _control) = db_state().await;
