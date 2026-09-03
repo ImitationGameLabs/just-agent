@@ -13,8 +13,8 @@
     profilesStore,
   } from "@kallipai/kallip-ui";
   import { Dialog, Portal } from "@skeletonlabs/skeleton-svelte";
-
-  import { beforeNavigate, goto } from "$app/navigation";
+  import { navigate as shellNavigate } from "@kallipai/kallip-ui";
+  import { beforeNavigate } from "$app/navigation";
   let leaveGuard = $state<{ open: boolean; to: string | null }>({
     open: false,
     to: null,
@@ -29,11 +29,10 @@
   function guardStay() {
     leaveGuard = { open: false, to: null };
   }
-
   async function leaveTo(to: string | null) {
     const target = to ?? "/local/manage";
     leaveGuard = { open: false, to: null };
-    await goto(target);
+    await shellNavigate(target);
   }
 
   async function guardDiscardAndLeave() {
@@ -79,14 +78,14 @@
         <div class="flex flex-col gap-2">
           <button
             type="button"
-            class="btn preset-filled-primary-500 text-on-primary-500 transition hover:brightness-110"
+            class="btn preset-outlined-primary-500 text-primary-500 transition hover:brightness-110"
             onclick={guardSaveAndLeave}
           >
             {manage_profiles_unsaved_save()}
           </button>
           <button
             type="button"
-            class="btn preset-outlined-surface-500 hover:preset-filled-surface-500"
+            class="btn preset-filled-surface-500 text-on-surface-500 transition hover:brightness-110"
             onclick={guardStay}
           >
             {common_cancel()}

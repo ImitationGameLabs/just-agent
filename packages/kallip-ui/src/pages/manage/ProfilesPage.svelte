@@ -54,6 +54,8 @@
     common_remove,
     common_save,
     manage_profiles_apply,
+    manage_profiles_remove_provider,
+    manage_profiles_remove_provider_desc,
     manage_profiles_dangling_desc,
     manage_profiles_dangling_title,
     manage_profiles_apply_desc,
@@ -271,9 +273,19 @@
     providerDialog.open = false;
   }
 
+  let removeProviderTarget = $state<ProfileProvider | null>(null);
+
   function onProviderRemove(provider: ProfileProvider) {
-    profilesStore.removeProvider(provider.id);
-    providerReports.delete(provider.id);
+    // The menu only arms the confirm; the removal itself happens on
+    // confirm (draft-level, reversible by discarding the draft).
+    removeProviderTarget = provider;
+  }
+
+  function onProviderRemoveConfirmed() {
+    if (removeProviderTarget === null) return;
+    profilesStore.removeProvider(removeProviderTarget.id);
+    providerReports.delete(removeProviderTarget.id);
+    removeProviderTarget = null;
   }
 
   // Set removal confirm: a set with bound users cannot be dropped by the
@@ -608,6 +620,8 @@
 
 <ConfirmDialog
   open={profilesStore.pendingDangling !== null}
+  busy={profilesStore.isSaving || profilesStore.saveBlocked}
+  error={profilesStore.saveBlocked ? profilesStore.error : null}
   title={manage_profiles_dangling_title()}
   description={manage_profiles_dangling_desc({
     count: profilesStore.pendingDangling?.length ?? 0,
@@ -617,4 +631,14 @@
   tone="primary"
   onConfirm={onConfirmDanglingSave}
   onCancel={() => profilesStore.dismissDangling()}
+/>
+
+<ConfirmDialog
+  open={removeProviderTarget !== null}
+  title={manage_profiles_remove_provider()}
+  description={manage_profiles_remove_provider_desc()}
+  confirmLabel={common_remove()}
+  tone="danger"
+  onConfirm={onProviderRemoveConfirmed}
+  onCancel={() => (removeProviderTarget = null)}
 />

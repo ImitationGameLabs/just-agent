@@ -139,6 +139,10 @@ Route guards that need kit's `$app/navigation` belong in the host app's
 `kallip-ui` components - the UI package stays a pure-UI library with zero
 `$app` imports. Shared dirty-state lives in the store, which both layers
 import (`profilesStore` is the precedent).
+Shell navigation from any layer goes through ShellPort (`navigate`),
+the single navigation primitive this repo consumes: components call it
+after the host's bootstrap `initShell(goto)` injection, and host
+wrappers use it too so route changes flow through one choke point.
 
 ## Formatting
 

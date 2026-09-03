@@ -101,7 +101,7 @@
                   <Menu.Separator class="my-1 border-t border-surface-300" />
                   <Menu.Item
                     value="remove"
-                    class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer text-error-500 hover:preset-filled-error-500"
+                    class="flex items-center gap-2 px-3 py-2 rounded-base text-sm text-error-500 dark:text-error-400 cursor-pointer hover:preset-filled-error-500"
                   >
                     <Trash2 class="size-4" />
                     {manage_profiles_remove_provider()}

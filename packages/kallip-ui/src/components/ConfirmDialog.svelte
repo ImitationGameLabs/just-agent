@@ -50,7 +50,7 @@
         class="card preset-tonal-surface w-full max-w-sm p-6 flex flex-col gap-4"
       >
         <Dialog.Title class="text-lg font-semibold">{title}</Dialog.Title>
-        <Dialog.Description class="text-sm opacity-80">
+        <Dialog.Description class="text-sm opacity-80 whitespace-pre-line">
           {description}
         </Dialog.Description>
         {#if error}

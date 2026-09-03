@@ -26,6 +26,7 @@ import {
   manage_profiles_load_failed,
   manage_profiles_probe_failed,
   manage_profiles_save_failed,
+  manage_profiles_save_stale_backend,
 } from "../../paraglide/messages.js";
 
 export class ProfilesStore {
@@ -44,6 +45,9 @@ export class ProfilesStore {
   /** Stranded profile-set bindings from the last 409, awaiting operator
    * confirmation. Non-null renders the confirm dialog. */
   pendingDangling = $state<readonly string[] | null>(null);
+  /** True when a force save hit an old backend (bare 409 without the
+   * structured list): the confirm re-send is blocked until reload. */
+  saveBlocked = $state(false);
   error = $state<string | null>(null);
   isProbing = $state(false);
 
@@ -83,6 +87,7 @@ export class ProfilesStore {
     if (!this.draft) return;
     this.isSaving = true;
     this.error = null;
+    this.saveBlocked = false;
     this.pendingDangling = null;
     try {
       const wire = profileConfigToWireFn(this.draft);
@@ -95,6 +100,12 @@ export class ProfilesStore {
       if (e instanceof KallipError && e.api.dangling) {
         // Structured 409: ask the operator before stranding bindings.
         this.pendingDangling = e.api.dangling;
+      } else if (force && e instanceof KallipError && e.api.status === 409) {
+        // Old backend: force is ignored, so a dangling save keeps failing
+        // with a bare 409 and no structured list. Surface the upgrade hint
+        // and block the confirm re-send instead of looping silently.
+        this.saveBlocked = true;
+        this.error = manage_profiles_save_stale_backend();
       } else {
         this.error = displayError("profiles", e, manage_profiles_save_failed());
       }
