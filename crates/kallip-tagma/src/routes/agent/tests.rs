@@ -892,12 +892,16 @@ async fn create_agent_rejects_duplicate_role() {
     let state = make_state();
     let holder = seed_role_agent(&state, "scout").await;
     let sup = AgentId::random();
+    // A workspace inside the root supervisor's /tmp tree but outside the
+    // test data dir (which the C1 isolation guard also parks under /tmp).
+    let ws = std::env::temp_dir().join("kallip-agent-ws-test");
+    std::fs::create_dir_all(&ws).expect("create test workspace");
 
     let resp = super::create_agent(
         State(state.clone()),
         AuthIdentity::test_new(Identity::Agent { id: sup.clone() }),
         axum::Json(kallip_common::protocol::CreateAgentRequest {
-            workspace_root: "/tmp".into(),
+            workspace_root: ws.to_string_lossy().into(),
             skills: vec![],
             prompt: None,
             created_by: Some(sup),
@@ -939,6 +943,8 @@ fn spawn_request_requires_profile_set_and_permission_class() {
 async fn create_agent_rejects_unknown_set_name() {
     let state = make_state();
     let sup = AgentId::random();
+    let ws = std::env::temp_dir().join("kallip-agent-ws-test");
+    std::fs::create_dir_all(&ws).expect("create test workspace");
     {
         let mut reg = state.registry.write().await;
         add_root(&mut reg, &sup);
@@ -947,7 +953,7 @@ async fn create_agent_rejects_unknown_set_name() {
         State(state.clone()),
         AuthIdentity::test_new(Identity::Operator),
         axum::Json(kallip_common::protocol::CreateAgentRequest {
-            workspace_root: "/tmp".into(),
+            workspace_root: ws.to_string_lossy().into(),
             skills: vec![],
             prompt: None,
             created_by: Some(sup),
