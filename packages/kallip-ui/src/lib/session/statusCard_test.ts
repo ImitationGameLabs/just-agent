@@ -53,7 +53,7 @@ const sub: WireAgentManagementSummary = {
 /** Only the calls the store makes from attach()/nudge(): the roster pull,
  * and the registry pull whose failure is a documented non-fatal path
  * (denominators stay null). getAgentStatus (the first-pull and the slow
- * poll both use it) resolves a fixed payload so the context merge runs. */
+ * poll both use it) rejects, so the context merge's failure paths run. */
 class StubClient {
   rosterCalls = 0;
   statusCalls = 0;
@@ -133,4 +133,24 @@ Deno.test("detach clears rows and makes nudges no-ops", async () => {
   statusCardStore.nudge();
   await flush();
   assertEquals(stub.rosterCalls, 2);
+});
+
+Deno.test("suspend keeps the cache and re-attach paints from it", async () => {
+  const stub = new StubClient();
+  try {
+    statusCardStore.attach(backend(stub));
+    await flush();
+    statusCardStore.suspend();
+    // The warm cache survives the page-unmount teardown.
+    assertEquals(statusCardStore.rootRow?.id, "root-1");
+    assertEquals(statusCardStore.subRows.length, 1);
+    const rosterBefore = stub.rosterCalls;
+    statusCardStore.attach(backend(stub));
+    await flush();
+    // Re-attach painted the cached rows again, then refreshed.
+    assertEquals(statusCardStore.rootRow?.id, "root-1");
+    assertEquals(stub.rosterCalls > rosterBefore, true);
+  } finally {
+    statusCardStore.detach();
+  }
 });
