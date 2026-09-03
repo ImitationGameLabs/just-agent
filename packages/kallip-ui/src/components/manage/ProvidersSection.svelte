@@ -4,7 +4,13 @@
   // events; the report chips read the shared per-provider probe map.
   import type { SvelteMap } from "svelte/reactivity";
   import { Menu, Portal } from "@skeletonlabs/skeleton-svelte";
-  import { FlaskConical, MoreVertical, Pencil, Plus } from "@lucide/svelte";
+  import {
+    FlaskConical,
+    MoreVertical,
+    Pencil,
+    Plus,
+    Trash2,
+  } from "@lucide/svelte";
   import type {
     ProfileProvider,
     ProfileProviderProbeReport,
@@ -18,6 +24,7 @@
   import {
     common_edit,
     manage_profiles_add_provider,
+    manage_profiles_remove_provider,
     manage_profiles_provider_base_url_default,
     manage_profiles_provider_card_base_url_label,
     manage_profiles_profile_provider_label,
@@ -32,6 +39,7 @@
     isProbing,
     onTest,
     onEdit,
+    onRemove,
     onAdd,
   }: {
     providers: ProfileProvider[];
@@ -39,6 +47,7 @@
     isProbing: boolean;
     onTest: (id: string) => void;
     onEdit: (provider: ProfileProvider) => void;
+    onRemove: (provider: ProfileProvider) => void;
     onAdd: () => void;
   } = $props();
 </script>
@@ -60,6 +69,7 @@
             onSelect={(e) => {
               if (e.value === "test") onTest(ep.id);
               else if (e.value === "edit") onEdit(ep);
+              else if (e.value === "remove") onRemove(ep);
             }}
           >
             <Menu.Trigger
@@ -87,6 +97,14 @@
                   >
                     <Pencil class="size-4" />
                     {common_edit()}
+                  </Menu.Item>
+                  <Menu.Separator class="my-1 border-t border-surface-300" />
+                  <Menu.Item
+                    value="remove"
+                    class="flex items-center gap-2 px-3 py-2 rounded-base text-sm cursor-pointer text-error-500 hover:preset-filled-error-500"
+                  >
+                    <Trash2 class="size-4" />
+                    {manage_profiles_remove_provider()}
                   </Menu.Item>
                 </Menu.Content>
               </Menu.Positioner>

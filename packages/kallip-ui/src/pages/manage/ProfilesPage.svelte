@@ -271,12 +271,9 @@
     providerDialog.open = false;
   }
 
-  function onProviderRemove() {
-    if (providerDialog.mode === "edit" && providerDialog.provider) {
-      profilesStore.removeProvider(providerDialog.provider.id);
-      providerReports.delete(providerDialog.provider.id);
-    }
-    providerDialog.open = false;
+  function onProviderRemove(provider: ProfileProvider) {
+    profilesStore.removeProvider(provider.id);
+    providerReports.delete(provider.id);
   }
 
   // Set removal confirm: a set with bound users cannot be dropped by the
@@ -495,6 +492,7 @@
         onTest={onTestProvider}
         onEdit={openProviderEdit}
         onAdd={openProviderNew}
+        onRemove={onProviderRemove}
       />
 
       <SetsSection
@@ -582,7 +580,6 @@
   existingIds={providerIds}
   onSave={onProviderSave}
   onCancel={() => (providerDialog.open = false)}
-  onRemove={providerDialog.mode === "edit" ? onProviderRemove : null}
 />
 
 <SetDialog

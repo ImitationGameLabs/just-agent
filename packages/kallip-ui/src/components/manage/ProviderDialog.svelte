@@ -34,7 +34,6 @@
     manage_profiles_provider_id_duplicate,
     manage_profiles_provider_id_hint,
     manage_profiles_provider_id_label,
-    manage_profiles_remove_provider,
   } from "../../paraglide/messages.js";
 
   let {
@@ -44,7 +43,6 @@
     existingIds = [],
     onSave,
     onCancel,
-    onRemove = null,
   }: {
     open: boolean;
     mode: "new" | "edit";
@@ -54,8 +52,6 @@
     existingIds?: string[];
     onSave: (result: ProviderDialogResult) => void;
     onCancel: () => void;
-    /** Edit mode's danger action; hide the zone when absent. */
-    onRemove?: (() => void) | null;
   } = $props();
 
   const FAMILIES = MODEL_PROVIDER_FAMILIES;
@@ -185,18 +181,6 @@
               </span>
             {/if}
           </label>
-
-          {#if mode === "edit" && onRemove}
-            <div class="border-t border-surface-300 pt-3">
-              <button
-                type="button"
-                class="btn btn-sm preset-outlined-surface-500 hover:preset-filled-error-500"
-                onclick={onRemove}
-              >
-                {manage_profiles_remove_provider()}
-              </button>
-            </div>
-          {/if}
 
           <div class="flex gap-2">
             <button
