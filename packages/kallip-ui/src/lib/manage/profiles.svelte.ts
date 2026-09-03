@@ -112,11 +112,10 @@ export class ProfilesStore {
           this.error = manage_profiles_save_stale_backend();
           break;
         default:
-          this.error = displayError(
-            "profiles",
-            e,
-            manage_profiles_save_failed(),
-          );
+          // The raw server text (409 hints, protocol wording) is for the
+          // console; the UI only ever shows the designed translation.
+          console.warn("[profiles] save failed:", e);
+          this.error = manage_profiles_save_failed();
       }
       throw e;
     } finally {

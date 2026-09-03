@@ -41,6 +41,23 @@ export class TransportError extends Error {
  * plain-text body (e.g. a CSRF-guard 403 string), then to `statusText`. The
  * body is read ONCE as text (then parsed), because `.json()` would consume the
  * stream and leave a following `.text()` empty. */
+/** Parse the `{"error":{"message","dangling"}}` envelope shared by every
+ * client path: HTTP responses (`readApiError`) and relay manage_result
+ * bodies (`OnlineBackend`) must agree on what the server sent, so the
+ * extraction lives here instead of once per transport. */
+export function parseErrorEnvelope(body: unknown): {
+  message?: string;
+  dangling?: readonly string[];
+} {
+  const envelope = body as {
+    error?: { message?: string; dangling?: readonly string[] };
+  };
+  const dangling = Array.isArray(envelope?.error?.dangling)
+    ? envelope.error.dangling
+    : undefined;
+  return { message: envelope?.error?.message, dangling };
+}
+
 export async function readApiError(resp: Response): Promise<ApiError> {
   let message = resp.statusText;
   let dangling: readonly string[] | undefined;
@@ -48,12 +65,12 @@ export async function readApiError(resp: Response): Promise<ApiError> {
     const text = await resp.text();
     if (text) {
       try {
-        const body = JSON.parse(text) as {
-          error?: { message?: string; dangling?: readonly string[] };
-        };
-        if (body?.error?.message) message = body.error.message;
+        const { message: msg, dangling: d } = parseErrorEnvelope(
+          JSON.parse(text),
+        );
+        if (msg) message = msg;
         else message = text;
-        dangling = body?.error?.dangling;
+        dangling = d;
       } catch {
         // Non-JSON body (e.g. a CSRF-guard plain string): use it verbatim.
         message = text;

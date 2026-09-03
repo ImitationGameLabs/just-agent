@@ -12,6 +12,7 @@ import type { RelayChannel } from "@kallipai/kallip-lesche-client";
 import {
   KallipError,
   type ApiError,
+  parseErrorEnvelope,
   TransportError,
 } from "@kallipai/kallip-common";
 import type {
@@ -111,14 +112,18 @@ export class OfflineBackend implements ManagementBackend {
 // --- OnlineBackend (wraps RelayChannel.manage()) ---
 
 /**
- * Reconstruct a KallipError from a manage_result when status >= 400. The tagma
- * returns its ApiError JSON in the loopback body; the IntoResponse extraction in
- * handle_manage wraps it as `{"error":{"message":"..."}}`.
+ * Reconstruct a KallipError from a manage_result when status >= 400. The
+ * body is the tagma's `ApiError` envelope (see parseErrorEnvelope), relayed
+ * verbatim — including the structured dangling list a 409 profiles save
+ * carries for the confirm flow.
  */
 function parseError(status: number, body: unknown): Error {
-  const envelope = body as { error?: { message?: string } };
-  const message = envelope?.error?.message ?? "management request failed";
-  return new KallipError({ status, message });
+  const { message, dangling } = parseErrorEnvelope(body);
+  return new KallipError({
+    status,
+    message: message ?? "management request failed",
+    dangling,
+  });
 }
 
 export class OnlineBackend implements ManagementBackend {

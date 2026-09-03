@@ -42,7 +42,6 @@
     mergeProfileScopeAll,
     mergeProviderScope,
     occupiedIdsOf,
-    profileKey,
     providerIdsOf,
   } from "../../lib/manage/profiles-view.ts";
   import type {
@@ -416,7 +415,7 @@
     profileId: string,
   ) {
     profilesStore.removeProfile(setName, profileIdx);
-    profileReports.delete(profileKey(setName, profileId));
+    clearProfileResult(profileReports, setName, profileId);
   }
 
   function onRemoveParked(idx: number, profileId: string) {
