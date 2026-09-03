@@ -250,7 +250,7 @@
     } catch {
       /* no backend for this conversation: the bar stays row-less */
     }
-    return () => statusCardStore.detach();
+    return () => statusCardStore.suspend();
   });
   // Roster rows follow status events: each snapshot update -- the relay
   // `tagma_status` push online, the direct SSE drain offline -- nudges an

@@ -63,9 +63,39 @@ class StatusCardStore {
   // must not stack a second concurrent round on a still-running one.
   private rosterRunning = false;
   private contextsRunning = false;
+  /** Set once the first contexts round has been attempted (success or
+   * not): the roster-triggered first pull must fire exactly once even
+   * when every getAgentStatus fails, or the two recurse. */
+
+  private contextsPrimed = false;
+  /** Page unmount: stop the pollers, keep every cached row/number so a
+   * return to the page paints instantly and only background-refreshes. */
+  suspend(): void {
+    this.rosterStop?.();
+    this.contextStop?.();
+    this.rosterStop = null;
+    this.contextStop = null;
+    this.backend = null;
+  }
+
+  /** Full reset (mode switch / logout): pollers and all cached data. */
+  detach(): void {
+    this.suspend();
+    this.rootRow = null;
+    this.subRows = [];
+    this.contexts.clear();
+    this.profileWindows.clear();
+    this.profileIds.clear();
+    this.lastSubSignature = "";
+    this.contextsPrimed = false;
+  }
 
   attach(backend: ManagementBackend): void {
-    this.detach();
+    // Idempotent re-attach: returning to the page keeps the warm cache
+    // (rows, contexts, windows) and only background-refreshes, so the
+    // panel paints instantly from the previous visit's data.
+    const resuming = this.backend === null && this.rootRow !== null;
+    this.suspend();
     this.backend = backend;
     this.refreshRoster();
     this.rosterStop = startVisibleInterval(() => this.refreshRoster(), 15_000);
@@ -74,22 +104,8 @@ class StatusCardStore {
       30_000,
     );
     void this.refreshProfileWindows(backend);
+    if (resuming) this.refreshContexts();
   }
-
-  detach(): void {
-    this.rosterStop?.();
-    this.contextStop?.();
-    this.rosterStop = null;
-    this.contextStop = null;
-    this.backend = null;
-    this.rootRow = null;
-    this.subRows = [];
-    this.contexts.clear();
-    this.profileWindows.clear();
-    this.profileIds.clear();
-    this.lastSubSignature = "";
-  }
-
   /** Event-driven roster refresh: the chat page routes every status-snapshot
    * update (the relay `tagma_status` push online, the direct SSE drain
    * offline) into this, so state flips paint at once instead of waiting for
@@ -141,6 +157,13 @@ class StatusCardStore {
         this.lastSubSignature = signature;
         this.subRows = subs;
       }
+      // First roster with rows: pull contexts right away instead of
+      // waiting for the first 30s tick (the numbers were invisible for
+      // a full period otherwise).
+      if ((root !== undefined || subs.length > 0) && !this.contextsPrimed) {
+        void this.refreshContexts();
+        this.contextsPrimed = true;
+      }
     } catch {
       /* transient poll failure: keep the last roster */
     } finally {
@@ -154,26 +177,31 @@ class StatusCardStore {
     const backend = this.backend;
     if (!backend) return;
     this.contextsRunning = true;
+    this.contextsPrimed = true;
     try {
       const targets = [
         ...(this.rootRow ? [this.rootRow] : []),
         ...this.subRows,
       ].filter((r) => r.state !== "faulted" && r.state !== "parked");
-      for (const row of targets) {
-        try {
-          const status = await backend.getAgentStatus(row.id);
-          if (this.backend !== backend) return;
-          this.contexts.set(
-            row.id,
-            status.context.turn_tokens +
-              status.context.pinned_items.reduce((sum, [, n]) => sum + n, 0),
-          );
-          const pid = status.profile?.profile_id;
-          if (pid) this.profileIds.set(row.id, pid);
-        } catch {
-          /* agent gone or not yet responsive: leave the stale value */
-        }
-      }
+      // Parallel, not serial: N agents cost one RTT round, not N. The
+      // per-agent catch keeps one dead agent from sinking the round.
+      await Promise.all(
+        targets.map(async (row) => {
+          try {
+            const status = await backend.getAgentStatus(row.id);
+            if (this.backend !== backend) return;
+            this.contexts.set(
+              row.id,
+              status.context.turn_tokens +
+                status.context.pinned_items.reduce((sum, [, n]) => sum + n, 0),
+            );
+            const pid = status.profile?.profile_id;
+            if (pid) this.profileIds.set(row.id, pid);
+          } catch {
+            /* agent gone or not yet responsive: leave the stale value */
+          }
+        }),
+      );
       this.refreshRoster(); // re-merge context numbers into rows
     } finally {
       this.contextsRunning = false;

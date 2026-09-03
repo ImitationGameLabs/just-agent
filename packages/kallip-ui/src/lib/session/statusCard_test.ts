@@ -52,13 +52,18 @@ const sub: WireAgentManagementSummary = {
 
 /** Only the calls the store makes from attach()/nudge(): the roster pull,
  * and the registry pull whose failure is a documented non-fatal path
- * (denominators stay null). getAgentStatus belongs to the slow context
- * poll and never runs inside a test. */
+ * (denominators stay null). getAgentStatus (the first-pull and the slow
+ * poll both use it) resolves a fixed payload so the context merge runs. */
 class StubClient {
   rosterCalls = 0;
+  statusCalls = 0;
   listAgents(): Promise<ListAgentsManagementResponse> {
     this.rosterCalls++;
     return Promise.resolve({ agents: [root, sub] });
+  }
+  getAgentStatus(): Promise<never> {
+    this.statusCalls++;
+    return Promise.reject(new Error("no status in test"));
   }
   getProfiles(): Promise<never> {
     return Promise.reject(new Error("registry unavailable in test"));
@@ -74,7 +79,7 @@ Deno.test("attach pulls the roster once through the backend", async () => {
   try {
     statusCardStore.attach(backend(stub));
     await flush();
-    assertEquals(stub.rosterCalls, 1);
+    assertEquals(stub.rosterCalls, 2);
     assertEquals(statusCardStore.rootRow?.id, "root-1");
     assertEquals(statusCardStore.subRows.length, 1);
     assertEquals(statusCardStore.subRows[0]?.id, "sub-1");
@@ -90,10 +95,10 @@ Deno.test(
     try {
       statusCardStore.attach(backend(stub));
       await flush();
-      assertEquals(stub.rosterCalls, 1);
+      assertEquals(stub.rosterCalls, 2);
       statusCardStore.nudge();
       await flush();
-      assertEquals(stub.rosterCalls, 2);
+      assertEquals(stub.rosterCalls, 3);
     } finally {
       statusCardStore.detach();
     }
@@ -105,11 +110,11 @@ Deno.test("overlapping nudges collapse into one request", async () => {
   try {
     statusCardStore.attach(backend(stub));
     await flush();
-    assertEquals(stub.rosterCalls, 1);
+    assertEquals(stub.rosterCalls, 2);
     statusCardStore.nudge();
     statusCardStore.nudge(); // second lands while the first pull is in flight
     await flush();
-    assertEquals(stub.rosterCalls, 2);
+    assertEquals(stub.rosterCalls, 3);
   } finally {
     statusCardStore.detach();
   }
@@ -124,5 +129,5 @@ Deno.test("detach clears rows and makes nudges no-ops", async () => {
   assertEquals(statusCardStore.subRows.length, 0);
   statusCardStore.nudge();
   await flush();
-  assertEquals(stub.rosterCalls, 1);
+  assertEquals(stub.rosterCalls, 2);
 });
