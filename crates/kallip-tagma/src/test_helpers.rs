@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::AtomicU8;
 
 use kallip_common::agentid::AgentId;
@@ -234,6 +235,7 @@ pub async fn enqueue_committed_approval(
 /// Minimal single-profile bundle for tests that need an `AppState` but won't
 /// spawn real agents. No declared window (env-path semantics).
 pub fn make_profile_bundle() -> Arc<arc_swap::ArcSwap<crate::state::ProfileBundle>> {
+    ensure_test_data_dir();
     use just_llm_client::family;
     use kallip_runtime::profile::{Profile, ProfileConfig, ProfileRegistry, ProfileSet, Provider};
     use std::collections::{BTreeMap, HashMap};
@@ -284,6 +286,7 @@ pub fn make_profile_bundle() -> Arc<arc_swap::ArcSwap<crate::state::ProfileBundl
 /// Two-set bundle (`default` + `alt` on a second endpoint) for set-management
 /// tests — bind/default/remove all need a second set to move between.
 pub fn make_profile_bundle_two_sets() -> Arc<arc_swap::ArcSwap<crate::state::ProfileBundle>> {
+    ensure_test_data_dir();
     use just_llm_client::family;
     use kallip_runtime::profile::{Profile, ProfileConfig, ProfileRegistry, ProfileSet, Provider};
     use std::collections::{BTreeMap, HashMap};
@@ -345,6 +348,7 @@ pub fn make_profile_bundle_two_sets() -> Arc<arc_swap::ArcSwap<crate::state::Pro
 
 /// Like [`make_state`], but over [`make_profile_bundle_two_sets`].
 pub fn make_state_two_sets() -> SharedState {
+    ensure_test_data_dir();
     Arc::new(AppState::new_with_preset(
         TokenHash::of("op-token"),
         make_profile_bundle_two_sets(),
@@ -361,6 +365,7 @@ pub fn make_state() -> SharedState {
 
 /// Like [`make_state`], but with a custom tagma-global preset.
 pub fn make_state_with_preset(preset: PolicyPreset) -> SharedState {
+    ensure_test_data_dir();
     Arc::new(AppState::new_with_preset(
         TokenHash::of("op-token"),
         make_profile_bundle(),
@@ -371,6 +376,7 @@ pub fn make_state_with_preset(preset: PolicyPreset) -> SharedState {
 /// Like [`make_state`], but with a custom spawn entry (delivery's slow-path
 /// test seam; see `AppState::spawn_fn`).
 pub fn make_state_with_spawn(spawn_fn: crate::lifecycle::SpawnFn) -> SharedState {
+    ensure_test_data_dir();
     let mut state = AppState::new_with_preset(
         TokenHash::of("op-token"),
         make_profile_bundle(),
@@ -387,4 +393,72 @@ pub async fn install_inbox_store(state: &SharedState) {
         .inboxes
         .set(crate::inbox::InboxStore::open_in_memory().await)
         .ok();
+}
+/// Process-wide redirect of `KALLIP_DATA_DIR` to a throwaway tempdir for the
+/// whole test run. Idempotent: the first call allocates the tempdir and swaps
+/// the env; later calls are no-ops.
+///
+/// Why: profile-handler tests reach `persist_config` →
+/// `kallip_runtime::profile::config_path`, which resolves against the process
+/// environment. `cargo test` inherits the caller's real `KALLIP_DATA_DIR`, so
+/// an unguarded persist overwrites the live profiles file (2026-09-02).
+///
+/// Parallel safety: `OnceLock::get_or_init` runs the initializer exactly once
+/// and every other thread blocks until the env is swapped, so no test
+/// observes a half-installed state. Every state/bundle constructor in this
+/// module calls this first, and disk-persisting handler calls happen only
+/// after those constructors return.
+pub fn ensure_test_data_dir() {
+    static GUARD: OnceLock<PathBuf> = OnceLock::new();
+    GUARD.get_or_init(|| {
+        let tmp = tempfile::Builder::new()
+            .prefix("kallip-tagma-test-data-")
+            .tempdir()
+            .expect("create test data dir");
+        let path = tmp.path().to_path_buf();
+        // Leak the TempDir so the directory outlives every test in the
+        // process; the env points at it for the process lifetime anyway.
+        std::mem::forget(tmp);
+        // SAFETY: runs exactly once per process under `OnceLock`; concurrent
+        // `getenv` from threads that never call this helper is the same
+        // theoretical race this crate's existing `temp_env` helper already
+        // accepts (edition 2024 makes `set_var` unsafe globally).
+        unsafe { std::env::set_var("KALLIP_DATA_DIR", &path) };
+        path
+    });
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+
+    /// Regression lock for the 2026-09-02 live-profiles pollution: the guard
+    /// must point `KALLIP_DATA_DIR` at a tempdir, and a real handler persist
+    /// must land there — never in the inherited (live) data dir.
+    #[tokio::test]
+    async fn data_dir_guard_redirects_handler_persist() {
+        ensure_test_data_dir();
+        let dir = std::env::var("KALLIP_DATA_DIR").expect("guard active");
+        assert!(
+            std::path::Path::new(&dir).starts_with(std::env::temp_dir()),
+            "KALLIP_DATA_DIR must be a tempdir, got {dir}"
+        );
+
+        let state = make_state_two_sets();
+        crate::routes::profiles::set_default_profile_set(
+            axum::extract::State(state),
+            crate::auth::AuthIdentity::test_new(crate::auth::Identity::Operator),
+            axum::Json(kallip_common::protocol::SetDefaultRequest {
+                default: "alt".into(),
+            }),
+        )
+        .await
+        .expect("default transfer succeeds");
+
+        let persisted = std::path::Path::new(&dir)
+            .join("profiles")
+            .join("profiles.toml");
+        let body = std::fs::read_to_string(persisted).expect("written under guard dir");
+        assert!(body.contains("default = \"alt\""));
+    }
 }
