@@ -182,3 +182,57 @@ Deno.test(
     }
   },
 );
+
+// Regression (review round): the stop handle must only retire its own
+// callback -- a sibling subscriber keeps receiving nudges, and a
+// fresh subscribe after everyone left revives the loop.
+Deno.test(
+  "stopping one subscriber leaves siblings and revival intact",
+  async () => {
+    const sse =
+      'data: {"tagma_id":"t-a","seq":1}\n\n' +
+      'data: {"tagma_id":"t-a","seq":2}\n\n';
+    const real = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(sse, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      )) as typeof fetch;
+    try {
+      const backend = new OnlineBackend(
+        {} as unknown as ManageRestClient,
+        "t-a",
+        new ProjectionClient("http://lesche.test"),
+      );
+      let aCount = 0;
+      let bCount = 0;
+      const stopA = backend.projectionFeed!.subscribe(() => {
+        aCount += 1;
+      });
+      const stopB = backend.projectionFeed!.subscribe(() => {
+        bCount += 1;
+      });
+      await new Promise((r) => setTimeout(r, 40));
+      const bBefore = bCount;
+      stopA();
+      const aFrozen = aCount;
+      await new Promise((r) => setTimeout(r, 40));
+      assertEquals(bCount > bBefore, true, "sibling keeps receiving");
+      assertEquals(aCount, aFrozen, "stopped subscriber stays stopped");
+
+      // Everyone unsubscribes (the loop aborts), then a fresh subscriber
+      // revives it with a new stream.
+      stopB();
+      let cCount = 0;
+      backend.projectionFeed!.subscribe(() => {
+        cCount += 1;
+      });
+      await new Promise((r) => setTimeout(r, 40));
+      assertEquals(cCount >= 1, true, "fresh subscribe revives the loop");
+    } finally {
+      globalThis.fetch = real;
+    }
+  },
+);

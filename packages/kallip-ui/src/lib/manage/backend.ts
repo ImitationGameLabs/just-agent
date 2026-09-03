@@ -155,31 +155,47 @@ export class OnlineBackend implements ManagementBackend {
     private readonly projection?: ProjectionClient,
   ) {
     if (!projection) return;
-    // P2-c: one reconnect loop per backend, fanning every dirty nudge.
-    // The LinearBackoff covers stream drops; a clean frame stream resets
-    // it. Aborted on the returned stop handle.
+    // P2-c: a single shared reconnect loop -- one sse connection per
+    // backend regardless of subscriber count. Subscribers join/leave a
+    // listener set; the first subscribe starts the loop (fresh
+    // controller + backoff), the last unsubscribe aborts it, and the
+    // next subscribe starts a new one, so any stop handle only ever
+    // retires its own callback.
+    const listeners = new Set<() => void>();
     const backoff = new LinearBackoff();
-    const stop = new AbortController();
+    let controller: AbortController | null = null;
+    const runLoop = async (): Promise<void> => {
+      while (controller && !controller.signal.aborted) {
+        try {
+          for await (const _ of projection.events(
+            this.agent,
+            controller.signal,
+          )) {
+            backoff.reset();
+            for (const fn of [...listeners]) fn();
+          }
+        } catch {
+          // stream error: fall through to the backoff
+        }
+        if (!controller || controller.signal.aborted) return;
+        await new Promise((r) => setTimeout(r, backoff.next()));
+      }
+    };
     this.projectionFeed = {
       subscribe: (onDirty: () => void): (() => void) => {
-        void (async () => {
-          while (!stop.signal.aborted) {
-            try {
-              for await (const _ of projection.events(
-                this.agent,
-                stop.signal,
-              )) {
-                backoff.reset();
-                onDirty();
-              }
-            } catch {
-              // stream error: fall through to the backoff
-            }
-            if (stop.signal.aborted) return;
-            await new Promise((r) => setTimeout(r, backoff.next()));
+        listeners.add(onDirty);
+        backoff.reset();
+        if (!controller) {
+          controller = new AbortController();
+          void runLoop();
+        }
+        return () => {
+          listeners.delete(onDirty);
+          if (listeners.size === 0 && controller) {
+            controller.abort();
+            controller = null;
           }
-        })();
-        return () => stop.abort();
+        };
       },
     };
   }
