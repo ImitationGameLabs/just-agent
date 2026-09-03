@@ -16,8 +16,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::get;
+use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use kallip_archeion_common::ids::ParticipantId;
@@ -34,11 +35,32 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use crate::auth::{AuthPrincipal, require_tagma};
 use crate::sse::{BoxEventStream, OnDrop};
 use crate::state::{AgentProfile, BROADCAST_CAPACITY, SharedConvState};
+use kallip_lesche_common::tunnel::ManageRestReply;
 
 pub fn router() -> Router<SharedConvState> {
-    Router::new().route("/tunnel", get(tunnel))
+    Router::new()
+        .route("/tunnel", get(tunnel))
+        .route("/v1/tunnel/manage-reply", post(manage_reply))
 }
 
+/// The tagma's plaintext reply to a ManageRest frame: resolves the pending
+
+/// The tagma's plaintext reply to a ManageRest frame: resolves the pending
+/// proxy waiter (see [`crate::routes::manage_proxy`]). Tagma-bearer auth.
+async fn manage_reply(
+    AuthPrincipal(principal): AuthPrincipal,
+    axum::Json(reply): axum::Json<ManageRestReply>,
+) -> StatusCode {
+    let tagma_id = match require_tagma(&principal) {
+        Ok(id) => id.clone(),
+        Err(_) => return StatusCode::UNAUTHORIZED,
+    };
+    if super::manage_proxy::resolve(&tagma_id, reply.req_id, reply).await {
+        StatusCode::OK
+    } else {
+        StatusCode::ACCEPTED
+    }
+}
 /// Wall-clock unix seconds, for proof skew checks.
 fn now_unix_secs() -> i64 {
     SystemTime::now()

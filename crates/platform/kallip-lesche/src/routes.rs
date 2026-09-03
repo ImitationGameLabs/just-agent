@@ -4,6 +4,7 @@ mod conversations;
 mod direct;
 mod events;
 mod internal;
+mod manage_proxy;
 mod room_management;
 mod rooms;
 mod signal;
@@ -34,7 +35,8 @@ pub fn router(
         .merge(events::router().with_state(state.clone()))
         .merge(signal::router().with_state(state.clone()))
         .merge(status::router().with_state(state.clone()))
-        .merge(tunnel::router().with_state(state.clone()));
+        .merge(tunnel::router().with_state(state.clone()))
+        .merge(manage_proxy::router().with_state(state.clone()));
 
     // The service-to-service `/internal/*` surface: mounted only when the
     // shared secret is configured (same discipline as the archeion's internal

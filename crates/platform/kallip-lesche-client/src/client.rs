@@ -35,6 +35,7 @@ use kallip_lesche_common::event::{SignalEvent, TagmaStatusPayload};
 use kallip_lesche_common::message::Envelope;
 use kallip_lesche_common::proof::tunnel_transcript;
 use kallip_lesche_common::rooms::{RoomId, TagmaRoomView};
+use kallip_lesche_common::tunnel::ManageRestReply;
 use kallip_lesche_common::tunnel::TunnelInbound;
 
 struct Inner {
@@ -282,10 +283,32 @@ impl LescheClient {
         Ok(())
     }
 
-    /// Post the tagma's periodic aggregate status snapshot (agent counts + token
-    /// budget). Not retried: status is idempotent and the next tick supersedes
-    /// a dropped POST, so retrying would only amplify a transient stall. A
-    /// failure here is logged by the caller, not surfaced to the agent.
+    /// Reply to a manage-rest frame: the plaintext counterpart of the
+    /// ManageRest tunnel frame. Not retried: the pending waiter on the
+    /// lesche side times out and surfaces a 504 to the proxy caller, so a
+    /// dropped reply degrades to an error, never to stale data.
+    pub async fn post_manage_reply(&self, payload: &ManageRestReply) -> Result<()> {
+        let url = self.url("/v1/tunnel/manage-reply");
+        let resp = self
+            .inner
+            .http_post
+            .post(&url)
+            .bearer_auth(&self.inner.tagma_token)
+            .json(payload)
+            .send()
+            .await
+            .context("lesche POST failed")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("lesche POST returned {}", resp.status());
+        }
+        Ok(())
+    }
+
+    /// Post the tagma's periodic aggregate status snapshot (agent counts +
+    /// token budget). Not retried: status is idempotent and the next tick
+    /// supersedes a dropped POST, so retrying would only amplify a transient
+    /// stall. A failure here is logged by the caller, not surfaced to the
+    /// agent.
     pub async fn post_status(
         &self,
         tagma_id: &TagmaId,
@@ -1057,6 +1080,7 @@ mod tests {
             }
             TunnelInbound::Envelope { .. } => panic!("expected KeyExchange"),
             TunnelInbound::Wake => panic!("expected KeyExchange"),
+            TunnelInbound::ManageRest { .. } => panic!("expected KeyExchange"),
         }
     }
 

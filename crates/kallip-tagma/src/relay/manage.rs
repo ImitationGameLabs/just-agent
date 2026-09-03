@@ -138,7 +138,7 @@ impl RelayHandle {
         }
     }
 
-    async fn dispatch_manage(
+    pub(super) async fn dispatch_manage(
         &self,
         method: &str,
         path: &str,

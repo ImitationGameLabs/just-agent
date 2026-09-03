@@ -44,6 +44,16 @@ pub enum TunnelInbound {
     },
 }
 
+/// The plaintext reply to a [`TunnelInbound::ManageRest`] frame: the tagma
+/// POSTs this back to the lesche, which resolves the pending proxy request.
+/// Plaintext by design -- manage metadata is the relay-visible surface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManageRestReply {
+    pub req_id: u64,
+    pub status: u16,
+    pub body: serde_json::Value,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

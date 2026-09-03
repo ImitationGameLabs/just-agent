@@ -167,8 +167,9 @@ fn frame_allowed(method: &str, path: &str) -> bool {
 impl RelayHandle {
     /// A ManageRest frame from the lesche reverse-proxy: run the frame-surface
     /// allowlist, then execute against the same manage router the envelope
-    /// path uses, replying over the existing emit loop. The trace id is
-    /// synthesized (frames carry no trace context).
+    /// path uses, replying over the plaintext manage-reply POST (the E2E
+    /// emit loop is unreadable to the lesche proxy, which needs the reply
+    /// to answer the HTTP caller). The trace id is synthesized for logging.
     async fn handle_manage_rest(
         &self,
         req_id: u64,
@@ -176,21 +177,40 @@ impl RelayHandle {
         path: &str,
         body: serde_json::Value,
     ) {
-        let trace = kallip_archeion_common::ids::TraceId::from(format!("manage-rest:{req_id}"));
         if !frame_allowed(method, path) {
             warn!(
                 req_id,
                 method, path, "manage-rest frame denied by allowlist"
             );
-            let reply = TagmaReply::ManageResult {
+            let reply = ManageRestReply {
                 req_id,
                 status: 404,
                 body: serde_json::json!({"error":{"message":"not on the manage frame surface"}}),
             };
-            let _ = self.emit(&trace, self.agent_sender(), reply, None).await;
+            let _ = self.inner.client.post_manage_reply(&reply).await;
             return;
         }
-        self.handle_manage(&trace, req_id, method, path, body).await;
+        let reply: TagmaReply = AssertUnwindSafe(self.dispatch_manage(method, path, body))
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|_| TagmaReply::ManageResult {
+                req_id,
+                status: 502,
+                body: serde_json::json!({"error":{"message":"relay manage panicked"}}),
+            });
+        let (status, body) = match &reply {
+            TagmaReply::ManageResult { status, body, .. } => (*status, body.clone()),
+            _ => (
+                502,
+                serde_json::json!({"error":{"message":"unexpected reply shape"}}),
+            ),
+        };
+        let out = ManageRestReply {
+            req_id,
+            status,
+            body,
+        };
+        let _ = self.inner.client.post_manage_reply(&out).await;
     }
 }
 

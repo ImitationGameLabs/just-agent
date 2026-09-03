@@ -41,7 +41,7 @@ use kallip_lesche_common::message::{
     Envelope, Participant, RoomMessage, TagmaControl, TagmaReply, TagmaRequest,
 };
 use kallip_lesche_common::rooms::RoomId;
-use kallip_lesche_common::tunnel::TunnelInbound;
+use kallip_lesche_common::tunnel::{ManageRestReply, TunnelInbound};
 use std::panic::AssertUnwindSafe;
 use time::OffsetDateTime;
 use tokio::sync::Mutex;
