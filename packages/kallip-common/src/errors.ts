@@ -13,6 +13,9 @@ export interface ApiError {
   readonly status: number;
   // Message parsed from the {"error":{"message":...}} envelope.
   readonly message: string;
+  // Stranded profile-set bindings, present only on the tagma 409 that
+  // `PUT /profiles` returns for a non-forced dangling save.
+  readonly dangling?: readonly string[];
 }
 
 export class KallipError extends Error {
@@ -40,13 +43,17 @@ export class TransportError extends Error {
  * stream and leave a following `.text()` empty. */
 export async function readApiError(resp: Response): Promise<ApiError> {
   let message = resp.statusText;
+  let dangling: readonly string[] | undefined;
   try {
     const text = await resp.text();
     if (text) {
       try {
-        const body = JSON.parse(text) as { error?: { message?: string } };
+        const body = JSON.parse(text) as {
+          error?: { message?: string; dangling?: readonly string[] };
+        };
         if (body?.error?.message) message = body.error.message;
         else message = text;
+        dangling = body?.error?.dangling;
       } catch {
         // Non-JSON body (e.g. a CSRF-guard plain string): use it verbatim.
         message = text;
@@ -55,5 +62,5 @@ export async function readApiError(resp: Response): Promise<ApiError> {
   } catch {
     // Empty or unreadable body: keep statusText.
   }
-  return { status: resp.status, message };
+  return { status: resp.status, message, dangling };
 }

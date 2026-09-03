@@ -43,3 +43,30 @@ Deno.test(
     assertEquals(api.message, "Bad Gateway");
   },
 );
+
+Deno.test(
+  "readApiError extracts dangling bindings from the tagma 409",
+  async () => {
+    const resp = new Response(
+      JSON.stringify({
+        error: {
+          message: "config drops sets still bound by agents: agent-x → 'alt'",
+          dangling: ["agent-x → 'alt'"],
+        },
+      }),
+      { status: 409, statusText: "Conflict" },
+    );
+    const api = await readApiError(resp);
+    assertEquals(api.status, 409);
+    assertEquals(api.dangling, ["agent-x → 'alt'"]);
+  },
+);
+
+Deno.test("readApiError omits dangling for errors without it", async () => {
+  const resp = new Response(JSON.stringify({ error: { message: "nope" } }), {
+    status: 400,
+    statusText: "Bad Request",
+  });
+  const api = await readApiError(resp);
+  assertEquals(api.dangling, undefined);
+});

@@ -57,6 +57,7 @@ pub async fn put_profiles(
     Json(wire): Json<ProfileConfigWire>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     crate::auth::require_operator(auth.identity())?;
+    let force = wire.force;
 
     // The sentinel endpoint id is reserved (it routes the profile-less
     // root to the placeholder backend); a user profile named the same
@@ -73,8 +74,18 @@ pub async fn put_profiles(
     // Reference integrity: a set some agent still records must not vanish
     // over a wholesale PUT — that would strand the agent (its delivery is
     // rejected as dangling). Force the operator through the set-removal
-    // flow, which interrupts the bound agents first.
-    reject_dangling_bindings(&state, &config).await?;
+    // flow, which interrupts the bound agents first. With `force` the
+    // operator confirms the stranding in the UI and the save proceeds.
+    let stranded = dangling_bindings(&state, &config).await;
+    if !stranded.is_empty() && !force {
+        return Err(ApiError::conflict_dangling(
+            format!(
+                "config drops sets still bound by agents: {}",
+                stranded.join(", ")
+            ),
+            stranded,
+        ));
+    }
     let registry = validate_config(&config)?;
 
     persist_config(&config);
@@ -131,6 +142,10 @@ pub(crate) struct ProfileConfigWire {
     /// a present list replaces it.
     #[serde(default)]
     parking: Option<Vec<ProfileWire>>,
+    /// Operator-confirmed acceptance of dangling profile-set bindings: when
+    /// true, `put_profiles` skips the dangling-bindings gate.
+    #[serde(default)]
+    force: bool,
 }
 
 /// Resolve the wire tri-state `api_key` and `base_url` fields against the live
@@ -411,28 +426,19 @@ fn persist_config(config: &ProfileConfig) {
     }
 }
 
-/// Reject a candidate config that drops a set some agent still records:
-/// the stranded agent's delivery would be rejected as dangling. Unbind or
-/// use the set-removal flow (which interrupts the bound agents first).
-async fn reject_dangling_bindings(
-    state: &SharedState,
-    config: &ProfileConfig,
-) -> Result<(), ApiError> {
+/// Collect the profile-set bindings that the candidate config would strand:
+/// each entry renders as `agent-id → 'set'`. Consumed by `put_profiles` to
+/// reject (or, with `force`, accept) a wholesale save that drops a set some
+/// agent still records.
+async fn dangling_bindings(state: &SharedState, config: &ProfileConfig) -> Vec<String> {
     let registry = state.registry.read().await;
-    let stranded: Vec<String> = registry
+    registry
         .iter()
         .filter_map(|(id, entry)| {
             let binding = entry.identity().config.profile_set.as_deref()?;
             (!config.sets.contains_key(binding)).then(|| format!("{id} → '{binding}'"))
         })
-        .collect();
-    if !stranded.is_empty() {
-        return Err(ApiError::conflict(format!(
-            "config drops sets still bound by agents: {}; use DELETE /profiles/sets/{{name}} to remove a referenced set",
-            stranded.join(", ")
-        )));
-    }
-    Ok(())
+        .collect()
 }
 
 /// Write a ProfileReset into the agent's pending cell and wake it — the
@@ -1195,5 +1201,75 @@ mod tests {
 
         let _ = apply_profiles(State(state), op_auth()).await.unwrap();
         // Should not panic; skipped count includes the faulted agent.
+    }
+    // A wholesale PUT that drops a set a live agent still records is
+    // rejected with a structured 409 carrying the stranded bindings.
+    #[tokio::test]
+    async fn put_rejects_dangling_with_structured_list() {
+        let state = make_state_two_sets();
+        let _sub = alt_bound_sub(&state).await;
+        let w: ProfileConfigWire = serde_json::from_value(serde_json::json!({
+            "endpoints": { "test": { "id": "test", "family": "deepseek", "api_key": null, "base_url": null } },
+            "sets": [{ "name": "default", "profiles": [{
+                "id": "test", "endpoint": "test", "model": "test", "max_context_window": 128000
+            }]}],
+            "default": "default"
+        }))
+        .unwrap();
+        let err = put_profiles(State(state), op_auth(), Json(w))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, 409);
+        let dangling = err.dangling.expect("structured dangling list present");
+        assert!(
+            dangling.iter().any(|s| s.contains("→ 'alt'")),
+            "got: {dangling:?}"
+        );
+    }
+
+    // With `force` the same save proceeds: the config persists to disk and
+    // the bound agent stays registered (its binding is now dangling).
+    #[tokio::test]
+    async fn put_force_accepts_dangling_and_persists() {
+        let state = make_state_two_sets();
+        let sub = alt_bound_sub(&state).await;
+        let w: ProfileConfigWire = serde_json::from_value(serde_json::json!({
+            "endpoints": { "test": { "id": "test", "family": "deepseek", "api_key": null, "base_url": null } },
+            "sets": [{ "name": "default", "profiles": [{
+                "id": "test", "endpoint": "test", "model": "test", "max_context_window": 128000
+            }]}],
+            "default": "default",
+            "force": true
+        }))
+        .unwrap();
+        let Json(value) = put_profiles(State(state.clone()), op_auth(), Json(w))
+            .await
+            .unwrap();
+        assert_eq!(value["default"], "default");
+        // Persisted under the guard's data dir.
+        let dir = std::env::var("KALLIP_DATA_DIR").unwrap();
+        let body = std::fs::read_to_string(
+            std::path::Path::new(&dir)
+                .join("profiles")
+                .join("profiles.toml"),
+        )
+        .unwrap();
+        assert!(body.contains("[[sets.default.profiles]]"));
+        // The bound agent is still registered, binding intact (now dangling).
+        let registry = state.registry.read().await;
+        assert!(registry.iter().any(|(id, _)| id == &sub));
+    }
+
+    // The error serializes `dangling` at the top level (the {"error":...}
+    // envelope wrapper is an axum-response concern), and errors without it
+    // omit the key entirely.
+    #[test]
+    fn conflict_dangling_envelope_round_trip() {
+        let err = ApiError::conflict_dangling("stranded", vec!["a → 'alt'".into()]);
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["dangling"][0], "a → 'alt'");
+        let plain = ApiError::bad_request("nope");
+        let json = serde_json::to_value(&plain).unwrap();
+        assert!(json.get("dangling").is_none());
     }
 }

@@ -270,6 +270,9 @@ export interface ProfileConfigPutRequest {
   readonly default?: string;
   readonly endpoints: Readonly<Record<string, ProfileProvider>>;
   readonly parking: readonly ProfileModel[];
+  /** Operator-confirmed acceptance of dangling profile-set bindings (the
+   * server's 409 lists them; absent/false keeps the hard reject). */
+  readonly force?: boolean;
 }
 /** `POST /profiles/apply` response. */
 export interface ProfileApplyResponse {

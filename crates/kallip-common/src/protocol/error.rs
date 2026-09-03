@@ -24,6 +24,11 @@ pub struct ApiError {
     pub status: u16,
     /// Human-readable error description.
     pub message: String,
+    /// Stranded profile-set bindings, carried only by the 409 that
+    /// `PUT /profiles` returns when a wholesale save would strand agents
+    /// (absent on every other error). Serialized inside the error envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dangling: Option<Vec<String>>,
 }
 
 impl ApiError {
@@ -34,6 +39,7 @@ impl ApiError {
         Self {
             status: 400,
             message: msg.into(),
+            dangling: None,
         }
     }
 
@@ -42,6 +48,7 @@ impl ApiError {
         Self {
             status: 401,
             message: msg.into(),
+            dangling: None,
         }
     }
 
@@ -50,6 +57,7 @@ impl ApiError {
         Self {
             status: 403,
             message: msg.into(),
+            dangling: None,
         }
     }
 
@@ -58,6 +66,7 @@ impl ApiError {
         Self {
             status: 404,
             message: msg.into(),
+            dangling: None,
         }
     }
 
@@ -66,6 +75,17 @@ impl ApiError {
         Self {
             status: 409,
             message: msg.into(),
+            dangling: None,
+        }
+    }
+
+    /// 409 Conflict carrying the stranded profile-set bindings from a
+    /// non-forced `PUT /profiles` (see the tagma profiles routes).
+    pub fn conflict_dangling(msg: impl Into<String>, dangling: Vec<String>) -> Self {
+        Self {
+            status: 409,
+            message: msg.into(),
+            dangling: Some(dangling),
         }
     }
 
@@ -74,6 +94,7 @@ impl ApiError {
         Self {
             status: 429,
             message: msg.into(),
+            dangling: None,
         }
     }
 
@@ -87,6 +108,7 @@ impl ApiError {
         Self {
             status: 500,
             message: "internal error".into(),
+            dangling: None,
         }
     }
 
@@ -95,6 +117,7 @@ impl ApiError {
         Self {
             status: 503,
             message: msg.into(),
+            dangling: None,
         }
     }
 
@@ -103,6 +126,7 @@ impl ApiError {
         Self {
             status: 502,
             message: msg.into(),
+            dangling: None,
         }
     }
 
@@ -111,6 +135,7 @@ impl ApiError {
         Self {
             status: 504,
             message: msg.into(),
+            dangling: None,
         }
     }
 }

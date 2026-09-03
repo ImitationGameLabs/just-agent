@@ -332,6 +332,7 @@ async fn parse_error(status: reqwest::StatusCode, response: reqwest::Response) -
     ApiError {
         status: status.as_u16(),
         message,
+        dangling: None,
     }
     .into()
 }

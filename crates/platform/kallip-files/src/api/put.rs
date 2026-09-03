@@ -80,6 +80,7 @@ pub async fn put_file(
                             "body exceeds the configured maximum of {} bytes",
                             state.config.max_body_bytes
                         ),
+                        dangling: None,
                     });
                 }
                 return Err(ApiError::internal(e));
