@@ -134,6 +134,12 @@ Port `5175` is reserved for this shell so it can run next to a `kallip-web`
 dev server (5173). First use: open `/connect`, enter the tagma URL and the
 operator token; the session is stored locally and reconnected on boot.
 
+Route guards that need kit's `$app/navigation` belong in the host app's
+`+page.svelte` wrappers (`kallip-direct`, `kallip-web`), never inside
+`kallip-ui` components - the UI package stays a pure-UI library with zero
+`$app` imports. Shared dirty-state lives in the store, which both layers
+import (`profilesStore` is the precedent).
+
 ## Formatting
 
 Two formatters, split by file type:
