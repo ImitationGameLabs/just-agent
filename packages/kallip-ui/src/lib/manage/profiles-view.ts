@@ -13,6 +13,7 @@ import type {
   ProfileProbeStatus,
   ProfileProviderProbeReport,
 } from "@kallipai/kallip-client";
+import { KallipError } from "@kallipai/kallip-common";
 import {
   manage_profiles_probe_models_one,
   manage_profiles_probe_models_other,
@@ -144,4 +145,40 @@ export function parkedLiveSnapshot(
     }
   }
   return agentCount > 0 ? { agentCount, profileIds: [...profileIds] } : null;
+}
+
+// --- save-failure classification and leave-guard decisions (P2/P4) ----
+// The store's catch block and the host wrapper's guard are thin layers
+// over these; the decision table lives here so tests drive it directly.
+
+/** What the save flow should do with a thrown save failure. */
+export type SaveFailureKind = "park-dangling" | "stale-backend" | "error";
+
+export function classifySaveFailure(
+  e: unknown,
+  force: boolean,
+): SaveFailureKind {
+  if (e instanceof KallipError && e.api.dangling) return "park-dangling";
+  // Old backend: force is ignored, so a dangling save keeps failing with
+  // a bare 409 and no structured list.
+  if (force && e instanceof KallipError && e.api.status === 409) {
+    return "stale-backend";
+  }
+  return "error";
+}
+
+/** Should an in-flight navigation be intercepted by the unsaved guard? */
+export function leaveGuardIntercept(
+  isDirty: boolean,
+  guardOpen: boolean,
+): boolean {
+  return isDirty && !guardOpen;
+}
+
+/** The unsaved-changes dialog waits while the dangling confirm is up. */
+export function leaveGuardDialogVisible(
+  guardOpen: boolean,
+  pendingDangling: readonly string[] | null,
+): boolean {
+  return guardOpen && pendingDangling === null;
 }

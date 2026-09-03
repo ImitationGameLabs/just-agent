@@ -12,6 +12,10 @@
     manage_profiles_unsaved_title,
     profilesStore,
   } from "@kallipai/kallip-ui";
+  import {
+    leaveGuardDialogVisible,
+    leaveGuardIntercept,
+  } from "@kallipai/kallip-ui";
   import { Dialog, Portal } from "@skeletonlabs/skeleton-svelte";
   import { navigate as shellNavigate } from "@kallipai/kallip-ui";
   import { beforeNavigate } from "$app/navigation";
@@ -21,7 +25,7 @@
   });
 
   beforeNavigate((nav) => {
-    if (!profilesStore.isDirty || leaveGuard.open) return;
+    if (!leaveGuardIntercept(profilesStore.isDirty, leaveGuard.open)) return;
     nav.cancel();
     leaveGuard = { open: true, to: nav.to?.url?.pathname ?? "/local/manage" };
   });
@@ -58,7 +62,7 @@
 <ProfilesPage />
 
 <Dialog
-  open={leaveGuard.open && profilesStore.pendingDangling === null}
+  open={leaveGuardDialogVisible(leaveGuard.open, profilesStore.pendingDangling)}
   onOpenChange={(e) => {
     if (!e.open) guardStay();
   }}

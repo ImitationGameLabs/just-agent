@@ -19,6 +19,7 @@ import {
   singleProviderProbeRequest as singleProviderProbeRequestFn,
 } from "./compute.ts";
 import { type ManagementBackend, managementBackend } from "./client.ts";
+import { classifySaveFailure } from "./profiles-view.ts";
 import { KallipError } from "@kallipai/kallip-common";
 import { displayError } from "./errors.ts";
 import {
@@ -97,17 +98,25 @@ export class ProfilesStore {
       this.config = resp;
       this.draft = structuredClone(resp);
     } catch (e) {
-      if (e instanceof KallipError && e.api.dangling) {
-        // Structured 409: ask the operator before stranding bindings.
-        this.pendingDangling = e.api.dangling;
-      } else if (force && e instanceof KallipError && e.api.status === 409) {
-        // Old backend: force is ignored, so a dangling save keeps failing
-        // with a bare 409 and no structured list. Surface the upgrade hint
-        // and block the confirm re-send instead of looping silently.
-        this.saveBlocked = true;
-        this.error = manage_profiles_save_stale_backend();
-      } else {
-        this.error = displayError("profiles", e, manage_profiles_save_failed());
+      switch (classifySaveFailure(e, force)) {
+        case "park-dangling":
+          // Structured 409: ask the operator before stranding bindings.
+          this.pendingDangling = (e as KallipError).api.dangling ?? null;
+          break;
+        case "stale-backend":
+          // Old backend: force is ignored, so a dangling save keeps
+          // failing with a bare 409 and no structured list. Surface the
+          // upgrade hint and block the confirm re-send instead of
+          // looping silently.
+          this.saveBlocked = true;
+          this.error = manage_profiles_save_stale_backend();
+          break;
+        default:
+          this.error = displayError(
+            "profiles",
+            e,
+            manage_profiles_save_failed(),
+          );
       }
       throw e;
     } finally {
