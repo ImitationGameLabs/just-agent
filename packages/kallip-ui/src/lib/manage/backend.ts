@@ -171,14 +171,16 @@ export class OnlineBackend implements ManagementBackend {
     let lastSeq = 0; // seq gate: a frame at or below the last notified
     // seq is a replay or echo, not news
     let windowTimer: ReturnType<typeof setTimeout> | null = null;
+    let windowDirty = false;
     let pendingWhileHidden = false;
     const notifyListeners = (): void => {
       for (const fn of [...listeners]) fn();
     };
-    // First frame in the window fires immediately; frames landing
-    // within the next 750ms collapse into the in-flight window rather
-    // than scheduling another pull (750ms sits well under any human
-    // perceivable lag yet absorbs a burst of same-tick mutations).
+    // Leading edge: the first frame in the window notifies immediately;
+    // frames landing within the next 750ms fold into the window, and
+    // the window tail fires one catch-up nudge if anything folded
+    // (750ms sits well under any human perceivable lag yet absorbs a
+    // burst of same-tick mutations).
     const onFrame = (seq: number): void => {
       if (seq <= lastSeq) return;
       lastSeq = seq;
@@ -190,18 +192,30 @@ export class OnlineBackend implements ManagementBackend {
         notifyListeners();
         windowTimer = setTimeout(() => {
           windowTimer = null;
+          if (windowDirty) {
+            windowDirty = false;
+            notifyListeners();
+          }
         }, 750);
+      } else {
+        windowDirty = true;
       }
     };
-    document.addEventListener("visibilitychange", () => {
+    const onVisibility = (): void => {
       if (!document.hidden && pendingWhileHidden) {
         pendingWhileHidden = false;
         notifyListeners();
       }
-    });
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     const runLoop = async (): Promise<void> => {
       while (controller && !controller.signal.aborted) {
         try {
+          // A fresh connection renumbers the stream: a lesche restart
+          // starts seq back at 1, so a gate persisted across connections
+          // would drop every frame as a replay. Reset per connection --
+          // the cost is one idempotent replayed GET after a reconnect.
+          lastSeq = 0;
           for await (const frame of projection.events(
             this.agent,
             controller.signal,
@@ -236,6 +250,9 @@ export class OnlineBackend implements ManagementBackend {
           if (listeners.size === 0 && controller) {
             controller.abort();
             controller = null;
+            // Last one out: detach the visibility listener too, so a
+            // retired feed leaves no document-level callbacks behind.
+            document.removeEventListener("visibilitychange", onVisibility);
           }
         };
       },

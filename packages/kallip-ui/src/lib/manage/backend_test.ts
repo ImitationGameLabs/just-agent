@@ -20,6 +20,7 @@ if (typeof globalThis.document === "undefined") {
   globalThis.document = {
     hidden: false,
     addEventListener: () => {},
+    removeEventListener: () => {},
   } as unknown as typeof globalThis.document;
 }
 import { classifySaveFailure } from "./profiles-view.ts";
@@ -272,24 +273,38 @@ Deno.test(
   },
 );
 // Regression (review round): dirty-frame traffic shaping. A burst of
-// frames inside the 750ms window must collapse into the single nudge
-// the first frame already fired, and a frame at or below the last
+// frames inside the 750ms window folds into one trailing catch-up
+// nudge at the window tail, and a frame at or below the last
 // notified seq is a replay, not news.
 Deno.test(
-  "a frame burst collapses into one nudge; stale seq frames drop",
+  "a frame burst folds into one trailing nudge; stale seq frames drop",
   async () => {
     const sse =
       'data: {"tagma_id":"t-a","seq":5}\n\n' +
       'data: {"tagma_id":"t-a","seq":6}\n\n' +
       'data: {"tagma_id":"t-a","seq":5}\n\n';
     const real = globalThis.fetch;
-    globalThis.fetch = (() =>
-      Promise.resolve(
+    let call = 0;
+    globalThis.fetch = (() => {
+      call += 1;
+      if (call > 1) {
+        // Later connections idle open: a replayed short stream would
+        // re-notify by design (per-connection seq reset), which is not
+        // this test's subject.
+        return Promise.resolve(
+          new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      }
+      return Promise.resolve(
         new Response(sse, {
           status: 200,
           headers: { "content-type": "text/event-stream" },
         }),
-      )) as typeof fetch;
+      );
+    }) as typeof fetch;
     try {
       const backend = new OnlineBackend(
         {} as unknown as ManageRestClient,
@@ -300,12 +315,13 @@ Deno.test(
       const stop = backend.projectionFeed!.subscribe(() => {
         nudges += 1;
       });
-      // seq 5 fires immediately; seq 6 lands inside the window; the
-      // trailing seq 5 sits at the notified seq and drops.
+      // seq 5 fires immediately (leading edge); seq 6 folds into the
+      // window and the tail fires one catch-up nudge; the trailing
+      // seq 5 sits at the notified seq and drops.
       await new Promise((r) => setTimeout(r, 60));
-      assertEquals(nudges, 1, "burst collapsed into the first nudge");
+      assertEquals(nudges, 1, "the leading nudge only, burst absorbed");
       await new Promise((r) => setTimeout(r, 800));
-      assertEquals(nudges, 1, "window expiry fires nothing extra");
+      assertEquals(nudges, 2, "the window tail fires one catch-up");
       stop();
     } finally {
       globalThis.fetch = real;
@@ -324,16 +340,30 @@ Deno.test(
       addEventListener: (_type: string, fn: () => void) => {
         visListener = fn;
       },
+      removeEventListener: () => {},
     };
     const real = globalThis.fetch;
     const realDoc = globalThis.document;
-    globalThis.fetch = (() =>
-      Promise.resolve(
+    let call = 0;
+    globalThis.fetch = (() => {
+      call += 1;
+      if (call > 1) {
+        // Later connections idle open so the replayed frame does not
+        // muddy the pending-flush assertions.
+        return Promise.resolve(
+          new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      }
+      return Promise.resolve(
         new Response('data: {"tagma_id":"t-a","seq":3}\n\n', {
           status: 200,
           headers: { "content-type": "text/event-stream" },
         }),
-      )) as typeof fetch;
+      );
+    }) as typeof fetch;
     globalThis.document = doc as unknown as typeof globalThis.document;
     try {
       const backend = new OnlineBackend(
@@ -361,3 +391,54 @@ Deno.test(
     }
   },
 );
+
+// Regression (review round): a lesche restart renumbers the stream --
+// seq starts back at 1. The seq gate resets per connection, so the
+// renumbered stream still notifies instead of reading as replays.
+Deno.test("a renumbered stream still notifies after a reconnect", async () => {
+  let stream = 0;
+  const real = globalThis.fetch;
+  globalThis.fetch = (() => {
+    stream += 1;
+    if (stream > 2) {
+      // Third and later connections idle open: an endless chain of
+      // one-frame streams would re-notify forever.
+      return Promise.resolve(
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+    }
+    const seq = stream === 1 ? 9 : 1;
+    return Promise.resolve(
+      new Response('data: {"tagma_id":"t-a","seq":' + seq + "}\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+  }) as typeof fetch;
+  try {
+    const backend = new OnlineBackend(
+      {} as unknown as ManageRestClient,
+      "t-a",
+      new ProjectionClient("http://lesche.test"),
+    );
+    let nudges = 0;
+    const stop = backend.projectionFeed!.subscribe(() => {
+      nudges += 1;
+    });
+    // Stream one: seq 9 notifies (leading). It ends, the backoff is
+    // zero after a clean frame, and stream two opens renumbered at
+    // seq 1; its frame folds into the window and the tail fires.
+    await new Promise((r) => setTimeout(r, 900));
+    assertEquals(
+      nudges,
+      2,
+      "old stream leading + renumbered stream catch-up both notify",
+    );
+    stop();
+  } finally {
+    globalThis.fetch = real;
+  }
+});
