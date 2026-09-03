@@ -2,19 +2,15 @@
 //
 // Two implementations:
 //   - OfflineBackend: wraps TagmaClient (HTTP to localhost tagma API)
-//   - OnlineBackend: wraps RelayChannel.manage() (E2E encrypted channel)
+//   - OnlineBackend: wraps ManageRestClient (plaintext over TLS via lesche proxy)
 //
 // Both throw KallipError on non-2xx (OnlineBackend reconstructs it from the
-// manage_result status+body) and TransportError on network/transport failures.
+// relayed status+body). Network failures differ: OfflineBackend throws
+// TransportError; OnlineBackend surfaces fetch's own TypeError.
 
 import type { TagmaClient } from "@kallipai/kallip-client";
 import { ManageRestClient } from "@kallipai/kallip-lesche-client";
-import {
-  KallipError,
-  type ApiError,
-  parseErrorEnvelope,
-  TransportError,
-} from "@kallipai/kallip-common";
+import { KallipError, parseErrorEnvelope } from "@kallipai/kallip-common";
 import type {
   AgentStatusResponse,
   BudgetResponse,
@@ -109,7 +105,7 @@ export class OfflineBackend implements ManagementBackend {
   }
 }
 
-// --- OnlineBackend (wraps RelayChannel.manage()) ---
+// --- OnlineBackend (wraps ManageRestClient over the lesche proxy) ---
 
 /**
  * Reconstruct a KallipError from a manage_result when status >= 400. The
@@ -166,6 +162,12 @@ export class OnlineBackend implements ManagementBackend {
   updateBudget(body: BudgetUpdateRequest) {
     return this.req<BudgetResponse>("POST", "/budget", body);
   }
+  /**
+   * `created_by` filters only the Offline transport: the online reverse
+   * proxy 404s every query string (the sole exception, /agents?include=,
+   * rides the frame body), so the argument is unreachable through
+   * OnlineBackend. The signature stays for OfflineBackend.
+   */
   listAgents(query?: ListAgentsQuery) {
     const qs = query?.created_by
       ? `?created_by=${encodeURIComponent(query.created_by)}`
@@ -173,19 +175,26 @@ export class OnlineBackend implements ManagementBackend {
     return this.req<ListAgentsManagementResponse>("GET", `/agents${qs}`);
   }
   getAgentStatus(id: string) {
-    return this.req<AgentStatusResponse>("GET", `/agents/${id}/status`);
+    return this.req<AgentStatusResponse>(
+      "GET",
+      `/agents/${encodeURIComponent(id)}/status`,
+    );
   }
   interruptAgent(id: string) {
-    return this.reqVoid("POST", `/agents/${id}/interrupt`);
+    return this.reqVoid("POST", `/agents/${encodeURIComponent(id)}/interrupt`);
   }
   removeAgent(id: string) {
-    return this.reqVoid("DELETE", `/agents/${id}`);
+    return this.reqVoid("DELETE", `/agents/${encodeURIComponent(id)}`);
   }
   setAgentDuty(id: string, body: UpdateDutyRequest) {
-    return this.reqVoid("PUT", `/agents/${id}/duty`, body);
+    return this.reqVoid("PUT", `/agents/${encodeURIComponent(id)}/duty`, body);
   }
   updateAgentMetadata(id: string, body: UpdateAgentMetadataRequest) {
-    return this.reqVoid("PUT", `/agents/${id}/metadata`, body);
+    return this.reqVoid(
+      "PUT",
+      `/agents/${encodeURIComponent(id)}/metadata`,
+      body,
+    );
   }
   getProfiles() {
     return this.req<ProfileConfig>("GET", "/profiles");

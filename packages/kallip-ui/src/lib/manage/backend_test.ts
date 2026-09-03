@@ -66,3 +66,24 @@ Deno.test(
     assertEquals(classifySaveFailure(err, true), "stale-backend");
   },
 );
+
+Deno.test(
+  "a plain-text relayed 403 folds into the same KallipError shape",
+  async () => {
+    // The proxy answers forbidden agents with a bare text body; the
+    // string branch must yield the same KallipError shape the envelope
+    // path produces.
+    const rest = {
+      manage: () => Promise.resolve({ status: 403, body: "not your tagma" }),
+    } as unknown as ManageRestClient;
+    const backend = new OnlineBackend(rest, "t-a");
+    let caught: unknown = null;
+    await backend.getBudget().catch((e) => {
+      caught = e;
+    });
+    assertEquals(caught instanceof KallipError, true);
+    const err = caught as KallipError;
+    assertEquals(err.api.status, 403);
+    assertEquals(err.api.message, "not your tagma");
+  },
+);
