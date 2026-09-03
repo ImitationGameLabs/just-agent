@@ -129,7 +129,7 @@ impl RelayHandle {
                 body,
                 trace,
             } => {
-                self.handle_manage_rest(req_id, &method, &path, &trace, body)
+                self.handle_manage_rest(req_id, &path, &method, &trace, body)
                     .await
             }
         }
@@ -199,6 +199,10 @@ impl RelayHandle {
             let _ = self.inner.client.post_manage_reply(&reply).await;
             return;
         }
+        debug!(
+            req_id, trace = %trace, method, path = %frame_path,
+            "manage-rest frame accepted"
+        );
         let reply: TagmaReply = AssertUnwindSafe(self.dispatch_manage(method, frame_path, body))
             .catch_unwind()
             .await
@@ -269,5 +273,78 @@ mod manage_rest_tests {
         ] {
             assert!(!frame_allowed(method, path), "{method} {path}");
         }
+    }
+}
+
+/// P1-c nail (quality C-1): the call site passes (path, method) into a
+/// fn whose parameters are (method, path)-shaped -- swapping them makes
+/// every frame hit the deny arm. These two asserts pin the order: the
+/// swapped call must NOT be allowed.
+#[test]
+fn frame_allowed_is_order_sensitive() {
+    assert!(frame_allowed("GET", "/agents"));
+    assert!(!frame_allowed("/agents", "GET"));
+}
+
+/// P1-c nail (quality M-3): the frame dispatch end-to-end -- handle_manage_rest
+/// against a mock lesche that records the manage-reply POST. Pins the
+/// (path, method) call order at the real dispatch site: the correct order
+/// must reach the router (200), and a swapped call must deny (404) --
+/// the exact regression C-1 was.
+#[cfg(test)]
+mod manage_frame_tests {
+    use super::*;
+    use crate::test_helpers::make_state;
+    use std::sync::Arc;
+
+    async fn setup(
+        replies: Arc<tokio::sync::Mutex<Vec<serde_json::Value>>>,
+    ) -> (RelayHandle, crate::state::SharedState) {
+        let state = make_state();
+        let app = axum::Router::new().route(
+            "/v1/tunnel/manage-reply",
+            axum::routing::post(move |axum::Json(reply): axum::Json<serde_json::Value>| {
+                let replies = replies.clone();
+                async move {
+                    replies.lock().await.push(reply);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let lesche_url = format!("http://{addr}");
+        let client = LescheClient::builder(&lesche_url, "tok").build().unwrap();
+        let handle = RelayHandle::new(
+            client,
+            "test".to_string(),
+            TagmaId::from("tagma".to_string()),
+            "Tagma".into(),
+            e2e::DeviceKey::generate(),
+            AgentId::from("root".to_string()),
+            Arc::downgrade(&state),
+        );
+        (handle, state)
+    }
+
+    #[tokio::test]
+    async fn correct_order_reaches_router_swapped_order_denies() {
+        let replies = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let (handle, state) = setup(replies.clone()).await;
+        let _keep_state = &state;
+        let trace = kallip_archeion_common::ids::TraceId::random();
+        // Correct (path, method) order: the router serves GET /agents.
+        handle
+            .handle_manage_rest(1, "/agents", "GET", &trace, serde_json::json!({}))
+            .await;
+        // Swapped order (the C-1 bug): frame_allowed denies.
+        handle
+            .handle_manage_rest(2, "GET", "/agents", &trace, serde_json::json!({}))
+            .await;
+        let replies = replies.lock().await;
+        assert_eq!(replies.len(), 2);
+        assert_eq!(replies[0]["status"], 200, "correct order must route");
+        assert_eq!(replies[1]["status"], 404, "swapped order must deny");
     }
 }

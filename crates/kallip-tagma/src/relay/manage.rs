@@ -25,6 +25,7 @@ use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use futures_util::FutureExt;
+use kallip_common::agentid::AgentId;
 use kallip_common::protocol::ListAgentsQuery;
 use kallip_lesche_common::message::TagmaReply;
 use std::panic::AssertUnwindSafe;
@@ -76,47 +77,60 @@ fn manage_router() -> Router<SharedState> {
         .fallback(manage_fallback)
 }
 
-/// `list_agents` with the manage plane's historical query semantics: a
-/// missing or unparsable query string yields the default struct (axum's
-/// One-registry-pass aggregate: every agent's summary, optionally joined
-/// with its live status snapshot. This is the N+1 killer for the operator
-/// UI -- one frame instead of one status GET per agent.
+/// One-registry-pass aggregate (lock only for summaries): every agent's
+/// summary, optionally joined with its live status snapshot -- the N+1
+/// killer for the operator UI: one frame instead of one status GET per
+/// agent.
 async fn aggregate_agents(state: &SharedState, with_status: bool) -> Response {
-    let registry = state.registry.read().await;
-    let mut agents = Vec::new();
-    for (id, entry) in registry.iter() {
-        let mut summary =
-            serde_json::to_value(state.summarize(id, entry)).unwrap_or(serde_json::Value::Null);
-        if with_status {
-            let live = entry.as_live().is_some();
-            summary["status"] = if live {
-                // Reuse the real handler in-process: one function call per
-                // agent, not one HTTP round-trip per agent.
-                let resp = crate::routes::context::agent_status(
-                    State(state.clone()),
-                    crate::auth::AuthIdentity::operator(),
-                    axum::extract::Path(id.clone()),
-                )
-                .await
-                .into_response();
-                let bytes = if resp.status().is_success() {
-                    axum::body::to_bytes(resp.into_body(), 1 << 20)
-                        .await
-                        .unwrap_or_default()
-                } else {
-                    axum::body::Bytes::new()
-                };
-                serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
-            } else {
-                serde_json::Value::Null
-            };
+    // Phase 1 -- hold the registry read lock only while snapshotting
+    // summaries, then DROP it before the per-agent status joins: agent_status
+    // takes the same read lock, and holding ours across those awaits would
+    // let an interleaving writer queue ahead of the readers and deadlock
+    // the node (tokio RwLock is write-preferring).
+    let mut agents = {
+        let registry = state.registry.read().await;
+        let mut agents = Vec::new();
+        for (id, entry) in registry.iter() {
+            let mut summary =
+                serde_json::to_value(state.summarize(id, entry)).unwrap_or(serde_json::Value::Null);
+            if with_status {
+                summary["status"] = serde_json::Value::Null; // joined below
+            }
+            agents.push((entry.as_live().is_some(), summary));
         }
-        agents.push(summary);
+        agents
+    };
+    if with_status {
+        for (live, summary) in agents.iter_mut() {
+            if !*live {
+                continue;
+            }
+            let id = AgentId::from(summary["id"].as_str().unwrap_or("").to_owned());
+            // Reuse the real handler in-process: one function call per
+            // agent, not one HTTP round-trip per agent.
+            let resp = crate::routes::context::agent_status(
+                State(state.clone()),
+                crate::auth::AuthIdentity::operator(),
+                axum::extract::Path(id),
+            )
+            .await
+            .into_response();
+            let bytes = if resp.status().is_success() {
+                axum::body::to_bytes(resp.into_body(), 1 << 20)
+                    .await
+                    .unwrap_or_default()
+            } else {
+                axum::body::Bytes::new()
+            };
+            summary["status"] = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        }
     }
-    drop(registry);
+    let agents: Vec<serde_json::Value> = agents.into_iter().map(|(_, s)| s).collect();
     axum::Json(serde_json::json!({ "agents": agents })).into_response()
 }
 
+/// `list_agents` with the manage plane's historical query semantics: a
+/// missing or unparsable query string yields the default struct (axum's
 /// `Query` extractor would reject with 400 instead).
 async fn list_agents_lenient(
     State(state): State<SharedState>,

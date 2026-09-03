@@ -92,12 +92,14 @@ async fn proxy_manage(
     if let Some(q) = uri.query() {
         // hand-rolled: only include=key,key lists ride this path, and the
         // lesche has no form-encoding dependency.
+        let malformed = q.split('&').any(|pair| pair.split_once('=').is_none());
         let pairs: Vec<(String, String)> = q
             .split('&')
+            .filter(|pair| pair.split_once('=').is_some())
             .filter_map(|pair| pair.split_once('='))
             .map(|(k, v)| (k.to_owned(), v.to_owned()))
             .collect();
-        let unknown = pairs.iter().any(|(k, _)| k != "include");
+        let unknown = malformed || pairs.iter().any(|(k, _)| k != "include");
         let only_agents = uri.path() == "/agents";
         if unknown || !only_agents {
             return (StatusCode::NOT_FOUND, "query not allowed on the frame").into_response();
