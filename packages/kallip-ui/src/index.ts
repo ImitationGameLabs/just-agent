@@ -176,3 +176,13 @@ export type {
 } from "./lib/connection.svelte.ts";
 export { classifyError } from "./lib/errors.ts";
 export type { ErrorView } from "./lib/errors.ts";
+
+// Unsaved-changes leave-guard copy: re-exported so host pages (kallip-direct
+// routes) can render the guard dialog without importing paraglide directly.
+export {
+  common_cancel,
+  manage_profiles_discard,
+  manage_profiles_unsaved_body,
+  manage_profiles_unsaved_save,
+  manage_profiles_unsaved_title,
+} from "./paraglide/messages.js";
