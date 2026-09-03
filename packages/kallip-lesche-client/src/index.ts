@@ -15,6 +15,7 @@ export const PACKAGE_NAME = "@kallipai/kallip-lesche-client";
 export { LescheClient } from "./http.ts";
 export { openRelayChannel, RelayChannel } from "./channel.ts";
 export { ManageRestClient } from "./manageRest.ts";
+export { LinearBackoff, ProjectionClient } from "./projection.ts";
 export {
   type CachedLine,
   clear as clearConvCache,
@@ -40,6 +41,12 @@ export type {
   TagmaReply,
 } from "./types.ts";
 export type { LescheEvent } from "./types.ts";
+export type {
+  ProjectionAgentsResponse,
+  ProjectionBudgetResponse,
+  ProjectionDirty,
+  ProjectionWorkScheduleResponse,
+} from "./types.ts";
 // Room management (relocated from the archeion client).
 export type {
   AddTagmaRequest,

@@ -107,11 +107,24 @@ class StatusCardStore {
     this.suspend();
     this.backend = backend;
     this.refreshRoster();
-    this.rosterStop = startVisibleInterval(() => this.refreshRoster(), 15_000);
-    this.contextStop = startVisibleInterval(
-      () => this.refreshContexts(),
-      30_000,
-    );
+    if (backend.projectionFeed) {
+      // P2-c: the lesche's dirty SSE drives both refreshes -- no roster
+      // polling while a live feed exists (Offline keeps the intervals).
+      const feed = backend.projectionFeed;
+      this.rosterStop = feed.subscribe(() => {
+        void this.refreshRoster();
+        void this.refreshContexts();
+      });
+    } else {
+      this.rosterStop = startVisibleInterval(
+        () => this.refreshRoster(),
+        15_000,
+      );
+      this.contextStop = startVisibleInterval(
+        () => this.refreshContexts(),
+        30_000,
+      );
+    }
     void this.refreshProfileWindows(backend);
     if (resuming) this.refreshContexts();
   }

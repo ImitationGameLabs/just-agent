@@ -6,7 +6,10 @@
 
 import { assertEquals } from "@std/assert";
 import { KallipError } from "@kallipai/kallip-common";
-import type { ManageRestClient } from "@kallipai/kallip-lesche-client";
+import {
+  type ManageRestClient,
+  ProjectionClient,
+} from "@kallipai/kallip-lesche-client";
 import { OnlineBackend } from "./backend.ts";
 
 import { classifySaveFailure } from "./profiles-view.ts";
@@ -105,5 +108,77 @@ Deno.test(
     await backend.getAgentStatus("a/b c");
     assertEquals(captured.length, 1);
     assertEquals(captured[0]!.path, "/agents/a%2Fb%20c/status");
+  },
+);
+
+// --- P2-c: the projection seam -------------------------------------------
+
+// End-to-end across the seam: listAgents rides the projection GET, and a
+// dirty frame pumped through the stubbed SSE stream reaches the feed
+// subscriber -- the exact chain a real lesche drives (store -> SSE -> GET).
+Deno.test(
+  "projection-backed listAgents and a dirty frame reach the feed",
+  async () => {
+    const sse = 'data: {"tagma_id":"t-a","seq":9}\n\n';
+    const seen: string[] = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = ((url: string | URL | Request) => {
+      const u = String(url);
+      seen.push(u);
+      if (u.endsWith("/projection/agents")) {
+        return Promise.resolve(
+          Response.json({
+            stale: false,
+            seq: 9,
+            updated_at: 1,
+            agents: [
+              {
+                id: "root",
+                workspace_root: "/w",
+                state: "idle",
+                created_by: null,
+                role: "",
+                description: "",
+                activity: "",
+                duty: "onduty",
+                faulted_reason: null,
+                conversation_id: null,
+              },
+            ],
+            status: {},
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(sse, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+    }) as typeof fetch;
+    try {
+      const backend = new OnlineBackend(
+        {} as unknown as ManageRestClient, // the manage relay stays untouched
+        "t-a",
+        new ProjectionClient("http://lesche.test"),
+      );
+      const agents = await backend.listAgents();
+      assertEquals(agents.agents[0]!.id, "root");
+      assertEquals(
+        seen.some((u) => u.endsWith("/projection/agents")),
+        true,
+      );
+
+      // The feed: one dirty nudge reaches the subscriber, no polling.
+      let nudges = 0;
+      const stop = backend.projectionFeed!.subscribe(() => {
+        nudges += 1;
+      });
+      await new Promise((r) => setTimeout(r, 60));
+      stop();
+      assertEquals(nudges >= 1, true);
+    } finally {
+      globalThis.fetch = real;
+    }
   },
 );

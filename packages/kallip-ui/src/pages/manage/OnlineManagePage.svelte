@@ -11,7 +11,10 @@
   import { channelsStore } from "../../lib/session/channels.svelte.ts";
   import { realtimeStore } from "../../lib/session/realtime.svelte.ts";
   import { OnlineBackend } from "../../lib/manage/backend.ts";
-  import { ManageRestClient } from "@kallipai/kallip-lesche-client";
+  import {
+    ManageRestClient,
+    ProjectionClient,
+  } from "@kallipai/kallip-lesche-client";
   import { lescheBaseUrlOrFail } from "../../lib/session/archeion.svelte.ts";
   import { manageChannelStalled } from "../../lib/manage/channelStalled.ts";
   import { budgetStore } from "../../lib/manage/budget.svelte.ts";
@@ -85,6 +88,7 @@
       const backend = new OnlineBackend(
         new ManageRestClient(lescheBaseUrlOrFail()),
         channel.tagmaId,
+        new ProjectionClient(lescheBaseUrlOrFail()),
       );
       budgetStore.switchBackend(backend);
       agentsStore.switchBackend(backend);

@@ -287,6 +287,82 @@ export type LescheEvent =
     };
 
 /**
+ * One `ProjectionDirty` frame on the projection SSE stream
+ * (`GET /v1/tagmata/{id}/projection/events`). A liveness nudge only -- the
+ * payload carries the tagma id and the store seq, never content; the
+ * consumer re-pulls the projection GET when the seq is newer than its
+ * local copy.
+ */
+export interface ProjectionDirty {
+  readonly tagma_id: string;
+  readonly seq: number;
+}
+
+/** `GET /v1/tagmata/{id}/projection/agents` -- the stored projection's
+ * roster and aggregate status, plus the seq/staleness bookkeeping.
+ * `stale` is true when the tagma has no live presence (MIN3: offline
+ * tags keep serving the last known projection). */
+export interface ProjectionAgentsResponse {
+  readonly stale: boolean;
+  readonly seq: number;
+  readonly updated_at: number;
+  readonly agents: readonly ProjectionAgentSummary[];
+  readonly status: unknown;
+}
+
+/** The projected per-agent summary: the same serde wire as kallip-ui's
+ * management summary common fields (structural, so the UI consumes it
+ * directly; extra wire fields the management type omits, like `lock`,
+ * are harmless). */
+export interface ProjectionAgentSummary {
+  readonly id: string;
+  readonly workspace_root: string;
+  readonly state:
+    | "idle"
+    | "busy"
+    | "waiting"
+    | "parked"
+    | "retrying"
+    | "faulted";
+  readonly created_by: string | null;
+  readonly role: string;
+  readonly description: string;
+  readonly activity: string;
+  readonly duty: "onduty" | "offduty";
+  readonly faulted_reason: string | null;
+  readonly parked_reason?: unknown;
+  readonly retrying?: unknown;
+  readonly conversation_id: string | null;
+  readonly profile_set?: string | null;
+}
+
+/** `GET /v1/tagmata/{id}/projection/budget` -- the cached token budget
+ * snapshot with the same seq/staleness bookkeeping. */
+export interface ProjectionBudgetResponse {
+  readonly stale: boolean;
+  readonly seq: number;
+  readonly updated_at: number;
+  readonly budget: number;
+  readonly consumed: number;
+}
+
+/** `GET /v1/tagmata/{id}/projection/work-schedule` -- the cached
+ * prompt-free schedule projection (same seq/staleness bookkeeping). */
+export interface ProjectionWorkScheduleResponse {
+  readonly stale: boolean;
+  readonly seq: number;
+  readonly updated_at: number;
+  readonly work_schedule: {
+    readonly id: string;
+    readonly spec: unknown;
+    readonly pre_warn_minutes: number;
+    readonly final_warn_minutes: number;
+    readonly status: string;
+    readonly created_at: string;
+  } | null;
+}
+
+/**
  * Lesche API error. Mirrors `kallip_common::protocol::ApiError`. This is a
  * distinct surface from `kallip-ui`'s tagma-transport `classifyError` -- the
  * lesche errors are routed through the realtime/channels stores, not the shared

@@ -9,7 +9,11 @@
 // TransportError; OnlineBackend surfaces fetch's own TypeError.
 
 import type { TagmaClient } from "@kallipai/kallip-client";
-import { ManageRestClient } from "@kallipai/kallip-lesche-client";
+import {
+  LinearBackoff,
+  ManageRestClient,
+  ProjectionClient,
+} from "@kallipai/kallip-lesche-client";
 import { KallipError, parseErrorEnvelope } from "@kallipai/kallip-common";
 import type {
   AgentStatusResponse,
@@ -29,8 +33,19 @@ import type {
   WorkSchedule,
 } from "@kallipai/kallip-client";
 
+/** P2-c: a live projection-dirty subscription, when the transport has
+ * one (OnlineBackend over the lesche SSE). `subscribe` starts the
+ * feed and returns the stop handle; the implementation owns the
+ * reconnect/backoff loop and fans every dirty nudge to the callback. */
+export interface ProjectionFeed {
+  subscribe(onDirty: () => void): () => void;
+}
+
 /** The 14 management methods shared by both backends. */
 export interface ManagementBackend {
+  /** P2-c: present only on transports with a live dirty feed. */
+  readonly projectionFeed?: ProjectionFeed;
+
   getBudget(): Promise<BudgetResponse>;
   updateBudget(body: BudgetUpdateRequest): Promise<BudgetResponse>;
   listAgents(query?: ListAgentsQuery): Promise<ListAgentsManagementResponse>;
@@ -133,10 +148,41 @@ function parseError(status: number, body: unknown): Error {
 }
 
 export class OnlineBackend implements ManagementBackend {
+  readonly projectionFeed?: ProjectionFeed;
   constructor(
     private readonly rest: ManageRestClient,
     private readonly agent: string,
-  ) {}
+    private readonly projection?: ProjectionClient,
+  ) {
+    if (!projection) return;
+    // P2-c: one reconnect loop per backend, fanning every dirty nudge.
+    // The LinearBackoff covers stream drops; a clean frame stream resets
+    // it. Aborted on the returned stop handle.
+    const backoff = new LinearBackoff();
+    const stop = new AbortController();
+    this.projectionFeed = {
+      subscribe: (onDirty: () => void): (() => void) => {
+        void (async () => {
+          while (!stop.signal.aborted) {
+            try {
+              for await (const _ of projection.events(
+                this.agent,
+                stop.signal,
+              )) {
+                backoff.reset();
+                onDirty();
+              }
+            } catch {
+              // stream error: fall through to the backoff
+            }
+            if (stop.signal.aborted) return;
+            await new Promise((r) => setTimeout(r, backoff.next()));
+          }
+        })();
+        return () => stop.abort();
+      },
+    };
+  }
   private async req<T>(
     method: string,
     path: string,
@@ -162,13 +208,26 @@ export class OnlineBackend implements ManagementBackend {
   updateBudget(body: BudgetUpdateRequest) {
     return this.req<BudgetResponse>("POST", "/budget", body);
   }
-  /**
-   * `created_by` filters only the Offline transport: the online reverse
-   * proxy 404s every query string (the sole exception, /agents?include=,
-   * rides the frame body), so the argument is unreachable through
-   * OnlineBackend. The signature stays for OfflineBackend.
+  /** P2-c: the roster read rides the lesche's cached projection (§9)
+   * instead of the per-call manage relay, so roster refreshes stop
+   * round-tripping to the tagma. Falls back to the relay when no
+   * projection client was wired (older construction sites). The
+   * projection's per-agent summary is shape-compatible with the
+   * management one (same serde wire), plus a `lock` field the
+   * management type does not declare -- harmless extra at runtime.
+   * `created_by` filters only the Offline transport either way.
    */
   listAgents(query?: ListAgentsQuery) {
+    if (this.projection) {
+      const p = this.projection;
+      return p.agents(this.agent).then(
+        (r): ListAgentsManagementResponse => ({
+          // Same serde wire as the management summary (the projection is a
+          // cached copy); the cast only widens optional-detail typing.
+          agents: r.agents as ListAgentsManagementResponse["agents"],
+        }),
+      );
+    }
     const qs = query?.created_by
       ? `?created_by=${encodeURIComponent(query.created_by)}`
       : "";

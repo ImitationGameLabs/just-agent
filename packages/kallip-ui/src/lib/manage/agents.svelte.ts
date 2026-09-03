@@ -52,12 +52,18 @@ class AgentsStore {
     }
   }
 
-  /** Reconciliation backstop for a mounted page, not a live feed:
-   * management actions already refresh optimistically, so a slow (and
-   * hidden-paused, see visibleInterval) interval is enough. */
+  /** P2-c: with a live projection feed the dirty SSE drives refreshes
+   * and the interval is retired; without one (Offline) the visible-
+   * paused interval remains the reconciliation backstop. Management
+   * actions still refresh optimistically either way. */
   startPolling(intervalMs = 30_000): void {
     this.stopPolling();
-    this.pollStop = startVisibleInterval(() => this.refresh(), intervalMs);
+    const feed = this.backend.projectionFeed;
+    if (feed) {
+      this.pollStop = feed.subscribe(() => void this.refresh());
+    } else {
+      this.pollStop = startVisibleInterval(() => this.refresh(), intervalMs);
+    }
     this.refresh();
   }
 

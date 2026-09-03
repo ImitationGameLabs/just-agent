@@ -1,0 +1,94 @@
+// Projection read client (api-redesign §9): the lesche's cached, prompt-free
+// snapshot of a tagma plus the per-tagma dirty SSE. Reads are served from the
+// lesche's store (MIN3: offline tags keep serving, flagged `stale`), so the
+// browser no longer needs to poll the tagma's manage plane for roster/status.
+// All endpoints are owner-gated (C1) with the shared session cookie.
+
+import { parseSseStream } from "@kallipai/kallip-common";
+import type {
+  ProjectionAgentsResponse,
+  ProjectionBudgetResponse,
+  ProjectionDirty,
+  ProjectionWorkScheduleResponse,
+} from "./types.ts";
+
+/** Linear backoff: 2s per consecutive failure, capped at 30s. Linear rather
+ * than exponential because the dominant failure is a deterministic server
+ * rejection (a 404 for an unenrolled tagma), where wide exponential gaps
+ * only blunt recovery from a transient blip. `reset()` on any success. */
+export class LinearBackoff {
+  private failures = 0;
+  constructor(
+    private readonly stepMs = 2_000,
+    private readonly capMs = 30_000,
+  ) {}
+
+  /** Milliseconds to wait before the next attempt (0 on first use). */
+  next(): number {
+    const delay = Math.min(this.failures * this.stepMs, this.capMs);
+    this.failures += 1;
+    return delay;
+  }
+
+  reset(): void {
+    this.failures = 0;
+  }
+}
+
+/** Read-side client for a tagma's projection: three cached GETs plus the
+ * dirty-frame SSE. Constructed with the lesche base URL (same origin as
+ * `LescheClient`); the session cookie is the auth, so every fetch is
+ * credentialed. GET-only, hence no CSRF marker. */
+export class ProjectionClient {
+  constructor(private readonly baseUrl: string) {}
+
+  /** `GET /v1/tagmata/{id}/projection/agents` -- cached roster + status. */
+  async agents(agent: string): Promise<ProjectionAgentsResponse> {
+    return (await this.get(agent, "agents")) as ProjectionAgentsResponse;
+  }
+
+  /** `GET /v1/tagmata/{id}/projection/budget` -- cached budget snapshot. */
+  async budget(agent: string): Promise<ProjectionBudgetResponse> {
+    return (await this.get(agent, "budget")) as ProjectionBudgetResponse;
+  }
+
+  /** `GET /v1/tagmata/{id}/projection/work-schedule` -- cached schedule. */
+  async workSchedule(agent: string): Promise<ProjectionWorkScheduleResponse> {
+    return (await this.get(
+      agent,
+      "work-schedule",
+    )) as ProjectionWorkScheduleResponse;
+  }
+
+  /** `GET /v1/tagmata/{id}/projection/events` -- the dirty-frame SSE. A
+   * long-lived fetch parsed with the shared `parseSseStream`; each payload is
+   * a `ProjectionDirty` nudge. The caller owns reconnect/backoff; the
+   * generator ends when the stream closes or `signal` aborts. */
+  async *events(
+    agent: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<ProjectionDirty> {
+    const resp = await fetch(
+      `${this.baseUrl}/v1/tagmata/${encodeURIComponent(agent)}/projection/events`,
+      {
+        method: "GET",
+        headers: { accept: "text/event-stream" },
+        credentials: "include",
+        signal,
+      },
+    );
+    if (!resp.ok) throw new Error(`projection events: ${resp.status}`);
+    for await (const ev of parseSseStream(resp, signal)) {
+      yield JSON.parse(ev.data) as ProjectionDirty;
+    }
+  }
+
+  private async get(agent: string, tail: string): Promise<unknown> {
+    const resp = await fetch(
+      `${this.baseUrl}/v1/tagmata/${encodeURIComponent(agent)}/projection/${tail}`,
+      { method: "GET", credentials: "include" },
+    );
+    if (!resp.ok) throw new Error(`projection ${tail}: ${resp.status}`);
+    return resp.json();
+  }
+}
