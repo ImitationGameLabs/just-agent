@@ -32,7 +32,7 @@ use kallip_archeion_common::control_plane::ControlPlane;
 use kallip_archeion_common::ids::{ConversationId, ParticipantId, TagmaId, UserId};
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::control::KeyExchangeResponse;
-use kallip_lesche_common::event::LescheEvent;
+use kallip_lesche_common::event::{LescheEvent, TagmaStatusPayload};
 use kallip_lesche_common::projection::{ProjectionDirty, ProjectionSnapshot};
 use kallip_lesche_common::rooms::MemberId;
 use kallip_lesche_common::tunnel::TunnelInbound;
@@ -177,8 +177,9 @@ pub struct PresenceEntry {
     pub owner: UserId,
     pub tagma_id: TagmaId,
     pub id: Arc<()>,
+    /// Latest aggregate status snapshot relayed over this tunnel; written unconditionally on every status POST (with or without live subscribers). Tunnel-scoped: a reconnect starts the cache empty until the next pump tick (bounded self-heal, <= one heartbeat period).
+    pub latest_status: Option<TagmaStatusPayload>,
 }
-
 /// One tagma's stored projection: the latest accepted push plus the
 /// bookkeeping the accept/replay logic needs. `generation` records which
 /// tunnel connection the snapshot came in on (an `Arc::ptr_eq` against the
@@ -458,6 +459,7 @@ impl Registry {
                 owner,
                 tagma_id: tagma.clone(),
                 id,
+                latest_status: None,
             },
         );
     }
@@ -476,6 +478,10 @@ impl Registry {
         self.presence.get(&ParticipantId::for_tagma(tagma))
     }
 
+    /// Mutable lookup for the status relay's cache write (the only writer of latest_status). See presence_by_tagma.
+    pub fn presence_by_tagma_mut(&mut self, tagma: &TagmaId) -> Option<&mut PresenceEntry> {
+        self.presence.get_mut(&ParticipantId::for_tagma(tagma))
+    }
     /// Remove `tagma`'s presence iff the live entry is still `id` (Arc pointer
     /// identity), returning whether it was removed. Race-free across reconnects.
     pub fn take_presence_if_owned(&mut self, tagma: &TagmaId, id: &Arc<()>) -> bool {

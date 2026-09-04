@@ -3,12 +3,15 @@
 //! transitions: `TagmaOnline`/`TagmaOffline` for the user's own tagmata, and
 //! `RoomMemberOnline`/`RoomMemberOffline` for peers in the user's rooms (fanned
 //! by [`crate::room_presence`] as participants connect/disconnect). On open, the
-//! stream emits the current presence snapshot for the user's online tagmata;
+//! stream emits the current presence snapshot for the user's online tagmata
+//! plus each tagma's latest cached status snapshot;
 //! room-member presence arrives live and is resynced by the roster's `online`
 //! field on each roster fetch.
 //!
 //! If a slow client falls behind the broadcast capacity, the channel drops
 //! events server-side (logged at `warn`); the client must reconnect/resync.
+
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::State;
@@ -68,9 +71,23 @@ async fn me_events(
     {
         let reg = state.read()?;
         for entry in reg.presence.values() {
-            if entry.owner == user_id {
-                let _ = tx.send(LescheEvent::TagmaOnline {
+            if entry.owner != user_id {
+                continue;
+            }
+            let _ = tx.send(LescheEvent::TagmaOnline {
+                tagma_id: entry.tagma_id.clone(),
+            });
+            // Initial status flush: late-connecting clients get the latest
+            // cached snapshot immediately instead of waiting for the next
+            // pump heartbeat. Idempotent with the live fan (status.set).
+            if let Some(st) = &entry.latest_status {
+                let _ = tx.send(LescheEvent::TagmaStatus {
                     tagma_id: entry.tagma_id.clone(),
+                    root_state: st.root_state.clone(),
+                    subagents_total: st.subagents_total,
+                    subagents_active: st.subagents_active,
+                    token_budget: st.token_budget,
+                    token_consumed: st.token_consumed,
                 });
             }
         }
@@ -118,7 +135,11 @@ async fn me_events(
             }
         }
     });
-    // `: ping` comment every 15s so quiet periods cannot let an idle
+    // `: ping` comment every 5s so quiet periods cannot let an idle
     // timeout reap the stream mid-read (parser ignores comments).
-    Ok(Sse::new(cleaned).keep_alive(KeepAlive::new().text("ping")))
+    Ok(Sse::new(cleaned).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(5))
+            .text("ping"),
+    ))
 }

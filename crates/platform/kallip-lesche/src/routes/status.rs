@@ -8,8 +8,9 @@
 //! The relay does not parse or validate the numbers and does not rate-limit;
 //! the snapshot cadence is a tagma-side contract.
 //!
-//! Concurrency: routing runs under a registry READ lock (broadcast `send` is
-//! synchronous), never co-held with a `ControlPlane` call.
+//! Concurrency: routing runs under a registry WRITE lock (the cache write
+//! mutates `PresenceEntry::latest_status`; broadcast `send` is synchronous),
+//! never co-held with a `ControlPlane` call.
 
 use axum::Json;
 use axum::Router;
@@ -33,7 +34,9 @@ pub fn router() -> Router<SharedConvState> {
 /// authoritative (matched against the authenticated tagma); the body carries
 /// only the counts/budget. If the owner has no live app stream the snapshot is
 /// silently dropped (no client listening) -- the tagma re-posts within 30s
-/// best-effort delivery is sufficient and the tagma must not retry.
+/// best-effort delivery is sufficient and the tagma must not retry. The
+/// snapshot is also cached on the tunnel's presence entry (unconditionally,
+/// subscriber or not) so `me_events` can flush it to late-connecting clients.
 async fn post_status(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
@@ -52,12 +55,16 @@ async fn post_status(
     // tunnel is gone -- surface 404 rather than silently masking a routing
     // gap. Guard is dropped before any await (lock discipline invariant #1).
     let app_tx = {
-        let reg = state.read()?;
-        let owner = reg
-            .presence_by_tagma(&path_tagma)
-            .ok_or_else(|| ApiError::not_found("no live tunnel for tagma"))?
-            .owner
-            .clone();
+        // WRITE lock: the cache write mutates `latest_status` (lock discipline
+        // invariant #1 still holds -- no awaits inside this CS).
+        let mut reg = state.write()?;
+        let entry = reg
+            .presence_by_tagma_mut(&path_tagma)
+            .ok_or_else(|| ApiError::not_found("no live tunnel for tagma"))?;
+        // Unconditional cache write: the snapshot must land even with no live
+        // subscribers, or a reconnect's flush starts from the pre-gap value.
+        entry.latest_status = Some(payload.clone());
+        let owner = entry.owner.clone();
         reg.app_stream(&owner).cloned()
     };
 
@@ -215,5 +222,44 @@ mod tests {
         .await
         .expect("silent drop still 202");
         assert_eq!(status, StatusCode::ACCEPTED);
+    }
+    #[tokio::test]
+    async fn post_status_caches_snapshot_without_subscribers() {
+        let (state, control) = make_state(60, std::time::Duration::from_secs(2));
+        let owner = user("owner");
+        let tagma = TagmaId::from("tagma-1".to_string());
+        control.enroll_tagma(
+            &tagma,
+            owner.clone(),
+            Ed25519PublicKey(vec![0u8; 32]),
+            "tok",
+        );
+        let (_t_tx, _id) = seed_presence(&state, &tagma, owner.clone());
+        // No app stream opened: the POST is a silent drop for delivery, but
+        // the cache write is unconditional so a late-connecting client's
+        // me_events flush starts from this snapshot, not the pre-gap value.
+        let status = post_status(
+            State(state.clone()),
+            AuthPrincipal(Principal::Tagma(tagma.clone())),
+            Path(tagma.to_string()),
+            Json(TagmaStatusPayload {
+                root_state: AgentState::Busy,
+                subagents_total: 3,
+                subagents_active: 2,
+                token_budget: 50_000,
+                token_consumed: 12_000,
+            }),
+        )
+        .await
+        .expect("relay ok");
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let cached = state
+            .read()
+            .unwrap()
+            .presence_by_tagma(&tagma)
+            .and_then(|e| e.latest_status.clone())
+            .expect("snapshot cached despite no subscribers");
+        assert_eq!(cached.subagents_total, 3);
+        assert_eq!(cached.subagents_active, 2);
     }
 }

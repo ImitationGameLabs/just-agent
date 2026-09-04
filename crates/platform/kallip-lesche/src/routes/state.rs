@@ -285,7 +285,11 @@ async fn state_events(
     // die mid-stream (fetch TypeError) and back off reconnecting. The
     // front-end SSE parser ignores comment lines, so the ping cannot be
     // mistaken for a dirty frame. Same contract as the tunnel SSE.
-    Ok(Sse::new(cleaned).keep_alive(KeepAlive::new().text("ping")))
+    Ok(Sse::new(cleaned).keep_alive(
+        KeepAlive::new()
+            .interval(std::time::Duration::from_secs(5))
+            .text("ping"),
+    ))
 }
 
 #[cfg(test)]
