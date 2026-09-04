@@ -49,7 +49,7 @@ pub fn stop(
             "stop refused: recorded pid is not a tagma"
         );
         // Stale runtime state (crash leftover) or a recycled pid: the
-        // is gone; report it rather than shooting an innocent process.
+        // instance behind it is gone; report it rather than shooting an innocent process.
         return Err(StopError::NotRunning(slug.to_string()));
     }
 

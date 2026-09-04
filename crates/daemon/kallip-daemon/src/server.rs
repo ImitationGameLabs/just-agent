@@ -247,7 +247,10 @@ fn log_start_outcome(slug: &str, error: &crate::start::StartError) {
     use crate::start::StartError;
     match error {
         StartError::AlreadyRunning(_) => {}
-        StartError::NotFound(_) | StartError::Invalid(_) => {
+        StartError::NotFound(_) => {
+            tracing::info!(slug = %slug, %error, "start refused: no such instance")
+        }
+        StartError::Invalid(_) => {
             tracing::info!(slug = %slug, %error, "start refused: invalid request")
         }
         StartError::Timeout { .. } | StartError::Internal(_) => {

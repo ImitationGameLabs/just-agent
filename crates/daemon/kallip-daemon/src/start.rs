@@ -164,7 +164,10 @@ pub fn start(
     let mut launch_env = replay;
     launch_env.extend(env_overrides.iter().cloned());
     match launch(&instance_dir, Path::new(&workspace), &launch_env, timeout) {
-        Ok(started) => Ok(started),
+        Ok((pid, port)) => {
+            tracing::info!(slug = %slug, pid, port, "instance started (adoption)");
+            Ok((pid, port))
+        }
         Err(SpawnError::Timeout { timeout_secs }) => Err(StartError::Timeout { timeout_secs }),
         Err(SpawnError::Internal(e)) => Err(StartError::Internal(e)),
         // Unreachable via launch today; kept total so a future variant

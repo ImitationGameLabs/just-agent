@@ -450,10 +450,6 @@ pub fn spawn(
         // keeps an existing tree, so identity and credentials survive a
         // failed relaunch.
         if let Some(pid) = scan::read_runtime(&instance_dir).map(|r| r.pid) {
-            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
-        }
-        let _ = std::fs::remove_dir_all(&instance_dir);
-        if let Some(pid) = scan::read_runtime(&instance_dir).map(|r| r.pid) {
             tracing::warn!(pid, "spawn rollback: killing half-booted instance");
             unsafe { libc::kill(pid as i32, libc::SIGKILL) };
         }
