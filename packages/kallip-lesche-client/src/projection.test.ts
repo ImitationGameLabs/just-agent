@@ -24,28 +24,23 @@ function withFetch(
   };
 }
 
-Deno.test(
-  "projection agents GET hits the per-tagma projection path",
-  async () => {
-    const seen: string[] = [];
-    const restore = withFetch((url) => {
-      seen.push(url);
-      return Promise.resolve(Response.json(AGENTS_BODY));
-    });
-    try {
-      const client = new ProjectionClient("http://lesche.test");
-      const resp = await client.agents("t-a");
-      assertEquals(seen, [
-        "http://lesche.test/v1/tagmata/t-a/projection/agents",
-      ]);
-      assertEquals(resp.seq, 7);
-      assertEquals(resp.stale, false);
-      assertEquals(resp.agents.length, 1);
-    } finally {
-      restore();
-    }
-  },
-);
+Deno.test("projection agents GET hits the per-tagma agents path", async () => {
+  const seen: string[] = [];
+  const restore = withFetch((url) => {
+    seen.push(url);
+    return Promise.resolve(Response.json(AGENTS_BODY));
+  });
+  try {
+    const client = new ProjectionClient("http://lesche.test");
+    const resp = await client.agents("t-a");
+    assertEquals(seen, ["http://lesche.test/v1/tagmata/t-a/agents"]);
+    assertEquals(resp.seq, 7);
+    assertEquals(resp.stale, false);
+    assertEquals(resp.agents.length, 1);
+  } finally {
+    restore();
+  }
+});
 
 Deno.test("projection GET failure surfaces the status", async () => {
   const restore = withFetch(() =>
@@ -66,7 +61,7 @@ Deno.test(
       'data: {"tagma_id":"t-a","seq":1}\n\n' +
       'data: {"tagma_id":"t-a","seq":2}\n\n';
     const restore = withFetch((url) => {
-      assertEquals(url, "http://lesche.test/v1/tagmata/t-a/projection/events");
+      assertEquals(url, "http://lesche.test/v1/tagmata/t-a/state");
       return Promise.resolve(
         new Response(sseBody, {
           status: 200,
@@ -77,7 +72,7 @@ Deno.test(
     try {
       const client = new ProjectionClient("http://lesche.test");
       const frames: number[] = [];
-      for await (const dirty of client.events("t-a")) {
+      for await (const dirty of client.state("t-a")) {
         frames.push(dirty.seq);
         if (frames.length === 2) break;
       }

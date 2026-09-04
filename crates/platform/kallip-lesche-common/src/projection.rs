@@ -56,7 +56,7 @@ pub struct WorkScheduleProjection {
     pub created_at: time::OffsetDateTime,
 }
 
-/// One change-notification frame on the `/projection/{agent}/events` SSE
+/// One change-notification frame on the `/tagmata/{id}/state` SSE stream:
 /// stream: the lesche tells subscribed clients *that* a tagma's projection
 /// moved (and to which store seq), never *what* moved -- clients re-pull
 /// via GET. `tagma_id` is carried even on the per-tagma stream so a future

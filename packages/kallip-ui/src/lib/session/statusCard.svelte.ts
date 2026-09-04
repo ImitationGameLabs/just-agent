@@ -70,6 +70,13 @@ class StatusCardStore {
   // roster-triggered retry (the 30s tick remains the final backstop),
   // so a persistently failing agent cannot recurse with the roster.
   private contextCooldown = new Map<string, number>();
+  // Root-row signature: the root row keeps its object identity across
+  // refreshes when nothing observable changed. Svelte skips the update
+  // for a same-reference $state write, so effects that read rootRow do
+  // not re-run -- a fresh reference per refresh would make every frame
+  // re-run the chat page's attach effect, teardown the projection feed
+  // and re-dial the SSE stream (the production refresh storm).
+  private lastRootSignature = "";
   private gapPullRunning = false;
   /** Set once the first contexts round has been attempted (success or
    * not): the roster-triggered first pull must fire exactly once even
@@ -95,6 +102,7 @@ class StatusCardStore {
     this.profileWindows.clear();
     this.profileIds.clear();
     this.lastSubSignature = "";
+    this.lastRootSignature = "";
     this.contextsPrimed = false;
     this.contextCooldown.clear();
   }
@@ -103,7 +111,12 @@ class StatusCardStore {
     // Idempotent re-attach: returning to the page keeps the warm cache
     // (rows, contexts, windows) and only background-refreshes, so the
     // panel paints instantly from the previous visit's data.
-    const resuming = this.backend === null && this.rootRow !== null;
+    // Reads the signature field, not the $state rootRow: a reactive read
+    // here would make the chat page's attach effect depend on rootRow,
+    // so every rootRow write would re-run it (full backend rebuild +
+    // feed teardown per write). The signature field mirrors rootRow's
+    // data without being reactive.
+    const resuming = this.backend === null && this.lastRootSignature !== "";
     this.suspend();
     this.backend = backend;
     this.refreshRoster();
@@ -161,7 +174,25 @@ class StatusCardStore {
         if (a.created_by === null) root = row;
         else subs.push(row);
       }
-      this.rootRow = root ?? null;
+      // JSON-array encoding, not a ":" join: activity and description
+      // are free text that could contain the separator and collide.
+      const rootSignature =
+        root === undefined
+          ? ""
+          : JSON.stringify([
+              root.id,
+              root.state,
+              root.role,
+              root.activity,
+              root.contextTokens,
+              root.description,
+              root.contextWindow,
+              root.parkedReason,
+            ]);
+      if (rootSignature !== this.lastRootSignature) {
+        this.lastRootSignature = rootSignature;
+        this.rootRow = root ?? null;
+      }
       subs.sort(
         (a, b) =>
           STATE_ORDER[a.state] - STATE_ORDER[b.state] ||

@@ -137,6 +137,6 @@ Deno.test("the agent segment is URL-encoded in the request path", async () => {
   );
   assertEquals(
     url,
-    "https://lesche.example/v1/tagma/ag%2Fent%201/manage/budget",
+    "https://lesche.example/v1/tagmata/ag%2Fent%201/manage/budget",
   );
 });

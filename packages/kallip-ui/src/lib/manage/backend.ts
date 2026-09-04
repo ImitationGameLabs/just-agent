@@ -216,7 +216,7 @@ export class OnlineBackend implements ManagementBackend {
           // would drop every frame as a replay. Reset per connection --
           // the cost is one idempotent replayed GET after a reconnect.
           lastSeq = 0;
-          for await (const frame of projection.events(
+          for await (const frame of projection.state(
             this.agent,
             controller.signal,
           )) {

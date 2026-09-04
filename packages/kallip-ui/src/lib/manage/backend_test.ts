@@ -136,7 +136,7 @@ Deno.test(
     globalThis.fetch = ((url: string | URL | Request) => {
       const u = String(url);
       seen.push(u);
-      if (u.endsWith("/projection/agents")) {
+      if (u.endsWith("/v1/tagmata/t-a/agents")) {
         return Promise.resolve(
           Response.json({
             stale: false,
@@ -176,7 +176,7 @@ Deno.test(
       const agents = await backend.listAgents();
       assertEquals(agents.agents[0]!.id, "root");
       assertEquals(
-        seen.some((u) => u.endsWith("/projection/agents")),
+        seen.some((u) => u.endsWith("/v1/tagmata/t-a/agents")),
         true,
       );
 

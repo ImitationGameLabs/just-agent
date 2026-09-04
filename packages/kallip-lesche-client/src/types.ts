@@ -288,7 +288,7 @@ export type LescheEvent =
 
 /**
  * One `ProjectionDirty` frame on the projection SSE stream
- * (`GET /v1/tagmata/{id}/projection/events`). A liveness nudge only -- the
+ * (`GET /v1/tagmata/{id}/state`). A liveness nudge only -- the
  * payload carries the tagma id and the store seq, never content; the
  * consumer re-pulls the projection GET when the seq is newer than its
  * local copy.
@@ -298,7 +298,7 @@ export interface ProjectionDirty {
   readonly seq: number;
 }
 
-/** `GET /v1/tagmata/{id}/projection/agents` -- the stored projection's
+/** `GET /v1/tagmata/{id}/agents` -- the stored projection's
  * roster and aggregate status, plus the seq/staleness bookkeeping.
  * `stale` is true when the tagma has no live presence (MIN3: offline
  * tags keep serving the last known projection). */
@@ -336,7 +336,7 @@ export interface ProjectionAgentSummary {
   readonly profile_set?: string | null;
 }
 
-/** `GET /v1/tagmata/{id}/projection/budget` -- the cached token budget
+/** `GET /v1/tagmata/{id}/budget` -- the cached token budget
  * snapshot with the same seq/staleness bookkeeping. */
 export interface ProjectionBudgetResponse {
   readonly stale: boolean;
@@ -346,7 +346,7 @@ export interface ProjectionBudgetResponse {
   readonly consumed: number;
 }
 
-/** `GET /v1/tagmata/{id}/projection/work-schedule` -- the cached
+/** `GET /v1/tagmata/{id}/work-schedule` -- the cached
  * prompt-free schedule projection (same seq/staleness bookkeeping). */
 export interface ProjectionWorkScheduleResponse {
   readonly stale: boolean;

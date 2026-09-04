@@ -330,29 +330,30 @@ impl LescheClient {
         Ok(())
     }
 
-    /// Post a full projection snapshot (roster + aggregate status) to the
-    /// lesche's internal projection surface (api-redesign §9.1). Same
-    /// best-effort contract as [`post_status`](Self::post_status): not
-    /// retried -- the projection is a pure cache, so the next push (signal
-    /// nudge or fallback tick) supersedes a dropped POST, and a tunnel-down
-    /// cancels the in-flight POST rather than waiting out the HTTP timeout.
-    pub async fn post_projection(
+    /// Put a full projection-state snapshot (roster + aggregate status) to
+    /// the lesche's state surface (api-redesign §9.1): PUT /state is an
+    /// idempotent whole-resource replace. Same best-effort contract as
+    /// [`post_status`](Self::post_status): not retried -- the state is a
+    /// pure cache, so the next push (signal nudge or fallback tick)
+    /// supersedes a dropped PUT, and a tunnel-down cancels the in-flight
+    /// request rather than waiting out the HTTP timeout.
+    pub async fn put_state(
         &self,
         tagma_id: &TagmaId,
         snapshot: &kallip_lesche_common::projection::ProjectionSnapshot,
     ) -> Result<()> {
-        let url = self.url(&format!("/v1/tagmata/{tagma_id}/projection"));
+        let url = self.url(&format!("/v1/tagmata/{tagma_id}/state"));
         let resp = self
             .inner
             .http_post
-            .post(&url)
+            .put(&url)
             .bearer_auth(&self.inner.tagma_token)
             .json(snapshot)
             .send()
             .await
-            .context("lesche POST failed")?;
+            .context("lesche PUT failed")?;
         if !resp.status().is_success() {
-            anyhow::bail!("lesche POST returned {}", resp.status());
+            anyhow::bail!("lesche PUT returned {}", resp.status());
         }
         Ok(())
     }

@@ -40,7 +40,7 @@ use kallip_lesche_common::tunnel::ManageRestReply;
 pub fn router() -> Router<SharedConvState> {
     Router::new()
         .route("/tunnel", get(tunnel))
-        .route("/v1/tunnel/manage-reply", post(manage_reply))
+        .route("/tunnel/manage-reply", post(manage_reply))
 }
 
 /// The tagma's plaintext reply to a ManageRest frame: resolves the pending

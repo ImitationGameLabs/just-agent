@@ -202,16 +202,13 @@ impl RelayHandle {
             let registry = state.registry.read().await;
             snapshot_projection(state, &registry, push_seq, work_schedule)
         };
-        let post = self
-            .inner
-            .client
-            .post_projection(&self.inner.tagma_id, &snapshot);
+        let put = self.inner.client.put_state(&self.inner.tagma_id, &snapshot);
         tokio::select! {
             biased;
             _ = cancel.cancelled() => {}
-            r = post => {
+            r = put => {
                 if let Err(e) = r {
-                    warn!(tagma = %self.inner.tagma_id, "projection post failed: {e:#}");
+                    warn!(tagma = %self.inner.tagma_id, "projection put failed: {e:#}");
                 }
             }
         }
@@ -246,10 +243,7 @@ mod tests {
             "ok"
         }
         let app = axum::Router::new()
-            .route(
-                "/v1/tagmata/{tagma}/projection",
-                axum::routing::post(handler),
-            )
+            .route("/v1/tagmata/{tagma}/state", axum::routing::put(handler))
             .with_state(capture);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

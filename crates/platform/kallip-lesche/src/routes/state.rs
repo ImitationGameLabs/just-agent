@@ -1,5 +1,6 @@
-//! The projection plane (api-redesign §9.1/§9.7): the write endpoint the
-//! tagma pushes snapshots to, the per-tagma read endpoints that serve the
+//! The tagma state plane (api-redesign §9.1/§9.7): the write endpoint the
+//! tagma pushes full snapshots to (PUT /tagmata/{id}/state, an idempotent
+//! whole-resource replace), the per-tagma read endpoints that serve the
 //! stored snapshot (stale reads included -- the table outlives presence,
 //! MIN3), and the per-tagma SSE change-notification stream whose
 //! subscription-count flips drive `SubscriptionHint` over the tagma's tunnel.
@@ -7,13 +8,12 @@
 //! Every client-facing route re-checks C1 (the stored/live owner must be the
 //! caller) so cross-tenant reads are 403; the write route authenticates the
 //! tagma itself and pins the push to its own id.
-
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::get;
 use kallip_archeion_common::ids::{ParticipantId, TagmaId};
 use kallip_archeion_common::principal::{Principal, require_tagma, require_user};
 use kallip_lesche_common::projection::{ProjectionDirty, ProjectionSnapshot};
@@ -27,14 +27,18 @@ use crate::state::SharedConvState;
 
 pub fn router() -> Router<SharedConvState> {
     Router::new()
+        // Registered without the /v1 prefix: the app nests this router under
+        // /v1, so the final mounts are /v1/tagmata/{id}/* -- the shapes the
+        // tagma pump and the browser client both dial.
+        // GET and PUT share /state: GET streams the dirty-frame SSE, PUT
+        // replaces the stored snapshot (one resource, two representations).
         .route(
-            "/v1/tagmata/{agent}/projection",
-            post(accept_projection_push),
+            "/tagmata/{id}/state",
+            get(state_events).put(accept_state_push),
         )
-        .route("/projection/{agent}/agents", get(read_agents))
-        .route("/projection/{agent}/budget", get(read_budget))
-        .route("/projection/{agent}/work-schedule", get(read_work_schedule))
-        .route("/projection/{agent}/events", get(projection_events))
+        .route("/tagmata/{id}/agents", get(read_agents))
+        .route("/tagmata/{id}/budget", get(read_budget))
+        .route("/tagmata/{id}/work-schedule", get(read_work_schedule))
 }
 
 /// C1 for the read/SSE plane, offline-safe: the owner recorded on the stored
@@ -67,17 +71,17 @@ fn require_owner(
 /// The tagma's push: validate it targets the pushing tagma itself, accept it
 /// into the store (M1 generation logic inside), and fan the dirty event to
 /// this tagma's projection subscribers.
-async fn accept_projection_push(
+async fn accept_state_push(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
-    Path(agent): Path<String>,
+    Path(id): Path<String>,
     axum::Json(snapshot): axum::Json<ProjectionSnapshot>,
 ) -> Response {
     let pusher = match require_tagma(&principal) {
         Ok(id) => id.clone(),
         Err(_) => return (StatusCode::UNAUTHORIZED, "tagma bearer required").into_response(),
     };
-    let tagma_id = TagmaId::from(agent);
+    let tagma_id = TagmaId::from(id);
     if pusher != tagma_id {
         return (
             StatusCode::FORBIDDEN,
@@ -149,9 +153,9 @@ fn read_entry(
 async fn read_agents(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
-    Path(agent): Path<String>,
+    Path(id): Path<String>,
 ) -> Response {
-    let tagma_id = TagmaId::from(agent);
+    let tagma_id = TagmaId::from(id);
     let (entry, stale) = match read_entry(&principal, &state, &tagma_id) {
         Ok(v) => v,
         Err(r) => return r,
@@ -169,9 +173,9 @@ async fn read_agents(
 async fn read_budget(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
-    Path(agent): Path<String>,
+    Path(id): Path<String>,
 ) -> Response {
-    let tagma_id = TagmaId::from(agent);
+    let tagma_id = TagmaId::from(id);
     let (entry, stale) = match read_entry(&principal, &state, &tagma_id) {
         Ok(v) => v,
         Err(r) => return r,
@@ -189,9 +193,9 @@ async fn read_budget(
 async fn read_work_schedule(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
-    Path(agent): Path<String>,
+    Path(id): Path<String>,
 ) -> Response {
-    let tagma_id = TagmaId::from(agent);
+    let tagma_id = TagmaId::from(id);
     let (entry, stale) = match read_entry(&principal, &state, &tagma_id) {
         Ok(v) => v,
         Err(r) => return r,
@@ -209,15 +213,15 @@ async fn read_work_schedule(
 /// an independent broadcast (never the `me/events` app stream, §9.7). The
 /// 0 -> 1 subscribe edge fans `SubscriptionHint { active: true }` down the
 /// tagma's tunnel; the last unsubscribe fans `false` after the lag window.
-async fn projection_events(
+async fn state_events(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
-    Path(agent): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Sse<OnDrop>, StatusCode> {
     // q-M-1: the SSE plane is owner-gated like the read plane -- a
     // cross-tenant subscriber must not be able to flip the tagma's
     // subscription hint (remote pump start) or probe existence.
-    let tagma_id = TagmaId::from(agent);
+    let tagma_id = TagmaId::from(id);
     let user_id = match require_owner(&principal, &state, &tagma_id) {
         Ok(()) => match require_user(&principal) {
             Ok(u) => u.clone(),
@@ -318,7 +322,7 @@ mod tests {
         agent: &str,
         push_seq: u64,
     ) -> Response {
-        accept_projection_push(
+        accept_state_push(
             State(state.clone()),
             principal,
             Path(agent.to_string()),
@@ -602,7 +606,7 @@ mod generation_tests {
         let owner = uid("alice");
         let other = uid("mallory");
         let _rx = enroll(&state, &tagma, &owner).await;
-        let err = projection_events(
+        let err = state_events(
             State(state.clone()),
             owner_principal(&other),
             Path("t-a".to_string()),
@@ -625,7 +629,7 @@ mod generation_tests {
             let reg = state.registry.read().unwrap();
             reg.set_projection_unsub_lag_ms(50);
         }
-        let sse = projection_events(
+        let sse = state_events(
             State(state.clone()),
             owner_principal(&owner),
             Path("t-a".to_string()),

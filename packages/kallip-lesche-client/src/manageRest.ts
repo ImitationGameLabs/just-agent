@@ -1,5 +1,5 @@
 // Manage-plane REST client for the lesche reverse proxy:
-// `/v1/tagma/{agent}/manage/{*path}`. Unlike the envelope path, manage
+// `/v1/tagmata/{id}/manage/{*path}`. Unlike the envelope path, manage
 // metadata is plaintext by design (TLS + device-proof tunnel auth is the
 // trust base), so this client speaks plain credentialed HTTP and passes
 // the response status + body through untouched -- the caller decides how
@@ -34,7 +34,7 @@ export class ManageRestClient {
       if (body !== undefined) headers["content-type"] = "application/json";
     }
     const resp = await fetch(
-      `${this.baseUrl}/v1/tagma/${encodeURIComponent(agent)}/manage${path}`,
+      `${this.baseUrl}/v1/tagmata/${encodeURIComponent(agent)}/manage${path}`,
       {
         method,
         headers,

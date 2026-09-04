@@ -1,4 +1,4 @@
-//! Manage-plane reverse proxy: `/v1/tagma/{agent}/manage/{*path}`.
+//! Manage-plane reverse proxy: `/v1/tagmata/{id}/manage/{*path}`.
 //!
 //! Bridges the plaintext manage surface (api-redesign §9.3): an
 //! authenticated operator session is checked against the tunnel's owner
@@ -49,13 +49,13 @@ pub async fn resolve(tagma_id: &TagmaId, req_id: u64, reply: ManageRestReply) ->
 }
 
 pub fn router() -> Router<SharedConvState> {
-    Router::new().route("/v1/tagma/{agent}/manage/{*path}", any(proxy_manage))
+    Router::new().route("/tagmata/{id}/manage/{*path}", any(proxy_manage))
 }
 
 async fn proxy_manage(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
-    Path(agent): Path<String>,
+    Path(id): Path<String>,
     method: axum::http::Method,
     uri: axum::http::Uri,
     body: Option<axum::Json<serde_json::Value>>,
@@ -65,7 +65,7 @@ async fn proxy_manage(
         // Tagma-bearer callers have no business on the operator proxy.
         _ => return (StatusCode::FORBIDDEN, "operator session required").into_response(),
     };
-    let tagma_id = TagmaId::from(agent.clone());
+    let tagma_id = TagmaId::from(id.clone());
 
     // arch C1: tenant authorization. The E2EE envelope used to carry this
     // boundary implicitly; on the plaintext frame it must be explicit.

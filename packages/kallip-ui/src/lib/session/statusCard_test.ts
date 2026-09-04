@@ -24,6 +24,11 @@ import type {
 } from "@kallipai/kallip-client";
 
 const { assertEquals } = await import("@std/assert");
+import type * as stdAssert from "@std/assert";
+
+const assertStrictEquals: typeof stdAssert.assertStrictEquals = (
+  await import("@std/assert")
+).assertStrictEquals;
 const { OfflineBackend } = await import("../manage/backend.ts");
 const { statusCardStore } = await import("./statusCard.svelte.ts");
 
@@ -57,9 +62,14 @@ const sub: WireAgentManagementSummary = {
 class StubClient {
   rosterCalls = 0;
   statusCalls = 0;
+  /** Mutable so a test can flip an observable field between refreshes
+   * (the fixture rows are readonly). */
+  rootActivity = "thinking";
   listAgents(): Promise<ListAgentsManagementResponse> {
     this.rosterCalls++;
-    return Promise.resolve({ agents: [root, sub] });
+    return Promise.resolve({
+      agents: [{ ...root, activity: this.rootActivity }, sub],
+    });
   }
   getAgentStatus(): Promise<never> {
     this.statusCalls++;
@@ -151,6 +161,53 @@ Deno.test("suspend keeps the cache and re-attach paints from it", async () => {
     assertEquals(statusCardStore.rootRow?.id, "root-1");
     assertEquals(stub.rosterCalls > rosterBefore, true);
   } finally {
+    statusCardStore.detach();
+  }
+});
+
+/** Regression nail for the production refresh storm: a same-data roster
+ * refresh must keep the rootRow object identity. Svelte skips a
+ * same-reference $state write, so identity preservation is exactly what
+ * stops effects that read rootRow (the chat page's attach effect) from
+ * re-running per frame -- each re-run tore down the projection feed and
+ * re-dialed the SSE stream. The passthrough $state shim makes the
+ * identity assertion the same check Svelte's Object.is short-circuit
+ * makes at runtime. */
+Deno.test(
+  "same-data roster refreshes keep the rootRow identity stable",
+  async () => {
+    const stub = new StubClient();
+    try {
+      statusCardStore.attach(backend(stub));
+      await flush();
+      const before = statusCardStore.rootRow;
+      assertEquals(before?.id, "root-1");
+      statusCardStore.nudge();
+      await flush();
+      statusCardStore.nudge();
+      await flush();
+      // Two same-data refreshes later: same object, no effect churn.
+      assertStrictEquals(statusCardStore.rootRow, before);
+    } finally {
+      statusCardStore.detach();
+    }
+  },
+);
+
+Deno.test("a changed roster swaps the rootRow reference", async () => {
+  const stub = new StubClient();
+  try {
+    statusCardStore.attach(backend(stub));
+    await flush();
+    const before = statusCardStore.rootRow;
+    stub.rootActivity = "dispatching"; // observable change
+    statusCardStore.nudge();
+    await flush();
+    const after = statusCardStore.rootRow;
+    assertEquals(after?.activity, "dispatching");
+    assertEquals(after === before, false);
+  } finally {
+    stub.rootActivity = "thinking";
     statusCardStore.detach();
   }
 });

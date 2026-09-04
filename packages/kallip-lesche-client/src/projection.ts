@@ -35,41 +35,43 @@ export class LinearBackoff {
   }
 }
 
-/** Read-side client for a tagma's projection: three cached GETs plus the
- * dirty-frame SSE. Constructed with the lesche base URL (same origin as
- * `LescheClient`); the session cookie is the auth, so every fetch is
- * credentialed. GET-only, hence no CSRF marker. */
+/** Read-side client for a tagma's projection state: three cached GETs
+ * (agents/budget/work-schedule) plus the dirty-frame SSE. Constructed
+ * with the lesche base URL (same origin as `LescheClient`); the session
+ * cookie is the auth, so every fetch is credentialed. GET-only, hence no
+ * CSRF marker. */
 export class ProjectionClient {
   constructor(private readonly baseUrl: string) {}
 
-  /** `GET /v1/tagmata/{id}/projection/agents` -- cached roster + status. */
-  async agents(agent: string): Promise<ProjectionAgentsResponse> {
-    return (await this.get(agent, "agents")) as ProjectionAgentsResponse;
+  /** `GET /v1/tagmata/{id}/agents` -- cached roster + status. */
+  async agents(id: string): Promise<ProjectionAgentsResponse> {
+    return (await this.get(id, "agents")) as ProjectionAgentsResponse;
   }
 
-  /** `GET /v1/tagmata/{id}/projection/budget` -- cached budget snapshot. */
-  async budget(agent: string): Promise<ProjectionBudgetResponse> {
-    return (await this.get(agent, "budget")) as ProjectionBudgetResponse;
+  /** `GET /v1/tagmata/{id}/budget` -- cached budget snapshot. */
+  async budget(id: string): Promise<ProjectionBudgetResponse> {
+    return (await this.get(id, "budget")) as ProjectionBudgetResponse;
   }
 
-  /** `GET /v1/tagmata/{id}/projection/work-schedule` -- cached schedule. */
-  async workSchedule(agent: string): Promise<ProjectionWorkScheduleResponse> {
+  /** `GET /v1/tagmata/{id}/work-schedule` -- cached schedule. */
+  async workSchedule(id: string): Promise<ProjectionWorkScheduleResponse> {
     return (await this.get(
-      agent,
+      id,
       "work-schedule",
     )) as ProjectionWorkScheduleResponse;
   }
 
-  /** `GET /v1/tagmata/{id}/projection/events` -- the dirty-frame SSE. A
-   * long-lived fetch parsed with the shared `parseSseStream`; each payload is
-   * a `ProjectionDirty` nudge. The caller owns reconnect/backoff; the
+  /** `GET /v1/tagmata/{id}/state` -- the dirty-frame SSE: the tagma's
+   * projection-state change channel. Each payload is a `ProjectionDirty`
+   * nudge ({tagma_id, seq}, no content). A long-lived fetch parsed with
+   * the shared `parseSseStream`; the caller owns reconnect/backoff; the
    * generator ends when the stream closes or `signal` aborts. */
-  async *events(
-    agent: string,
+  async *state(
+    id: string,
     signal?: AbortSignal,
   ): AsyncGenerator<ProjectionDirty> {
     const resp = await fetch(
-      `${this.baseUrl}/v1/tagmata/${encodeURIComponent(agent)}/projection/events`,
+      `${this.baseUrl}/v1/tagmata/${encodeURIComponent(id)}/state`,
       {
         method: "GET",
         headers: { accept: "text/event-stream" },
@@ -77,7 +79,7 @@ export class ProjectionClient {
         signal,
       },
     );
-    if (!resp.ok) throw new Error(`projection events: ${resp.status}`);
+    if (!resp.ok) throw new Error(`projection state: ${resp.status}`);
     for await (const ev of parseSseStream(resp, signal)) {
       // A torn or non-JSON frame is skipped: dirty frames are pure
       // nudges, so a lost frame only costs one debounced re-pull.
@@ -89,9 +91,9 @@ export class ProjectionClient {
     }
   }
 
-  private async get(agent: string, tail: string): Promise<unknown> {
+  private async get(id: string, tail: string): Promise<unknown> {
     const resp = await fetch(
-      `${this.baseUrl}/v1/tagmata/${encodeURIComponent(agent)}/projection/${tail}`,
+      `${this.baseUrl}/v1/tagmata/${encodeURIComponent(id)}/${tail}`,
       { method: "GET", credentials: "include" },
     );
     if (!resp.ok) throw new Error(`projection ${tail}: ${resp.status}`);
