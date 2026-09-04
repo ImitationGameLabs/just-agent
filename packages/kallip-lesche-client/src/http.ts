@@ -31,6 +31,45 @@ import type {
 const CSRF_HEADER = "X-Requested-With";
 const CSRF_HEADER_VALUE = "kallip";
 
+/** Connect/first-byte window for SSE fetches: long enough for a cold TLS
+ * handshake through a slow proxy, short enough that a hung connection is
+ * abandoned before the user gives up. Body lifetime is explicitly not
+ * covered -- see {@linkcode sseFetch}. */
+export const SSE_CONNECT_TIMEOUT_MS = 30_000;
+
+/**
+ * Fetch a lesche SSE endpoint with a connect/first-byte timeout. The window
+ * covers connection establishment and response headers only: once the response
+ * arrives the timer is cleared, because a body-scoped timer would kill every
+ * healthy long-lived stream at the window edge and drive a periodic reconnect
+ * storm (amplified by idle-sensitive intermediaries that drop quiet streams).
+ * The external `signal` -- the caller's stream lifetime, also passed to
+ * `parseSseStream` -- is bridged into the internal controller for the fetch
+ * itself and unhooked once headers arrive; an already-aborted external signal
+ * short-circuits before any request is made.
+ */
+export async function sseFetch(
+  url: string,
+  signal: AbortSignal | undefined,
+  connectTimeoutMs = SSE_CONNECT_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), connectTimeoutMs);
+  const onExternalAbort = () => controller.abort();
+  signal?.addEventListener("abort", onExternalAbort);
+  if (signal?.aborted) controller.abort();
+  try {
+    return await fetch(url, {
+      method: "GET",
+      headers: { accept: "text/event-stream" },
+      credentials: "include",
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onExternalAbort);
+  }
+}
 /**
  * Shared base for the lesche browser client: a base URL + the JSON/CSRF fetch
  * helper. The session cookie (`credentials: "include"`) is the auth; the
@@ -152,12 +191,7 @@ export class LescheClient extends BaseClient {
    * caller owns reconnect/backoff; the generator ends when the stream closes
    * or `signal` aborts. */
   async *meEvents(signal?: AbortSignal): AsyncGenerator<LescheEvent> {
-    const resp = await fetch(this.baseUrl + "/v1/me/events", {
-      method: "GET",
-      headers: { accept: "text/event-stream" },
-      credentials: "include",
-      signal,
-    });
+    const resp = await sseFetch(this.baseUrl + "/v1/me/events", signal);
     if (!resp.ok) {
       throw await lescheError(resp);
     }

@@ -5,6 +5,7 @@
 // All endpoints are owner-gated (C1) with the shared session cookie.
 
 import { parseSseStream } from "@kallipai/kallip-common";
+import { sseFetch } from "./http.ts";
 import type {
   ProjectionAgentsResponse,
   ProjectionBudgetResponse,
@@ -70,14 +71,9 @@ export class ProjectionClient {
     id: string,
     signal?: AbortSignal,
   ): AsyncGenerator<ProjectionDirty> {
-    const resp = await fetch(
+    const resp = await sseFetch(
       `${this.baseUrl}/v1/tagmata/${encodeURIComponent(id)}/state`,
-      {
-        method: "GET",
-        headers: { accept: "text/event-stream" },
-        credentials: "include",
-        signal,
-      },
+      signal,
     );
     if (!resp.ok) throw new Error(`projection state: ${resp.status}`);
     for await (const ev of parseSseStream(resp, signal)) {
