@@ -1,9 +1,11 @@
 // Status-card rows: the per-agent list under the chat status bar. Roster
 // refresh is event-nudged first -- the chat page routes every status-snapshot
 // update (relay `tagma_status` push online, direct SSE drain offline) into
-// nudge() -- with a slow reconciliation poll (15s) as the dropped-frame
-// backstop; the per-agent context poll runs slower still (30s, occupancy is
-// approximate). Both cadences pause while the tab is hidden, over whichever
+// nudge() -- with a slow reconciliation poll as the dropped-frame backstop:
+// the Online (projection-feed) path runs roster and context polls at 30s
+// alongside the dirty SSE (a half-open stream looks alive, so the poll is
+// the only thing that notices it died); the Offline path polls at 15s/30s.
+// Both cadences pause while the tab is hidden, over whichever
 // ManagementBackend the conversation provides (OnlineBackend on the relay
 // channel, OfflineBackend direct). Context occupancy mirrors the detail
 // page's approximation (turn tokens + pinned) with the registry profile's
@@ -19,6 +21,12 @@ import { startVisibleInterval } from "../visibleInterval.ts";
 /** Failed context pulls retry at most once per this window; the 30s
  * poll remains the unconditional backstop. */
 const CONTEXT_RETRY_COOLDOWN_MS = 30_000;
+
+/** The Online (projection-feed) backstop cadence: the interval that keeps
+ * polling when the dirty SSE delivers nothing -- either because nothing
+ * changed or because the stream died silently. Both legs (roster and
+ * contexts) run at this cadence, matching the Offline path's slow leg. */
+const BACKSTOP_INTERVAL_MS = 30_000;
 export interface StatusCardRow {
   readonly id: string;
   readonly state: AgentState;
@@ -56,6 +64,11 @@ class StatusCardStore {
   private rosterStop: (() => void) | null = null;
   private contextStop: (() => void) | null = null;
   private contexts = new Map<string, number>();
+  // Online-only: the roster backstop interval armed alongside the
+  // projection feed (a silently dead SSE looks alive, so the poll is the
+  // only thing that notices). Null on the Offline path, which owns its
+  // intervals outright.
+  private rosterBackstopStop: (() => void) | null = null;
   private lastSubSignature = "";
   // Denominator data: the profile registry pulled once per attach (it
   // changes rarely and only takes effect on apply), and each agent's
@@ -87,8 +100,10 @@ class StatusCardStore {
    * return to the page paints instantly and only background-refreshes. */
   suspend(): void {
     this.rosterStop?.();
+    this.rosterBackstopStop?.();
     this.contextStop?.();
     this.rosterStop = null;
+    this.rosterBackstopStop = null;
     this.contextStop = null;
     this.backend = null;
   }
@@ -107,7 +122,7 @@ class StatusCardStore {
     this.contextCooldown.clear();
   }
 
-  attach(backend: ManagementBackend): void {
+  attach(backend: ManagementBackend, backstopMs = BACKSTOP_INTERVAL_MS): void {
     // Idempotent re-attach: returning to the page keeps the warm cache
     // (rows, contexts, windows) and only background-refreshes, so the
     // panel paints instantly from the previous visit's data.
@@ -121,13 +136,26 @@ class StatusCardStore {
     this.backend = backend;
     this.refreshRoster();
     if (backend.projectionFeed) {
-      // P2-c: the lesche's dirty SSE drives both refreshes -- no roster
-      // polling while a live feed exists (Offline keeps the intervals).
+      // P2-c: the lesche's dirty SSE drives both refreshes the moment a
+      // frame lands. A silently dead stream looks alive, so the visible
+      // backstop intervals run alongside it (30s both, matching the
+      // Offline cadence's slow leg): the poll is the only thing that
+      // notices the feed died. The running guards collapse a dirty tick
+      // and an interval tick that overlap, and the signature guards make
+      // a redundant pull a no-op repaint.
       const feed = backend.projectionFeed;
       this.rosterStop = feed.subscribe(() => {
         void this.refreshRoster();
         void this.refreshContexts();
       });
+      this.rosterBackstopStop = startVisibleInterval(
+        () => this.refreshRoster(),
+        backstopMs,
+      );
+      this.contextStop = startVisibleInterval(
+        () => this.refreshContexts(),
+        backstopMs,
+      );
     } else {
       this.rosterStop = startVisibleInterval(
         () => this.refreshRoster(),

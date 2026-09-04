@@ -30,6 +30,7 @@ const assertStrictEquals: typeof stdAssert.assertStrictEquals = (
   await import("@std/assert")
 ).assertStrictEquals;
 const { OfflineBackend } = await import("../manage/backend.ts");
+const assert: typeof stdAssert.assert = (await import("@std/assert")).assert;
 const { statusCardStore } = await import("./statusCard.svelte.ts");
 
 const root: WireAgentManagementSummary = {
@@ -81,6 +82,7 @@ class StubClient {
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 20));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const backend = (stub: StubClient) =>
   new OfflineBackend(stub as unknown as TagmaClient);
 
@@ -210,4 +212,97 @@ Deno.test("a changed roster swaps the rootRow reference", async () => {
     stub.rootActivity = "thinking";
     statusCardStore.detach();
   }
+});
+
+// --- Online projection-feed backstop (dirty SSE + visible intervals) -------
+
+/** Minimal ProjectionFeed stub: captures the dirty callback and fires it on
+ * demand (or never, standing in for a silently dead stream). */
+class StubFeed {
+  onDirty: (() => void) | null = null;
+  subscribe(onDirty: () => void): () => void {
+    this.onDirty = onDirty;
+    return () => {
+      this.onDirty = null;
+    };
+  }
+  fire(): void {
+    this.onDirty?.();
+  }
+}
+
+/** The real Offline adapter over the stub client with a projectionFeed
+ * grafted on -- exactly what the Online path looks like to attach(). */
+const feedBackend = (stub: StubClient, feed: StubFeed) => {
+  const b = new OfflineBackend(stub as unknown as TagmaClient);
+  return Object.assign(b, { projectionFeed: feed });
+};
+
+Deno.test("a silent feed's backstop keeps the roster refreshing", async () => {
+  const stub = new StubClient();
+  const feed = new StubFeed(); // never fires: the SSE is dead
+  try {
+    statusCardStore.attach(feedBackend(stub, feed), 20);
+    await flush();
+    const afterAttach = stub.rosterCalls;
+    // No dirty frames at all: only the 20ms backstop intervals advance
+    // the counters. The roster poll (and the context poll via its own
+    // cooldown path) must keep running without any feed activity.
+    await sleep(70);
+    assert(
+      stub.rosterCalls > afterAttach,
+      `backstop must poll a dead feed (attach=${afterAttach}, now=${stub.rosterCalls})`,
+    );
+  } finally {
+    statusCardStore.detach();
+  }
+});
+
+Deno.test(
+  "dirty fires during an in-flight roster collapse into it",
+  async () => {
+    const stub = new StubClient();
+    const feed = new StubFeed();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const orig = stub.listAgents.bind(stub);
+    stub.listAgents = () => {
+      stub.rosterCalls++;
+      return stub.rosterCalls === 1 ? gate.then(() => orig()) : orig();
+    };
+    try {
+      statusCardStore.attach(feedBackend(stub, feed), 20);
+      await flush();
+      // The first roster call is still in-flight (gated): the dirty fire
+      // and every backstop tick in this window must collapse into it.
+      assertEquals(stub.rosterCalls, 1);
+      feed.fire();
+      await sleep(60);
+      assertEquals(
+        stub.rosterCalls,
+        1,
+        "overlapping dirty/backstop pulls must not stack",
+      );
+    } finally {
+      release();
+      statusCardStore.detach();
+    }
+  },
+);
+
+Deno.test("suspend stops the feed backstop timer", async () => {
+  const stub = new StubClient();
+  const feed = new StubFeed();
+  statusCardStore.attach(feedBackend(stub, feed), 20);
+  await flush();
+  statusCardStore.suspend();
+  const frozen = stub.rosterCalls;
+  await sleep(60);
+  assertEquals(
+    stub.rosterCalls,
+    frozen,
+    "suspend must stop the backstop interval",
+  );
 });
