@@ -279,7 +279,7 @@ async fn state_events(
             registry.remove_projection_stream_if_last(&user, &tagma, &tx);
         });
     });
-    // `: ping` comment every 15s: dirty frames only flow on changes, so a
+    // `: ping` comment every 5s: dirty frames only flow on changes, so a
     // quiet tagma would otherwise stream zero bytes and get reaped by an
     // idle timeout (proxy or browser) -- the client would see the body
     // die mid-stream (fetch TypeError) and back off reconnecting. The
@@ -666,13 +666,13 @@ mod generation_tests {
     /// `: ping` comment frame within the keep-alive interval, and the
     /// frame carries no `data:`/`event:` lines -- an SSE parser ignores
     /// comment lines, so the idle ping can never be mistaken for a
-    /// dirty frame (no seq, no onFrame). The paused clock lets the 15s
+    /// dirty frame (no seq, no onFrame). The paused clock lets the 5s
     /// interval elapse without any real waiting.
     #[tokio::test]
     async fn idle_stream_emits_comment_ping_not_data() {
         let (state, _control) = db_state().await;
         // Real clock for DB setup, then freeze: the pending stream read
-        // auto-advances past the 15s keep-alive with zero real waiting.
+        // auto-advances past the 5s keep-alive with zero real waiting.
         tokio::time::pause();
         let tagma = tagma_of("t-a");
         let owner = uid("alice");

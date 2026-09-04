@@ -83,7 +83,7 @@ async fn me_events(
             if let Some(st) = &entry.latest_status {
                 let _ = tx.send(LescheEvent::TagmaStatus {
                     tagma_id: entry.tagma_id.clone(),
-                    root_state: st.root_state.clone(),
+                    root_state: st.root_state,
                     subagents_total: st.subagents_total,
                     subagents_active: st.subagents_active,
                     token_budget: st.token_budget,

@@ -68,6 +68,10 @@ async fn post_status(
         reg.app_stream(&owner).cloned()
     };
 
+    // Ordering: the cache write above completes before this fan-out (the
+    // write guard drops at the end of the critical section), so a connect
+    // flush running concurrently can never bury a newer broadcast under a
+    // stale snapshot.
     // No live app stream -> silent drop (best-effort). Still 202 so the tagma
     // does not retry; the next periodic snapshot supersedes this one.
     if let Some(tx) = app_tx
