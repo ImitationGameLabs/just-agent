@@ -8,6 +8,11 @@
 //! Status is a periodic full snapshot, not a delta log: a dropped frame just
 //! means slightly-stale data until the next tick, so there is no sequence
 //! tracking and no replay path.
+//! An unchanged snapshot is not re-posted until FORCED_RESEND (30s) has
+//! elapsed since the last successful POST: the periodic full snapshot
+//! doubles as a catch-up heartbeat, because lesche drops a POST with no
+//! live owner stream and still returns 202 -- plain suppression would
+//! starve subscribers that connect after the last change.
 
 use std::time::Duration;
 
@@ -24,6 +29,25 @@ use crate::state::AgentRegistry;
 /// The snapshot cadence. Source-tunable; not exposed as an env knob until an
 /// operator asks for it.
 const STATUS_INTERVAL: Duration = Duration::from_secs(2);
+/// How long an unchanged snapshot may stay silent. Upper bound on the
+/// catch-up window for a subscriber that connects after the last change:
+/// lesche acknowledges a POST even when it drops it (no live owner
+/// stream), so suppression alone would never re-arm a late subscriber.
+const FORCED_RESEND: Duration = Duration::from_secs(30);
+
+/// The suppression decision, factored out pure: post when nothing has
+/// been posted yet, when the payload changed, or when the last successful
+/// POST is older than FORCED_RESEND (the catch-up heartbeat).
+fn needs_post(
+    last: Option<(&TagmaStatusPayload, std::time::Instant)>,
+    payload: &TagmaStatusPayload,
+    now: std::time::Instant,
+) -> bool {
+    match last {
+        None => true,
+        Some((posted, at)) => posted != payload || now.duration_since(at) >= FORCED_RESEND,
+    }
+}
 
 /// Build a status payload from the current registry + token budget. Pure
 /// (lock-free) so it can be unit-tested in isolation. Partitions agents into
@@ -90,7 +114,7 @@ impl RelayHandle {
     }
 
     /// Snapshot total/active agent counts + the token budget and POST them
-    /// every `STATUS_INTERVAL` until `cancel` fires.
+    /// every STATUS_INTERVAL until cancel fires; an unchanged snapshot is skipped.
     ///
     /// `Weak::upgrade() == None` (AppState dropped) ends the loop: the tagma is
     /// shutting down. The registry read-guard is dropped before the POST so no
@@ -100,6 +124,11 @@ impl RelayHandle {
         info!(tagma = %self.inner.tagma_id, "relay status pump started");
         let mut ticker = tokio::time::interval(STATUS_INTERVAL);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        // Last successfully posted snapshot + its timestamp: a tick whose
+        // payload equals it is skipped until FORCED_RESEND elapses (the
+        // catch-up heartbeat for late subscribers), and a failed POST keeps
+        // the old value so the next tick retries. Updated only on success.
+        let mut last_posted: Option<(TagmaStatusPayload, std::time::Instant)> = None;
         loop {
             tokio::select! {
                 biased;
@@ -117,6 +146,11 @@ impl RelayHandle {
             // the POST. `state_for_summary` reads only the bridge-owned atomic
             // (Live) or returns a constant (Faulted) -- no per-agent lock.
             let payload = snapshot_status(&*state.registry.read().await, &state.token_budget);
+            let now = std::time::Instant::now();
+            let last = last_posted.as_ref().map(|(p, at)| (p, *at));
+            if !needs_post(last, &payload, now) {
+                continue;
+            }
             // No retry: status is idempotent and the next tick supersedes a
             // dropped POST, so retrying would only amplify a transient stall.
             // The POST is cancel-select'd so a tunnel-down (cancel fires) aborts
@@ -131,8 +165,13 @@ impl RelayHandle {
                 biased;
                 _ = cancel.cancelled() => return,
                 r = post => {
-                    if let Err(e) = r {
-                        warn!(tagma = %self.inner.tagma_id, "status post failed: {e:#}");
+                    match r {
+                        Ok(()) => {
+                            last_posted = Some((payload, std::time::Instant::now()));
+                        }
+                        Err(e) => {
+                            warn!(tagma = %self.inner.tagma_id, "status post failed: {e:#}");
+                        }
                     }
                 }
             }
@@ -151,7 +190,7 @@ mod tests {
     use kallip_e2ee::DeviceKey;
     use kallip_lesche_client::LescheClient;
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use tokio::sync::Mutex;
 
@@ -177,12 +216,35 @@ mod tests {
         format!("http://{addr}")
     }
 
+    /// Spawn a mock lesche whose first status POST fails with a 500 (not
+    /// captured) and every later one succeeds (captured). Returns the url;
+    /// the attempt counter is shared with the caller.
+    async fn spawn_flaky_status_lesche(capture: Capture, attempts: Arc<AtomicUsize>) -> String {
+        async fn handler(
+            axum::extract::State((c, n)): axum::extract::State<(Capture, Arc<AtomicUsize>)>,
+            axum::Json(payload): axum::Json<TagmaStatusPayload>,
+        ) -> (axum::http::StatusCode, &'static str) {
+            if n.fetch_add(1, Ordering::SeqCst) == 0 {
+                return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom");
+            }
+            c.lock().await.push(payload);
+            (axum::http::StatusCode::OK, "ok")
+        }
+        let app = axum::Router::new()
+            .route("/v1/tagmata/{tagma}/status", axum::routing::post(handler))
+            .with_state((capture, attempts));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
     /// Build a RelayHandle wired to a capturing mock lesche + a real AppState
     /// whose single root agent makes `root_state != Faulted` (i.e. the snapshot
     /// reflects a real root, not the zero-root fallback). Returns the handle,
     /// the capture, and the AppState strong ref (the pump only holds a Weak, so
     /// the caller must keep it alive for the pump's `upgrade()` to resolve).
-    async fn setup_pump() -> (RelayHandle, Capture, SharedState) {
+    async fn setup_pump_at(capture: Capture, url: String) -> (RelayHandle, Capture, SharedState) {
         let state = make_state();
         let root = AgentId::from("root".to_string());
         {
@@ -194,8 +256,6 @@ mod tests {
                 )
                 .expect("register root");
         }
-        let capture: Capture = Arc::new(Mutex::new(Vec::new()));
-        let url = spawn_status_lesche(capture.clone()).await;
         let client = LescheClient::builder(&url, "tok").build().unwrap();
         let handle = RelayHandle::new(
             client,
@@ -207,6 +267,12 @@ mod tests {
             Arc::downgrade(&state),
         );
         (handle, capture, state)
+    }
+
+    async fn setup_pump() -> (RelayHandle, Capture, SharedState) {
+        let capture: Capture = Arc::new(Mutex::new(Vec::new()));
+        let url = spawn_status_lesche(capture.clone()).await;
+        setup_pump_at(capture, url).await
     }
 
     /// The pump POSTs a snapshot on its first tick (tokio interval fires at
@@ -308,5 +374,93 @@ mod tests {
         let payload = snapshot_status(&registry, &state.token_budget);
         assert_eq!(payload.root_state, AgentState::Faulted);
         assert_eq!((payload.subagents_total, payload.subagents_active), (0, 0));
+    }
+    /// Change suppression: with an idle registry the second tick's identical
+    /// snapshot is skipped, so the window captures exactly one POST. Before
+    /// suppression this captured one frame per tick (two here).
+    #[tokio::test]
+    async fn status_pump_skips_unchanged_snapshot_on_second_tick() {
+        let (handle, capture, _state) = setup_pump().await;
+        handle.start_status_pump().await;
+        // Two ticks (immediate + 2s) plus slack for scheduler delay.
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        handle.stop_status_pump().await;
+        assert_eq!(
+            capture.lock().await.len(),
+            1,
+            "identical second tick must be skipped"
+        );
+    }
+
+    /// A registry change alters the payload, so the next tick posts again --
+    /// the flip-to-visible contract (<= 2s) is what the suppression must keep.
+    #[tokio::test]
+    async fn status_pump_posts_again_after_a_change() {
+        let (handle, capture, state) = setup_pump().await;
+        handle.start_status_pump().await;
+        // The first tick is immediate; wait for it to land.
+        for _ in 0..50 {
+            if !capture.lock().await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        {
+            let registry = state.registry.read().await;
+            registry
+                .get(&AgentId::from("root".to_string()))
+                .expect("root present")
+                .as_live()
+                .expect("live")
+                .agent
+                .state
+                .store(AgentState::BUSY, Ordering::Relaxed);
+        }
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        handle.stop_status_pump().await;
+        assert_eq!(capture.lock().await.len(), 2, "changed snapshot must post");
+    }
+
+    /// Unit test for the suppression decision: only a fresh (within
+    /// FORCED_RESEND) unchanged payload suppresses the POST.
+    #[test]
+    fn needs_post_suppresses_only_fresh_unchanged_snapshots() {
+        let payload = TagmaStatusPayload {
+            root_state: AgentState::Idle,
+            subagents_total: 0,
+            subagents_active: 0,
+            token_budget: 1000,
+            token_consumed: 0,
+        };
+        let now = std::time::Instant::now();
+        assert!(needs_post(None, &payload, now), "nothing posted yet");
+        let fresh = Some((&payload, now - Duration::from_secs(5)));
+        assert!(!needs_post(fresh, &payload, now), "fresh duplicate");
+        let stale = Some((&payload, now - Duration::from_secs(31)));
+        assert!(needs_post(stale, &payload, now), "stale heartbeat");
+        let changed = TagmaStatusPayload {
+            token_consumed: 1,
+            ..payload.clone()
+        };
+        assert!(
+            needs_post(Some((&payload, now)), &changed, now),
+            "changed payload"
+        );
+    }
+
+    /// A failed POST keeps the old suppression memory, so the next tick
+    /// retries even though the payload is unchanged: two attempts in the
+    /// two-tick window, exactly one captured (successful).
+    #[tokio::test]
+    async fn status_pump_retries_after_a_failed_post() {
+        let capture: Capture = Arc::new(Mutex::new(Vec::new()));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let url = spawn_flaky_status_lesche(capture.clone(), attempts.clone()).await;
+        let (handle, capture, _state) = setup_pump_at(capture, url).await;
+        handle.start_status_pump().await;
+        tokio::time::sleep(Duration::from_millis(2500)).await;
+        handle.stop_status_pump().await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 2, "retry happened");
+        assert_eq!(capture.lock().await.len(), 1, "only the retry captured");
     }
 }

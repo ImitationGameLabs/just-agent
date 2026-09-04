@@ -32,7 +32,7 @@ pub fn router() -> Router<SharedConvState> {
 /// runtime snapshot to its owner's app event stream. The path `tagma_id` is
 /// authoritative (matched against the authenticated tagma); the body carries
 /// only the counts/budget. If the owner has no live app stream the snapshot is
-/// silently dropped (no client listening) -- the next tick supersedes it, so
+/// silently dropped (no client listening) -- the tagma re-posts within 30s
 /// best-effort delivery is sufficient and the tagma must not retry.
 async fn post_status(
     State(state): State<SharedConvState>,

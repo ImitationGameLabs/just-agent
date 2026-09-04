@@ -149,7 +149,7 @@ pub enum LescheEvent {
 /// lesche asserts it matches the authenticated tagma before rebroadcast
 /// (mirroring `post_envelope`'s `channel_id` check). Field names mirror
 /// the [`LescheEvent::TagmaStatus`] variant; keep them in sync.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagmaStatusPayload {
     pub root_state: AgentState,
     pub subagents_total: u32,
