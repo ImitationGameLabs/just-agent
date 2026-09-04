@@ -82,6 +82,15 @@
     // decision). Bound here (the shell, where both singletons are in scope)
     // rather than via a store-to-store import, keeping realtime decoupled from
     // both. Idempotent + safe to run once per mount.
+    // Auth-plane verifier for the realtime 401 recovery: re-run whoami and
+    // report whether the session survived. whoami is mutating (it clears
+    // `user` on 401/403), so the uid-keyed effect below restarts realtime
+    // by itself when the session is really gone -- the verifier only has
+    // to tell the loop which way to branch.
+    realtimeStore.setSessionVerifier(async () => {
+      await archeionSession.whoami();
+      return archeionSession.user !== null;
+    });
     realtimeStore.setEnvelopeSink((env) => {
       if (roomConversationsStore.get(env.channel_id)) {
         roomConversationsStore.deliverLive(

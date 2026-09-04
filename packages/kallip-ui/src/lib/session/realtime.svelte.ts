@@ -5,8 +5,9 @@
 // inbound conversation `envelope` delivery (handed to channelsStore via a
 // shell-wired sink).
 //
-// The SSE loop (backoff, LescheApiError 401 stop, abort) was moved here verbatim
-// from channels.svelte.ts, which is now pure per-channel chat state. Realtime is
+// The SSE loop (backoff, 401 recovery via an auth-plane re-verify, abort) was
+// moved here from channels.svelte.ts, which is now pure per-channel chat
+// state. Realtime is
 // started/stopped by RootLayout (reactive to online mode + a signed-in user);
 // it must run before any channel opens, because the /tagmata dashboard reads
 // presence to light the online dot and the presence sink drives auto-connect
@@ -23,6 +24,7 @@ import {
   type SignalEvent,
 } from "@kallipai/kallip-lesche-client";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
+import { reverifySession, type SessionVerifier } from "./realtimeReverify.ts";
 import type { TagmaStatusSummary } from "../tagmata.svelte.ts";
 import { lescheClientOrFail } from "./archeion.svelte.ts";
 
@@ -128,6 +130,11 @@ class RealtimeStore {
   private foregroundKick = false;
   /** Resolves the in-flight backoff sleep early (foreground fast path). */
   private wake: (() => void) | null = null;
+  // Auth-plane session re-verification (the lesche-401 recovery path). The
+  // verifier is bound by the shell; `lastVerifiedAt` paces it to one
+  // round-trip per throttle window. Null until bound (tests, pre-shell).
+  private sessionVerifier: SessionVerifier | null = null;
+  private lastVerifiedAt = 0;
 
   /** Reactive liveness query: true iff a tagma tunnel is live for `tagmaId`. */
   has(tagmaId: string): boolean {
@@ -158,6 +165,15 @@ class RealtimeStore {
    * drives channelsStore auto-connect on offline -> online transitions. */
   setPresenceSink(sink: PresenceSink | null): void {
     this.presenceSink = sink;
+  }
+
+  /** Bind the auth-plane session verifier, called once by the shell at boot.
+   * Invoked when the lesche returns a 401 so the loop can distinguish a real
+   * sign-out (stop; the uid-keyed effect restarts us on the next sign-in)
+   * from a lesche-side rejection with a healthy session (keep retrying
+   * under backoff). Unbound, a 401 stops the loop (the safe default). */
+  setSessionVerifier(verifier: SessionVerifier | null): void {
+    this.sessionVerifier = verifier;
   }
 
   /** Bind the inbound-signal handler. Called once by the shell at boot; routes
@@ -270,15 +286,27 @@ class RealtimeStore {
         }
         // Stream ended cleanly (rare); loop to reconnect unless stopped.
       } catch (e) {
-        // A 401 means the session is gone -- stop rather than hot-looping
-        // reconnects against an unsigned user.
+        // A 401 from the lesche no longer means the session is gone: the
+        // relay can reject a cookie the auth plane still honors (e.g. a
+        // lesche restart). Re-validate against the auth plane -- a real
+        // sign-out clears the user and stops the loop (the uid-keyed shell
+        // effect restarts us on the next sign-in); anything else keeps the
+        // loop alive with the backoff capping the retry period at 30s.
         if (e instanceof LescheApiError && e.status === 401) {
-          this.running = false;
-          this.clearResolveDeadline();
-          this.presence.clear();
-          this.resolvedState = false;
-          this.unbindForeground();
-          return;
+          const { verdict, verifiedAt } = await reverifySession(
+            this.sessionVerifier,
+            this.lastVerifiedAt,
+            Date.now(),
+          );
+          this.lastVerifiedAt = verifiedAt;
+          if (verdict === "invalid") {
+            this.running = false;
+            this.clearResolveDeadline();
+            this.presence.clear();
+            this.resolvedState = false;
+            this.unbindForeground();
+            return;
+          }
         }
         // Other errors (transient network, server drop): reconnect after backoff.
       }
