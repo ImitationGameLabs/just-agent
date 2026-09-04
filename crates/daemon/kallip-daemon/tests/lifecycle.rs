@@ -23,6 +23,7 @@ struct DaemonProc {
     child: std::process::Child,
     _data: PathBuf,
     data_dir: tempfile::TempDir,
+    log_path: PathBuf,
 }
 
 fn resolve_bin(name: &str) -> PathBuf {
@@ -55,11 +56,15 @@ fn start_daemon() -> DaemonProc {
     let state_dir = tempfile::tempdir().expect("state tempdir");
     let socket = state_dir.path().join("control.sock");
     let bin = resolve_bin("kallip-daemon");
+    // stdout+stderr land in a file (not null) so tests can assert on
+    // the daemon's own log — the quiet-Dead guarantee is a log claim.
+    let log_path = state_dir.path().join("daemon.log");
+    let log = std::fs::File::create(&log_path).expect("create daemon log");
     let mut child = std::process::Command::new(&bin)
         .env("KALLIP_DAEMON_DATA_DIR", data_dir.path())
         .env("KALLIP_STATE_DIR", state_dir.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(log.try_clone().expect("clone log handle"))
+        .stderr(log)
         .spawn()
         .expect("spawn daemon");
     // Wait for the socket to appear.
@@ -70,6 +75,7 @@ fn start_daemon() -> DaemonProc {
                 child,
                 _data: state_dir.keep(),
                 data_dir,
+                log_path,
             };
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -164,6 +170,22 @@ fn spawn_health_stop_round_trip() {
             .as_str()
             .is_some_and(|id| !id.is_empty())
     );
+    // The launch claim point pinned the kernel incarnation: the anchor
+    // names this pid with a real start time and a wall-clock stamp.
+    let identity = &meta["identity"];
+    assert_eq!(
+        identity["pid"],
+        serde_json::json!(pid),
+        "anchor names the spawned pid"
+    );
+    assert!(
+        identity["starttime"].as_u64().is_some_and(|t| t > 0),
+        "anchor carries a kernel start time"
+    );
+    assert!(
+        identity["anchored_at"].as_u64().is_some_and(|t| t > 0),
+        "anchor carries its wall-clock stamp"
+    );
 
     // Stop: TERM grace.
     let stop = tokio_block_on(client.call(RequestBody::Stop { slug: "e2e".into() }));
@@ -227,6 +249,13 @@ fn spawn_health_stop_round_trip() {
         4,
         "one-shot overlay is not persisted to meta.json"
     );
+    // The relaunch re-anchored: the previous incarnation's anchor was
+    // overwritten with the fresh pid at the claim point.
+    assert_eq!(
+        meta_after["identity"]["pid"],
+        serde_json::json!(started_pid),
+        "relaunch re-anchored to the fresh incarnation"
+    );
     assert!(
         instance_dir.join("credentials").exists(),
         "credentials survive"
@@ -254,6 +283,24 @@ fn spawn_health_stop_round_trip() {
         panic!("expected stop payload");
     };
     assert_eq!(stopped_again_slug, "e2e");
+
+    // M1 quiet-Dead: after the graceful exit, repeated polls classify
+    // the dead pid as Gone with zero degraded-match warnings — a dead
+    // pid must never trip the "matches only by name" warn.
+    for _ in 0..2 {
+        let poll = tokio_block_on(client.call(RequestBody::Health {
+            slug: Some("e2e".into()),
+        }));
+        let OkPayload::Health { report } = expect_ok(poll) else {
+            panic!("expected health payload");
+        };
+        assert_eq!(report.state, InstanceState::Dead);
+    }
+    let log = std::fs::read_to_string(&daemon.log_path).expect("daemon log");
+    assert!(
+        !log.contains("matches tagma only by name"),
+        "degraded-match warn must stay silent on a healthy lifecycle:\n{log}"
+    );
 }
 
 #[test]
@@ -591,6 +638,71 @@ fn manual_boot_in_unmarked_dir_writes_nothing() {
     );
 }
 
+/// The stop guard's two legs: a runtime.json retargeted at a foreign
+/// live pid is refused even though the pid is alive (the anchor names
+/// a different incarnation), and once the tree is restored the same
+/// stop succeeds because the anchor verifies the original pid.
+#[test]
+fn stop_refuses_tampered_runtime_pid_then_allows_restored() {
+    let daemon = start_daemon();
+    let client = DaemonClient::new(&daemon.socket);
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+
+    let spawn = tokio_block_on(client.call(RequestBody::Spawn {
+        slug: "tamper".into(),
+        workspace: workspace.path().display().to_string(),
+        env: vec![
+            "KALLIP_OPERATOR_TOKEN=test-op-token".into(),
+            "KALLIP_LLM_PROVIDER=deepseek".into(),
+            "KALLIP_LLM_MODEL=test-model".into(),
+            "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
+        ],
+    }));
+    let OkPayload::Spawn { pid, port, .. } = expect_ok(spawn) else {
+        panic!("expected spawn payload");
+    };
+    let instance_dir = daemon.data_dir.path().join("tamper");
+    let runtime_path = instance_dir.join("runtime.json");
+    let original = std::fs::read_to_string(&runtime_path).expect("read runtime.json");
+
+    // Tamper: point runtime.json at this test process — alive, but
+    // provably not the anchored incarnation.
+    let tampered = serde_json::json!({ "pid": std::process::id(), "port": port });
+    std::fs::write(
+        &runtime_path,
+        serde_json::to_vec(&tampered).expect("serialize tampered runtime"),
+    )
+    .expect("write tampered runtime.json");
+    let refused = tokio_block_on(client.call(RequestBody::Stop {
+        slug: "tamper".into(),
+    }));
+    match refused.expect("refused exchange").body {
+        ResponseBody::Err { code, .. } => assert_eq!(code, ErrorCode::NotRunning),
+        other => panic!("expected not_running refusal, got {other:?}"),
+    }
+    // The refusal must not have killed the real tagma.
+    assert!(
+        PathBuf::from(format!("/proc/{pid}")).exists(),
+        "real tagma alive after refused stop"
+    );
+
+    // Restore: the anchor verifies the original pid and stop lands.
+    std::fs::write(&runtime_path, original).expect("restore runtime.json");
+    let stopped = tokio_block_on(client.call(RequestBody::Stop {
+        slug: "tamper".into(),
+    }));
+    expect_ok(stopped);
+    for _ in 0..100 {
+        if !PathBuf::from(format!("/proc/{pid}")).exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !PathBuf::from(format!("/proc/{pid}")).exists(),
+        "tagma exited after restored stop"
+    );
+}
 /// Drive a tokio client call from a sync test: a minimal single-thread
 /// runtime per call. (The daemon crate is async; the tests are not.)
 fn tokio_block_on<F: std::future::Future>(future: F) -> F::Output {

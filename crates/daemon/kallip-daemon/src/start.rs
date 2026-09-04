@@ -104,6 +104,7 @@ fn replay_env(meta: &scan::InstanceMeta, instance_dir: &Path) -> Vec<String> {
         owner_uid: meta.owner_uid,
         workspace: meta.workspace.clone(),
         env: replay.clone(),
+        identity: meta.identity.clone(),
     };
     if let Ok(bytes) = serde_json::to_vec(&scrubbed) {
         let _ = std::fs::write(instance_dir.join("meta.json"), bytes);
@@ -112,7 +113,7 @@ fn replay_env(meta: &scan::InstanceMeta, instance_dir: &Path) -> Vec<String> {
 }
 
 /// Blocking relaunch. `pid_is_alive` is injected so tests can fake the
-/// liveness verdict without a real process (mirroring stop). Liveness
+/// liveness verdict without a real process. Liveness
 /// alone decides the AlreadyRunning check — the former comm re-check
 /// rejected a healthy instance under a wrapped binary name (a
 /// makeWrapper-wrapped tagma's truncated comm is not ours to judge).
@@ -186,6 +187,7 @@ mod tests {
             owner_uid: 1000,
             workspace: Some("/ws".into()),
             env: env.iter().map(|pair| pair.to_string()).collect(),
+            identity: None,
         }
     }
 
@@ -224,6 +226,32 @@ mod tests {
 
         assert_eq!(replay, ["KALLIP_OPERATOR_TOKEN=t"]);
         assert_eq!(persisted_env(dir.path()), ["KALLIP_OPERATOR_TOKEN=t"]);
+    }
+
+    #[test]
+    fn replay_scrub_preserves_the_identity_anchor() {
+        // The scrub rewrites meta.json wholesale; dropping the anchor
+        // here would silently demote every enrolled instance to
+        // name-chain classification after its first code scrub.
+        let dir = tempfile::tempdir().expect("instance tempdir");
+        write_stored_credentials(dir.path());
+        let mut value = meta(&[
+            "KALLIP_OPERATOR_TOKEN=t",
+            "KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-spent",
+        ]);
+        value.identity = Some(scan::Identity {
+            pid: 7,
+            starttime: 99,
+            anchored_at: 5,
+        });
+        write_meta(dir.path(), &value);
+
+        replay_env(&value, dir.path());
+
+        let bytes = std::fs::read(dir.path().join("meta.json")).expect("read meta");
+        let parsed: scan::InstanceMeta = serde_json::from_slice(&bytes).expect("parse meta");
+        let identity = parsed.identity.expect("anchor survives the scrub");
+        assert_eq!((identity.pid, identity.starttime), (7, 99));
     }
 
     #[test]

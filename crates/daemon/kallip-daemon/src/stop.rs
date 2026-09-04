@@ -1,7 +1,8 @@
-//! Stop semantics: read the pid from runtime.json → verify it is really a
-//! tagma (pid reuse guard) → SIGTERM → poll for exit within the grace
-//! period → SIGKILL. runtime.json stays (adoption semantics: a daemon
-//! restart rebuilds its view from the tree).
+//! Stop semantics: read the pid from runtime.json → verify it is this
+//! instance's own live tagma (launch anchor or name chain; the pid
+//! reuse guard) → SIGTERM → poll for exit within the grace period →
+//! SIGKILL. runtime.json stays (adoption semantics: a daemon restart
+//! rebuilds its view from the tree).
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -30,23 +31,21 @@ impl From<&StopError> for ErrorCode {
 
 const GRACE: Duration = Duration::from_secs(10);
 
-/// Blocking stop. `pid_is_tagma` is injected so tests can fake the
-/// liveness verdict without a real process.
-pub fn stop(
-    data_root: &Path,
-    slug: &str,
-    pid_is_tagma: &dyn Fn(u32) -> bool,
-) -> Result<(), StopError> {
+/// Blocking stop. Identity is judged by `scan::identity_matches` —
+/// the anchored pid/starttime when meta.json carries one, the
+/// exe/comm name chain otherwise — so a recycled pid is refused.
+pub fn stop(data_root: &Path, slug: &str) -> Result<(), StopError> {
     let instance_dir = data_root.join(slug);
     let pid: u32 = crate::scan::read_runtime(&instance_dir)
         .map(|runtime| runtime.pid)
         .ok_or_else(|| StopError::NotRunning(slug.to_string()))?;
-    if !pid_is_tagma(pid) {
+    if crate::scan::identity_matches(&instance_dir, pid) != crate::scan::Verdict::Match {
         tracing::warn!(
             slug = %slug,
             pid,
             comm = ?crate::scan::pid_comm(pid),
-            "stop refused: recorded pid is not a tagma"
+            exe = ?crate::scan::pid_exe(pid),
+            "stop refused: recorded pid does not match this instance"
         );
         // Stale runtime state (crash leftover) or a recycled pid: the
         // instance behind it is gone; report it rather than shooting an innocent process.

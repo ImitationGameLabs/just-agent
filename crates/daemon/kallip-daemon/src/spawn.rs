@@ -437,6 +437,7 @@ pub fn spawn(
         owner_uid,
         workspace: Some(workspace_canon.display().to_string()),
         env: user_env.to_vec(),
+        identity: None,
     })
     .map_err(|e| rolled_back(anyhow::anyhow!("serializing meta.json: {e}")))?;
     std::fs::write(instance_dir.join("meta.json"), &meta_bytes)
@@ -553,12 +554,16 @@ pub(crate) fn launch(
     // Invariant: reaching this poll ⇔ the instance dir held no leftover
     // runtime.json at launch time (cleared before the helper ran). Any
     // file that appears during the poll belongs to this launch, so the
-    // pid it carries is trusted directly — no comm re-check (a
-    // makeWrapper-wrapped tagma's truncated comm is not ours to judge).
+    // pid it carries is trusted directly. Trust is then made durable:
+    // the claim point pins pid+starttime into meta.json (or clears a
+    // stale anchor a previous incarnation left), and a failed
+    // revalidation keeps polling — a pid that died between its
+    // starttime read and the check must not be reported as launched.
     let deadline = Instant::now() + timeout;
     loop {
         if let Some(runtime) = scan::read_runtime(instance_dir)
             && scan::pid_is_alive(runtime.pid)
+            && anchor_identity(instance_dir, runtime.pid)
         {
             return Ok((runtime.pid, runtime.port));
         }
@@ -580,6 +585,75 @@ pub(crate) fn launch(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// The launch claim point: pin `pid` into meta.json together with its
+/// kernel start time, so later classification can tell this exact
+/// incarnation from a reused pid. Post-condition the poll relies on:
+/// the anchor names this pid or there is no anchor at all — a stale
+/// anchor from a previous incarnation is cleared, never left lying
+/// against a pid it does not name. If the anchor write itself fails
+/// that is beyond reach: a stale anchor may survive and classify the
+/// live pid conservatively (Mismatch); the warn names it. Returns
+/// false only when the revalidation race says the pid died under us;
+/// the caller keeps polling rather than reporting a launch it cannot
+/// vouch for.
+fn anchor_identity(instance_dir: &Path, pid: u32) -> bool {
+    let starttime = scan::proc_starttime(pid).filter(|t| *t > 0);
+    let mut meta = match scan::read_meta(instance_dir) {
+        Some(meta) => meta,
+        None => {
+            tracing::warn!(pid, "meta.json unreadable at claim; launching unanchored");
+            return true;
+        }
+    };
+    match starttime {
+        Some(starttime) => {
+            meta.identity = Some(scan::Identity {
+                pid,
+                starttime,
+                anchored_at: now_unix(),
+            });
+        }
+        None => {
+            // Without a starttime there is nothing to pin; make that
+            // explicit by clearing any anchor a previous incarnation
+            // left, so classification falls to the name chain.
+            if meta.identity.is_some() {
+                tracing::warn!(pid, "cannot read start time; clearing stale anchor");
+            }
+            meta.identity = None;
+        }
+    }
+    let bytes = match serde_json::to_vec(&meta) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::warn!(pid, error = %e, "cannot serialize anchor; stale anchor may remain");
+            return true;
+        }
+    };
+    if let Err(e) = std::fs::write(instance_dir.join("meta.json"), bytes) {
+        tracing::warn!(pid, error = %e, "cannot write identity anchor; stale anchor may remain");
+        return true;
+    }
+    // Revalidate against what the tree now says: if the pid died
+    // between the starttime read and this check, its incarnation is
+    // gone and the launch must not claim it.
+    match scan::identity_matches(instance_dir, pid) {
+        scan::Verdict::Match => true,
+        other => {
+            tracing::warn!(pid, verdict = ?other, "anchor failed revalidation; not claiming the pid");
+            false
+        }
+    }
+}
+/// Seconds since the Unix epoch, saturating at 0 on clock skew;
+/// diagnostic stamp only.
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Drop a leftover `runtime.json` from a previous incarnation. ENOENT is

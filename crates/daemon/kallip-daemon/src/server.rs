@@ -154,7 +154,7 @@ impl Daemon {
                 let slug_out = slug.clone();
                 match tokio::task::spawn_blocking({
                     let data_root = self.data_root.clone();
-                    move || crate::stop::stop(&data_root, &slug, &crate::scan::pid_is_tagma)
+                    move || crate::stop::stop(&data_root, &slug)
                 })
                 .await
                 {

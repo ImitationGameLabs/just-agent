@@ -26,18 +26,26 @@ pub struct ScannedInstance {
     /// The enrolled tagma identity (archeion-issued id) if the instance's own
     /// credentials tree carries one; see `read_tagma_id`.
     pub tagma_id: Option<String>,
+    /// The launch-time identity anchor from `meta.json` (the
+    /// `identity` key): the kernel incarnation this instance was
+    /// claimed as. `None` when the claim point could not pin one —
+    /// classification then falls back to the exe/comm name chain.
+    pub anchored: Option<Identity>,
 }
 
 impl ScannedInstance {
-    /// The daemon's three-way classification: a live tagma pid is
-    /// Running, a missing pid file is a clean Stopped, and a recorded
-    /// pid that no longer lives (or no longer looks like a tagma) is
-    /// Dead. Single classification source — running() derives from it.
+    /// The daemon's classification: a pid that is verifiably this
+    /// instance's live tagma is Running, a missing pid file is a clean
+    /// Stopped, and anything else (dead pid, reused pid, unidentifiable
+    /// process) is Dead. Single classification source — running()
+    /// derives from it.
     pub fn state(&self) -> InstanceState {
         match self.pid {
             None => InstanceState::Stopped,
-            Some(pid) if pid_is_tagma(pid) => InstanceState::Running,
-            Some(_) => InstanceState::Dead,
+            Some(pid) => match classify_with_facts(self.anchored.as_ref(), pid, &self.slug) {
+                Verdict::Match => InstanceState::Running,
+                Verdict::Mismatch | Verdict::Unknown | Verdict::Gone => InstanceState::Dead,
+            },
         }
     }
     pub fn info(&self) -> InstanceInfo {
@@ -66,7 +74,7 @@ impl ScannedInstance {
         } else if self.pid.is_none() {
             Some("no runtime.json".to_string())
         } else {
-            Some("pid not alive (stale or reused)".to_string())
+            Some("pid does not match a live instance (stale or reused)".to_string())
         };
         HealthReport {
             slug: Some(self.slug.clone()),
@@ -97,15 +105,150 @@ pub fn pid_comm(pid: u32) -> Option<String> {
         .ok()
         .map(|c| c.trim().to_owned())
 }
-/// True when `pid` is alive (not a zombie) and `/proc/<pid>/comm` starts
-/// with `kallip-tagma`.
-/// The prefix match (not equality) tolerates a 15-char comm truncation of
-/// longer future names.
-pub fn pid_is_tagma(pid: u32) -> bool {
-    if !pid_is_alive(pid) {
-        return false;
+/// The launch-time identity anchor persisted in `meta.json`: the pid
+/// plus the kernel start time of the exact process incarnation a
+/// launch claimed. `starttime` is the reuse discriminator (a recycled
+/// pid gets a fresh start time); `anchored_at` is a wall-clock
+/// diagnostic of when the claim happened, never compared.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Identity {
+    pub pid: u32,
+    pub starttime: u64,
+    #[serde(default)]
+    pub anchored_at: u64,
+}
+/// The kernel start time from `/proc/<pid>/stat` (field 22, clock
+/// ticks since boot): the incarnation discriminator that survives pid
+/// reuse. Parsed after the comm's closing paren because comm may
+/// contain spaces, digits, and parentheses of its own.
+pub fn proc_starttime(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after_comm = stat.rfind(')')? + 1;
+    stat[after_comm..].split_whitespace().nth(19)?.parse().ok()
+}
+/// The resolved executable path (`/proc/<pid>/exe`). `None` when the
+/// link cannot be read — the process is gone, or the reader lacks
+/// permission (same-uid always has it).
+pub fn pid_exe(pid: u32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+}
+/// Family check on an exe path: the binary's own name or its parent
+/// directory names a kallip-tagma once leading dots (the nix wrapper
+/// convention `.kallip-tagma-wrapped`) are trimmed. The store layout
+/// `<hash>-kallip-tagma-<ver>/bin/kallip-tagma` matches on the binary
+/// name, and a binary rebuilt underneath a running process keeps
+/// matching through the ` (deleted)` suffix.
+fn tagma_exe_family(exe: &str) -> bool {
+    let path = std::path::Path::new(exe);
+    let file = path.file_name().and_then(|n| n.to_str());
+    let parent = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|n| n.to_str());
+    [file, parent]
+        .into_iter()
+        .flatten()
+        .any(|n| n.trim_start_matches('.').starts_with("kallip-tagma"))
+}
+/// The comm fallback: the existing prefix rule plus the nix wrapper
+/// shim's exact truncated name (comm caps at 15 bytes).
+fn tagma_comm_matches(comm: &str) -> bool {
+    comm.trim_start_matches("kallip-").starts_with("tagma") || comm == ".kallip-tagma-w"
+}
+/// The identity verdict for a recorded pid: is this live process the
+/// one this instance's launch claimed?
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// Live and positively identified as this instance's tagma.
+    Match,
+    /// Live, but provably not the anchored incarnation (pid reuse, or
+    /// a foreign process occupying the recorded pid).
+    Mismatch,
+    /// Live, but every identity probe failed — unverifiable.
+    Unknown,
+    /// No live process (dead or zombie).
+    Gone,
+}
+/// What /proc says about a pid, gathered once for classification.
+#[derive(Debug, Default, Clone)]
+pub struct ProcFacts {
+    pub starttime: Option<u64>,
+    pub exe: Option<String>,
+    pub comm: Option<String>,
+}
+/// Read the identity facts for `pid` in one pass.
+pub fn observe_identity(pid: u32) -> ProcFacts {
+    ProcFacts {
+        starttime: proc_starttime(pid),
+        exe: pid_exe(pid),
+        comm: pid_comm(pid),
     }
-    matches!(pid_comm(pid), Some(c) if c.trim_start_matches("kallip-").starts_with("tagma"))
+}
+/// Pure classification over the anchored identity and observed facts.
+/// The bool is `true` only for a Match that fell below the anchor
+/// level (verified by exe or comm because no anchor did) — the
+/// degraded case worth a warn. Level order: existence (a dead pid is
+/// quietly `Gone`), anchor starttime (the exact incarnation), exe
+/// family, comm. An unreadable exe falls through to comm; a readable
+/// exe that is not family decides `Mismatch` regardless of comm.
+fn classify_identity(anchored: Option<&Identity>, pid: u32, facts: &ProcFacts) -> (Verdict, bool) {
+    if !pid_is_alive(pid) {
+        return (Verdict::Gone, false);
+    }
+    if let Some(anchor) = anchored {
+        if anchor.pid != pid {
+            return (Verdict::Mismatch, false);
+        }
+        if anchor.starttime != 0
+            && let Some(starttime) = facts.starttime
+        {
+            return if starttime == anchor.starttime {
+                (Verdict::Match, false)
+            } else {
+                (Verdict::Mismatch, false)
+            };
+        }
+    }
+    let family_match = match (&facts.exe, &facts.comm) {
+        (Some(exe), _) => tagma_exe_family(exe),
+        (None, Some(comm)) => tagma_comm_matches(comm),
+        (None, None) => return (Verdict::Unknown, false),
+    };
+    if family_match {
+        (Verdict::Match, true)
+    } else {
+        (Verdict::Mismatch, false)
+    }
+}
+/// Classify a recorded pid against `anchored`, warning exactly when
+/// the verdict is a degraded (below-the-anchor) Match: the one
+/// "live, but only by name" case worth investigating.
+fn classify_with_facts(anchored: Option<&Identity>, pid: u32, slug: &str) -> Verdict {
+    let facts = observe_identity(pid);
+    let (verdict, degraded) = classify_identity(anchored, pid, &facts);
+    if degraded {
+        tracing::warn!(
+            slug = %slug,
+            pid,
+            comm = ?facts.comm,
+            "pid matches tagma only by name (launch anchor missing or unverified)"
+        );
+    }
+    verdict
+}
+/// Classification for callers holding an instance dir rather than a
+/// scanned struct: reads the anchor fresh from `meta.json` (the tree
+/// is the registry) and classifies the recorded pid.
+pub fn identity_matches(instance_dir: &Path, pid: u32) -> Verdict {
+    let anchored = read_meta(instance_dir).and_then(|meta| meta.identity);
+    let slug = instance_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("?")
+        .to_owned();
+    classify_with_facts(anchored.as_ref(), pid, &slug)
 }
 
 /// `meta.json`: the adopt marker for an instance directory. The
@@ -128,6 +271,12 @@ pub struct InstanceMeta {
     /// pre-field meta.json files parseable.
     #[serde(default)]
     pub env: Vec<String>,
+    /// The launch claim anchor: the pid and kernel starttime of the
+    /// exact process incarnation a launch verified as its own (see
+    /// `Identity`). #[serde(default)] is generic tolerance for meta
+    /// whose claim point could not pin one — not a legacy path.
+    #[serde(default)]
+    pub identity: Option<Identity>,
 }
 
 /// `runtime.json`: the instance's runtime identity, written by the
@@ -164,6 +313,7 @@ pub fn scan_instances(data_root: &Path) -> Vec<ScannedInstance> {
             port: runtime.map(|r| r.port),
             owner: Some(meta.owner_uid),
             tagma_id: read_tagma_id(&dir),
+            anchored: meta.identity,
         });
     }
     out.sort_by(|a, b| a.slug.cmp(&b.slug));
@@ -291,10 +441,89 @@ mod tests {
     }
 
     #[test]
-    fn live_pid_of_this_test_process_counts_as_tagma_via_comm() {
+    fn live_foreign_process_is_not_a_match() {
         // This test binary is not kallip-tagma, so our own pid must NOT
-        // count even though it is alive: the comm check is load-bearing.
-        assert!(!pid_is_tagma(std::process::id()));
+        // count even though it is alive: the exe/comm fallback checks
+        // are load-bearing, not decoration.
+        let pid = std::process::id();
+        let (verdict, degraded) = classify_identity(None, pid, &observe_identity(pid));
+        assert_eq!(verdict, Verdict::Mismatch);
+        assert!(!degraded);
+    }
+
+    #[test]
+    fn classify_matrix() {
+        let anchor = Identity {
+            pid: 42,
+            starttime: 1000,
+            anchored_at: 7,
+        };
+        let tagma_exe = Some("/nix/store/xyz-kallip-tagma-0.1.0/bin/kallip-tagma".to_string());
+        let foreign_exe = Some("/usr/bin/sleep".to_string());
+        let facts = |starttime: Option<u64>, exe: Option<String>, comm: Option<&str>| ProcFacts {
+            starttime,
+            exe,
+            comm: comm.map(str::to_string),
+        };
+        // Anchor level: same pid, same starttime — the exact incarnation.
+        let (v, d) = classify_identity(
+            Some(&anchor),
+            42,
+            &facts(Some(1000), tagma_exe.clone(), Some("kallip-tagma")),
+        );
+        assert_eq!((v, d), (Verdict::Match, false));
+        // Same pid, different starttime: the pid was recycled.
+        let (v, _) = classify_identity(
+            Some(&anchor),
+            42,
+            &facts(Some(2000), tagma_exe.clone(), Some("kallip-tagma")),
+        );
+        assert_eq!(v, Verdict::Mismatch);
+        // The runtime pid is not the anchored pid at all.
+        let (v, _) = classify_identity(
+            Some(&anchor),
+            43,
+            &facts(Some(1000), tagma_exe.clone(), Some("kallip-tagma")),
+        );
+        assert_eq!(v, Verdict::Mismatch);
+        // Anchor present but starttime unreadable: falls below the
+        // anchor; a family exe still matches, but degraded.
+        let (v, d) = classify_identity(Some(&anchor), 42, &facts(None, tagma_exe.clone(), None));
+        assert_eq!((v, d), (Verdict::Match, true));
+        // A hand-crafted zero starttime in the anchor cannot anchor
+        // anything (the launch path never writes one): the anchor
+        // level is skipped and the name chain decides.
+        let zero_anchor = Identity {
+            pid: 42,
+            starttime: 0,
+            anchored_at: 7,
+        };
+        let (v, d) = classify_identity(
+            Some(&zero_anchor),
+            42,
+            &facts(Some(1000), tagma_exe.clone(), Some("kallip-tagma")),
+        );
+        assert_eq!((v, d), (Verdict::Match, true));
+        // No anchor at all: name-chain matches are degraded matches.
+        let (v, d) = classify_identity(
+            None,
+            42,
+            &facts(Some(1000), tagma_exe.clone(), Some("kallip-tagma")),
+        );
+        assert_eq!((v, d), (Verdict::Match, true));
+        // Wrapped binary: comm falls back to the truncated shim name.
+        let (v, d) = classify_identity(None, 42, &facts(None, None, Some(".kallip-tagma-w")));
+        assert_eq!((v, d), (Verdict::Match, true));
+        // A readable exe that is not family decides against comm.
+        let (v, _) = classify_identity(None, 42, &facts(None, foreign_exe, Some("kallip-tagma")));
+        assert_eq!(v, Verdict::Mismatch);
+        // Nothing readable on a live process: unverifiable.
+        let (v, _) = classify_identity(None, 42, &facts(None, None, None));
+        assert_eq!(v, Verdict::Unknown);
+        // A dead pid is Gone — quiet, never degraded (u32::MAX names no
+        // process; kernel pids cap far below it).
+        let (v, d) = classify_identity(None, u32::MAX, &ProcFacts::default());
+        assert_eq!((v, d), (Verdict::Gone, false));
     }
 
     #[test]
