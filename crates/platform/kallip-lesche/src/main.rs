@@ -96,7 +96,15 @@ async fn main() -> Result<()> {
             args.max_body_size_kb,
         )))
         .layer(routes::cors_layer(&args.cors_origins))
-        .layer(tower_http::trace::TraceLayer::new_for_http());
+        // INFO-level request spans: the failure line must carry the
+        // method/uri to be triageable (the default DEBUG span is filtered
+        // out by the info log level, which is exactly why the in-the-wild
+        // 503s had no target path in the logs).
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http().make_span_with(
+                tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO),
+            ),
+        );
 
     let listener = tokio::net::TcpListener::bind(&args.listen_addr)
         .await

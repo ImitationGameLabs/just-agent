@@ -54,8 +54,14 @@ pub fn router() -> Router<SharedConvState> {
 
 async fn proxy_manage(
     State(state): State<SharedConvState>,
+    // Path runs BEFORE auth on purpose: a route/extractor shape mismatch
+    // is a server bug and must surface as its own 500, not masquerade as
+    // a 401. The route is `/tagmata/{id}/manage/{*path}`: TWO capture
+    // sets (the named id and the wildcard). A single-element `Path` here
+    // rejects every request with 500 WrongNumberOfParameters -- the
+    // shape must stay a tuple matched to the route's capture count.
+    Path((id, path)): Path<(String, String)>,
     AuthPrincipal(principal): AuthPrincipal,
-    Path(id): Path<String>,
     method: axum::http::Method,
     uri: axum::http::Uri,
     body: Option<axum::Json<serde_json::Value>>,
@@ -100,7 +106,7 @@ async fn proxy_manage(
             .map(|(k, v)| (k.to_owned(), v.to_owned()))
             .collect();
         let unknown = malformed || pairs.iter().any(|(k, _)| k != "include");
-        let only_agents = uri.path() == "/agents";
+        let only_agents = path == "agents";
         if unknown || !only_agents {
             return (StatusCode::NOT_FOUND, "query not allowed on the frame").into_response();
         }
@@ -112,7 +118,9 @@ async fn proxy_manage(
             .collect();
         body = serde_json::json!({ "include": include });
     }
-    let path = uri.path();
+    // The wildcard capture arrives WITHOUT the leading slash; the frame
+    // path must be absolute so it matches the tagma-side router's modes.
+    let frame_path = format!("/{path}");
     let req_id = next_req_id();
 
     let (reply_tx, reply_rx) = oneshot::channel();
@@ -124,7 +132,7 @@ async fn proxy_manage(
     let frame = TunnelInbound::ManageRest {
         req_id,
         method: method.as_str().to_ascii_uppercase(),
-        path: path.to_owned(),
+        path: frame_path,
         // Fresh UUID per proxied request: collision-free across reconnects.
         trace: kallip_archeion_common::ids::TraceId::random(),
         body,
@@ -258,10 +266,12 @@ mod tests {
 mod proxy_tests {
     use super::*;
     use crate::routes::test_support::db_state;
-    use axum::extract::{Path, State};
+    use axum::body::Body;
+    use axum::extract::Request;
     use axum::http::{Method, StatusCode, Uri};
     use kallip_archeion_common::ids::UserId;
     use std::str::FromStr;
+    use tower::ServiceExt;
 
     fn uid(s: &str) -> UserId {
         UserId::from(s.to_string())
@@ -271,6 +281,10 @@ mod proxy_tests {
         Uri::from_str(s).expect("test uri")
     }
 
+    /// Direct handler call with pre-built extractors, in the handler's
+    /// parameter order (Path first). This leg covers authorization and
+    /// frame semantics; the router-level shape pin below covers the
+    /// route/extractor capture contract, which a direct call bypasses.
     async fn call(
         state: &SharedConvState,
         user: &UserId,
@@ -279,11 +293,15 @@ mod proxy_tests {
         uri: &Uri,
         body: Option<serde_json::Value>,
     ) -> axum::response::Response {
-        let principal = AuthPrincipal(Principal::User(user.clone()));
         proxy_manage(
             State(state.clone()),
-            principal,
-            Path(agent.to_string()),
+            // Mirrors the wildcard capture: the relative path exactly as
+            // the router hands it over (no leading slash).
+            Path((
+                agent.to_string(),
+                uri.path().trim_start_matches('/').to_string(),
+            )),
+            AuthPrincipal(Principal::User(user.clone())),
             Method::from_bytes(method.as_bytes()).expect("valid method"),
             uri.clone(),
             body.map(axum::Json),
@@ -442,5 +460,44 @@ mod proxy_tests {
         let uri = Uri::from_static("/agents?state=idle");
         let resp = call(&state, &owner, "t-a", "GET", &uri, None).await;
         assert_eq!(status_of(&resp), StatusCode::NOT_FOUND);
+    }
+    /// Production-incident nail (the proxy 500): every proxied manage
+    /// path shape must survive the router's Path extractor. The request
+    /// goes through the real router UNAUTHENTICATED: the handler takes
+    /// Path before AuthPrincipal, so a 401 here proves the capture set
+    /// matched (a shape mismatch would 500 first); no credentials are
+    /// needed and no tunnel waiter can hang. Single-segment,
+    /// parameterized, and two-parameter paths are all covered.
+    #[tokio::test]
+    async fn proxied_paths_pass_the_path_extractor_before_auth() {
+        let (state, _control) = db_state().await;
+        let shapes = [
+            "/agents",
+            "/agents/a-1/status",
+            "/agents/a-1/lesche/direct-sessions/peer-9/messages",
+        ];
+        for path in shapes {
+            let full_uri = format!("/tagmata/t-a/manage{path}");
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri(full_uri)
+                .body(Body::empty())
+                .expect("static request");
+            let resp = router()
+                .with_state(state.clone())
+                .oneshot(request)
+                .await
+                .expect("infallible oneshot");
+            assert_ne!(
+                resp.status(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "path-shape rejection on {path}"
+            );
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED,
+                "auth must be the only rejecter left on {path}"
+            );
+        }
     }
 }

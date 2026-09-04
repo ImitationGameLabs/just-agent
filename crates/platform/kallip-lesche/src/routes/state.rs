@@ -11,7 +11,7 @@
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use kallip_archeion_common::ids::{ParticipantId, TagmaId};
@@ -217,7 +217,7 @@ async fn state_events(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
     Path(id): Path<String>,
-) -> Result<Sse<OnDrop>, StatusCode> {
+) -> Result<Sse<axum::response::sse::KeepAliveStream<OnDrop>>, StatusCode> {
     // q-M-1: the SSE plane is owner-gated like the read plane -- a
     // cross-tenant subscriber must not be able to flip the tagma's
     // subscription hint (remote pump start) or probe existence.
@@ -279,7 +279,13 @@ async fn state_events(
             registry.remove_projection_stream_if_last(&user, &tagma, &tx);
         });
     });
-    Ok(Sse::new(cleaned))
+    // `: ping` comment every 15s: dirty frames only flow on changes, so a
+    // quiet tagma would otherwise stream zero bytes and get reaped by an
+    // idle timeout (proxy or browser) -- the client would see the body
+    // die mid-stream (fetch TypeError) and back off reconnecting. The
+    // front-end SSE parser ignores comment lines, so the ping cannot be
+    // mistaken for a dirty frame. Same contract as the tunnel SSE.
+    Ok(Sse::new(cleaned).keep_alive(KeepAlive::new().text("ping")))
 }
 
 #[cfg(test)]
@@ -651,5 +657,45 @@ mod generation_tests {
             reg.projection_stream_live_for_tagma(&tagma)
         };
         assert!(!live, "the channel is gone after the lag window");
+    }
+    /// Keep-alive nail: a stream with no dirty traffic still emits the
+    /// `: ping` comment frame within the keep-alive interval, and the
+    /// frame carries no `data:`/`event:` lines -- an SSE parser ignores
+    /// comment lines, so the idle ping can never be mistaken for a
+    /// dirty frame (no seq, no onFrame). The paused clock lets the 15s
+    /// interval elapse without any real waiting.
+    #[tokio::test]
+    async fn idle_stream_emits_comment_ping_not_data() {
+        let (state, _control) = db_state().await;
+        // Real clock for DB setup, then freeze: the pending stream read
+        // auto-advances past the 15s keep-alive with zero real waiting.
+        tokio::time::pause();
+        let tagma = tagma_of("t-a");
+        let owner = uid("alice");
+        let _hint_rx = enroll(&state, &tagma, &owner).await;
+        let sse = state_events(
+            State(state.clone()),
+            owner_principal(&owner),
+            Path("t-a".to_string()),
+        )
+        .await
+        .expect("owner subscribes");
+        let mut stream = sse.into_response().into_body().into_data_stream();
+        // Pending read on the paused clock: time auto-advances past the
+        // keep-alive interval; the timeout makes a keep_alive regression
+        // (no frame ever) fail red instead of hanging the test.
+        let frame = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            futures_util::StreamExt::next(&mut stream),
+        )
+        .await
+        .expect("keep-alive frame must arrive within its interval")
+        .expect("stream live")
+        .expect("frame bytes");
+        let text = String::from_utf8(frame.to_vec()).expect("utf8 frame");
+        assert!(text.starts_with(':'), "comment line expected: {text:?}");
+        assert!(text.contains(": ping"), "ping comment expected: {text:?}");
+        assert!(!text.contains("data:"), "no dirty payload: {text:?}");
+        assert!(!text.contains("event:"), "no event type: {text:?}");
     }
 }

@@ -310,6 +310,63 @@ mod tests {
             .await
             .unwrap_or_else(|infallible| match infallible {})
     }
+    /// Same as [`manage_get`] for an arbitrary method: the full-table
+    /// shape nail needs each route's declared verb, not just GET.
+    async fn manage_call(state: &SharedState, method: &str, uri: &str) -> Response {
+        let method = Method::from_str(method).expect("static method");
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .extension(AuthIdentity::operator())
+            .body(Body::empty())
+            .expect("static parts");
+        manage_router()
+            .with_state(state.clone())
+            .oneshot(request)
+            .await
+            .unwrap_or_else(|infallible| match infallible {})
+    }
+
+    /// Route-shape nail: every (method, path) row of the management-plane
+    /// table must survive the router's extractors. A Path-shape mismatch
+    /// (route capture count vs extractor arity) is a 500 by axum
+    /// contract -- exactly the bug class the lesche manage proxy surfaced
+    /// in production. 400/404/405 are legitimate handler outcomes here;
+    /// only the 500 shape-rejection fires the assert.
+    #[tokio::test]
+    async fn manage_router_shape_pin_rejects_no_path_shape_500s() {
+        let state = make_state();
+        let rows: &[(&str, &str)] = &[
+            ("GET", "/budget"),
+            ("POST", "/budget"),
+            ("GET", "/agents"),
+            ("DELETE", "/agents/a-1"),
+            ("GET", "/agents/a-1/status"),
+            ("POST", "/agents/a-1/interrupt"),
+            ("PUT", "/agents/a-1/duty"),
+            ("PUT", "/agents/a-1/metadata"),
+            ("PUT", "/agents/a-1/profile-set"),
+            ("GET", "/profiles"),
+            ("PUT", "/profiles"),
+            ("POST", "/profiles/probe"),
+            ("POST", "/profiles/apply"),
+            ("PUT", "/profiles/default"),
+            ("DELETE", "/profiles/sets/default"),
+            ("GET", "/work-schedule"),
+            ("PUT", "/work-schedule"),
+            ("GET", "/agents/a-1/lesche/sessions"),
+            ("GET", "/agents/a-1/lesche/direct-sessions/peer-9/messages"),
+            ("POST", "/agents/a-1/lesche/messages"),
+        ];
+        for (method, path) in rows {
+            let resp = manage_call(&state, method, path).await;
+            assert_ne!(
+                resp.status(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "path-shape rejection on {method} {path}"
+            );
+        }
+    }
 
     /// P1-c nail: the aggregate include list is a closed allowlist -- an
     /// unknown key is a 400 (fail-closed), not an ignored filter.

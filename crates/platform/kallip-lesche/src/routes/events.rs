@@ -12,7 +12,7 @@
 
 use axum::Router;
 use axum::extract::State;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::event::LescheEvent;
@@ -32,7 +32,7 @@ pub fn router() -> Router<SharedConvState> {
 async fn me_events(
     State(state): State<SharedConvState>,
     AuthPrincipal(principal): AuthPrincipal,
-) -> Result<Sse<OnDrop>, ApiError> {
+) -> Result<Sse<axum::response::sse::KeepAliveStream<OnDrop>>, ApiError> {
     let user_id = require_user(&principal)?.clone();
     // Capture the runtime handle so the synchronous `OnDrop` cleanup can spawn
     // the presence fan-out without `tokio::spawn`'s implicit `Handle::current()`
@@ -118,5 +118,7 @@ async fn me_events(
             }
         }
     });
-    Ok(Sse::new(cleaned))
+    // `: ping` comment every 15s so quiet periods cannot let an idle
+    // timeout reap the stream mid-read (parser ignores comments).
+    Ok(Sse::new(cleaned).keep_alive(KeepAlive::new().text("ping")))
 }
