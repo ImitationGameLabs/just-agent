@@ -981,11 +981,14 @@ async fn shutdown_signal(token: CancellationToken) {
             .recv()
             .await;
     };
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = sigterm => {},
-    }
-    info!("received shutdown signal, initiating graceful shutdown");
+    let signal = tokio::select! {
+        _ = ctrl_c => "SIGINT",
+        _ = sigterm => "SIGTERM",
+    };
+    info!(
+        signal,
+        "received shutdown signal, initiating graceful shutdown"
+    );
     token.cancel();
 }
 
