@@ -141,7 +141,10 @@ impl Daemon {
                         pid,
                         port,
                     }),
-                    Ok(Err(error)) => spawn_error_response(&error),
+                    Ok(Err(error)) => {
+                        log_spawn_outcome(&slug_out, &error);
+                        spawn_error_response(&error)
+                    }
                     Err(join_error) => {
                         err(ErrorCode::Internal, format!("spawn task: {join_error}"))
                     }
@@ -188,6 +191,7 @@ impl Daemon {
                         port,
                     }),
                     Ok(Err(error)) => {
+                        log_start_outcome(&slug_out, &error);
                         let code = kallip_daemon_common::wire::ErrorCode::from(&error);
                         err(code, error.to_string())
                     }
@@ -210,6 +214,46 @@ fn spawn_error_response(error: &crate::spawn::SpawnError) -> Response {
         SpawnError::Internal(_) => ErrorCode::Internal,
     };
     err(code, error.to_string())
+}
+
+/// Outcome logging for spawn/start at the dispatch layer — the slug is
+/// only reliably known here (error variants carry it partially). Levels
+/// follow the audit rubric: input rejections are routine business
+/// answers (info), state conflicts are worth attention (warn), failed
+/// actions need a human (error). Success is logged inside spawn/start,
+/// where the pid and port are native.
+fn log_spawn_outcome(slug: &str, error: &crate::spawn::SpawnError) {
+    use crate::spawn::SpawnError;
+    match error {
+        SpawnError::Invalid(_) => {
+            tracing::info!(slug = %slug, %error, "spawn refused: invalid request")
+        }
+        SpawnError::SlugTaken(_) => {
+            tracing::warn!(slug = %slug, %error, "spawn refused: slug already exists")
+        }
+        SpawnError::Overlap { .. } => {
+            tracing::warn!(slug = %slug, %error, "spawn refused: workspace overlap")
+        }
+        SpawnError::Timeout { .. } | SpawnError::Internal(_) => {
+            tracing::error!(slug = %slug, %error, "spawn failed")
+        }
+    }
+}
+
+/// Start's twin of [`log_spawn_outcome`]. AlreadyRunning is logged
+/// inside start (with the recorded pid and its comm) and stays silent
+/// here to keep one diagnostic line per refusal.
+fn log_start_outcome(slug: &str, error: &crate::start::StartError) {
+    use crate::start::StartError;
+    match error {
+        StartError::AlreadyRunning(_) => {}
+        StartError::NotFound(_) | StartError::Invalid(_) => {
+            tracing::info!(slug = %slug, %error, "start refused: invalid request")
+        }
+        StartError::Timeout { .. } | StartError::Internal(_) => {
+            tracing::error!(slug = %slug, %error, "start failed")
+        }
+    }
 }
 
 #[cfg(test)]

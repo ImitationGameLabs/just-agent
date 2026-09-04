@@ -42,27 +42,38 @@ pub fn stop(
         .map(|runtime| runtime.pid)
         .ok_or_else(|| StopError::NotRunning(slug.to_string()))?;
     if !pid_is_tagma(pid) {
+        tracing::warn!(
+            slug = %slug,
+            pid,
+            comm = ?crate::scan::pid_comm(pid),
+            "stop refused: recorded pid is not a tagma"
+        );
         // Stale runtime state (crash leftover) or a recycled pid: the
         // is gone; report it rather than shooting an innocent process.
         return Err(StopError::NotRunning(slug.to_string()));
     }
 
     send(pid, libc::SIGTERM).map_err(|m| internal(slug, m))?;
+    tracing::info!(slug = %slug, pid, "stopping instance; sent SIGTERM");
     let deadline = Instant::now() + GRACE;
     while Instant::now() < deadline {
         if !alive(pid) {
+            tracing::info!(slug = %slug, pid, "instance stopped");
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+    tracing::warn!(slug = %slug, pid, "grace period expired; escalating to SIGKILL");
     send(pid, libc::SIGKILL).map_err(|m| internal(slug, m))?;
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         if !alive(pid) {
+            tracing::info!(slug = %slug, pid, "instance stopped after SIGKILL");
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    tracing::error!(slug = %slug, pid, "instance survived SIGKILL");
     Err(internal(slug, format!("pid {pid} survived SIGKILL")))
 }
 

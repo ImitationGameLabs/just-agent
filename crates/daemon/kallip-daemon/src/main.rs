@@ -143,10 +143,16 @@ fn state_dir() -> Result<PathBuf> {
 /// endpoint and startup must fail instead of stealing it.
 fn refuse_if_live(path: &std::path::Path) -> Result<()> {
     match std::os::unix::net::UnixStream::connect(path) {
-        Ok(_probe) => anyhow::bail!(
-            "another kallip-daemon is listening at {}; refusing to take over a live socket",
-            path.display()
-        ),
+        Ok(_probe) => {
+            tracing::error!(
+                socket = %path.display(),
+                "another daemon owns this socket; refusing to start"
+            );
+            anyhow::bail!(
+                "another kallip-daemon is listening at {}; refusing to take over a live socket",
+                path.display()
+            );
+        }
         Err(_) => {
             let _ = std::fs::remove_file(path);
             Ok(())

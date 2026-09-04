@@ -145,6 +145,12 @@ pub fn start(
     if let Some(runtime) = scan::read_runtime(&instance_dir)
         && pid_is_alive(runtime.pid)
     {
+        tracing::warn!(
+            slug = %slug,
+            pid = runtime.pid,
+            comm = ?scan::pid_comm(runtime.pid),
+            "start refused: recorded pid is alive"
+        );
         return Err(StartError::AlreadyRunning(slug.to_string()));
     }
     // The persisted copy is re-validated so hand-edited meta cannot smuggle
