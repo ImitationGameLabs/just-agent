@@ -2,8 +2,8 @@
 //! stopped or dead. This is adoption, not allocation — nothing is created
 //! or removed: meta.json carries the workspace and user env captured at
 //! spawn time, credentials/ survive untouched for the fresh process to
-//! pick up, and a stale runtime.json is simply overwritten by the new
-//! incarnation's own self-report.
+//! pick up, and a stale runtime.json is removed before the relaunch so
+//! the launch poll only ever sees the new incarnation's self-report.
 
 use std::path::Path;
 use std::time::Duration;

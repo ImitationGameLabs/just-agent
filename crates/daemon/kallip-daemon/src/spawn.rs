@@ -524,7 +524,8 @@ pub(crate) fn launch(
     // launch. That trust needs a clean slate: drop a previous
     // incarnation's runtime.json before starting the helper. ENOENT is
     // the common path (fresh spawn); any other failure aborts the launch
-    // — an unremovable leftover would make the poll adopt a dead pid.
+    // — an unremovable leftover would leave a foreign pid inside the
+    // poll's trust window, and the timeout branch would kill it.
     if let Err(e) = clear_stale_runtime(instance_dir) {
         tracing::error!(
             instance_dir = %instance_dir.display(),
