@@ -411,6 +411,141 @@ fn spawn_rejects_slug_reuse_and_workspace_overlap() {
     }
 }
 
+#[test]
+fn start_recovers_from_stale_runtime_json() {
+    // The regression this locks: a leftover runtime.json from a previous
+    // incarnation used to poison the launch poll, and its recorded pid
+    // (required to look like a tagma before it was trusted) decided
+    // between a bogus adoption and a 30s kill. The launch now clears the
+    // leftover before starting the helper, so the poll only ever sees
+    // this launch's self-report.
+    let daemon = start_daemon();
+    let client = DaemonClient::new(&daemon.socket);
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+
+    let spawn = tokio_block_on(client.call(RequestBody::Spawn {
+        slug: "stale-runtime".into(),
+        workspace: workspace.path().display().to_string(),
+        env: vec![
+            "KALLIP_OPERATOR_TOKEN=test-op-token".into(),
+            "KALLIP_LLM_PROVIDER=deepseek".into(),
+            "KALLIP_LLM_MODEL=test-model".into(),
+            "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
+        ],
+    }));
+    let OkPayload::Spawn { pid, .. } = expect_ok(spawn) else {
+        panic!("expected spawn payload");
+    };
+
+    // Stop and wait for the exit, so the fabricated runtime.json below
+    // carries a genuinely dead pid — exactly what a crash leaves behind.
+    let stop = tokio_block_on(client.call(RequestBody::Stop {
+        slug: "stale-runtime".into(),
+    }));
+    expect_ok(stop);
+    for _ in 0..100 {
+        if !PathBuf::from(format!("/proc/{pid}")).exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let stale = serde_json::json!({ "pid": pid, "port": 1 });
+    let instance_dir = daemon.data_dir.path().join("stale-runtime");
+    std::fs::write(
+        instance_dir.join("runtime.json"),
+        serde_json::to_vec(&stale).expect("serialize stale runtime"),
+    )
+    .expect("write stale runtime.json");
+
+    let started = tokio_block_on(client.call(RequestBody::Start {
+        slug: "stale-runtime".into(),
+        env: Vec::new(),
+    }));
+    let OkPayload::Spawn {
+        pid: started_pid,
+        port: started_port,
+        ..
+    } = expect_ok(started)
+    else {
+        panic!("expected start payload");
+    };
+    assert_ne!(started_pid, pid, "the stale pid, not this launch");
+    assert!(started_port > 0, "fresh bound port");
+
+    // Cleanup so the test does not leave a live tagma behind.
+    let stop = tokio_block_on(client.call(RequestBody::Stop {
+        slug: "stale-runtime".into(),
+    }));
+    expect_ok(stop);
+    for _ in 0..100 {
+        if !PathBuf::from(format!("/proc/{started_pid}")).exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !PathBuf::from(format!("/proc/{started_pid}")).exists(),
+        "relaunched tagma exited after stop"
+    );
+}
+
+#[test]
+fn start_rejects_when_stale_runtime_names_a_live_pid() {
+    // Liveness alone decides AlreadyRunning: a leftover naming a live pid
+    // (here: this test process) is refused, not adopted and not killed.
+    // Under the old comm re-check this same shape wedged the poll into a
+    // 30s timeout whose kill branch SIGKILLed this very pid.
+    let daemon = start_daemon();
+    let client = DaemonClient::new(&daemon.socket);
+    let workspace = tempfile::tempdir().expect("workspace tempdir");
+
+    let spawn = tokio_block_on(client.call(RequestBody::Spawn {
+        slug: "live-stale".into(),
+        workspace: workspace.path().display().to_string(),
+        env: vec![
+            "KALLIP_OPERATOR_TOKEN=test-op-token".into(),
+            "KALLIP_LLM_PROVIDER=deepseek".into(),
+            "KALLIP_LLM_MODEL=test-model".into(),
+            "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
+        ],
+    }));
+    let OkPayload::Spawn { pid, .. } = expect_ok(spawn) else {
+        panic!("expected spawn payload");
+    };
+
+    let stop = tokio_block_on(client.call(RequestBody::Stop {
+        slug: "live-stale".into(),
+    }));
+    expect_ok(stop);
+    for _ in 0..100 {
+        if !PathBuf::from(format!("/proc/{pid}")).exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // A live pid that is not a tagma: the conservative refusal is the
+    // point. Refusing costs one retry; adopting or killing an unrelated
+    // process costs the process.
+    let stale = serde_json::json!({ "pid": std::process::id(), "port": 1 });
+    let instance_dir = daemon.data_dir.path().join("live-stale");
+    std::fs::write(
+        instance_dir.join("runtime.json"),
+        serde_json::to_vec(&stale).expect("serialize stale runtime"),
+    )
+    .expect("write stale runtime.json");
+
+    let started = tokio_block_on(client.call(RequestBody::Start {
+        slug: "live-stale".into(),
+        env: Vec::new(),
+    }));
+    let response = started.expect("client exchange");
+    match response.body {
+        ResponseBody::Err { code, .. } => assert_eq!(code, ErrorCode::SlugTaken),
+        other => panic!("expected slug_taken refusal, got {other:?}"),
+    }
+}
+
 /// A manually booted tagma on an unmarked data root must stay unwritten:
 /// no meta.json means no daemon management, so no runtime.json. The
 /// gate runs between bind and serve, so a successful TCP connect to the

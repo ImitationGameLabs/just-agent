@@ -88,6 +88,15 @@ pub fn pid_is_alive(pid: u32) -> bool {
         Err(_) => false,
     }
 }
+/// The process name from `/proc/<pid>/comm`, whitespace-trimmed. `None`
+/// when the entry is unreadable (the process is gone). This is the
+/// diagnostic surface for launch-timeout logs: recording the actual
+/// comm value is what makes a naming mismatch investigable.
+pub fn pid_comm(pid: u32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|c| c.trim().to_owned())
+}
 /// True when `pid` is alive (not a zombie) and `/proc/<pid>/comm` starts
 /// with `kallip-tagma`.
 /// The prefix match (not equality) tolerates a 15-char comm truncation of
@@ -96,8 +105,7 @@ pub fn pid_is_tagma(pid: u32) -> bool {
     if !pid_is_alive(pid) {
         return false;
     }
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"));
-    matches!(comm, Ok(c) if c.trim_start_matches("kallip-").starts_with("tagma"))
+    matches!(pid_comm(pid), Some(c) if c.trim_start_matches("kallip-").starts_with("tagma"))
 }
 
 /// `meta.json`: the adopt marker for an instance directory. The
@@ -287,6 +295,12 @@ mod tests {
         // This test binary is not kallip-tagma, so our own pid must NOT
         // count even though it is alive: the comm check is load-bearing.
         assert!(!pid_is_tagma(std::process::id()));
+    }
+
+    #[test]
+    fn pid_comm_reads_the_test_process_name() {
+        let comm = pid_comm(std::process::id()).expect("own /proc entry readable");
+        assert!(!comm.is_empty());
     }
 
     #[test]

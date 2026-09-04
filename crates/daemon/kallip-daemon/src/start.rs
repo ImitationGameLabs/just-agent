@@ -22,7 +22,8 @@ pub enum StartError {
     #[error("instance {0} is already running")]
     AlreadyRunning(String),
     #[error(
-        "instance did not publish pid/port within {timeout_secs}s; the instance's own stderr (if any) went to the daemon's stderr"
+        "instance did not publish pid/port within {timeout_secs}s; see the \
+         instance log files under <instance-dir>/logs/ and system OOM records"
     )]
     Timeout { timeout_secs: u64 },
     #[error(transparent)]
@@ -110,8 +111,11 @@ fn replay_env(meta: &scan::InstanceMeta, instance_dir: &Path) -> Vec<String> {
     replay
 }
 
-/// Blocking relaunch. `pid_is_tagma` is injected so tests can fake the
-/// liveness verdict without a real process (mirroring stop).
+/// Blocking relaunch. `pid_is_alive` is injected so tests can fake the
+/// liveness verdict without a real process (mirroring stop). Liveness
+/// alone decides the AlreadyRunning check — the former comm re-check
+/// rejected a healthy instance under a wrapped binary name (a
+/// makeWrapper-wrapped tagma's truncated comm is not ours to judge).
 /// `env_overrides` is a one-shot overlay validated like spawn's request
 /// env and applied for this launch only.
 pub fn start(
@@ -119,7 +123,7 @@ pub fn start(
     slug: &str,
     env_overrides: &[String],
     timeout: Duration,
-    pid_is_tagma: &dyn Fn(u32) -> bool,
+    pid_is_alive: &dyn Fn(u32) -> bool,
 ) -> Result<(u32, u16), StartError> {
     if !kallip_daemon_common::wire::valid_slug(slug) {
         return Err(StartError::Invalid(format!(
@@ -139,7 +143,7 @@ pub fn start(
         )));
     };
     if let Some(runtime) = scan::read_runtime(&instance_dir)
-        && pid_is_tagma(runtime.pid)
+        && pid_is_alive(runtime.pid)
     {
         return Err(StartError::AlreadyRunning(slug.to_string()));
     }

@@ -176,7 +176,7 @@ impl Daemon {
                             &slug,
                             &env,
                             timeout,
-                            &crate::scan::pid_is_tagma,
+                            &crate::scan::pid_is_alive,
                         )
                     }
                 })

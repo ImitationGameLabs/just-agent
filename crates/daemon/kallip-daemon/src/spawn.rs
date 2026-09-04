@@ -30,7 +30,8 @@ pub enum SpawnError {
     #[error("{0}")]
     Invalid(String),
     #[error(
-        "instance did not publish pid/port within {timeout_secs}s; the instance's own stderr (if any) went to the daemon's stderr"
+        "instance did not publish pid/port within {timeout_secs}s; see the \
+         instance log files under <instance-dir>/logs/ and system OOM records"
     )]
     Timeout { timeout_secs: u64 },
     #[error(transparent)]
@@ -507,6 +508,23 @@ pub(crate) fn launch(
     user_env: &[String],
     timeout: Duration,
 ) -> Result<(u32, u16), SpawnError> {
+    // The poll below trusts any runtime.json it sees as belonging to this
+    // launch. That trust needs a clean slate: drop a previous
+    // incarnation's runtime.json before starting the helper. ENOENT is
+    // the common path (fresh spawn); any other failure aborts the launch
+    // — an unremovable leftover would make the poll adopt a dead pid.
+    if let Err(e) = clear_stale_runtime(instance_dir) {
+        tracing::error!(
+            instance_dir = %instance_dir.display(),
+            error = %e,
+            "cannot clear stale runtime.json; refusing to launch"
+        );
+        return Err(anyhow::anyhow!(
+            "clearing stale runtime.json in {}: {e}",
+            instance_dir.display()
+        )
+        .into());
+    }
     let helper = bins::resolve("kallip-daemon-spawn");
     let tagma = bins::resolve("kallip-tagma");
     let base = harvest_base_env(tagma.parent());
@@ -518,20 +536,33 @@ pub(crate) fn launch(
         .status()
         .map_err(|e| anyhow::anyhow!("running spawn helper: {e}"))?;
     if !status.success() {
+        tracing::error!(status = %status, "spawn helper failed");
         return Err(anyhow::anyhow!("spawn helper exited {status}").into());
     }
 
     // --- wait for the self-written runtime.json --------------------------
+    // Invariant: reaching this poll ⇔ the instance dir held no leftover
+    // runtime.json at launch time (cleared before the helper ran). Any
+    // file that appears during the poll belongs to this launch, so the
+    // pid it carries is trusted directly — no comm re-check (a
+    // makeWrapper-wrapped tagma's truncated comm is not ours to judge).
     let deadline = Instant::now() + timeout;
     loop {
         if let Some(runtime) = scan::read_runtime(instance_dir)
-            && scan::pid_is_tagma(runtime.pid)
+            && scan::pid_is_alive(runtime.pid)
         {
             return Ok((runtime.pid, runtime.port));
         }
         if Instant::now() >= deadline {
             // Kill whatever the helper left; keep the tree itself.
             if let Some(pid) = scan::read_runtime(instance_dir).map(|r| r.pid) {
+                // Diagnosability before the kill: the recorded comm is what
+                // a naming-mismatch investigation needs.
+                tracing::warn!(
+                    pid,
+                    comm = ?scan::pid_comm(pid),
+                    "launch timed out; killing the pid that never published"
+                );
                 unsafe { libc::kill(pid as i32, libc::SIGKILL) };
             }
             return Err(SpawnError::Timeout {
@@ -542,9 +573,44 @@ pub(crate) fn launch(
     }
 }
 
+/// Drop a leftover `runtime.json` from a previous incarnation. ENOENT is
+/// success (the target state — no leftover — already holds); any other
+/// error surfaces to the caller, which aborts the launch.
+fn clear_stale_runtime(instance_dir: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(instance_dir.join("runtime.json")) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- clear_stale_runtime ----------------------------------------------
+
+    #[test]
+    fn clear_stale_runtime_is_ok_when_no_file_exists() {
+        let dir = tempdir();
+        clear_stale_runtime(dir.path()).expect("absent file is the clean state");
+    }
+
+    #[test]
+    fn clear_stale_runtime_removes_a_leftover() {
+        let dir = tempdir();
+        std::fs::write(dir.path().join("runtime.json"), b"{}").expect("write leftover");
+        clear_stale_runtime(dir.path()).expect("leftover removes");
+        assert!(!dir.path().join("runtime.json").exists());
+    }
+
+    #[test]
+    fn clear_stale_runtime_fails_when_instance_dir_is_not_a_directory() {
+        let dir = tempdir();
+        let not_a_dir = dir.path().join("file");
+        std::fs::write(&not_a_dir, b"x").expect("write file");
+        assert!(clear_stale_runtime(&not_a_dir).is_err());
+    }
 
     /// Write an executable `#!/bin/bash` script and return its path. The
     /// body must stick to bash builtins: the shim runs under the
