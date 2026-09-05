@@ -228,14 +228,16 @@ The archeion and both postgres services need no special privileges.
 
 In dev and the prod-tagma composition, tagma data and the agent workspace are
 **docker named volumes** — no host directories are created and the project tree
-stays clean. Shared skills live inside the `data` volume's `skills/` subdir, and
-the tagma credentials (device key + tagma token) live under
-`/var/lib/kallip/credentials/` inside the `data` volume. The archeion and each
+stays clean. Shared skills live inside the `kallipai_tagma_data` volume's
+`skills/` subdir, and the tagma credentials (device key + tagma token) live
+under
+`/var/lib/kallipai/tagmata/main/credentials/` inside that volume. The
+archeion and each
 postgres service add their own volumes in the compositions that run them. The
 test composition mounts none (its scratch tree is an ephemeral `/testdata`
 tmpfs).
 
-- `data` named volume → `/var/lib/kallip` — agent state, logs, skills, and the tagma credentials (persistent; survives `arion down`, removed by `arion down -v`).
+- `kallipai_tagma_data` named volume → `/var/lib/kallipai/tagmata/main` — agent state, logs, skills, and the tagma credentials (persistent; survives `arion down`, removed by `arion down -v`).
 - `workspace` named volume → `/workspace` — the agent workspace root.
 - `archeion_pgdata` named volume → `/var/lib/postgresql/data` — the archeion's Postgres store (dev + the prod-archeion composition).
 - `lesche_pgdata` named volume → `/var/lib/postgresql/data` — the lesche's Postgres chat store (dev + the prod-archeion composition).
@@ -248,9 +250,9 @@ named volumes — if you need tagma state on a specific disk, pin it at the
 docker layer (data-root) or edit the compose:
 
 ```sh
-KALLIP_ARION_DATA_PATH=$PWD/data arion up -d        # /var/lib/kallip ← host ./data
+KALLIP_ARION_DATA_PATH=$PWD/data arion up -d        # /var/lib/kallipai/tagmata/main ← host ./data
 KALLIP_ARION_WORKSPACE_PATH=$PWD/ws arion up -d     # /workspace ← host ./ws
-KALLIP_ARION_SKILLS_PATH=$PWD/skills arion up -d    # /var/lib/kallip/skills ← host ./skills
+KALLIP_ARION_SKILLS_PATH=$PWD/skills arion up -d    # /var/lib/kallipai/tagmata/main/skills ← host ./skills
 ```
 
 Don't point `KALLIP_ARION_SKILLS_PATH` at the same host path as
@@ -262,7 +264,7 @@ compose throws at eval otherwise).
 path (default `/workspace`); a host bind does not change what the tagma sees.
 
 Each agent needs a `workspace_root` that exists in the container and is
-**disjoint** from `/var/lib/kallip`. Pass `workspace_root: /workspace` when
+**disjoint** from `/var/lib/kallipai/tagmata/main`. Pass `workspace_root: /workspace` when
 creating an agent via the [tagma API](tagma-api.md); the tagma rejects a
 workspace that contains or is contained by the data dir.
 
@@ -330,7 +332,7 @@ docker load < result
 docker run --rm \
   --security-opt seccomp=unconfined --cap-add SYS_ADMIN \
   -p 3000:3000 \
-  -v kallipai-tagma_data:/var/lib/kallip \
+  -v kallipai-tagma_data:/var/lib/kallipai/tagmata/main \
   -v kallipai-tagma_workspace:/workspace \
   -e KALLIP_LLM_PROVIDER=deepseek \
   -e KALLIP_LLM_MODEL=deepseek-v4-flash \

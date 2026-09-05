@@ -319,7 +319,7 @@ Both sides must list the new rows: `human` for the user's message,
 
 The daemon family (`crates/daemon/`) manages multiple local tagma
 instances. The daemon is stateless — the instance tree under
-`KALLIP_DATA_DIR` (default `~/.local/share/kallip`) is the only truth;
+`KALLIP_DATA_DIR` (default `~/.local/share/kallipai/tagmata`) is the only truth;
 `kallipctl` talks to it over a 0600 control socket:
 
 ```sh
@@ -344,12 +344,13 @@ replayed env once the instance holds stored relay credentials
 the code is single-use, and replaying it after a completed enrollment trips
 tagma's conflicting-relay-configuration fail-fast. An instance whose
 enrollment never completed still replays the code, so a restart can retry.
-A tagma instance logs into the `logs/` subdirectory of its data root
-by default: daily-rolling files, the last 7 kept. Set
-`KALLIP_TAGMA_LOG_TO_STDERR=1` (or `true`) to log to the terminal's
-stderr instead -- handy when manually debugging a managed data dir;
-any other value keeps the file default, and a file layer that fails
-to build falls back to stderr.
+A daemon-managed tagma instance logs into the state tree —
+`~/.local/state/kallipai/tagmata/<slug>/logs/` (created 0700): daily-rolling
+files, the last 7 kept. A standalone run (no daemon marker) keeps its
+`logs/` inside the data root instead. Set `KALLIP_TAGMA_LOG_TO_STDERR=1`
+(or `true`) to log to the terminal's stderr instead -- handy when manually
+debugging a managed data dir; any other value keeps the file default, and
+a log directory that cannot be resolved or created falls back to stderr.
 The web management face lives in `crates/platform/kallip-instances`: a
 pure JSON API under `/api/instances/*`, proxying the daemon over its
 UDS socket. Platform mode: the archeion's internal face
@@ -389,9 +390,9 @@ bind-mount them on the host instead:
 
 | Env var                       | Mounts                   | Use case                            |
 | ----------------------------- | ------------------------ | ----------------------------------- |
-| `KALLIP_ARION_DATA_PATH`      | `/var/lib/kallip`        | keep tagma state on a known disk    |
+| `KALLIP_ARION_DATA_PATH`      | `/var/lib/kallipai/tagmata/main` | keep tagma state on a known disk    |
 | `KALLIP_ARION_WORKSPACE_PATH` | `/workspace`             | make the agent's files host-visible |
-| `KALLIP_ARION_SKILLS_PATH`    | `/var/lib/kallip/skills` | curate shared skills on the host    |
+| `KALLIP_ARION_SKILLS_PATH`    | `/var/lib/kallipai/tagmata/main/skills` | curate shared skills on the host    |
 
 Leave `KALLIP_SKILLS_ROOT` unset when using `KALLIP_ARION_SKILLS_PATH` -- the
 former redirects `skill_dir()` away from the bind-mount target.

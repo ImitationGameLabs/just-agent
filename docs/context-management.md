@@ -96,9 +96,9 @@ Skills are a natural consequence of agentic context management:
 
    | Platform | Default path                           |
    | -------- | -------------------------------------- |
-   | Linux    | `~/.local/share/kallip`                |
-   | macOS    | `~/Library/Application Support/kallip` |
-   | Windows  | `%APPDATA%\kallip`                     |
+   | Linux    | `~/.local/share/kallipai/tagmata/default` |
+   | macOS    | `~/Library/Application Support/kallipai/tagmata/default` |
+   | Windows  | `%APPDATA%\kallipai\tagmata\default`     |
 
 3. When it encounters a matching situation later, it reads the file and pins
    the content into context.

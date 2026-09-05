@@ -123,7 +123,7 @@ pub fn seed_skills_if_empty() -> Result<()> {
 /// Location of the bundled read-only skill tree, if configured.
 ///
 /// `KALLIP_SKILLS_SEED` points at a store path (e.g. the `shared-skills` flake
-/// output's `${out}/share/kallip/skills`). Unset or empty → `None`.
+/// output's `${out}/share/kallipai/skills`). Unset or empty → `None`.
 fn seed_dir() -> Option<PathBuf> {
     let s = std::env::var("KALLIP_SKILLS_SEED").ok()?;
     (!s.is_empty()).then(|| PathBuf::from(s))
