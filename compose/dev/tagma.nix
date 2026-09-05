@@ -91,7 +91,7 @@ in
         workspaceVolume
       ]
       # skills has no named volume of its own: unset -> skills live inside the
-      # `tagma_data` volume's skills/ subdir; set -> a bind overlays it.
+      # `kallipai_tagma_data` volume's skills/ subdir; set -> a bind overlays it.
       ++ lib.optional (skillsBind != null) skillsBind;
       service.env_file = [ ".env" ];
       image.enableRecommendedContents = true;

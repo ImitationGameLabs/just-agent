@@ -50,8 +50,10 @@ pub fn data_dir_root() -> Result<PathBuf> {
 }
 /// Resolve the state home's `kallipai` namespace — where pure output
 /// residue lives (instance logs), symmetric to [`data_dir_root`]'s data
-/// side but under `$XDG_STATE_HOME`: state is regenerable-or-reproducible
-/// material that must not sit inside the portable instance tree.
+/// side but under `$XDG_STATE_HOME`. State is material that persists
+/// across restarts yet is not portable enough to belong in the data
+/// home — XDG puts logs and history here, not in cache (logs are not
+/// regenerable) and not inside the portable instance tree.
 pub fn state_dir_root() -> Result<PathBuf> {
     Ok(dirs::state_dir()
         .context("could not determine platform state directory")?

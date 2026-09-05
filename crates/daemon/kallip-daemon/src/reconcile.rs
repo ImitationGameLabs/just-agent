@@ -49,9 +49,10 @@ pub async fn run(data_root: PathBuf) {
 }
 /// Where an instance's log files live: the state tree mirrors the data
 /// tree (`<state_home>/kallipai/tagmata/<slug>/logs`) because logs are
-/// pure output residue kept outside the portable instance tree. When
-/// the platform state home is undetermined, fall back to the in-tree
-/// location so the diagnostic still points somewhere real.
+/// pure output residue kept outside the portable instance tree. The
+/// no-state-home arm is defensive only — the daemon's own startup
+/// already requires the platform state dir, so in practice it never
+/// fires; it keeps the pure function total for tests.
 fn instance_logs_dir(data_root: &Path, state_home: Option<&Path>, slug: &str) -> PathBuf {
     match state_home {
         Some(home) => home
