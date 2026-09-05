@@ -53,7 +53,16 @@ async fn main() -> Result<()> {
         args.listen_addr
     );
 
-    let data_dir = args.data_dir.clone().unwrap_or_else(args::default_data_dir);
+    let data_dir = match args.data_dir.clone() {
+        Some(dir) => dir,
+        None => match args::default_data_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                eprintln!("kallip-cron-daemon: {e:#}");
+                std::process::exit(2);
+            }
+        },
+    };
     let db_path = data_dir.join("cron.sqlite");
     info!(db = %db_path.display(), "opening schedule store");
     let store = ScheduleStore::open(&db_path).await?;

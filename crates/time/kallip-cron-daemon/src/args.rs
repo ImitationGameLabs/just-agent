@@ -5,8 +5,9 @@
 //! that `TagmaClient::from_env` reads — those are NOT repeated here.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use anyhow::Context as _;
 use clap::Parser;
 
 #[derive(Parser)]
@@ -21,7 +22,7 @@ pub struct Args {
     #[arg(long, env = "KALLIP_CRON_ADDR", default_value = "127.0.0.1:3010")]
     pub listen_addr: String,
 
-    /// Directory holding `cron.sqlite`. Unset = platform data dir (`kallip-cron/`).
+    /// Directory holding `cron.sqlite`. Unset = platform data dir + `kallipai/cron`.
     #[arg(long, env = "KALLIP_CRON_DATA_DIR")]
     pub data_dir: Option<PathBuf>,
 
@@ -34,11 +35,21 @@ pub struct Args {
     pub deliver_interval_ms: u64,
 }
 
-/// Default data directory: platform data dir + `kallip-cron`.
-pub fn default_data_dir() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-        .join("kallip-cron")
+/// Default data directory: platform data dir + `kallipai/cron`.
+///
+/// Fails instead of guessing: the schedule store is durable state, and
+/// the old current_dir() fallback could silently land it wherever the
+/// daemon happened to start from — a refused boot beats a lost store.
+pub fn default_data_dir() -> anyhow::Result<PathBuf> {
+    default_data_dir_in(dirs::data_dir().as_deref())
+}
+
+/// Pure core of [`default_data_dir`] so the fail-fast shape is testable
+/// without touching process environment state.
+fn default_data_dir_in(data_home: Option<&Path>) -> anyhow::Result<PathBuf> {
+    data_home
+        .map(|home| home.join("kallipai").join("cron"))
+        .context("cannot determine the platform data directory; pass --data-dir or set KALLIP_CRON_DATA_DIR")
 }
 
 /// Whether `addr` binds to a loopback interface — the sole network boundary
@@ -63,6 +74,18 @@ pub fn is_loopback(addr: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_data_dir_sits_under_the_kallipai_namespace() {
+        let dir = default_data_dir_in(Some(Path::new("/xdg/data"))).expect("resolves");
+        assert_eq!(dir, PathBuf::from("/xdg/data/kallipai/cron"));
+    }
+
+    #[test]
+    fn default_data_dir_fails_fast_without_a_platform_data_dir() {
+        let err = default_data_dir_in(None).expect_err("refuses to guess");
+        assert!(err.to_string().contains("KALLIP_CRON_DATA_DIR"), "{err}");
+    }
 
     #[test]
     fn accepts_loopback_forms() {
