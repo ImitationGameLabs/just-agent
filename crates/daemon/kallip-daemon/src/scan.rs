@@ -617,7 +617,7 @@ mod tests {
 
     fn tempfile_dir(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("kallip-daemon-scan-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("kallip-scan-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tempdir");
         dir

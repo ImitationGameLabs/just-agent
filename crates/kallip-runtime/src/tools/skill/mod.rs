@@ -78,8 +78,8 @@ task is fully done. You may do work and `break` without sending anything.
 ///
 /// `KALLIP_SKILLS_ROOT`, if set, is used verbatim. Otherwise the directory
 /// is `<data_dir_root>/skills/` — i.e. `$KALLIP_DATA_DIR/skills/` when the
-/// env var is set, or `~/.local/share/kallip/skills/` via the XDG fallback
-/// (see [`crate::persistence::data_dir_root`]).
+/// env var is set, or the XDG fallback tree's `skills/` — the standalone
+/// default instance leaf (see [`crate::persistence::data_dir_root`]).
 pub fn skill_dir() -> Result<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("KALLIP_SKILLS_ROOT")
         && !dir.is_empty()

@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
                 .map(|d| format!("{}/control.sock", d.to_string_lossy()))
                 .unwrap_or_else(|| {
                     format!(
-                        "{}/kallip-daemon/control.sock",
+                        "{}/kallipai/daemon/control.sock",
                         std::env::var_os("XDG_STATE_HOME")
                             .map(|h| h.to_string_lossy().into_owned())
                             .unwrap_or_else(|| format!(

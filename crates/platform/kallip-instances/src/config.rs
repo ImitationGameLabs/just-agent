@@ -82,7 +82,8 @@ impl Config {
         }
         Ok(dirs::state_dir()
             .ok_or_else(|| anyhow::anyhow!("could not determine the platform state directory"))?
-            .join("kallip-daemon")
+            .join("kallipai")
+            .join("daemon")
             .join("control.sock"))
     }
 
@@ -137,7 +138,10 @@ mod tests {
         };
         let socket = config.resolve_socket().expect("resolve");
         // Only the shape is asserted: the XDG root varies by environment.
-        assert!(socket.ends_with("kallip-daemon/control.sock"), "{socket:?}");
+        assert!(
+            socket.ends_with("kallipai/daemon/control.sock"),
+            "{socket:?}"
+        );
     }
     #[test]
     fn state_dir_env_honored_between_flag_and_xdg() {
@@ -155,10 +159,10 @@ mod tests {
         };
         // A system unit points both the daemon and this proxy at the
         // same state dir; skipping this tier is how the paths fork.
-        temp_env::with_var("KALLIP_STATE_DIR", Some("/run/kallip-daemon"), || {
+        temp_env::with_var("KALLIP_STATE_DIR", Some("/run/kallipai/daemon"), || {
             assert_eq!(
                 config.resolve_socket().expect("resolve"),
-                PathBuf::from("/run/kallip-daemon/control.sock")
+                PathBuf::from("/run/kallipai/daemon/control.sock")
             );
         });
     }

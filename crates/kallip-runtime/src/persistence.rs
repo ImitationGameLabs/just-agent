@@ -24,8 +24,13 @@ use kallip_common::AgentId;
 ///
 /// - If `$KALLIP_DATA_DIR` is set, it IS the data root — used verbatim,
 ///   no suffix appended. The operator has already named the directory.
-/// - Otherwise fall back to the platform data directory namespaced as
-///   `<platform_data_dir>/kallip` (XDG convention).
+/// - Otherwise fall back to the fixed standalone instance tree
+///   `<platform_data_dir>/kallipai/tagmata/default`: the `kallipai`
+///   namespace is the product-wide data home, `tagmata/` holds one
+///   directory per instance, and `default` is the standalone
+///   instance's fixed leaf (daemon-managed instances get their slug
+///   there instead — the daemon points `KALLIP_DATA_DIR` at
+///   `<platform_data_dir>/kallipai/tagmata/<slug>`).
 ///
 /// Both `agents_base` and `archived_base` route through this so the live and
 /// archived trees share one root. When that root is on a single filesystem,
@@ -38,7 +43,9 @@ pub fn data_dir_root() -> Result<PathBuf> {
     } else {
         Ok(dirs::data_dir()
             .context("could not determine platform data directory")?
-            .join("kallip"))
+            .join("kallipai")
+            .join("tagmata")
+            .join("default"))
     }
 }
 
