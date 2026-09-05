@@ -1,45 +1,50 @@
 //! The projection pump: pushes the tagma's manage-plane projection (full
 //! roster + aggregate status) to the lesche whenever the state may have
-//! changed and someone is actually reading it (api-redesign §9.1/§9.7).
+//! changed and someone is actually reading it.
 //!
 //! Three sources wake the pump:
 //! - tunnel-up: an unconditional full first snapshot (the M1 self-heal — the
 //!   lesche's in-memory projection dies with its process, and a reconnecting
 //!   tagma must repopulate it regardless of any buffered hint, which by
 //!   definition cannot have survived either side's restart);
-//! - an `ExternalFrame::Signal` on the external bus (the third subscriber:
+//! - a `SignalFrame` on the typed topic bus (the third subscriber:
 //!   turn-state transitions nudge an immediate re-snapshot, debounced);
-//! - a low-frequency fallback ticker, because the Signal vocabulary only
-//!   covers turn lifecycle — roster changes (spawn/remove), duty flips,
-//!   budget writes, and work-schedule edits mutate the registry silently.
+//! - registry invalidations (a watch the AppState bumps on the discrete
+//!   mutation classes the Signal vocabulary cannot see — roster changes
+//!   (spawn/remove), duty flips, budget-limit writes, work-schedule edits);
+//! - a low-frequency fallback ticker as the staleness bound (design R4): it
+//!   catches anything the invalidation source missed.
 //!
 //! Everything is suppressed while `projection_active` is false (no subscriber
 //! on the lesche side), except the tunnel-up first shot. Pushes are
-//! best-effort: same contract as the status pump — no retry, the next wake
-//! supersedes a dropped POST.
+//! best-effort publishes: the upstream flusher owns wire retention and
+//! retry (see relay/flusher.rs).
 
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use kallip_lesche_common::projection::ProjectionSnapshot;
-use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::RelayHandle;
 use super::status_pump::snapshot_status;
-use crate::external::ExternalFrame;
+use crate::bus::SignalFrame;
+use crate::pump_driver::{
+    SnapshotPumpConfig, SnapshotPumpWakes, SnapshotSink, SnapshotSource, run_snapshot_pump,
+};
 use crate::state::AppState;
 
 /// Merge window after a wake-up: state mutated several times within the
 /// window collapses into one push (projection semantics allow dropping
-/// intermediate states, §9.2). Implementation constant, not protocol.
+/// intermediate states). Implementation constant, not protocol.
 const PROJECTION_DEBOUNCE: Duration = Duration::from_secs(1);
 
 /// Build the full projection snapshot from the current registry + token
 /// budget + work-schedule singleton. Lock-free like `snapshot_status`: the
 /// registry read-guard is dropped before any await happens (the caller
-/// holds no lock across POSTs).
+/// holds no lock across the awaits).
 fn snapshot_projection(
     state: &AppState,
     registry: &crate::state::AgentRegistry,
@@ -73,117 +78,24 @@ fn work_schedule_projection(
     }
 }
 
-impl RelayHandle {
-    /// Ensure the projection pump is running. Idempotent. Started on
-    /// tunnel-up (which also fires the unconditional full first shot) and on
-    /// a `false -> true` subscription-hint flip; stopped on tunnel-down and
-    /// on `true -> false` so an unread projection costs nothing.
-    pub(super) async fn start_projection_pump(&self) {
-        let mut slot = self.inner.projection_pump.lock().await;
-        if slot.is_some() {
-            return;
-        }
-        let cancel = CancellationToken::new();
-        let task = tokio::spawn(self.clone().run_projection_pump(cancel.clone()));
-        *slot = Some(super::PumpHandle { task, cancel });
-    }
+/// Captures the full projection snapshot (roster + status + work schedule)
+/// under the registry read-lock, stamping the connection-lifetime push seq
+/// (the lesche keys same-generation replay rejection on it; never reset by a
+/// pump restart). The guard is dropped before any await (lock discipline
+/// invariant #1); a store read failure degrades that push to no-schedule
+/// rather than blocking the whole snapshot. `None` when the `AppState` is
+/// gone: the tagma is shutting down.
+struct ProjectionSource {
+    state: Weak<AppState>,
+    push_seq: Arc<std::sync::atomic::AtomicU64>,
+}
 
-    /// Stop and await the projection pump if it is running, clearing the slot.
-    pub(super) async fn stop_projection_pump(&self) {
-        let handle = { self.inner.projection_pump.lock().await.take() };
-        if let Some(handle) = handle {
-            handle.cancel.cancel();
-            let _ = handle.task.await;
-        }
-    }
+impl SnapshotSource for ProjectionSource {
+    type Snapshot = crate::bus::ProjectionSnapshot;
 
-    /// Consume a `SubscriptionHint` from the tunnel (hierarchical
-    /// consumption: the hint only starts/stops the pump -- the pump itself
-    /// decides, per push, whether the flag allows a POST).
-    pub(super) async fn handle_projection_hint(&self, active: bool) {
-        let was = self.inner.projection_active.swap(active, Ordering::Relaxed);
-        if was == active {
-            return; // includes the reconnect `true -> true` re-send
-        }
-        if active {
-            self.start_projection_pump().await;
-        } else {
-            self.stop_projection_pump().await;
-        }
-    }
-
-    /// Subscribe to the external bus (the third subscriber) and push the
-    /// projection on Signal, on the fallback tick, and once unconditionally
-    /// at tunnel-up. Exits when the tunnel dies (`cancel`), the AppState
-    /// drops, or the bus closes.
-    async fn run_projection_pump(self, cancel: CancellationToken) {
-        info!(tagma = %self.inner.tagma_id, "relay projection pump started");
-        let Some(state) = self.inner.state.upgrade() else {
-            return; // the tagma is shutting down
-        };
-        let Some(projector) = state.external.get() else {
-            warn!("external projector missing; projection pump idle");
-            return;
-        };
-        let mut rx = projector.subscribe();
-
-        // M1 self-heal: the first snapshot rides tunnel-up unconditionally
-        // (hint state is irrelevant -- the lesche may have restarted and lost
-        // its stored projection while the hint stayed logically `true`).
-        self.push_projection(&state, &cancel).await;
-
-        let fallback =
-            Duration::from_millis(self.inner.projection_fallback_ms.load(Ordering::Relaxed));
-        let mut ticker = tokio::time::interval(fallback);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel.cancelled() => {
-                    info!(tagma = %self.inner.tagma_id, "relay projection pump stopped");
-                    return;
-                }
-                _ = ticker.tick() => {}
-                r = rx.recv() => match r {
-                    Ok(ExternalFrame::Signal(_)) => {}
-                    Ok(_) => continue, // authored content never moves the projection
-                    Err(RecvError::Lagged(_)) => {} // missed frames: re-check
-                    Err(RecvError::Closed) => {
-                        warn!("external bus closed; projection pump exiting");
-                        return;
-                    }
-                },
-            }
-            // Merge window: everything that changes during the debounce lands
-            // in the same push. The sleep is not cancel-selected on purpose --
-            // 1s is well under the tunnel teardown path's patience.
-            tokio::time::sleep(PROJECTION_DEBOUNCE).await;
-            // Drain whatever piled up inside the window (a lagged receiver is
-            // dirty by the same argument), so one push covers all of it.
-            loop {
-                match rx.try_recv() {
-                    Ok(_) => {}
-                    Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
-                    Err(_) => break,
-                }
-            }
-            if !self.inner.projection_active.load(Ordering::Relaxed) {
-                continue; // nobody is reading: skip the push (§9.7 suppression)
-            }
-            self.push_projection(&state, &cancel).await;
-        }
-    }
-
-    /// Recompute the snapshot under the registry read-lock (guard dropped
-    /// before the POST) and push it best-effort, cancel-select'd so a
-    /// tunnel-down aborts the in-flight POST instead of waiting out the 30s
-    /// HTTP timeout (mirrors the status pump).
-    async fn push_projection(&self, state: &AppState, cancel: &CancellationToken) {
-        let push_seq = self
-            .inner
-            .projection_push_seq
-            .fetch_add(1, Ordering::Relaxed)
-            + 1;
+    async fn capture(&self) -> Option<crate::bus::ProjectionSnapshot> {
+        let state = self.state.upgrade()?;
+        let push_seq = self.push_seq.fetch_add(1, Ordering::Relaxed) + 1;
         let work_schedule = match state.work_schedules.get() {
             Some(store) => match store.get_singleton().await {
                 Ok(Some(ws)) => Some(work_schedule_projection(&ws)),
@@ -200,24 +112,111 @@ impl RelayHandle {
         };
         let snapshot = {
             let registry = state.registry.read().await;
-            snapshot_projection(state, &registry, push_seq, work_schedule)
+            snapshot_projection(&state, &registry, push_seq, work_schedule)
         };
-        let put = self.inner.client.put_state(&self.inner.tagma_id, &snapshot);
-        tokio::select! {
-            biased;
-            _ = cancel.cancelled() => {}
-            r = put => {
-                if let Err(e) = r {
-                    warn!(tagma = %self.inner.tagma_id, "projection put failed: {e:#}");
-                }
-            }
+        Some(crate::bus::ProjectionSnapshot(snapshot))
+    }
+}
+
+/// Publishes each fresh projection onto the bus's projection topic. The
+/// wire belongs to the upstream flusher: publish is this sink's
+/// whole job, so every emit counts as delivered and the differential
+/// bookkeeping always advances — the flusher owns PUT retention.
+struct ProjectionSink(Weak<AppState>);
+
+impl SnapshotSink for ProjectionSink {
+    type Snapshot = crate::bus::ProjectionSnapshot;
+
+    async fn emit(&mut self, snapshot: crate::bus::ProjectionSnapshot) -> bool {
+        if let Some(state) = self.0.upgrade()
+            && let Err(err) = state.bus.publish(snapshot)
+        {
+            // A no-subscriber publish is benign Ok (the flusher and the
+            // local SSE hold receivers in production); this arm only
+            // fires on a registry/slot bug.
+            warn!(error = %err, "projection publish failed; dropping frame");
         }
+        true
+    }
+}
+
+impl RelayHandle {
+    /// Ensure the projection pump is running. Idempotent. Started on
+    /// tunnel-up (which also fires the unconditional full first shot) and on
+    /// a `false -> true` subscription-hint flip; stopped on tunnel-down and
+    /// on `true -> false` so an unread projection costs nothing.
+    pub(super) async fn start_projection_pump(&self) {
+        self.inner
+            .projection_pump
+            .get_or_spawn(|cancel| self.clone().run_projection_pump(cancel))
+            .await;
+    }
+
+    /// Stop and await the projection pump if it is running, clearing the slot.
+    pub(super) async fn stop_projection_pump(&self) {
+        self.inner.projection_pump.stop_and_await().await;
+    }
+
+    /// Consume the projection face of an `OwnerSub` frame from the tunnel
+    /// consumption: the hint only starts/stops the pump -- the pump itself
+    /// decides, per push, whether the flag allows a POST).
+    pub(super) async fn handle_projection_hint(&self, active: bool) {
+        let was = self.inner.projection_active.swap(active, Ordering::Relaxed);
+        if was == active {
+            return; // includes the reconnect `true -> true` re-send
+        }
+        if active {
+            self.start_projection_pump().await;
+        } else {
+            self.stop_projection_pump().await;
+        }
+    }
+
+    /// Subscribe to the signal topic and push the projection on Signal, on a
+    /// registry invalidation, on the fallback tick, and once unconditionally
+    /// at tunnel-up (the driver's first shot). Exits when the tunnel dies
+    /// (`cancel`), the AppState drops, or the bus closes.
+    async fn run_projection_pump(self, cancel: CancellationToken) {
+        info!(tagma = %self.inner.tagma_id, "relay projection pump started");
+        let Some(state) = self.inner.state.upgrade() else {
+            return; // the tagma is shutting down
+        };
+        // Both chat topics are registered at construction, so the only
+        // failure here would be a broken registry build.
+        let signals = Some(
+            state
+                .bus
+                .subscribe::<SignalFrame>()
+                .expect("signal topic is registered"),
+        );
+        let invalidations = state.subscribe_invalidations();
+        drop(state); // the source re-upgrades per capture; no strong ref held
+        let fallback =
+            Duration::from_millis(self.inner.projection_fallback_ms.load(Ordering::Relaxed));
+        let mut sink = ProjectionSink(self.inner.state.clone());
+        let source = ProjectionSource {
+            state: self.inner.state.clone(),
+            push_seq: Arc::clone(&self.inner.projection_push_seq),
+        };
+        let config = SnapshotPumpConfig {
+            ticker: fallback,
+            debounce: Some(PROJECTION_DEBOUNCE),
+            activity: Some(Arc::clone(&self.inner.projection_active)),
+            first_shot: true,
+        };
+        let wakes = SnapshotPumpWakes {
+            cancel,
+            signals,
+            invalidations,
+        };
+        run_snapshot_pump(config, wakes, source, &mut sink, |_, _, _| true).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bus::SignalFrame;
     use crate::external::ExternalProjector;
     use crate::relay::MessageLimits;
     use crate::state::RegistryEntry;
@@ -227,35 +226,13 @@ mod tests {
     use kallip_lesche_client::LescheClient;
     use std::sync::Arc;
     use std::time::Duration;
-    use tokio::sync::Mutex;
 
-    /// Captured projection POST bodies, in arrival order.
-    type Capture = Arc<Mutex<Vec<ProjectionSnapshot>>>;
-
-    /// Spawn a mock lesche that captures `POST /v1/tagmata/{tagma}/projection`
-    /// and returns 200. Mirrors the status-pump mock-lesche pattern.
-    async fn spawn_projection_lesche(capture: Capture) -> String {
-        async fn handler(
-            axum::extract::State(c): axum::extract::State<Capture>,
-            axum::Json(payload): axum::Json<ProjectionSnapshot>,
-        ) -> &'static str {
-            c.lock().await.push(payload);
-            "ok"
-        }
-        let app = axum::Router::new()
-            .route("/v1/tagmata/{tagma}/state", axum::routing::put(handler))
-            .with_state(capture);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
-        format!("http://{addr}")
-    }
-
-    /// Build a RelayHandle wired to a capturing mock lesche + a real AppState
-    /// (root registered, external projector installed) so the pump's bus
-    /// subscription and registry snapshot both resolve. Returns the handle,
-    /// the capture, and the state strong ref (the pump holds a Weak).
-    async fn setup() -> (RelayHandle, Capture, crate::state::SharedState) {
+    /// Build a RelayHandle wired to a real AppState (root registered,
+    /// external projector installed) and no lesche traffic: the pump is
+    /// publish-only (the wire belongs to the flusher), so these
+    /// legs observe the bus topic. Returns the handle and the state strong
+    /// ref (the pump holds a Weak).
+    async fn setup() -> (RelayHandle, crate::state::SharedState) {
         let state = make_state();
         let root = kallip_common::agentid::AgentId::from("root".to_string());
         {
@@ -276,9 +253,9 @@ mod tests {
             MessageLimits::default(),
         );
         let _ = state.external.set(projector); // single install per test state
-        let capture: Capture = Arc::new(Mutex::new(Vec::new()));
-        let url = spawn_projection_lesche(capture.clone()).await;
-        let client = LescheClient::builder(&url, "tok").build().unwrap();
+        let client = LescheClient::builder("http://127.0.0.1:1", "tok")
+            .build()
+            .unwrap();
         let handle = RelayHandle::new(
             client,
             "test".to_string(),
@@ -288,29 +265,78 @@ mod tests {
             root,
             Arc::downgrade(&state),
         );
-        (handle, capture, state)
+        (handle, state)
     }
 
-    /// Wait until the capture holds at least `n` snapshots (or time out).
-    async fn wait_for(capture: &Capture, n: usize) -> Vec<ProjectionSnapshot> {
-        for _ in 0..300 {
-            let got = capture.lock().await.len();
-            if got >= n {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    /// Collect the next `n` published projections (wire payloads), each
+    /// within a generous window (debounce is 1 s; a push lands inside two
+    /// windows plus scheduler slack).
+    async fn wait_pushes(
+        rx: &mut crate::bus::TopicReceiver<crate::bus::ProjectionSnapshot>,
+        n: usize,
+    ) -> Vec<ProjectionSnapshot> {
+        let mut got = Vec::new();
+        for _ in 0..n {
+            let frame = tokio::time::timeout(Duration::from_millis(1800), rx.recv())
+                .await
+                .expect("push within window")
+                .expect("topic open");
+            got.push(frame.0);
         }
-        capture.lock().await.clone()
+        got
     }
 
+    /// Push suppression + hierarchical hint consumption: with the pump
+    /// started but the last hint `false`, wakes do not push; the `false ->
+    /// true` flip restarts the pump (whose first shot lands); `true -> false`
+    /// stops it again.
+    #[tokio::test]
+    async fn hint_flip_gates_pushes() {
+        let (handle, state) = setup().await;
+        let mut rx = state
+            .bus
+            .subscribe::<crate::bus::ProjectionSnapshot>()
+            .expect("topic");
+        // Simulate "the lesche told us nobody is listening": the pump stays
+        // stopped and nothing is pushed.
+        handle.handle_projection_hint(false).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "false hint: no pushes"
+        );
+        // The flip to `true` starts the pump, whose first shot lands.
+        handle.handle_projection_hint(true).await;
+        let got = wait_pushes(&mut rx, 1).await;
+        assert_eq!(got.len(), 1, "true hint starts the pump + first shot");
+        // And back to `false`: the pump stops, so no further pushes.
+        handle.handle_projection_hint(false).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "false hint stops pushes"
+        );
+        handle.stop_projection_pump().await;
+    }
     /// M1 self-heal: tunnel-up (pump start) pushes one full snapshot
-    /// unconditionally, and a stop/start cycle (the tagma's tunnel reconnect,
-    /// or a full restart) pushes another one without any hint traffic.
+    /// unconditionally, and a stop/start cycle (the tagma's tunnel
+    /// reconnect, or a full restart) pushes another one without any hint
+    /// traffic.
     #[tokio::test]
     async fn tunnel_up_first_shot_and_restart_repushes() {
-        let (handle, capture, _state) = setup().await;
+        let (handle, state) = setup().await;
+        let mut rx = state
+            .bus
+            .subscribe::<crate::bus::ProjectionSnapshot>()
+            .expect("topic");
         handle.start_projection_pump().await;
-        let got = wait_for(&capture, 1).await;
+        let got = wait_pushes(&mut rx, 1).await;
         assert_eq!(got.len(), 1, "tunnel-up first shot");
         assert_eq!(got[0].push_seq, 1, "first shot is seq 1");
         assert_eq!(
@@ -322,60 +348,49 @@ mod tests {
             got[0].status.root_state,
             kallip_common::protocol::AgentState::Idle
         );
-        // Simulate a reconnect: tunnel-down stops the pump, tunnel-up starts
-        // a fresh one whose first shot repopulates the (possibly restarted)
-        // lesche's projection.
+        // Simulate a reconnect: tunnel-down stops the pump, tunnel-up
+        // starts a fresh one whose first shot repopulates the (possibly
+        // restarted) lesche's projection.
         handle.stop_projection_pump().await;
         handle.start_projection_pump().await;
-        let got = wait_for(&capture, 2).await;
-        assert_eq!(got.len(), 2, "restart pushes a fresh full snapshot");
-        // c-Major-1: the counter is monotonic across a pump restart -- the
-        // second shot continues the sequence (2) rather than replaying 1,
-        // which the lesche's same-generation check would reject.
-        assert_eq!(got[1].push_seq, 2, "seq continues across restart");
-        handle.stop_projection_pump().await;
-    }
-    /// §9.7 suppression + hierarchical hint consumption: with the pump
-    /// started but the last hint `false`, wakes do not push; the `false ->
-    /// true` flip restarts the pump (whose first shot lands); `true -> false`
-    /// stops it again.
-    #[tokio::test]
-    async fn hint_flip_gates_pushes() {
-        let (handle, capture, _state) = setup().await;
-        // Simulate "the lesche told us nobody is listening": the pump stays
-        // stopped and nothing is pushed.
-        handle.handle_projection_hint(false).await;
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        assert!(capture.lock().await.is_empty(), "false hint: no pushes");
-        // The flip to `true` starts the pump, whose first shot lands.
-        handle.handle_projection_hint(true).await;
-        let got = wait_for(&capture, 1).await;
-        assert_eq!(got.len(), 1, "true hint starts the pump + first shot");
-        // And back to `false`: the pump stops, so no further pushes.
-        handle.handle_projection_hint(false).await;
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        assert_eq!(capture.lock().await.len(), 1, "false hint stops pushes");
+        let got = wait_pushes(&mut rx, 1).await;
+        assert_eq!(got.len(), 1, "restart pushes a fresh full snapshot");
+        // The counter is monotonic across a pump restart -- the second
+        // shot continues the sequence (2) rather than replaying 1, which
+        // the lesche's same-generation check would reject.
+        assert_eq!(got[0].push_seq, 2, "seq continues across restart");
         handle.stop_projection_pump().await;
     }
 
     /// A burst of external-bus Signals collapses into a single debounced
-    /// push (the merge window), and the fallback tick keeps the projection
-    /// eventually fresh even without signals.
+    /// push (the merge window): three signals inside the 1 s merge window
+    /// are a single state change, so exactly one extra frame lands.
     #[tokio::test]
     async fn signal_burst_debounces_into_one_push() {
-        let (handle, capture, state) = setup().await;
+        let (handle, state) = setup().await;
+        let mut rx = state
+            .bus
+            .subscribe::<crate::bus::ProjectionSnapshot>()
+            .expect("topic");
         handle.handle_projection_hint(true).await;
-        let got = wait_for(&capture, 1).await;
+        let got = wait_pushes(&mut rx, 1).await;
         assert_eq!(got.len(), 1, "first shot before the burst");
-        let projector = state.external.get().unwrap().clone();
         for _ in 0..3 {
-            projector.publish(ExternalFrame::Signal(SignalEvent::Idle));
+            state
+                .bus
+                .publish(SignalFrame(SignalEvent::Idle))
+                .expect("SignalFrame is registered at the construction-time single site");
         }
-        // One debounce window later exactly one push must have landed: three
-        // signals inside the 1s merge window are a single state change.
-        tokio::time::sleep(Duration::from_millis(1600)).await;
-        let got = capture.lock().await.clone();
-        assert_eq!(got.len(), 2, "3-signal burst -> exactly one extra push");
+        // One debounce window later exactly one push must have landed.
+        let got = wait_pushes(&mut rx, 1).await;
+        assert_eq!(got.len(), 1, "3-signal burst -> exactly one extra push");
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "no third push from a single burst"
+        );
         handle.stop_projection_pump().await;
     }
 
@@ -385,22 +400,20 @@ mod tests {
     /// (roster/duty/budget/schedule).
     #[tokio::test]
     async fn fallback_tick_drives_a_push_without_signals() {
-        let (handle, capture, _state) = setup().await;
+        let (handle, state) = setup().await;
+        let mut rx = state
+            .bus
+            .subscribe::<crate::bus::ProjectionSnapshot>()
+            .expect("topic");
         handle
             .inner
             .projection_fallback_ms
             .store(150, Ordering::Relaxed);
         handle.handle_projection_hint(true).await;
-        let got = wait_for(&capture, 1).await;
+        let got = wait_pushes(&mut rx, 1).await;
         assert_eq!(got.len(), 1, "first shot on pump start");
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            if capture.lock().await.len() >= 2 {
-                break;
-            }
-        }
-        let got = capture.lock().await.clone();
-        assert_eq!(got.len(), 2, "fallback tick pushed once more");
+        let got = wait_pushes(&mut rx, 1).await;
+        assert_eq!(got.len(), 1, "fallback tick pushed once more");
         handle.stop_projection_pump().await;
     }
 

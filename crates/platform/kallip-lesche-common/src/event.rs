@@ -141,11 +141,11 @@ pub enum LescheEvent {
     },
 }
 
-/// `POST /v1/tagmata/{tagma_id}/status` request body — the tagma's periodic
-/// runtime snapshot, rebroadcast by the lesche as an
-/// [`LescheEvent::TagmaStatus`] on the owner's app event stream.
+/// The tagma's periodic runtime snapshot — the `UpstreamEvent::Status`
+/// element of the batched `POST /v1/tagmata/{tagma_id}/upstream` body,
+/// rebroadcast as an [`LescheEvent::TagmaStatus`] on the owner's stream.
 ///
-/// `tagma_id` is intentionally absent: the path is authoritative, and the
+/// `tagma_id` is intentionally absent: the batch path is authoritative, and the
 /// lesche asserts it matches the authenticated tagma before rebroadcast
 /// (mirroring `post_envelope`'s `channel_id` check). Field names mirror
 /// the [`LescheEvent::TagmaStatus`] variant; keep them in sync.
@@ -156,4 +156,86 @@ pub struct TagmaStatusPayload {
     pub subagents_active: u32,
     pub token_budget: u64,
     pub token_consumed: u64,
+}
+
+/// `POST /v1/tagmata/{tagma_id}/upstream` request body element — one
+/// plaintext metadata event on the single upstream channel. The batch body
+/// is `Vec<UpstreamEvent>`; the lesche demultiplexes each element into the
+/// same fan logic the three per-kind endpoints (status POST / signal POST /
+/// state PUT) have always used, so the two paths cannot drift (R3).
+/// Adjacently tagged because the payload variants mix structs and an enum
+/// (`SignalEvent` is itself internally tagged, which rules out an internal
+/// tag here). Authored envelope traffic never joins this channel: envelopes
+/// are encrypted request/reply pairs, not broadcast events, so the E2EE
+/// boundary holds by construction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "event", rename_all = "snake_case")]
+pub enum UpstreamEvent {
+    /// Aggregate runtime snapshot; fans like the status POST (presence
+    /// cache + `LescheEvent::TagmaStatus`).
+    Status(TagmaStatusPayload),
+    /// Runtime signal; fans like the signal POST
+    /// (`LescheEvent::TagmaSignal` rebroadcast).
+    Signal(SignalEvent),
+    /// Full projection snapshot; fans like the state PUT (projection
+    /// store accept plus dirty fan). Boxed: the batch enum is born at the
+    /// flusher serialization boundary and dies at the lesche demux, so
+    /// the variant-size spread is not worth carrying inline (clippy
+    /// large_enum_variant).
+    Projection(Box<crate::projection::ProjectionSnapshot>),
+}
+
+#[cfg(test)]
+mod upstream_shape_tests {
+    use super::*;
+
+    /// The upstream channel is a cross-crate wire contract (tagma flusher
+    /// serializes, lesche demultiplexes): pin the adjacent-tag shape per
+    /// variant so neither side can rename or retag unilaterally.
+    #[test]
+    fn status_variant_adjacent_tag_shape() {
+        let json = serde_json::json!({
+            "type": "status",
+            "event": {
+                "root_state": "idle",
+                "subagents_total": 0,
+                "subagents_active": 0,
+                "token_budget": 1,
+                "token_consumed": 0,
+            },
+        });
+        let event: UpstreamEvent = serde_json::from_value(json.clone()).expect("parses");
+        assert!(matches!(event, UpstreamEvent::Status(_)));
+        assert_eq!(serde_json::to_value(&event).expect("serializes"), json);
+    }
+
+    #[test]
+    fn signal_variant_adjacent_tag_shape() {
+        let json = serde_json::json!({ "type": "signal", "event": { "type": "busy" } });
+        let event: UpstreamEvent = serde_json::from_value(json.clone()).expect("parses");
+        assert!(matches!(event, UpstreamEvent::Signal(SignalEvent::Busy)));
+        assert_eq!(serde_json::to_value(&event).expect("serializes"), json);
+    }
+
+    #[test]
+    fn projection_variant_adjacent_tag_shape() {
+        let json = serde_json::json!({
+            "type": "projection",
+            "event": {
+                "agents": [],
+                "status": {
+                    "root_state": "idle",
+                    "subagents_total": 0,
+                    "subagents_active": 0,
+                    "token_budget": 1,
+                    "token_consumed": 0,
+                },
+                "push_seq": 7,
+                "work_schedule": null,
+            },
+        });
+        let event: UpstreamEvent = serde_json::from_value(json.clone()).expect("parses");
+        assert!(matches!(event, UpstreamEvent::Projection(_)));
+        assert_eq!(serde_json::to_value(&event).expect("serializes"), json);
+    }
 }

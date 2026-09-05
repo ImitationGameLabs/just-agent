@@ -22,14 +22,42 @@ pub use kallip_common::protocol::DutyStatus;
 /// Shared map of per-agent duty status. Sync read access — the duty check
 /// must be non-blocking (called from `try_send` paths). Lock contention is
 /// negligible: one lock per message, holding for a HashMap lookup.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DutyStore {
     map: Mutex<HashMap<AgentId, DutyStatus>>,
+    /// Invalidation source: duty flips wake the snapshot pumps (see
+    /// [`crate::state::AppState::invalidations`]). Private channel when built
+    /// bare — bumps land nowhere.
+    invalidations: tokio::sync::watch::Sender<u64>,
 }
 
 impl DutyStore {
+    /// Bare constructor: flips land on a private channel (test-friendly — no
+    /// receiver, no observable effect). The AppState constructor installs the
+    /// shared channel via [`Self::with_invalidation`].
+    #[cfg(test)]
     pub fn new() -> Self {
-        Self::default()
+        let (invalidations, _) = tokio::sync::watch::channel(0u64);
+        Self {
+            map: Mutex::new(HashMap::new()),
+            invalidations,
+        }
+    }
+
+    /// Store wired to the tagma's invalidation channel: duty flips wake every
+    /// subscribed snapshot pump.
+    pub fn with_invalidation(invalidations: tokio::sync::watch::Sender<u64>) -> Self {
+        Self {
+            map: Mutex::new(HashMap::new()),
+            invalidations,
+        }
+    }
+
+    /// Bump the invalidation generation (a duty flip changed the aggregate the
+    /// projection summarizes). Best-effort: no receivers is fine.
+    fn notify_invalidation(&self) {
+        let generation = *self.invalidations.borrow();
+        let _ = self.invalidations.send(generation + 1);
     }
 
     /// Get the duty status for an agent. Defaults to [`DutyStatus::OnDuty`]
@@ -54,11 +82,13 @@ impl DutyStore {
             .lock()
             .expect("duty map poisoned")
             .insert(id, status);
+        self.notify_invalidation();
     }
 
     /// Remove the duty entry for an agent (cleanup on removal).
     pub fn remove(&self, id: &AgentId) {
         self.map.lock().expect("duty map poisoned").remove(id);
+        self.notify_invalidation();
     }
 }
 

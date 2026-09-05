@@ -122,7 +122,7 @@ Deno.test(
   },
 );
 
-// --- P2-c: the projection seam -------------------------------------------
+// --- the projection seam -------------------------------------------
 
 // End-to-end across the seam: listAgents rides the projection GET, and a
 // dirty frame pumped through the stubbed SSE stream reaches the feed

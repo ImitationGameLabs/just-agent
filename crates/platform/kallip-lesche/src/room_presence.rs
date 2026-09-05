@@ -106,8 +106,8 @@ pub(crate) async fn fan_member_presence(
             // Only live HUMAN members receive `LescheEvent`; agents consume their
             // tunnel (`TunnelInbound`), and `app_stream_by_member` is `None`
             // for agents, so the kind filter is implicit.
-            if let Some(tx) = reg.app_stream_by_member(&mid) {
-                let _ = tx.send(ev.clone());
+            if let Some(s) = reg.app_stream_by_member(&mid) {
+                let _ = s.deliver(ev.clone());
             }
         }
     }
@@ -168,7 +168,7 @@ mod tests {
             .await
             .expect("bob receives the tagma online");
         assert!(matches!(
-            ev,
+            ev.event,
             LescheEvent::RoomMemberOnline { ref room_id, ref member_id }
                 if room_id.as_ref() == "room-1"
                    && member_id == &MemberId::for_tagma(&t1)
@@ -235,7 +235,7 @@ mod tests {
         // One event per shared room, each carrying its own room_id.
         let mut seen: Vec<String> = Vec::new();
         while let Some(ev) = try_recv(&mut rx).await {
-            match ev {
+            match ev.event {
                 LescheEvent::RoomMemberOnline { room_id, .. } => {
                     seen.push(room_id.as_ref().to_string());
                 }
@@ -273,7 +273,7 @@ mod tests {
             .await
             .expect("bob receives the tagma offline");
         assert!(matches!(
-            ev,
+            ev.event,
             LescheEvent::RoomMemberOffline { ref room_id, ref member_id }
                 if room_id.as_ref() == "room-1"
                    && member_id == &MemberId::for_tagma(&t1)
@@ -313,7 +313,7 @@ mod tests {
         let ev = try_recv(&mut app_rx)
             .await
             .expect("alice receives the tagma online");
-        assert!(matches!(ev, LescheEvent::RoomMemberOnline { .. }));
+        assert!(matches!(ev.event, LescheEvent::RoomMemberOnline { .. }));
         assert!(
             try_recv::<TunnelInbound>(&mut tunnel_rx).await.is_none(),
             "agent tunnel is silent"

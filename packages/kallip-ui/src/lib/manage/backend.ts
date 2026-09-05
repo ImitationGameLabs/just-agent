@@ -33,7 +33,7 @@ import type {
   WorkSchedule,
 } from "@kallipai/kallip-client";
 
-/** P2-c: a live projection-dirty subscription, when the transport has
+/** A live projection-dirty subscription, when the transport has
  * one (OnlineBackend over the lesche SSE). `subscribe` starts the
  * feed and returns the stop handle; the implementation owns the
  * reconnect/backoff loop and fans every dirty nudge to the callback. */
@@ -43,7 +43,7 @@ export interface ProjectionFeed {
 
 /** The 14 management methods shared by both backends. */
 export interface ManagementBackend {
-  /** P2-c: present only on transports with a live dirty feed. */
+  /** Present only on transports with a live dirty feed. */
   readonly projectionFeed?: ProjectionFeed;
 
   getBudget(): Promise<BudgetResponse>;
@@ -155,7 +155,7 @@ export class OnlineBackend implements ManagementBackend {
     private readonly projection?: ProjectionClient,
   ) {
     if (!projection) return;
-    // P2-c: a single shared reconnect loop -- one sse connection per
+    // A single shared reconnect loop -- one sse connection per
     // backend regardless of subscriber count. Subscribers join/leave a
     // listener set; the first subscribe starts the loop (fresh
     // controller + backoff), the last unsubscribe aborts it, and the
@@ -165,7 +165,7 @@ export class OnlineBackend implements ManagementBackend {
     const backoff = new LinearBackoff();
     let controller: AbortController | null = null;
     let warnedThisStreak = false;
-    // P2-c review round: dirty-frame traffic shaping, shared by every
+    // Dirty-frame traffic shaping, shared by every
     // subscriber. A stream storm (one dirty frame per mutation) must
     // not multiply into one GET per frame.
     let lastSeq = 0; // seq gate: a frame at or below the last notified
@@ -288,7 +288,7 @@ export class OnlineBackend implements ManagementBackend {
   updateBudget(body: BudgetUpdateRequest) {
     return this.req<BudgetResponse>("POST", "/budget", body);
   }
-  /** P2-c: the roster read rides the lesche's cached projection (§9)
+  /** The roster read rides the lesche's cached projection
    * instead of the per-call manage relay, so roster refreshes stop
    * round-tripping to the tagma. Falls back to the relay when no
    * projection client was wired (older construction sites). The

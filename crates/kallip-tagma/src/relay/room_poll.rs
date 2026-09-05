@@ -77,22 +77,15 @@ impl RelayHandle {
     /// status pump. The interval's first tick is immediate, so a reconnect
     /// warms the joined-rooms cache right away.
     pub(super) async fn start_room_pump(&self) {
-        let mut slot = self.inner.room_pump.lock().await;
-        if slot.is_some() {
-            return;
-        }
-        let cancel = CancellationToken::new();
-        let task = tokio::spawn(self.clone().run_room_pump(cancel.clone()));
-        *slot = Some(PumpHandle { task, cancel });
+        self.inner
+            .room_pump
+            .get_or_spawn(|cancel| self.clone().run_room_pump(cancel))
+            .await;
     }
 
     /// Stop and await the room-membership pump if running, clearing the slot.
     pub(super) async fn stop_room_pump(&self) {
-        let handle = { self.inner.room_pump.lock().await.take() };
-        if let Some(handle) = handle {
-            handle.cancel.cancel();
-            let _ = handle.task.await;
-        }
+        self.inner.room_pump.stop_and_await().await;
     }
 
     /// Poll `list_my_rooms` + refresh the joined-rooms cache on a slow cadence

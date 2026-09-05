@@ -269,3 +269,54 @@ async fn direct_poll_failure_keeps_the_rooms_cache_warm() {
         "the direct cache stays cold when its poll fails"
     );
 }
+
+/// The room pump's slot lifecycle: start runs the immediate first tick
+/// (warming the joined-rooms cache), stop clears the slot, and a restart
+/// installs a fresh pump.
+#[tokio::test]
+async fn room_pump_slot_start_stop_restart() {
+    let rooms: Rooms = Arc::new(Mutex::new(vec![room_view("room-a")]));
+    let (handle, state) = setup(rooms).await;
+
+    assert!(
+        !handle.inner.room_pump.is_running().await,
+        "the slot starts empty"
+    );
+    handle.start_room_pump().await;
+    assert!(
+        handle.inner.room_pump.is_running().await,
+        "start must install the pump"
+    );
+
+    // The first tick is immediate: wait out the spawned poll briefly.
+    for _ in 0..100 {
+        if state
+            .joined_rooms
+            .is_joined(&RoomId::from("room-a".to_string()))
+            .await
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        state
+            .joined_rooms
+            .is_joined(&RoomId::from("room-a".to_string()))
+            .await,
+        "the immediate first tick warms the cache"
+    );
+
+    handle.stop_room_pump().await;
+    assert!(
+        !handle.inner.room_pump.is_running().await,
+        "stop must clear the slot"
+    );
+
+    handle.start_room_pump().await;
+    assert!(
+        handle.inner.room_pump.is_running().await,
+        "a stopped slot must accept a fresh pump"
+    );
+    handle.stop_room_pump().await;
+}

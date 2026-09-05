@@ -13,7 +13,8 @@ use super::harness::*;
 #[tokio::test]
 #[serial_test::serial]
 async fn scenario2_normal() {
-    if unsupported() {
+    if let Err(reason) = sandbox_runnable().await {
+        eprintln!("sandbox: skipping, {reason}");
         return;
     }
     // `/dev/shm` is absent on some restricted containers; guard so the shm

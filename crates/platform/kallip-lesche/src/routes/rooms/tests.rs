@@ -48,7 +48,10 @@ fn uid(s: &str) -> UserId {
 
 /// Open `user`'s app stream and return a receiver (kept alive by the
 /// caller) so a fan send lands on a live subscriber.
-fn app_rx(state: &SharedConvState, user: &UserId) -> tokio::sync::broadcast::Receiver<LescheEvent> {
+fn app_rx(
+    state: &SharedConvState,
+    user: &UserId,
+) -> tokio::sync::broadcast::Receiver<crate::state::SequencedAppEvent> {
     let mut reg = state.write().unwrap();
     reg.open_app_stream(user).subscribe()
 }
@@ -117,7 +120,7 @@ async fn member_envelope_is_fanned_to_other_members() {
     // client-supplied one. The sender sent handle "Alice"; the fan must
     // carry "@alice" (the stable username handle), proving a client cannot
     // spoof a display handle into the room.
-    let kallip_lesche_common::event::LescheEvent::Envelope { envelope } = bob_ev else {
+    let kallip_lesche_common::event::LescheEvent::Envelope { envelope } = bob_ev.event else {
         panic!("expected an Envelope event");
     };
     assert_eq!(
@@ -158,7 +161,7 @@ async fn agent_envelope_is_stamped_with_stable_owner_handle() {
     .expect("accepted");
 
     let ev = alice_rx.recv().await.expect("alice received the envelope");
-    let LescheEvent::Envelope { envelope } = ev else {
+    let LescheEvent::Envelope { envelope } = ev.event else {
         panic!("expected an Envelope event");
     };
     let pid = ParticipantId::for_tagma(&t1);
@@ -228,7 +231,7 @@ async fn agent_envelope_degrades_to_prefix_when_not_usable() {
         .await
         .expect("accepted even when the sender is not usable");
         let ev = alice_rx.recv().await.expect("alice received the envelope");
-        let LescheEvent::Envelope { envelope } = ev else {
+        let LescheEvent::Envelope { envelope } = ev.event else {
             panic!("expected an Envelope event");
         };
         assert_eq!(
@@ -538,7 +541,7 @@ async fn put_read_cursor_roundtrip_lists_and_fans() {
     let kallip_lesche_common::event::LescheEvent::RoomReadCursorChanged {
         room_id,
         last_read_seq,
-    } = ev
+    } = ev.event
     else {
         panic!("expected RoomReadCursorChanged, got {ev:?}");
     };

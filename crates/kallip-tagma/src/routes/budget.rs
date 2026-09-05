@@ -76,6 +76,10 @@ pub async fn update_budget(
                 ))
             })?;
     }
+    // A budget-limit write is a discrete mutation class: wake the snapshot pumps
+    // (the ticker would cover it within 2 s, but the operator expects the
+    // header to reflect the change on the next frame, not three later).
+    state.invalidate();
 
     // Use a single snapshot so budget/consumed/remaining are consistent.
     let snap = state.token_budget.snapshot();

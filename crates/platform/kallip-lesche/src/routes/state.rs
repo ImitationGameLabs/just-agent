@@ -1,13 +1,13 @@
-//! The tagma state plane (api-redesign §9.1/§9.7): the write endpoint the
-//! tagma pushes full snapshots to (PUT /tagmata/{id}/state, an idempotent
-//! whole-resource replace), the per-tagma read endpoints that serve the
-//! stored snapshot (stale reads included -- the table outlives presence,
-//! MIN3), and the per-tagma SSE change-notification stream whose
-//! subscription-count flips drive `SubscriptionHint` over the tagma's tunnel.
+//! The tagma state plane: the per-tagma read
+//! endpoints that serve the stored snapshot (stale reads included -- the
+//! table outlives presence, MIN3), and the per-tagma SSE change-notification
+//! stream whose subscription-count flips drive `OwnerSub` over the tagma's
+//! tunnel. Snapshots enter via the batched `POST /upstream` channel, whose
+//! demux fans into `accept_projection` here.
 //!
 //! Every client-facing route re-checks C1 (the stored/live owner must be the
-//! caller) so cross-tenant reads are 403; the write route authenticates the
-//! tagma itself and pins the push to its own id.
+//! caller) so cross-tenant reads are 403; the tagma-side push auth lives in
+//! the upstream channel's batch-level check, not on the read plane.
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -15,7 +15,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use kallip_archeion_common::ids::{ParticipantId, TagmaId};
-use kallip_archeion_common::principal::{Principal, require_tagma, require_user};
+use kallip_archeion_common::principal::{Principal, require_user};
 use kallip_lesche_common::projection::{ProjectionDirty, ProjectionSnapshot};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
@@ -30,12 +30,7 @@ pub fn router() -> Router<SharedConvState> {
         // Registered without the /v1 prefix: the app nests this router under
         // /v1, so the final mounts are /v1/tagmata/{id}/* -- the shapes the
         // tagma pump and the browser client both dial.
-        // GET and PUT share /state: GET streams the dirty-frame SSE, PUT
-        // replaces the stored snapshot (one resource, two representations).
-        .route(
-            "/tagmata/{id}/state",
-            get(state_events).put(accept_state_push),
-        )
+        .route("/tagmata/{id}/state", get(state_events))
         .route("/tagmata/{id}/agents", get(read_agents))
         .route("/tagmata/{id}/budget", get(read_budget))
         .route("/tagmata/{id}/work-schedule", get(read_work_schedule))
@@ -68,27 +63,14 @@ fn require_owner(
     }
 }
 
-/// The tagma's push: validate it targets the pushing tagma itself, accept it
-/// into the store (M1 generation logic inside), and fan the dirty event to
-/// this tagma's projection subscribers.
-async fn accept_state_push(
-    State(state): State<SharedConvState>,
-    AuthPrincipal(principal): AuthPrincipal,
-    Path(id): Path<String>,
-    axum::Json(snapshot): axum::Json<ProjectionSnapshot>,
+/// The upstream channel's projection fan: accept into the projection store
+/// (M1 generation logic inside) + dirty fan. One shared implementation so
+/// wire paths cannot drift (R3).
+pub(super) async fn accept_projection(
+    state: &SharedConvState,
+    tagma_id: TagmaId,
+    snapshot: ProjectionSnapshot,
 ) -> Response {
-    let pusher = match require_tagma(&principal) {
-        Ok(id) => id.clone(),
-        Err(_) => return (StatusCode::UNAUTHORIZED, "tagma bearer required").into_response(),
-    };
-    let tagma_id = TagmaId::from(id);
-    if pusher != tagma_id {
-        return (
-            StatusCode::FORBIDDEN,
-            "a tagma may only push its own projection",
-        )
-            .into_response();
-    }
     let mut registry = state.registry.write().expect("registry lock");
     let (generation, owner) = match registry.presence.get(&ParticipantId::for_tagma(&tagma_id)) {
         Some(entry) => (entry.id.clone(), entry.owner.clone()),
@@ -210,8 +192,8 @@ async fn read_work_schedule(
 }
 
 /// The per-tagma change stream: `ProjectionDirty { tagma_id, seq }` frames on
-/// an independent broadcast (never the `me/events` app stream, §9.7). The
-/// 0 -> 1 subscribe edge fans `SubscriptionHint { active: true }` down the
+/// an independent broadcast (never the `me/events` app stream). The
+/// 0 -> 1 subscribe edge fans `OwnerSub { face: Projection, active: true }` down the
 /// tagma's tunnel; the last unsubscribe fans `false` after the lag window.
 async fn state_events(
     State(state): State<SharedConvState>,
@@ -271,7 +253,7 @@ async fn state_events(
         };
         h.spawn(async move {
             tokio::time::sleep(unsub_lag).await;
-            // remove_if_last fans the `SubscriptionHint { active: false }`
+            // remove_if_last fans the `OwnerSub { Projection, false }`
             // itself on the 1 -> 0 edge -- no duplicate send here.
             let Ok(mut registry) = st.write() else {
                 return;
@@ -328,15 +310,14 @@ mod tests {
 
     pub(super) async fn push(
         state: &SharedConvState,
-        principal: AuthPrincipal,
+        _principal: AuthPrincipal,
         agent: &str,
         push_seq: u64,
     ) -> Response {
-        accept_state_push(
-            State(state.clone()),
-            principal,
-            Path(agent.to_string()),
-            axum::Json(snapshot_with(push_seq)),
+        accept_projection(
+            state,
+            TagmaId::from(agent.to_string()),
+            snapshot_with(push_seq),
         )
         .await
     }
@@ -354,18 +335,6 @@ mod tests {
         let (tx, rx) = tokio::sync::broadcast::channel(8);
         reg.register_presence(tagma, owner.clone(), tx, Arc::new(()));
         rx
-    }
-
-    /// The write endpoint authenticates the tagma bearer: an operator (user)
-    /// principal pushing is 401, and the tagma pins the push to its own id.
-    #[tokio::test]
-    async fn push_rejects_non_tagma_and_foreign_ids() {
-        let (state, _control) = db_state().await;
-        let tagma = tagma_of("t-a");
-        let owner = uid("alice");
-        let _rx = enroll(&state, &tagma, &owner).await;
-        let resp = push(&state, owner_principal(&owner), "t-a", 1).await;
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     /// Cross-tenant reads are 403 (C1) and an unknown tagma is 404.
@@ -479,7 +448,7 @@ mod generation_tests {
         );
     }
 
-    /// The subscription flip fans SubscriptionHint both ways over the tagma's
+    /// The subscription flip fans OwnerSub both ways over the tagma's
     /// tunnel: first subscriber -> true, (post-lag-window teardown of) the
     /// last subscriber -> false. The lag window itself lives in the SSE
     /// handler; this pins the registry edges the handler drives.
@@ -512,7 +481,10 @@ mod generation_tests {
         // q-M-2: the false half of the flip actually reaches the tunnel.
         assert!(matches!(
             hint_rx.try_recv(),
-            Ok(TunnelInbound::SubscriptionHint { active: false })
+            Ok(TunnelInbound::OwnerSub {
+                face: kallip_lesche_common::tunnel::Face::Projection,
+                active: false,
+            })
         ));
     }
 
@@ -548,7 +520,10 @@ mod generation_tests {
         assert!(!removed, "a live subscriber survives the teardown");
         assert!(matches!(
             hint_rx.try_recv(),
-            Ok(TunnelInbound::SubscriptionHint { active: true })
+            Ok(TunnelInbound::OwnerSub {
+                face: kallip_lesche_common::tunnel::Face::Projection,
+                active: true,
+            })
         ));
         // After the true departure: teardown + false hint.
         drop(rx2);
@@ -559,8 +534,163 @@ mod generation_tests {
         assert!(removed, "the last unsubscribe tears the channel down");
         assert!(matches!(
             hint_rx.try_recv(),
-            Ok(TunnelInbound::SubscriptionHint { active: false })
+            Ok(TunnelInbound::OwnerSub {
+                face: kallip_lesche_common::tunnel::Face::Projection,
+                active: false,
+            })
         ));
+    }
+
+    /// The status-face edges: the first `open_app_stream` create
+    /// fans `OwnerSub { Status, true }` to every live tagma of the owner
+    /// (owner-scoped: one edge, N sends), a second tab fans nothing, and
+    /// the last departure fans `false` to both. A foreign owner's tagma
+    /// hears nothing (presence-gated fan).
+    #[tokio::test]
+    async fn app_stream_edges_fan_status_owner_subs() {
+        let (state, _control) = db_state().await;
+        let owner = uid("alice");
+        let t1 = tagma_of("t-a");
+        let t2 = tagma_of("t-b");
+        let stranger = tagma_of("t-c");
+        let other = uid("mallory");
+        let mut rx1 = enroll(&state, &t1, &owner).await;
+        let mut rx2 = enroll(&state, &t2, &owner).await;
+        let mut rx_stranger = enroll(&state, &stranger, &other).await;
+
+        let stream = {
+            let mut reg = state.registry.write().unwrap();
+            reg.open_app_stream(&owner)
+        };
+        for (name, rx) in [("t1", &mut rx1), ("t2", &mut rx2)] {
+            assert!(
+                matches!(
+                    rx.try_recv(),
+                    Ok(TunnelInbound::OwnerSub {
+                        face: kallip_lesche_common::tunnel::Face::Status,
+                        active: true
+                    })
+                ),
+                "{name} hears the open edge"
+            );
+        }
+        assert!(matches!(
+            rx_stranger.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+
+        // A second tab joins an existing stream: no edge, no fan.
+        {
+            let mut reg = state.registry.write().unwrap();
+            reg.open_app_stream(&owner);
+        }
+        assert!(matches!(
+            rx1.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+
+        // The last departure fans `false` to both of the owner's tagmata.
+        let _rx_dying = stream.subscribe();
+        let removed = {
+            let mut reg = state.registry.write().unwrap();
+            reg.remove_app_stream_if_last(&owner, &stream)
+        };
+        assert!(removed, "last subscriber removal is the 1 -> 0 edge");
+        for (name, rx) in [("t1", &mut rx1), ("t2", &mut rx2)] {
+            assert!(
+                matches!(
+                    rx.try_recv(),
+                    Ok(TunnelInbound::OwnerSub {
+                        face: kallip_lesche_common::tunnel::Face::Status,
+                        active: false
+                    })
+                ),
+                "{name} hears the close edge"
+            );
+        }
+    }
+
+    /// The removal window: a tab arriving before the last
+    /// departure keeps the stream open -- the join pushes the stream's
+    /// receiver count past the departing tab's own, so that tab's
+    /// `remove_app_stream_if_last` is refused (no close edge, registry
+    /// still live), and only the genuinely-last departure fires the
+    /// 1 -> 0 fan.
+    #[tokio::test]
+    async fn removal_window_arrival_keeps_the_stream_open() {
+        let (state, _control) = db_state().await;
+        let owner = uid("boa");
+        let t1 = tagma_of("t-w");
+        let mut rx = enroll(&state, &t1, &owner).await;
+
+        let s = {
+            let mut reg = state.registry.write().unwrap();
+            reg.open_app_stream(&owner)
+        };
+        let r1 = s.subscribe(); // tab 1's SSE receiver
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Ok(TunnelInbound::OwnerSub {
+                    face: kallip_lesche_common::tunnel::Face::Status,
+                    active: true
+                })
+            ),
+            "open edge fans true"
+        );
+
+        // A second tab joins inside the removal window: same stream, no
+        // fan (the 0 -> 1 edge already happened).
+        let s2 = {
+            let mut reg = state.registry.write().unwrap();
+            reg.open_app_stream(&owner)
+        };
+        let r2 = s2.subscribe();
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "the join is not an edge"
+        );
+
+        // Tab 1 departs while tab 2 is live: the refusal IS the window
+        // protection (no close edge may fire over a live tab).
+        let removed = {
+            let mut reg = state.registry.write().unwrap();
+            reg.remove_app_stream_if_last(&owner, &s)
+        };
+        assert!(!removed, "a live second tab keeps the stream open");
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "no close edge while a tab remains"
+        );
+        assert!(
+            state.registry.read().unwrap().has_app_stream(&owner),
+            "the stream is still open"
+        );
+
+        // The genuinely-last departure fires the 1 -> 0 fan.
+        drop(r1);
+        let removed = {
+            let mut reg = state.registry.write().unwrap();
+            reg.remove_app_stream_if_last(&owner, &s2)
+        };
+        assert!(removed, "the last departure fires the close edge");
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Ok(TunnelInbound::OwnerSub {
+                    face: kallip_lesche_common::tunnel::Face::Status,
+                    active: false
+                })
+            ),
+            "close edge fans false"
+        );
+        drop(r2);
     }
 
     /// q-M-2: the offline arm of the read plane -- with the tagma's
@@ -648,13 +778,19 @@ mod generation_tests {
         .expect("owner subscribes");
         assert!(matches!(
             hint_rx.try_recv(),
-            Ok(TunnelInbound::SubscriptionHint { active: true })
+            Ok(TunnelInbound::OwnerSub {
+                face: kallip_lesche_common::tunnel::Face::Projection,
+                active: true,
+            })
         ));
         drop(sse); // OnDrop fires: lag, then teardown + false hint
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         assert!(matches!(
             hint_rx.try_recv(),
-            Ok(TunnelInbound::SubscriptionHint { active: false })
+            Ok(TunnelInbound::OwnerSub {
+                face: kallip_lesche_common::tunnel::Face::Projection,
+                active: false,
+            })
         ));
         let live = {
             let reg = state.registry.read().unwrap();

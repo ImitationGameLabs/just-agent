@@ -2,8 +2,8 @@
 //!
 //! It owns the unified `chat_history` store + the resolved conversation id and
 //! is the one place a durable row is written. Every ingress that produces chat
-//! content funnels through it, and each write publishes the stamped frame onto
-//! one broadcast (the "external bus") that the serving paths — the direct local
+//! content funnels through it, and each write publishes the stamped event onto
+//! the typed topic bus ([`crate::bus`]) that the serving paths — the direct local
 //! SSE and the relay E2EE envelope — subscribe to and forward. The pumps never
 //! touch `chat_history`; they are pure forwarders. This makes "the write
 //! produces the event" the uniform rule for both directions and dissolves the
@@ -36,38 +36,14 @@ use kallip_lesche_common::message::{HistoryEntry, Participant, TagmaReply};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
+use crate::bus::{AuthoredFrame, SignalFrame};
 use crate::relay::MessageLimits;
 use crate::relay::RelayMessageError;
 use crate::relay::chat_history::{self, Db};
 use crate::relay::ops::MessageLimiter;
 use crate::state::{AppState, RegistryEntry};
-
-/// Broadcast capacity for the external bus. Mirrors the prior direct pump's
-/// capacity. A `Lagged` receiver now loses a frame for BOTH transports at once
-/// (whereas the old two independent pumps lagged independently); accepted,
-/// because either transport recovers on its next `history({after:
-/// maxRendered})` pull.
-const FRAMES_CAPACITY: usize = 256;
-
-/// One frame on the external bus the serving paths subscribe to. The sender
-/// rides alongside the content (never inside it): the projector stamps it once
-/// per direction (agent outbound, user inbound echo), and each serving path
-/// copies it onto its carrier — the relay envelope's `sender` (online) or the
-/// `DirectFrame::Authored.sender` (offline).
-#[derive(Clone, Debug)]
-pub(crate) enum ExternalFrame {
-    /// Authored content, persisted once and stamped with its `history_id`,
-    /// paired with the sender who authored it.
-    Authored {
-        sender: Participant,
-        reply: TagmaReply,
-    },
-    /// A runtime signal (busy/idle/terminals/errors). Ephemeral, never persisted,
-    /// and carries no sender (operator metadata, not conversation content).
-    Signal(kallip_common::protocol::SignalEvent),
-}
 
 /// The single external projector handle. Cheap to clone (`Arc` inside); the
 /// pumps and routes hold clones to subscribe / record.
@@ -77,7 +53,6 @@ pub(crate) struct ExternalProjector {
 }
 
 struct Inner {
-    frames_tx: broadcast::Sender<ExternalFrame>,
     history: Option<Db>,
     /// The tagma's own identity — used to stamp the agent sender on outbound
     /// frames and to refine a backfilled outbound row's empty `sender_id` on
@@ -180,7 +155,6 @@ impl ExternalProjector {
         tagma_label: Option<String>,
         message_limits: MessageLimits,
     ) -> Self {
-        let (frames_tx, _) = broadcast::channel(FRAMES_CAPACITY);
         let cancel = state
             .upgrade()
             .map(|s| s.shutdown.child_token())
@@ -198,7 +172,6 @@ impl ExternalProjector {
             None => OnceLock::new(),
         };
         let inner = Arc::new(Inner {
-            frames_tx,
             history,
             tagma_id: tagma_id_once,
             tagma_label: tagma_label_once,
@@ -249,12 +222,6 @@ impl ExternalProjector {
         let _ = self.inner.conversation_id.set(conv);
     }
 
-    /// Subscribe to the external bus. Each serving path (direct SSE, relay
-    /// envelope) subscribes once and forwards the frames it receives.
-    pub(crate) fn subscribe(&self) -> broadcast::Receiver<ExternalFrame> {
-        self.inner.frames_tx.subscribe()
-    }
-
     /// The resolved conversation id for this tagma, if any (`None` until
     /// enrollment resolves it). Surfaced on the root-agent summary so the
     /// offline frontend can key its cache + history pulls under the same id the
@@ -266,11 +233,24 @@ impl ExternalProjector {
             .map(|c| c.as_ref().to_string())
     }
 
-    /// Publish a frame; a `Send` error means there are currently no subscribers,
-    /// which is benign (the frame is live-only and needs no durable echo — the
-    /// persisted rows are re-pullable via history).
-    pub(crate) fn publish(&self, frame: ExternalFrame) {
-        let _ = self.inner.frames_tx.send(frame);
+    /// Publish onto the typed topic bus (see [`crate::bus`]). A send with
+    /// no subscribers is benign — live-only topics need no durable echo and
+    /// the persisted rows are re-pullable via history — and a registry
+    /// error is logged and the frame dropped: the hot path never panics.
+    /// Upgrading the `Weak` state fails only at shutdown, where dropping
+    /// the frame is equally fine.
+    /// Returns the allocated seq for per-site attribution traces, or
+    /// `None` when the frame never entered the channel (shutdown or
+    /// registry fault).
+    pub(crate) fn publish<E: crate::bus::Event>(&self, event: E) -> Option<u64> {
+        let state = self.inner.state.upgrade()?;
+        match state.bus.publish(event) {
+            Ok(seq) => Some(seq),
+            Err(err) => {
+                warn!(error = %err, "external projector publish failed; dropping frame");
+                None
+            }
+        }
     }
 
     /// Run the outbound burst check WITHOUT persisting or publishing. The
@@ -302,7 +282,9 @@ impl ExternalProjector {
             created_at: None,
         };
         self.stamp(&text, &mut reply).await;
-        self.publish(ExternalFrame::Authored { sender, reply });
+        if let Some(seq) = self.publish(AuthoredFrame { sender, reply }) {
+            debug!(site = "record_outbound", seq, "authored frame published");
+        }
         Ok(())
     }
 
@@ -350,7 +332,9 @@ impl ExternalProjector {
                 };
                 reply.set_history_id(id);
                 reply.set_created_at(created_at);
-                self.publish(ExternalFrame::Authored { sender, reply });
+                if let Some(seq) = self.publish(AuthoredFrame { sender, reply }) {
+                    debug!(site = "record_inbound", seq, "authored frame published");
+                }
             }
             Err(e) => {
                 error!("inbound history append failed: {e:#}");
@@ -367,7 +351,7 @@ impl ExternalProjector {
         text: String,
         attachment: Option<FileAttachment>,
     ) {
-        self.publish(ExternalFrame::Authored {
+        if let Some(seq) = self.publish(AuthoredFrame {
             sender,
             reply: TagmaReply::UserMessage {
                 history_id: 0,
@@ -375,7 +359,9 @@ impl ExternalProjector {
                 created_at: None,
                 attachment,
             },
-        });
+        }) {
+            debug!(site = "record_inbound", seq, "authored frame published");
+        }
     }
 
     /// Read a history window for one peer partition as decoded entries (each a
@@ -501,10 +487,14 @@ impl ExternalProjector {
                                 created_at: None,
                             };
                             self.stamp(&text, &mut reply).await;
-                            self.publish(ExternalFrame::Authored { sender, reply });
+                            if let Some(seq) = self.publish(AuthoredFrame { sender, reply }) {
+                                debug!(site = "run_event_pump", seq, "authored frame published");
+                            }
                         }
                         if let Some(signal) = signal {
-                            self.publish(ExternalFrame::Signal(signal));
+                            // SignalFrame sits outside the publish-site trace table (Authored ×3
+                            // + Status ×2); the seq return is intentionally dropped here.
+                            let _ = self.publish(SignalFrame(signal));
                         }
                     }
                     Err(RecvError::Lagged(n)) => {

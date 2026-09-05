@@ -2,7 +2,7 @@
 // how a wire spec is framed into it, and the predicates that gate saving.
 // workSchedule.ts owns the frame math and validation; the page owns the
 // $state draft, the clock preference, and localStorage — this seam keeps
-// the logic directly testable (the P5 parkedLive split precedent).
+// the logic directly testable.
 
 import type { WorkSchedule, WorkScheduleSpec } from "@kallipai/kallip-client";
 import { fromFrame, toFrame } from "./workSchedule.ts";

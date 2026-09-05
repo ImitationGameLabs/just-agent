@@ -1,6 +1,6 @@
 //! Manage-plane reverse proxy: `/v1/tagmata/{id}/manage/{*path}`.
 //!
-//! Bridges the plaintext manage surface (api-redesign §9.3): an
+//! Bridges the plaintext manage surface: an
 //! authenticated operator session is checked against the tunnel's owner
 //! (arch C1 -- the only application-layer authorization, replacing the
 //! authorization boundary the E2EE envelope used to provide), then the
@@ -377,7 +377,7 @@ mod proxy_tests {
         assert_eq!(status_of(&resp), StatusCode::OK);
     }
 
-    /// P1-c nail: `?include=` rides the frame BODY (the frame path stays
+    /// Nail: `?include=` rides the frame BODY (the frame path stays
     /// query-free) and every frame carries a fresh UUID trace, so traces
     /// from two requests never collide even across reconnects.
     #[tokio::test]

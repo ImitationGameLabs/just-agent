@@ -939,7 +939,7 @@ mod tests {
         assert!(!transient_retry_due(&ctx), "stale permit must be inert");
     }
 
-    /// Five-wake-set pin (design §9 v2-⑤): an approval decision (approve/
+    /// Five-wake-set pin: an approval decision (approve/
     /// deny) wakes the parked agent through the shared notify arm and the
     /// notification reaches the next round's context — no prompt needed.
     /// (Inbox: `notify_pull_drives_round` above; prompt: every full-loop

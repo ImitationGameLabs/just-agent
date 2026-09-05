@@ -1287,7 +1287,7 @@ async fn bridge_waiting_marks_waiting_and_notifies() {
 
 /// An FCE carrying a transient retry marks RETRYING (not PARKED), mirrors
 /// the retry plan into the retrying cell, and notifies nobody — a retry in
-/// flight is not operator-actionable (design §5 asymmetry).
+/// flight is not operator-actionable (the terminal-signal asymmetry).
 #[tokio::test]
 async fn bridge_fce_with_retry_marks_retrying_no_notice() {
     let (agent_tx, agent_rx) = tokio::sync::mpsc::channel::<AgentEvent>(16);

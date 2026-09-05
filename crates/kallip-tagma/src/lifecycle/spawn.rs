@@ -385,6 +385,10 @@ pub(crate) async fn watch_agent_task(
             };
             *registry.get_mut(&agent_id).expect("entry borrowed above") =
                 RegistryEntry::Faulted(faulted);
+            // The Live→Faulted flip changes the roster projection (the
+            // state field and subagent counting); wake the snapshot
+            // pumps — a raw get_mut flip, so the call is explicit.
+            state.invalidate();
             tracing::error!(id = %agent_id, reason = %detail, "agent task panicked, entry marked faulted");
             // The dead task's directory write-locks must not outlive the Live
             // entry: a Faulted agent holds nothing (mirroring

@@ -57,8 +57,7 @@ pub use decision::{AccessDecision, ReadPolicy};
 
 /// System paths a Guest (narrow-read) `bash` needs to read+execute to function.
 /// Delegated to libsandbox (the canonical list) so the two crates cannot drift;
-/// the runtime composes it with the workspace to form the Guest read allowlist
-/// (`.draft/design/agent-sandbox.md` §4.3).
+/// the runtime composes it with the workspace to form the Guest read allowlist.
 pub fn baseline_readable() -> Vec<std::path::PathBuf> {
     libsandbox::landlock::baseline_readable()
 }

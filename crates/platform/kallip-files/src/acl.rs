@@ -9,7 +9,7 @@
 //! exists only as server-side delivery (`api::send`), which writes as the
 //! service and never passes through these rules.
 //!
-//! The matrix (evaluation draft §3.1, nine rows as approved):
+//! The matrix (nine rows as approved):
 //!
 //! | # | principal | target | right |
 //! |---|---|---|---|
@@ -145,8 +145,7 @@ pub fn tagma_can(tagma: &str, path: &SpacePath, _action: Action, facts: &Enrollm
 /// The delete decision for a concrete record (its parsed path plus its
 /// `owner` field): a user deletes anything in their own space (row 1); a
 /// tagma deletes freely inside its private region (row 2) and only its own
-/// writes in the shared region (row 3's owner-field refinement,
-/// evaluation draft §3.1.1).
+/// writes in the shared region (row 3's owner-field refinement).
 pub fn can_delete_record(
     who: PrincipalRef<'_>,
     path: &SpacePath,

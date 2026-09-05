@@ -455,7 +455,7 @@ async fn install_projector(
     state: &crate::state::SharedState,
 ) -> (
     crate::relay::chat_history::Db,
-    tokio::sync::broadcast::Receiver<crate::external::ExternalFrame>,
+    crate::bus::TopicReceiver<crate::bus::AuthoredFrame>,
     TempDir,
 ) {
     let dir = TempDir::new().unwrap();
@@ -470,7 +470,7 @@ async fn install_projector(
         Some("Tagma".into()),
         MessageLimits::default(),
     );
-    let rx = projector.subscribe();
+    let rx = state.bus.subscribe::<crate::bus::AuthoredFrame>().unwrap();
     let _ = state.external.set(projector);
     (db, rx, dir)
 }
@@ -629,4 +629,83 @@ async fn off_duty_message_still_recorded() {
 
     let rows = operator_rows(&db).await;
     assert_eq!(rows.len(), 1, "buffered-but-accepted message still records");
+}
+
+// -- external_events: snapshot-then-live connect ordering --
+
+/// Connect ordering on the direct SSE: the first frame is the connect-time
+/// status snapshot, and a status published after the handler returned (the
+/// bus subscription is then already open) still reaches the client as a
+/// live frame. The initial snapshot can only repeat a live frame, never
+/// gap one — the ordering itself is pinned by `open_snapshot_stream`, which
+/// makes the reversed capture-then-subscribe order unrepresentable.
+#[tokio::test]
+async fn external_events_connect_serves_snapshot_then_live_status() {
+    let state = make_state();
+    let root = AgentId::random();
+    let (mut entry, _rx) = make_entry_with_rx(None, "root".into());
+    entry.identity.config.role = "root".into();
+    state
+        .registry
+        .write()
+        .await
+        .register_root(root.clone(), RegistryEntry::Live(entry))
+        .unwrap();
+    {
+        let reg = state.registry.read().await;
+        let live = reg.get(&root).unwrap().as_live().unwrap();
+        live.agent.state.store(
+            crate::state::AgentState::IDLE,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    let resp = external_events(
+        State(state.clone()),
+        AuthIdentity::test_new(Identity::Operator),
+        Path(root.clone()),
+    )
+    .await
+    .expect("root opens the direct stream");
+    let mut stream = axum::response::IntoResponse::into_response(resp)
+        .into_body()
+        .into_data_stream();
+
+    // Publish AFTER the handler returned: the handler's subscription is
+    // already open, so this frame must surface on the live stream.
+    state
+        .bus
+        .publish(crate::bus::StatusSnapshot(
+            kallip_lesche_common::event::TagmaStatusPayload {
+                root_state: kallip_common::protocol::AgentState::Busy,
+                subagents_total: 0,
+                subagents_active: 0,
+                token_budget: 50_000,
+                token_consumed: 7_000,
+            },
+        ))
+        .unwrap();
+
+    let first = read_sse_frame(&mut stream).await;
+    assert!(
+        first.starts_with("event: status") && first.contains("idle"),
+        "the first frame is the connect-time snapshot: {first:?}"
+    );
+    let second = read_sse_frame(&mut stream).await;
+    assert!(
+        second.starts_with("event: status") && second.contains("busy") && second.contains("7000"),
+        "the post-connect publish is not lost: {second:?}"
+    );
+}
+
+async fn read_sse_frame(stream: &mut axum::body::BodyDataStream) -> String {
+    let frame = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        futures_util::StreamExt::next(stream),
+    )
+    .await
+    .expect("frame within timeout")
+    .expect("stream live")
+    .expect("frame bytes");
+    String::from_utf8(frame.to_vec()).expect("utf8 frame")
 }

@@ -211,7 +211,7 @@ pub async fn bridge_task(
                                     )),
                                     // A retrying FCE is not operator-actionable:
                                     // no notice, by design (the terminal-signal
-                                    // asymmetry is deliberate — see design §5).
+                                    // asymmetry is deliberate).
                                     AgentEvent::FailoverChainExhausted {
                                         transient_retry: Some(_),
                                         ..

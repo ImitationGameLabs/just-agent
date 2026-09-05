@@ -75,6 +75,61 @@ async fn interrupt_when_idle_is_noop() {
     assert!(entry.agent.round_cancel.lock().unwrap().is_none());
 }
 
+// -- Invalidation source: discrete mutation classes wake the snapshot pumps --
+
+/// The head itself can bump: this is the path the budget-limit and
+/// work-schedule handlers take (their call sites are one-line
+/// `state.invalidate()`s; roster and duty have their own legs below).
+#[tokio::test]
+async fn invalidate_bumps_the_generation_for_subscribers() {
+    let state = make_state();
+    let mut rx = state.subscribe_invalidations();
+    let before = *rx.borrow();
+    state.invalidate();
+    rx.changed()
+        .await
+        .expect("the sender lives on the AppState");
+    assert!(*rx.borrow() > before, "the generation moved forward");
+}
+
+#[tokio::test]
+async fn roster_mutations_bump_the_invalidation_generation() {
+    let state = make_state();
+    let mut rx = state.subscribe_invalidations();
+    let before = *rx.borrow();
+    let id = AgentId::random();
+    state.registry.write().await.register(
+        id.clone(),
+        RegistryEntry::Live(make_entry(None, "tok".into())),
+    );
+    rx.changed()
+        .await
+        .expect("the sender lives in the registry");
+    assert!(
+        *rx.borrow() > before,
+        "a roster insert woke the pump family"
+    );
+    state.registry.write().await.unregister(&id);
+    rx.changed()
+        .await
+        .expect("the sender lives in the registry");
+    assert!(*rx.borrow() > before + 1, "a roster removal woke it too");
+}
+
+#[tokio::test]
+async fn duty_flips_bump_the_invalidation_generation() {
+    let state = make_state();
+    let mut rx = state.subscribe_invalidations();
+    let before = *rx.borrow();
+    state
+        .duty
+        .set(AgentId::random(), crate::duty::DutyStatus::OffDuty);
+    rx.changed()
+        .await
+        .expect("the sender lives in the duty store");
+    assert!(*rx.borrow() > before, "a duty flip woke the pump family");
+}
+
 // -- Registry consistency: agents + token_index + subagent_ids stay in sync --
 
 #[tokio::test]

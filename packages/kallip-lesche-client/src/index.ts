@@ -41,6 +41,7 @@ export type {
   TagmaReply,
 } from "./types.ts";
 export type { LescheEvent } from "./types.ts";
+export type { MeEventFrame } from "./http.ts";
 export type {
   ProjectionAgentsResponse,
   ProjectionBudgetResponse,

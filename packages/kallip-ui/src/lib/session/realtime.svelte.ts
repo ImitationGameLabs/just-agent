@@ -27,6 +27,7 @@ import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { reverifySession, type SessionVerifier } from "./realtimeReverify.ts";
 import type { TagmaStatusSummary } from "../tagmata.svelte.ts";
 import { lescheClientOrFail } from "./archeion.svelte.ts";
+import { MeCursor, ResyncBatcher, type ResyncPlan } from "./cursor.ts";
 
 /** Sink for inbound conversation envelopes. Bound by the shell to
  * `channelsStore.deliver`. `null` (the default) drops envelopes -- harmless
@@ -79,6 +80,11 @@ type RoomMemberPresenceSink = (
   memberId: string,
   online: boolean,
 ) => void;
+
+/** Sink for the resync plans the cursor batcher produces. Bound by the
+ * shell to the fetch-time resync executors (rooms list, mounted conversation
+ * roster and tail). `null` (the default) drops. */
+type ResyncSink = (plan: ResyncPlan) => void;
 
 /** Maximum time the dashboard shows the "checking" placeholder before treating
  * presence as resolved (unknown tagmas then read offline). Bounded so a missing
@@ -135,6 +141,21 @@ class RealtimeStore {
   // round-trip per throttle window. Null until bound (tests, pre-shell).
   private sessionVerifier: SessionVerifier | null = null;
   private lastVerifiedAt = 0;
+
+  // Resync face: the cursor judges every frame against the wire
+  // contract (id `<epoch>:<seq>` + open marker); the batcher coalesces the
+  // resulting plans on a trailing timer and fires ONE plan per burst at the
+  // shell-bound sink. The debounce is injectable so tests can collapse it.
+  private cursor = new MeCursor();
+  private readonly resyncBatcher: ResyncBatcher;
+  private resyncSink: ResyncSink | null = null;
+
+  constructor(resyncDebounceMs = 250) {
+    this.resyncBatcher = new ResyncBatcher(
+      (plan) => this.resyncSink?.(plan),
+      resyncDebounceMs,
+    );
+  }
 
   /** Reactive liveness query: true iff a tagma tunnel is live for `tagmaId`. */
   has(tagmaId: string): boolean {
@@ -211,6 +232,12 @@ class RealtimeStore {
     this.roomReadCursorChangedSink = sink;
   }
 
+  /** Bind the resync executor. Called once by the shell at boot; the batcher
+   * hands it at most one coalesced plan per loss burst. */
+  setResyncSink(sink: ResyncSink | null): void {
+    this.resyncSink = sink;
+  }
+
   /** Start the SSE subscriber, idempotently. Safe to call repeatedly. Clears
    * presence once per session so a stale set from a prior session cannot leak;
    * the lesche's connect-time snapshot then repopulates it. Arms the one-shot
@@ -241,6 +268,9 @@ class RealtimeStore {
     this.abort?.abort();
     this.abort = null;
     this.clearResolveDeadline();
+    // Fire any pending resync before tearing down: a plan judged but not
+    // yet debounced still describes real loss the stores should heal.
+    this.resyncBatcher.flush();
     this.presence.clear();
     this.status.clear();
     this.resolvedState = false;
@@ -282,7 +312,13 @@ class RealtimeStore {
           // presence immediately. The no-event case (empty snapshot, or the SSE
           // never connects) is handled by the one-shot deadline armed in start.
           this.markResolved();
-          this.dispatch(ev);
+          // Cursor first: the marker seeds or judges the stream and never
+          // reaches dispatch; a payload frame is judged, any resync plan
+          // is batched (one refetch per burst), and only its event reaches
+          // the exhaustive switch below.
+          const plan = this.cursor.observe(ev);
+          if (plan) this.resyncBatcher.push(plan);
+          if (ev.kind === "event") this.dispatch(ev.event);
         }
         // Stream ended cleanly (rare); loop to reconnect unless stopped.
       } catch (e) {

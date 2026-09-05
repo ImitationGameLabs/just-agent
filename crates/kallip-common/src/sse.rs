@@ -15,6 +15,7 @@
 //! negligible.
 
 use std::convert::Infallible;
+use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -59,5 +60,63 @@ impl Drop for OnDrop {
         if let Some(f) = self.on_drop.take() {
             f();
         }
+    }
+}
+
+/// Open a snapshot-then-live subscription: run `subscribe` first, then take
+/// `snapshot`, returning the subscription and the initial events.
+///
+/// The body's ordering is the invariant. Because the subscription exists
+/// before the snapshot is read, every change published after the snapshot
+/// necessarily lands in the live subscription — an initial flush built from
+/// the snapshot can only repeat an event, never miss one, and an idempotent
+/// latest-wins consumer absorbs the repeat. The reverse order loses exactly
+/// the events published in the capture-to-subscribe window: the snapshot is
+/// stale and the live stream gaps until the next snapshot cadence.
+///
+/// Flushing `initial` is deliberately left to the caller, because the two SSE
+/// surfaces flush differently: a channel-backed stream re-sends the events
+/// into the subscribed channel (they interleave in channel order), while a
+/// prepended stream emits them as the leading frames ahead of the merged
+/// live sources.
+pub async fn open_snapshot_stream<S, E, F, G, Fut>(subscribe: F, snapshot: G) -> (S, Vec<E>)
+where
+    F: FnOnce() -> S,
+    G: FnOnce() -> Fut,
+    Fut: Future<Output = Vec<E>>,
+{
+    let subscription = subscribe();
+    let initial = snapshot().await;
+    (subscription, initial)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The primitive's whole contract: the subscribe closure runs before the
+    /// snapshot closure, and both results come back intact. A regression that
+    /// swaps the two steps turns the ordering assert red.
+    #[tokio::test]
+    async fn subscribes_before_it_snapshots() {
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+        let subscribe_order = order.clone();
+        let snapshot_order = order.clone();
+
+        let (subscription, initial) = open_snapshot_stream(
+            move || {
+                subscribe_order.lock().unwrap().push("subscribe");
+                "subscription"
+            },
+            move || {
+                snapshot_order.lock().unwrap().push("snapshot");
+                std::future::ready(vec![7u32, 9u32])
+            },
+        )
+        .await;
+
+        assert_eq!(subscription, "subscription");
+        assert_eq!(initial, vec![7, 9]);
+        assert_eq!(*order.lock().unwrap(), vec!["subscribe", "snapshot"]);
     }
 }

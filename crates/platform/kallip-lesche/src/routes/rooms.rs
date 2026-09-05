@@ -263,8 +263,8 @@ async fn put_read_cursor(
     // write failure.
     if let Principal::User(user_id) = &principal {
         let reg = state.read()?;
-        if let Some(tx) = reg.app_stream(user_id) {
-            let _ = tx.send(LescheEvent::RoomReadCursorChanged {
+        if let Some(s) = reg.app_stream(user_id) {
+            let _ = s.deliver(LescheEvent::RoomReadCursorChanged {
                 room_id: room,
                 last_read_seq: stored,
             });

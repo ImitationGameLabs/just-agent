@@ -138,7 +138,7 @@ async fn list_agents_lenient(
     uri: Uri,
     body: axum::body::Bytes,
 ) -> Response {
-    // Aggregated shape (P1-c): the reverse proxy turns the HTTP-side
+    // Aggregated shape: the reverse proxy turns the HTTP-side
     // `?include=` filter into this frame-body field -- the frame path
     // itself stays query-free. Include keys are a closed allowlist;
     // unknown keys are rejected (400) rather than ignored, matching the
@@ -368,7 +368,7 @@ mod tests {
         }
     }
 
-    /// P1-c nail: the aggregate include list is a closed allowlist -- an
+    /// The aggregate include list is a closed allowlist -- an
     /// unknown key is a 400 (fail-closed), not an ignored filter.
     #[tokio::test]
     async fn aggregate_rejects_unknown_include_key() {
@@ -416,7 +416,7 @@ mod tests {
         // The online shell keys its confirm flow off body.error.dangling;
         // pin that the manage channel relays the full envelope verbatim. A
         // flattened message-only body would regress the confirm dialog to
-        // the raw error text (the P2 acceptance failure).
+        // the raw error text (the acceptance failure).
         let state = make_state_two_sets();
         let _sub = alt_bound_sub(&state).await;
         let wire = serde_json::json!({

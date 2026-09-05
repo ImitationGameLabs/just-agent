@@ -503,11 +503,16 @@ fn dropping_then_ok_server(retry_content: &str) -> String {
     let retry = retry_content.to_owned();
     std::thread::spawn(move || {
         use std::io::{Read, Write};
-        for attempt in 0..2u32 {
-            let (mut socket, _) = match listener.accept() {
-                Ok(s) => s,
-                Err(_) => return,
-            };
+        // More than the nominal 2 connects: under a loaded runner the
+        // transport can burn a spare connect on a pooled-connection reuse
+        // race, and refusing it flips the outcome to ChainExhausted. The
+        // first connect drops mid-stream; every later one gets the
+        // complete retry stream. (The thread parks in accept afterwards —
+        // fine for a test process.)
+        let mut attempt = 0u32;
+        while let Ok((mut socket, _)) = listener.accept() {
+            let first = attempt == 0;
+            attempt += 1;
             // Best-effort drain of the request (the small JSON body); HTTP is full-duplex so
             // writing the response does not depend on fully reading the request.
             let mut buf = [0u8; 1024];
@@ -515,7 +520,7 @@ fn dropping_then_ok_server(retry_content: &str) -> String {
             let _ = socket.write_all(
                     b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n",
                 );
-            if attempt == 0 {
+            if first {
                 write_chunk(&mut socket, &sse_delta("PARTIAL"));
                 // Drop mid-stream: close without the terminating zero-length chunk.
                 let _ = socket.shutdown(std::net::Shutdown::Both);
@@ -523,6 +528,13 @@ fn dropping_then_ok_server(retry_content: &str) -> String {
                 write_chunk(&mut socket, &sse_delta(&retry));
                 write_chunk(&mut socket, b"data: [DONE]\n\n");
                 let _ = socket.write_all(b"0\r\n\r\n");
+                // Graceful close: half-close the write side, then drain until
+                // the peer closes. Dropping with unread data sends RST and can
+                // swallow the response under load (observed as a phantom
+                // second stream reset).
+                let _ = socket.shutdown(std::net::Shutdown::Write);
+                let _ = socket.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+                let _ = socket.read_to_end(&mut Vec::new());
             }
         }
     });
@@ -945,7 +957,7 @@ async fn other_tools_remain_bounded_by_outer_timeout() {
     }
 }
 
-// --- C5: retry exhaustion / budget probe / silent-retry-loss (design §9) ---
+// --- C5: retry exhaustion / budget probe / silent-retry-loss ---
 
 /// Full-loop pin of the exhaustion path: with `max_transient_retries` spent,
 /// the final FCE carries no retry payload and no fuse stays armed — nothing

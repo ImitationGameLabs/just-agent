@@ -1,4 +1,4 @@
-// Two-end reconciliation (route-shape design §5): every URL the TS clients
+// Two-end reconciliation: every URL the TS clients
 // dial must exist in the shared route fixture the rust shape test also
 // asserts against. A one-sided URL change now fails a test on both sides --
 // the original double-prefix bugs came from each end proving itself alone.

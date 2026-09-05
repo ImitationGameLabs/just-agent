@@ -52,7 +52,7 @@ class AgentsStore {
     }
   }
 
-  /** P2-c: with a live projection feed the dirty SSE drives refreshes
+  /** With a live projection feed the dirty SSE drives refreshes
    * and the interval is retired; without one (Offline) the visible-
    * paused interval remains the reconciliation backstop. Management
    * actions still refresh optimistically either way. */

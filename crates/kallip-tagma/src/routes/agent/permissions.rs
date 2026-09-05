@@ -16,8 +16,8 @@ use kallip_runtime::config::{DelegationMode, PermissionClass, PermissionProfile}
 /// `requested_class` is the explicit class from the spawn request (already
 /// parsed from the wire string by the caller — the field is required on the
 /// wire). It is treated as a downgrade and is rejected with `forbidden` if
-/// it exceeds the supervisor's own granted class. This is the §2.3 class
-/// invariant, enforced explicitly by the tagma as the trusted reference
+/// it exceeds the supervisor's own granted class. This class
+/// invariant is enforced explicitly by the tagma as the trusted reference
 /// monitor.
 ///
 /// Lock ordering: `registry` RwLock is held when calling this function.
@@ -90,7 +90,7 @@ pub(crate) fn validate_subagent_request(
 
     let permissions = PermissionProfile::subagent(subagent_ws, supervisor_perms.max_depth);
 
-    // §2.3 class invariant: the child's granted permission class is
+    // Class invariant: the child's granted permission class is
     // explicit and can only be a downgrade of its supervisor's own
     // granted class. The decision is delegated to
     // `resolve_granted_class`, a pure function unit-tested in isolation.
@@ -131,7 +131,7 @@ pub(crate) fn parse_requested_class(raw: &str) -> Result<PermissionClass, ApiErr
     PermissionClass::from_str(raw).map_err(|e| ApiError::bad_request(e.to_string()))
 }
 
-/// Pure reference-monitor decision for the §2.3 class invariant, separated
+/// Pure reference-monitor decision for the class invariant, separated
 /// from `validate_subagent_request` so it can be unit-tested without building
 /// a full `Agent`/registry. Returns the class to actually grant.
 ///

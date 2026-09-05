@@ -156,7 +156,7 @@ async fn post_envelope(
                 // -- a bilateral conversation is strictly owner<->tagma, so the
                 // stamped sender can only affect rendering on the owner's own
                 // stream, never reach a third party. Ownership is the gate.
-                reg.app_stream(&conv.owner).cloned().map(Route::App)
+                reg.app_stream(&conv.owner).map(Route::App)
             }
             Principal::Admin => {
                 // An admin is not a conversation participant.
@@ -176,7 +176,7 @@ async fn post_envelope(
     // offline); surface 503 so the sender can retry.
     let delivered = match route {
         Some(Route::Tagma(tx)) => tx.send(TunnelInbound::Envelope { envelope: env }).is_ok(),
-        Some(Route::App(tx)) => tx.send(LescheEvent::Envelope { envelope: env }).is_ok(),
+        Some(Route::App(s)) => s.deliver(LescheEvent::Envelope { envelope: env }).is_ok(),
         None => false,
     };
     if !delivered {
@@ -189,10 +189,10 @@ async fn post_envelope(
     Ok(StatusCode::ACCEPTED)
 }
 
-/// A resolved route target carrying its typed broadcast sender.
+/// A resolved route target carrying the recipient's live channel.
 enum Route {
     Tagma(tokio::sync::broadcast::Sender<TunnelInbound>),
-    App(tokio::sync::broadcast::Sender<LescheEvent>),
+    App(std::sync::Arc<crate::state::AppStream>),
 }
 
 /// App -> tagma (synchronous): start a conversation key exchange and block

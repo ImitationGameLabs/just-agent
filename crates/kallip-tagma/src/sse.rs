@@ -3,16 +3,48 @@ use std::convert::Infallible;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_core::Stream;
 use kallip_common::agentid::AgentId;
+use kallip_common::protocol::SignalEvent;
 use kallip_common::protocol::SseEvent;
 use kallip_common::sse::OnDrop;
+use kallip_lesche_common::event::TagmaStatusPayload;
+use kallip_lesche_common::message::{Participant, TagmaReply};
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::direct::DirectFrame;
+use crate::bus::{AuthoredFrame, SignalFrame, StatusSnapshot, TopicReceiver};
 
+/// One frame on the direct SSE stream — the endpoint's private wire-assembly
+/// enum (retired as a bus item, it survives only here).
+/// The variant is the SSE event-name discriminator; the inner value is the
+/// `data:` payload. Serialization (variant name + inner JSON) lives in
+/// [`serialize_direct_frame`].
+#[derive(Clone, Debug)]
+pub(crate) enum DirectFrame {
+    /// An authored message forwarded from the projector: an `assistant_content`
+    /// event, a `user_message` echo, etc. Carries the sender alongside the
+    /// content reply (mirrors the online envelope's `{sender, body}`); already
+    /// persisted by the projector.
+    Authored {
+        sender: Participant,
+        reply: TagmaReply,
+    },
+    /// A runtime signal (busy/idle presence, turn terminals, errors). Ephemeral.
+    Signal(SignalEvent),
+    /// An aggregate runtime snapshot. Ephemeral.
+    Status(TagmaStatusPayload),
+}
+
+/// The JSON payload serialized for an `authored` direct-SSE event: the sender
+/// paired with the content reply, so the offline frontend (which has no relay
+/// envelope) renders the author from one uniform shape.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct DirectAuthoredPayload {
+    pub sender: Participant,
+    pub reply: TagmaReply,
+}
 /// A shutdown-aware SSE stream over one agent's broadcast channel, with
 /// subscribe/unsubscribe transition logging.
 ///
@@ -120,6 +152,47 @@ fn event_stream(
     })
 }
 
+/// Merge the direct SSE's three sources — the two chat topics off the bus
+/// — now all three bus topics — into one [`DirectFrame`] stream. The
+/// SSE `event:` names and payload shapes are unchanged (the wire contract
+/// with the frontend).
+///
+/// Cross-topic ordering (settled at this
+/// assembly point): intra-topic FIFO holds per source; across sources the
+/// interleaving is whatever the three receivers yield. This is an explicit
+/// release, not an accident: the frontend demuxes by event name into three
+/// queues drained concurrently, so its processing order never depended on
+/// cross-type wire order; the online face already carries replies and
+/// signals on two independent transports; and `applySignal` /
+/// `applyReplyCore` are order-independent reducers. If a future consumer
+/// needs cross-type program order, that is a new gate (a merge order tag),
+/// not a silent extension of this merge.
+pub(crate) fn merge_direct_frames(
+    authored: TopicReceiver<AuthoredFrame>,
+    signals: TopicReceiver<SignalFrame>,
+    status: TopicReceiver<StatusSnapshot>,
+) -> impl Stream<Item = DirectFrame> + Send {
+    let authored = authored.into_stream().map(|frame| DirectFrame::Authored {
+        sender: frame.sender,
+        reply: frame.reply,
+    });
+    let signals = signals
+        .into_stream()
+        .map(|frame| DirectFrame::Signal(frame.0));
+    let status = status
+        .into_stream()
+        .map(|frame| DirectFrame::Status(frame.0));
+    // Three erased sources, interleaved as they yield (see the ordering
+    // ruling above); a lagged source is skipped here — the same skip
+    // semantics as the old single-channel stream — and its loss lands in
+    // the topic's lagged counter (`into_stream` keeps the counting leg at
+    // the bus core). All three sources are counted alike now — the legacy
+    // uncounted direct line retired with the three-topic merge.
+    let sources: Vec<std::pin::Pin<Box<dyn Stream<Item = DirectFrame> + Send>>> =
+        vec![Box::pin(authored), Box::pin(signals), Box::pin(status)];
+    futures_util::stream::select_all(sources)
+}
+
 /// A shutdown-aware SSE stream over the direct serving channel. Each
 /// [`DirectFrame`] becomes one SSE `Event` whose `event:` name is the frame's
 /// channel discriminator (`authored` / `signal` / `status`) and whose `data:`
@@ -131,7 +204,7 @@ fn event_stream(
 /// [`serialize_direct_frame`] so the wire shape is identical to a pump-driven
 /// status frame; `None` skips it (no leading event).
 pub fn direct_sse_stream(
-    rx: broadcast::Receiver<DirectFrame>,
+    frames: impl Stream<Item = DirectFrame> + Send + 'static,
     initial: Option<DirectFrame>,
     shutdown: CancellationToken,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
@@ -142,22 +215,16 @@ pub fn direct_sse_stream(
             None
         }
     });
-    let live = futures_util::stream::StreamExt::take_until(
-        BroadcastStream::new(rx),
-        shutdown.cancelled_owned(),
-    )
-    .filter_map(|result| match result {
-        Ok(frame) => match serialize_direct_frame(&frame) {
+    let live = futures_util::stream::StreamExt::take_until(frames, shutdown.cancelled_owned())
+        .filter_map(|frame| match serialize_direct_frame(&frame) {
             Ok(event) => Some(Ok(event)),
             Err(e) => {
                 warn!(error = %e, "failed to serialize direct SSE frame, dropping");
                 None
             }
-        },
-        Err(_) => None, // skip lagged frames
-    });
+        });
     // `stream::iter(Option)` yields the single initial event or nothing, then
-    // chains into the live broadcast stream. One concrete stream type either way.
+    // chains into the live stream. One concrete stream type either way.
     let with_initial = futures_util::stream::iter(initial_event).chain(live);
     Sse::new(with_initial).keep_alive(KeepAlive::default())
 }
@@ -169,7 +236,7 @@ fn serialize_direct_frame(frame: &DirectFrame) -> serde_json::Result<Event> {
         // one uniform `{sender, reply}` shape.
         DirectFrame::Authored { sender, reply } => (
             "authored",
-            serde_json::to_string(&crate::direct::DirectAuthoredPayload {
+            serde_json::to_string(&DirectAuthoredPayload {
                 sender: sender.clone(),
                 reply: reply.clone(),
             })?,
@@ -284,5 +351,65 @@ mod tests {
         let shutdown = CancellationToken::new();
         shutdown.cancel();
         assert!(!should_log_detach(&shutdown, &tx2));
+    }
+    /// The endpoint merge carries all three sources — the authored topic, the
+    /// signal topic, and the status topic — as `DirectFrame`s. It closes
+    /// once its sources end. Order-agnostic asserts: the merge makes
+    /// no cross-source ordering promise (the ruling at `merge_direct_frames`).
+    #[tokio::test]
+    async fn merge_direct_frames_carries_all_three_sources() {
+        use kallip_archeion_common::ids::{ParticipantId, ParticipantKind, UserId};
+        let bus = crate::bus::tagma_bus().unwrap();
+        let authored = bus.subscribe::<AuthoredFrame>().unwrap();
+        let signals = bus.subscribe::<SignalFrame>().unwrap();
+        let status = bus.subscribe::<StatusSnapshot>().unwrap();
+        bus.publish(AuthoredFrame {
+            sender: Participant {
+                id: ParticipantId::for_user(&UserId::from("u".to_string())),
+                kind: ParticipantKind::Human,
+                handle: "Alice".into(),
+                tagma_id: None,
+            },
+            reply: TagmaReply::UserMessage {
+                history_id: 0,
+                text: "hi".into(),
+                created_at: None,
+                attachment: None,
+            },
+        })
+        .unwrap();
+        bus.publish(SignalFrame(SignalEvent::Busy)).unwrap();
+        bus.publish(StatusSnapshot(
+            kallip_lesche_common::event::TagmaStatusPayload {
+                root_state: kallip_common::protocol::AgentState::Idle,
+                subagents_total: 0,
+                subagents_active: 0,
+                token_budget: 50_000,
+                token_consumed: 0,
+            },
+        ))
+        .unwrap();
+        drop(bus); // end the bus-borne sources so the merged stream closes
+        let merged = merge_direct_frames(authored, signals, status);
+        let frames = tokio::time::timeout(
+            Duration::from_millis(500),
+            tokio_stream::StreamExt::collect::<Vec<_>>(merged),
+        )
+        .await
+        .expect("merge closes once its sources end");
+        let mut authored_n = 0;
+        let mut status_n = 0;
+        let mut busy = false;
+        for frame in &frames {
+            match frame {
+                DirectFrame::Authored { .. } => authored_n += 1,
+                DirectFrame::Signal(SignalEvent::Busy) => busy = true,
+                DirectFrame::Signal(_) => {
+                    panic!("unexpected frame")
+                }
+                DirectFrame::Status(_) => status_n += 1,
+            }
+        }
+        assert_eq!((authored_n, busy, status_n), (1, true, 1));
     }
 }

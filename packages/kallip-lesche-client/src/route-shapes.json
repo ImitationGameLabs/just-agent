@@ -29,11 +29,9 @@
     ["GET", "/v1/tagmata/{id}/budget"],
     ["ANY", "/v1/tagmata/{id}/manage/{*path}"],
     ["GET", "/v1/tagmata/{id}/state"],
-    ["PUT", "/v1/tagmata/{id}/state"],
     ["GET", "/v1/tagmata/{id}/work-schedule"],
     ["GET", "/v1/tagmata/{tagma_id}/rooms"],
-    ["POST", "/v1/tagmata/{tagma_id}/signal"],
-    ["POST", "/v1/tagmata/{tagma_id}/status"],
+    ["POST", "/v1/tagmata/{tagma_id}/upstream"],
     ["GET", "/v1/tunnel"],
     ["POST", "/v1/tunnel/manage-reply"]
   ]

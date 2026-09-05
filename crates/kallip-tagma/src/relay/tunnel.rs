@@ -49,6 +49,7 @@ impl RelayHandle {
         self.stop_status_pump().await;
         self.stop_room_pump().await;
         self.stop_projection_pump().await;
+        self.stop_upstream_flusher().await;
         self.stop_dispatch().await;
     }
 
@@ -77,6 +78,7 @@ impl RelayHandle {
         self.start_status_pump().await;
         self.start_room_pump().await;
         self.start_projection_pump().await;
+        self.start_upstream_flusher().await;
         tokio::pin!(stream);
         while let Some(item) = stream.next().await {
             match item {
@@ -92,6 +94,7 @@ impl RelayHandle {
         }
         self.stop_status_pump().await;
         self.stop_projection_pump().await;
+        self.stop_upstream_flusher().await;
         self.stop_room_pump().await;
         Ok(())
     }
@@ -135,9 +138,10 @@ impl RelayHandle {
                 self.handle_manage_rest(req_id, &path, &method, &trace, body)
                     .await
             }
-            TunnelInbound::SubscriptionHint { active } => {
-                self.handle_projection_hint(active).await;
-            }
+            TunnelInbound::OwnerSub { face, active } => match face {
+                Face::Projection => self.handle_projection_hint(active).await,
+                Face::Status => self.handle_status_sub(active).await,
+            },
         }
     }
 }
@@ -282,7 +286,7 @@ mod manage_rest_tests {
     }
 }
 
-/// P1-c nail (quality C-1): the call site passes (path, method) into a
+/// Order sensitivity: the call site passes (path, method) into a
 /// fn whose parameters are (method, path)-shaped -- swapping them makes
 /// every frame hit the deny arm. These two asserts pin the order: the
 /// swapped call must NOT be allowed.
@@ -292,7 +296,7 @@ fn frame_allowed_is_order_sensitive() {
     assert!(!frame_allowed("/agents", "GET"));
 }
 
-/// P1-c nail (quality M-3): the frame dispatch end-to-end -- handle_manage_rest
+/// Frame dispatch end-to-end -- handle_manage_rest
 /// against a mock lesche that records the manage-reply POST. Pins the
 /// (path, method) call order at the real dispatch site: the correct order
 /// must reach the router (200), and a swapped call must deny (404) --

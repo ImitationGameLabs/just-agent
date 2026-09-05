@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU8;
 
+use ctor::ctor;
 use kallip_common::agentid::AgentId;
 use kallip_common::policy::{ExecPolicy, PolicyPreset};
 use kallip_common::protocol::AgentState;
@@ -451,6 +452,7 @@ mod guard_tests {
     /// must point `KALLIP_DATA_DIR` at a tempdir, and a real handler persist
     /// must land there — never in the inherited (live) data dir.
     #[tokio::test]
+    #[serial_test::serial]
     async fn data_dir_guard_redirects_handler_persist() {
         ensure_test_data_dir();
         let dir = std::env::var("KALLIP_DATA_DIR").expect("guard active");
@@ -476,4 +478,28 @@ mod guard_tests {
         let body = std::fs::read_to_string(persisted).expect("written under guard dir");
         assert!(body.contains("default = \"alt\""));
     }
+}
+
+/// Install a process-wide default tracing subscriber before any test runs.
+///
+/// A callsite's interest is registered against whatever dispatcher is
+/// current the first time any thread reaches it, and the result is cached
+/// for the whole process. In the test binary, threads without a scoped
+/// subscriber resolve to `Dispatch::none`, so a parallel test hitting a
+/// callsite first caches `Interest::never` and that event becomes
+/// undeliverable process-wide — even for tests holding their own scoped
+/// subscriber (the flaky lock-evaporation WARN family). A global default
+/// gives every first registration a real subscriber; per-test scoped
+/// subscribers still take precedence on top of it. Output goes to
+/// `io::sink`: this subscriber exists for interest registration, capture
+/// stays with each test's own subscriber.
+#[ctor(unsafe)]
+fn install_global_test_subscriber() {
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(std::io::sink)
+        .with_max_level(tracing::Level::WARN)
+        .finish();
+    // Unreachable in practice: nothing else sets a global default in the
+    // test binary, and ctor runs once before any test thread exists.
+    tracing::subscriber::set_global_default(subscriber).ok();
 }

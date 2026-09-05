@@ -59,7 +59,7 @@ pub struct AgentConfig {
     /// (the agent surfaces as unspecified), but every spawn sets it.
     pub profile_set: Option<String>,
     /// FS-access permission class (Guest readonly / Normal home-rw) — the static
-    /// baseline axis of the sandbox (§2.3). Defaults to Normal; spawn requires it
+    /// baseline axis of the sandbox. Defaults to Normal; spawn requires it
     /// explicitly (never above the supervisor's own class) and restore re-validates
     /// it against the supervisor chain. Unlike `role`/`description`, this is a
     /// safety invariant, not display metadata.

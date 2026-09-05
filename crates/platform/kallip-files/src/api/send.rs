@@ -1,5 +1,5 @@
 //! POST /v1/files/{id}/send: server-side delivery (the send semantics of
-//! evaluation draft §3.1.3 -- delivery, not access). The caller needs read
+//! delivery, not access). The caller needs read
 //! right on the source; the target is validated against the enrollment
 //! facts; the landing write happens as the service, never through a path
 //! grant, so the ACL stays a zero-exception-channel model.

@@ -11,8 +11,8 @@
 //!
 //! # Testing
 //!
-//! Enable the `testutils` cargo feature for [`MockShellBackend`] and
-//! [`mock_shell_tool_set`], which let downstream tests drive the shell tools
+//! Enable the `testutils` cargo feature for `MockShellBackend` and
+//! `mock_shell_tool_set`, which let downstream tests drive the shell tools
 //! without spawning a real process.
 //!
 //! # Safety policy is the consumer's responsibility

@@ -1,3 +1,9 @@
+//! Tagma-wide shared state: one `Arc<AppState>` built by `main::run` and
+//! cloned into every task. Four fields are `OnceLock` services installed by
+//! `main::run` at startup: `hook_rules` right after construction, then the
+//! `work_schedules` and `inboxes` stores, then `external` (the relay
+//! projector) at root-relay activation; readers see `None` until set.
+//! Mutex-kind conventions are stated once in the crate root (`main.rs`).
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -215,11 +221,20 @@ pub struct AppState {
     /// routes); guards never span an await.
     pub relays:
         std::sync::Mutex<HashMap<String, (crate::relay::RelayHandle, tokio::task::JoinHandle<()>)>>,
-    /// The direct (local, non-relay) serving path, always present. Installed
-    /// once at startup via [`Self::set_direct`] after the `Arc<AppState>` exists
-    /// (its pumps hold a `Weak<AppState>` and a child of `shutdown`). Serves the
-    /// external event vocabulary over a plain SSE to any local frontend client.
-    pub direct: std::sync::OnceLock<crate::direct::DirectServing>,
+    /// The in-process typed topic bus (see [`crate::bus`]): the fixed registry
+    /// of chat topics every pump and serving path publishes/subscribes
+    /// through. Built once here at construction — the single registration
+    /// site.
+    pub bus: crate::bus::EventBus,
+    /// Invalidation source for the snapshot pumps (conduwuit-style watch): the
+    /// discrete registry mutation classes — roster changes ([`AgentRegistry`]),
+    /// duty flips ([`crate::duty::DutyStore`]), budget-limit writes, work-schedule edits —
+    /// bump the generation and wake every snapshot pump instantly; the pumps'
+    /// fallback tickers stay as the staleness lower bound (design R4).
+    /// Continuous consumption (`TokenBudget::record_usage`) is deliberately
+    /// NOT notified: turn-lifecycle signals already cover it, and the ticker
+    /// bounds the residual drift.
+    pub invalidations: tokio::sync::watch::Sender<u64>,
     /// The single external projector: the SOLE writer of chat content. Owns the
     /// unified `chat_history` store + conversation id, subscribes to the root
     /// broadcast, persists each authored/inbound row once, and publishes the
@@ -269,6 +284,10 @@ pub struct AgentRegistry {
     /// protection, since the plaintext still lives in [`Agent::env`] for shell
     /// injection.
     token_index: HashMap<TokenHash, AgentId>,
+    /// Roster-mutation invalidation source: the mutators bump the generation so
+    /// snapshot pumps wake instantly (see [`AppState::invalidations`]). Owns a
+    /// private channel when built bare (the test-only `new`) — bumps land nowhere.
+    invalidations: tokio::sync::watch::Sender<u64>,
 }
 
 /// Durable identity shared by live and faulted registry entries: the config
@@ -629,31 +648,14 @@ impl AppState {
         profiles: Arc<ArcSwap<ProfileBundle>>,
         preset: PolicyPreset,
     ) -> Self {
-        Self {
-            spawn_fn: crate::lifecycle::spawn_agent_boxed(),
-            registry: RwLock::new(AgentRegistry::new()),
-            preset,
-            hook_rules: std::sync::OnceLock::new(),
-            shutdown: CancellationToken::new(),
+        Self::with_limits(
             operator_token_hash,
-            max_agents: crate::args::MAX_AGENTS_LIMIT,
-            max_subagents: crate::args::MAX_SUBAGENTS_LIMIT,
-            prompt_queue_size: 5,
-            token_budget: kallip_runtime::token_budget::TokenBudget::new(
-                kallip_common::protocol::DEFAULT_TOKEN_BUDGET,
-                0,
-            ),
+            crate::args::MAX_AGENTS_LIMIT,
+            crate::args::MAX_SUBAGENTS_LIMIT,
+            5,
             profiles,
-            lock_manager: Arc::new(kallip_runtime::dirlock::DirLockManager::new()),
-            relays: std::sync::Mutex::new(HashMap::new()),
-            direct: std::sync::OnceLock::new(),
-            external: std::sync::OnceLock::new(),
-            joined_rooms: Arc::new(JoinedRooms::new()),
-            direct_sessions: Arc::new(DirectSessions::new()),
-            inboxes: std::sync::OnceLock::new(),
-            duty: Arc::new(crate::duty::DutyStore::new()),
-            work_schedules: std::sync::OnceLock::new(),
-        }
+            preset,
+        )
     }
 
     /// Production constructor with resource limits from CLI args.
@@ -665,9 +667,10 @@ impl AppState {
         profiles: Arc<ArcSwap<ProfileBundle>>,
         preset: PolicyPreset,
     ) -> Self {
+        let (invalidations, _) = tokio::sync::watch::channel(0u64);
         Self {
             spawn_fn: crate::lifecycle::spawn_agent_boxed(),
-            registry: RwLock::new(AgentRegistry::new()),
+            registry: RwLock::new(AgentRegistry::with_invalidation(invalidations.clone())),
             preset,
             hook_rules: std::sync::OnceLock::new(),
             shutdown: CancellationToken::new(),
@@ -682,18 +685,36 @@ impl AppState {
             profiles,
             lock_manager: Arc::new(kallip_runtime::dirlock::DirLockManager::new()),
             relays: std::sync::Mutex::new(HashMap::new()),
-            direct: std::sync::OnceLock::new(),
+            bus: crate::bus::tagma_bus().expect("static topic registry is conflict-free"),
             external: std::sync::OnceLock::new(),
             joined_rooms: Arc::new(JoinedRooms::new()),
             direct_sessions: Arc::new(DirectSessions::new()),
             inboxes: std::sync::OnceLock::new(),
-            duty: Arc::new(crate::duty::DutyStore::new()),
+            duty: Arc::new(crate::duty::DutyStore::with_invalidation(
+                invalidations.clone(),
+            )),
             work_schedules: std::sync::OnceLock::new(),
+            invalidations,
         }
     }
 }
 
 impl AppState {
+    /// Bump the invalidation generation: every subscribed snapshot pump wakes
+    /// on its next poll and re-snapshots (the pump's differential gate
+    /// absorbs no-op wakes). Best-effort: no receivers is fine.
+    pub fn invalidate(&self) {
+        let generation = *self.invalidations.borrow();
+        let _ = self.invalidations.send(generation + 1);
+    }
+
+    /// Subscribe a snapshot pump to the invalidation source. The watch
+    /// semantics give the conduwuit-style behavior for free: mutations that
+    /// land while the pump is busy coalesce into one wake.
+    pub fn subscribe_invalidations(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.invalidations.subscribe()
+    }
+
     /// Install the named relay connector + its run-task handle, at startup.
     /// Called from `main` after `ensure_root_agent` (once per successfully
     /// activated entry). Must not use `Arc::get_mut` — the root agent already
@@ -740,25 +761,37 @@ impl AppState {
             .map(|(name, (handle, join))| (name, handle, join))
             .collect()
     }
-
-    /// Install the direct serving handle, once, at startup. Called from `main`
-    /// after the `Arc<AppState>` exists (the direct pumps hold a `Weak` to it).
-    /// No `take`: direct runs for the tagma's lifetime and is drained by its
-    /// pumps' `shutdown` child token, not by dropping the handle.
-    pub fn set_direct(&self, serving: crate::direct::DirectServing) {
-        // OnceLock: a second install is a logic bug — surface it loudly.
-        if self.direct.set(serving).is_err() {
-            panic!("direct serving must be installed once at startup");
-        }
-    }
 }
 
 impl AgentRegistry {
+    /// Bare constructor: bumps land on a private channel (test-friendly — no
+    /// receiver, no observable effect). The AppState constructors install the
+    /// shared channel via [`Self::with_invalidation`].
+    #[cfg(test)]
     pub fn new() -> Self {
+        let (invalidations, _) = tokio::sync::watch::channel(0u64);
         Self {
             agents: HashMap::new(),
             token_index: HashMap::new(),
+            invalidations,
         }
+    }
+
+    /// Registry wired to the tagma's invalidation channel: roster mutations
+    /// wake every subscribed snapshot pump.
+    pub fn with_invalidation(invalidations: tokio::sync::watch::Sender<u64>) -> Self {
+        Self {
+            agents: HashMap::new(),
+            token_index: HashMap::new(),
+            invalidations,
+        }
+    }
+
+    /// Bump the invalidation generation (roster changed). Best-effort: no
+    /// receivers is fine.
+    fn notify_invalidation(&self) {
+        let generation = *self.invalidations.borrow();
+        let _ = self.invalidations.send(generation + 1);
     }
 
     // -- read helpers --
@@ -810,6 +843,7 @@ impl AgentRegistry {
                 .insert(live.agent.auth_token_hash.clone(), id.clone());
         }
         self.agents.insert(id, entry);
+        self.notify_invalidation();
     }
 
     /// Insert the tagma's single root agent. This is the **only** production
@@ -843,6 +877,7 @@ impl AgentRegistry {
                 .insert(live.agent.auth_token_hash.clone(), id.clone());
         }
         self.agents.insert(id, entry);
+        self.notify_invalidation();
     }
 
     /// Remove an entry, unregister its token hash (live only), and drop it from
@@ -857,6 +892,7 @@ impl AgentRegistry {
         {
             supervisor.subagent_ids_mut().retain(|sid| sid != id);
         }
+        self.notify_invalidation();
         Some(entry)
     }
 
@@ -868,7 +904,9 @@ impl AgentRegistry {
     /// await for them.
     pub fn drain(&mut self) -> Vec<(AgentId, RegistryEntry)> {
         self.token_index.clear();
-        self.agents.drain().collect()
+        let drained = self.agents.drain().collect::<Vec<_>>();
+        self.notify_invalidation();
+        drained
     }
 
     // -- authorization helpers --

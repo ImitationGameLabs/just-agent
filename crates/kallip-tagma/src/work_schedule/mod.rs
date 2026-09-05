@@ -242,6 +242,9 @@ pub async fn put_work_schedule(
     } else {
         store.create(&schedule).await.map_err(ApiError::internal)?;
     }
+    // A schedule edit is a discrete mutation class: wake the snapshot pumps
+    // (the projection carries the work-schedule block).
+    state.invalidate();
     if now_paused {
         // Pausing releases the root from duty so messages are not
         // buffered indefinitely (mirrors the v1 pause semantics).

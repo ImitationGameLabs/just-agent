@@ -1,83 +1,64 @@
-//! Tagma status relay: `POST /v1/tagmata/{tagma_id}/status`.
+//! Tagma status relay fan: presence-cache write + owner-stream broadcast.
 //!
-//! The tagma periodically snapshots its aggregate runtime state (agent counts
-//! and token budget) and POSTs it here; the lesche rebroadcasts it as an
-//! [`LescheEvent::TagmaStatus`] on the owner's app event stream. Like presence,
-//! status is plaintext and user-scoped, so the lesche can read it -- agent
-//! counts and token budget are operator metadata, not conversation content.
-//! The relay does not parse or validate the numbers and does not rate-limit;
-//! the snapshot cadence is a tagma-side contract.
+//! The batched `POST /v1/tagmata/{tagma_id}/upstream` channel demultiplexes
+//! Status elements into [`relay_status`], which rebroadcasts the snapshot as
+//! an [`LescheEvent::TagmaStatus`] on the owner's app event stream. Status is
+//! plaintext and user-scoped, so the lesche can read it -- agent counts and
+//! token budget are operator metadata, not conversation content. The relay
+//! does not parse or validate the numbers and does not rate-limit; the
+//! snapshot cadence is a tagma-side contract.
 //!
-//! Concurrency: routing runs under a registry WRITE lock (the cache write
+//! Concurrency: the cache write runs under a registry WRITE lock (it mutates
 //! mutates `PresenceEntry::latest_status`; broadcast `send` is synchronous),
 //! never co-held with a `ControlPlane` call.
 
-use axum::Json;
-use axum::Router;
-use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::post;
 use kallip_archeion_common::ids::TagmaId;
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::event::{LescheEvent, TagmaStatusPayload};
 use tracing::debug;
 
-use crate::auth::{AuthPrincipal, require_tagma};
 use crate::state::SharedConvState;
 
-pub fn router() -> Router<SharedConvState> {
-    Router::new().route("/tagmata/{tagma_id}/status", post(post_status))
-}
-
-/// `POST /v1/tagmata/{tagma_id}/status` -- rebroadcast the tagma's aggregate
-/// runtime snapshot to its owner's app event stream. The path `tagma_id` is
-/// authoritative (matched against the authenticated tagma); the body carries
-/// only the counts/budget. If the owner has no live app stream the snapshot is
-/// silently dropped (no client listening) -- the tagma re-posts within 30s
-/// best-effort delivery is sufficient and the tagma must not retry. The
-/// snapshot is also cached on the tunnel's presence entry (unconditionally,
-/// subscriber or not) so `me_events` can flush it to late-connecting clients.
-async fn post_status(
-    State(state): State<SharedConvState>,
-    AuthPrincipal(principal): AuthPrincipal,
-    Path(tagma_id): Path<String>,
-    Json(payload): Json<TagmaStatusPayload>,
+/// The batched upstream channel's status fan: presence-cache write +
+/// owner-stream broadcast. Single shared implementation so wire paths
+/// cannot drift (R3).
+pub(super) async fn relay_status(
+    state: &SharedConvState,
+    tagma_id: TagmaId,
+    payload: TagmaStatusPayload,
 ) -> Result<StatusCode, ApiError> {
-    let path_tagma = TagmaId::from(tagma_id);
-    let authed_tagma = require_tagma(&principal)?;
-    if &path_tagma != authed_tagma {
-        return Err(ApiError::forbidden("status tagma_id does not match auth"));
-    }
-
     // Resolve the owner from the in-memory presence cache (populated on tunnel
     // open by `register_presence`). The status pump runs only while the tunnel
     // is live, so presence is guaranteed present; a missing entry means the
     // tunnel is gone -- surface 404 rather than silently masking a routing
     // gap. Guard is dropped before any await (lock discipline invariant #1).
-    let app_tx = {
+    let app_stream = {
         // WRITE lock: the cache write mutates `latest_status` (lock discipline
         // invariant #1 still holds -- no awaits inside this CS).
         let mut reg = state.write()?;
         let entry = reg
-            .presence_by_tagma_mut(&path_tagma)
+            .presence_by_tagma_mut(&tagma_id)
             .ok_or_else(|| ApiError::not_found("no live tunnel for tagma"))?;
         // Unconditional cache write: the snapshot must land even with no live
         // subscribers, or a reconnect's flush starts from the pre-gap value.
         entry.latest_status = Some(payload.clone());
         let owner = entry.owner.clone();
-        reg.app_stream(&owner).cloned()
+        reg.app_stream(&owner)
     };
 
     // Ordering: the cache write above completes before this fan-out (the
-    // write guard drops at the end of the critical section), so a connect
-    // flush running concurrently can never bury a newer broadcast under a
-    // stale snapshot.
+    // write guard drops at the end of the critical section). The connect
+    // flush sends outside the lock, so a flush that read a pre-write
+    // snapshot may land after this send and briefly bury the newer
+    // frame; the bury is bounded and transient -- the next pump
+    // snapshot supersedes it within one heartbeat (last-wins).
     // No live app stream -> silent drop (best-effort). Still 202 so the tagma
     // does not retry; the next periodic snapshot supersedes this one.
-    if let Some(tx) = app_tx
-        && tx
-            .send(LescheEvent::TagmaStatus {
-                tagma_id: path_tagma.clone(),
+    if let Some(stream) = app_stream
+        && stream
+            .deliver(LescheEvent::TagmaStatus {
+                tagma_id: tagma_id.clone(),
                 root_state: payload.root_state,
                 subagents_total: payload.subagents_total,
                 subagents_active: payload.subagents_active,
@@ -86,7 +67,7 @@ async fn post_status(
             })
             .is_ok()
     {
-        debug!(tagma = %path_tagma, "status relayed");
+        debug!(tagma = %tagma_id, "status relayed");
     }
     Ok(StatusCode::ACCEPTED)
 }
@@ -97,138 +78,14 @@ mod tests {
     use crate::test_support::{make_state, seed_presence};
     use kallip_archeion_common::bytes::Ed25519PublicKey;
     use kallip_archeion_common::ids::{TagmaId, UserId};
-    use kallip_archeion_common::principal::Principal;
     use kallip_common::protocol::AgentState;
-    use kallip_lesche_common::event::LescheEvent;
 
     fn user(name: &str) -> UserId {
         UserId::from(name.to_string())
     }
 
     #[tokio::test]
-    async fn post_status_relays_to_owner_app_stream() {
-        let (state, control) = make_state(60, std::time::Duration::from_secs(2));
-        let owner = user("owner");
-        let tagma = TagmaId::from("tagma-1".to_string());
-        control.enroll_tagma(
-            &tagma,
-            owner.clone(),
-            Ed25519PublicKey(vec![0u8; 32]),
-            "tok",
-        );
-        // Presence alone is not enough -- the owner also needs an open app
-        // stream (created by `me_events` in production).
-        let app_tx = state.write().unwrap().open_app_stream(&owner);
-        let mut rx = app_tx.subscribe();
-        let (_t_tx, _id) = seed_presence(&state, &tagma, owner.clone());
-
-        let status = post_status(
-            State(state.clone()),
-            AuthPrincipal(Principal::Tagma(tagma.clone())),
-            Path(tagma.to_string()),
-            Json(TagmaStatusPayload {
-                root_state: AgentState::Busy,
-                subagents_total: 3,
-                subagents_active: 2,
-                token_budget: 50_000,
-                token_consumed: 12_000,
-            }),
-        )
-        .await
-        .expect("relay ok");
-        assert_eq!(status, StatusCode::ACCEPTED);
-
-        match rx.recv().await.expect("event delivered") {
-            LescheEvent::TagmaStatus {
-                tagma_id,
-                root_state,
-                subagents_total,
-                subagents_active,
-                token_budget,
-                token_consumed,
-            } => {
-                assert_eq!(tagma_id, tagma);
-                assert_eq!(root_state, AgentState::Busy);
-                assert_eq!((subagents_total, subagents_active), (3, 2));
-                assert_eq!((token_budget, token_consumed), (50_000, 12_000));
-            }
-            other => panic!("expected TagmaStatus, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn post_status_auth_mismatch_403() {
-        let (state, control) = make_state(60, std::time::Duration::from_secs(2));
-        let owner = user("owner");
-        let tagma = TagmaId::from("tagma-1".to_string());
-        control.enroll_tagma(&tagma, owner, Ed25519PublicKey(vec![0u8; 32]), "tok");
-        seed_presence(&state, &tagma, UserId::from("owner".to_string()));
-
-        let err = post_status(
-            State(state),
-            AuthPrincipal(Principal::Tagma(TagmaId::from("tagma-other".to_string()))),
-            Path(tagma.to_string()),
-            Json(TagmaStatusPayload {
-                root_state: AgentState::Idle,
-                subagents_total: 1,
-                subagents_active: 0,
-                token_budget: 0,
-                token_consumed: 0,
-            }),
-        )
-        .await
-        .expect_err("mismatch 403");
-        assert_eq!(err.status, 403);
-    }
-
-    #[tokio::test]
-    async fn post_status_no_live_tunnel_404() {
-        let (state, _control) = make_state(60, std::time::Duration::from_secs(2));
-        let tagma = TagmaId::from("ghost".to_string());
-        let err = post_status(
-            State(state),
-            AuthPrincipal(Principal::Tagma(tagma.clone())),
-            Path(tagma.to_string()),
-            Json(TagmaStatusPayload {
-                root_state: AgentState::Idle,
-                subagents_total: 0,
-                subagents_active: 0,
-                token_budget: 0,
-                token_consumed: 0,
-            }),
-        )
-        .await
-        .expect_err("no tunnel 404");
-        assert_eq!(err.status, 404);
-    }
-
-    #[tokio::test]
-    async fn post_status_silent_drop_when_no_app_stream() {
-        let (state, control) = make_state(60, std::time::Duration::from_secs(2));
-        let owner = user("owner");
-        let tagma = TagmaId::from("tagma-1".to_string());
-        control.enroll_tagma(&tagma, owner, Ed25519PublicKey(vec![0u8; 32]), "tok");
-        // Presence but NO open app stream -- the owner is offline.
-        seed_presence(&state, &tagma, UserId::from("owner".to_string()));
-
-        let status = post_status(
-            State(state),
-            AuthPrincipal(Principal::Tagma(tagma)),
-            Path("tagma-1".to_string()),
-            Json(TagmaStatusPayload {
-                root_state: AgentState::Busy,
-                subagents_total: 1,
-                subagents_active: 1,
-                token_budget: 100,
-                token_consumed: 1,
-            }),
-        )
-        .await
-        .expect("silent drop still 202");
-        assert_eq!(status, StatusCode::ACCEPTED);
-    }
-    #[tokio::test]
-    async fn post_status_caches_snapshot_without_subscribers() {
+    async fn relay_status_caches_snapshot_without_subscribers() {
         let (state, control) = make_state(60, std::time::Duration::from_secs(2));
         let owner = user("owner");
         let tagma = TagmaId::from("tagma-1".to_string());
@@ -239,20 +96,19 @@ mod tests {
             "tok",
         );
         let (_t_tx, _id) = seed_presence(&state, &tagma, owner.clone());
-        // No app stream opened: the POST is a silent drop for delivery, but
+        // No app stream opened: the relay is a silent drop for delivery, but
         // the cache write is unconditional so a late-connecting client's
         // me_events flush starts from this snapshot, not the pre-gap value.
-        let status = post_status(
-            State(state.clone()),
-            AuthPrincipal(Principal::Tagma(tagma.clone())),
-            Path(tagma.to_string()),
-            Json(TagmaStatusPayload {
+        let status = relay_status(
+            &state,
+            tagma.clone(),
+            TagmaStatusPayload {
                 root_state: AgentState::Busy,
                 subagents_total: 3,
                 subagents_active: 2,
                 token_budget: 50_000,
                 token_consumed: 12_000,
-            }),
+            },
         )
         .await
         .expect("relay ok");

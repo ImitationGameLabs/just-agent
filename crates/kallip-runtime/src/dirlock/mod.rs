@@ -377,7 +377,7 @@ impl DirLockManager {
 
     /// Snapshot of the canonical directories `agent` does NOT hold but some
     /// OTHER agent holds a write-lock on — the readonly-hole set (the DirLock
-    /// reader view, §4.2). These are the paths a mount-ns layer bind-mounts
+    /// reader view). These are the paths a mount-ns layer bind-mounts
     /// read-only so no agent can mutate a workspace a peer has locked. Empty for
     /// an agent that holds every lock it touches. For a Guest (read-only: no
     /// landlock writable paths) these are redundant — a Guest cannot write

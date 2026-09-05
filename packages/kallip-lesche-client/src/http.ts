@@ -37,6 +37,27 @@ const CSRF_HEADER_VALUE = "kallip";
  * covered -- see {@linkcode sseFetch}. */
 export const SSE_CONNECT_TIMEOUT_MS = 30_000;
 
+/** One frame of the `GET /v1/me/events` stream, shaped for cursor tracking.
+ *
+ * - `stream`: the open marker — `event: stream` with
+ *   `{ epoch, next_seq }` data. `nextSeq` is the seq of the first frame
+ *   allocated after the marker capture; frames allocated earlier may still
+ *   arrive first (pre-adoption).
+ * - `event`: a payload frame. `epoch`/`seq` come from the SSE `id:` field
+ *   (`"<epoch>:<seq>"`); both are `null` when the server sent no id
+ *   (an older server, or a non-kallip intermediary) — consumers treat that
+ *   as unversioned and disable gap detection, degrading to exactly the
+ *   pre-cursor behavior.
+ */
+export type MeEventFrame =
+  | { kind: "stream"; epoch: number; nextSeq: number }
+  | {
+      kind: "event";
+      epoch: number | null;
+      seq: number | null;
+      event: LescheEvent;
+    };
+
 /**
  * Fetch a lesche SSE endpoint with a connect/first-byte timeout. The window
  * covers connection establishment and response headers only: once the response
@@ -187,16 +208,30 @@ export class LescheClient extends BaseClient {
   /** `GET /v1/me/events` — the multiplexed SSE stream of the user's conversation
    * deliveries plus tagma presence (`tagma_online` / `tagma_offline`, with an
    * initial presence snapshot on connect). A long-lived fetch parsed with the
-   * shared `parseSseStream`; each `data:` payload is a `LescheEvent`. The
-   * caller owns reconnect/backoff; the generator ends when the stream closes
-   * or `signal` aborts. */
-  async *meEvents(signal?: AbortSignal): AsyncGenerator<LescheEvent> {
+   * shared `parseSseStream`. Yields {@linkcode MeEventFrame}: the marker
+   * (`kind: "stream"`) first, then payload frames carrying their
+   * `<epoch>:<seq>` cursor (or nulls when the server sends no id). The caller
+   * owns reconnect/backoff; the generator ends when the stream closes or
+   * `signal` aborts. */
+  async *meEvents(signal?: AbortSignal): AsyncGenerator<MeEventFrame> {
     const resp = await sseFetch(this.baseUrl + "/v1/me/events", signal);
     if (!resp.ok) {
       throw await lescheError(resp);
     }
     for await (const ev of parseSseStream(resp, signal)) {
-      yield JSON.parse(ev.data) as LescheEvent;
+      if (ev.event === "stream") {
+        const { epoch, next_seq } = JSON.parse(ev.data) as {
+          epoch: number;
+          next_seq: number;
+        };
+        yield { kind: "stream", epoch, nextSeq: next_seq };
+        continue;
+      }
+      const event = JSON.parse(ev.data) as LescheEvent;
+      const m = ev.id !== undefined ? /^(\d+):(\d+)$/.exec(ev.id) : null;
+      yield m
+        ? { kind: "event", epoch: Number(m[1]), seq: Number(m[2]), event }
+        : { kind: "event", epoch: null, seq: null, event };
     }
   }
 

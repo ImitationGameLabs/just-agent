@@ -21,6 +21,7 @@ use kallip_e2ee::{
     DIR_INITIATOR_TO_RESPONDER, DIR_RESPONDER_TO_INITIATOR, DeviceKey, SessionKey, nonce,
 };
 use kallip_lesche_common::control::KeyExchangeInit;
+use kallip_lesche_common::event::UpstreamEvent;
 use kallip_lesche_common::message::{Envelope, Participant, RoomMessage, TagmaReply, TagmaRequest};
 use kallip_lesche_common::rooms::RoomId;
 use std::sync::Arc;
@@ -34,8 +35,9 @@ use crate::test_helpers::{make_entry_with_rx, make_state};
 /// Captured outbound envelopes, in arrival order.
 type Capture = Arc<Mutex<Vec<Envelope>>>;
 
-/// Captured system signals (busy/idle/terminals/errors), in arrival order.
-type SignalCapture = Arc<Mutex<Vec<SignalEvent>>>;
+/// Captured upstream batches; the plaintext signal channel rides the
+/// flusher's `POST /upstream`.
+type SignalCapture = Arc<Mutex<Vec<Vec<UpstreamEvent>>>>;
 
 /// Initiator-side encrypt (direction 0 = initiator->responder). The e2e
 /// crate's `encrypt` is hardcoded to the responder's direction (1), so the
@@ -57,8 +59,7 @@ fn initiator_decrypt(key: &[u8; 32], seq: u64, ct: &[u8]) -> Option<Vec<u8>> {
 async fn spawn_lesche(capture: Capture, signals: SignalCapture) -> String {
     let app = Router::new()
         .route("/v1/conversations/{conv}/envelopes", post(capture_handler))
-        .route("/v1/tagmata/{_tagma}/signal", post(signal_handler))
-        .route("/v1/tagmata/{_tagma}/status", post(|| async { "ok" }))
+        .route("/v1/tagmata/{_tagma}/upstream", post(signal_handler))
         .with_state((capture, signals));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -76,9 +77,9 @@ async fn capture_handler(
 
 async fn signal_handler(
     State((_, s)): State<(Capture, SignalCapture)>,
-    axum::Json(event): axum::Json<SignalEvent>,
+    axum::Json(batch): axum::Json<Vec<UpstreamEvent>>,
 ) -> &'static str {
-    s.lock().await.push(event);
+    s.lock().await.push(batch);
     "ok"
 }
 
@@ -489,6 +490,7 @@ async fn pump_splits_authored_envelope_and_system_signal() {
     ];
     let (handle, key, capture, signals, _prompt_rx, _root_id, state) = setup_with_signals(16).await;
     handle.start_pump().await;
+    handle.start_upstream_flusher().await;
 
     // Resolve the root's event sender and wait for the pump to subscribe
     // (broadcast::send with no receiver returns Err).
@@ -521,16 +523,28 @@ async fn pump_splits_authored_envelope_and_system_signal() {
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    // System signals ride the plaintext channel; drain them too.
+    // System signals ride the plaintext upstream channel (the flusher's
+    // POST /upstream batches); drain the captured batches and flatten.
     let mut sig = Vec::new();
     for _ in 0..300 {
-        sig = signals.lock().await.clone();
+        sig = signals
+            .lock()
+            .await
+            .clone()
+            .into_iter()
+            .flatten()
+            .filter_map(|event| match event {
+                UpstreamEvent::Signal(s) => Some(s),
+                _ => None,
+            })
+            .collect();
         if sig.len() >= 2 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     handle.stop_pump().await;
+    handle.stop_upstream_flusher().await;
     assert_eq!(
         got.len(),
         1,
@@ -575,7 +589,7 @@ async fn re_kex_installs_key_resets_seq_and_starts_pump() {
     assert_eq!(c.seen_inbound, None, "KEX must reset the inbound window");
     drop(c);
     assert!(
-        handle.inner.pump.lock().await.is_some(),
+        handle.inner.pump.is_running().await,
         "KEX must start the pump"
     );
     handle.stop_pump().await;
@@ -1136,4 +1150,27 @@ fn direct_envelope(session: &DirectSessionId, text: &str, handle: &str) -> Envel
         timestamp: OffsetDateTime::now_utc(),
         ciphertext: Ciphertext(plaintext),
     }
+}
+
+/// The converged slot primitive: start is idempotent, stop clears the slot,
+/// and a stopped slot accepts a fresh pump.
+#[tokio::test]
+async fn pump_slot_is_idempotent_and_restartable() {
+    let slot = PumpSlot::new(PumpBinding::KexEpoch);
+    let run = |cancel: CancellationToken| async move {
+        cancel.cancelled().await;
+    };
+    assert!(slot.get_or_spawn(run).await, "first start must spawn");
+    assert!(
+        !slot.get_or_spawn(run).await,
+        "second start must be a no-op on a live slot"
+    );
+    slot.stop_and_await().await;
+    assert!(!slot.is_running().await, "stop must clear the slot");
+    assert!(
+        slot.get_or_spawn(run).await,
+        "a stopped slot must accept a fresh pump"
+    );
+    slot.stop_and_await().await;
+    assert!(!slot.is_running().await, "second stop must clear the slot");
 }

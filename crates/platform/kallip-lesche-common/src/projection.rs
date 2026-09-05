@@ -1,5 +1,5 @@
 //! The manage-plane projection snapshot the tagma pushes to the lesche
-//! (api-redesign §9.1): a full roster plus the aggregate status counters.
+//! (a full roster plus the aggregate status counters).
 //!
 //! Plaintext by design -- manage metadata is the relay-visible surface (same
 //! trust base as the [`crate::tunnel::TunnelInbound::ManageRest`] frame). The
@@ -8,10 +8,10 @@
 //! when the tagma is offline (stale read), so the tagma simply re-pushes a
 //! fresh full snapshot on tunnel-up -- there is no delta protocol.
 //!
-//! Deliberately excluded (api-redesign §9.1 last bullet): prompt-bearing
+//! Deliberately excluded: prompt-bearing
 //! text never rides the projection. Roster summaries carry only registry
 //! metadata (role/description/activity/duty), and the work-schedule
-//! projection is deferred until its storage shape lands (P2-b) precisely so
+//! projection is deferred until its storage shape lands, precisely so
 //! its prompt fields (`wake_prompt`, `final_warn_prompt`) cannot leak in.
 
 use crate::event::TagmaStatusPayload;

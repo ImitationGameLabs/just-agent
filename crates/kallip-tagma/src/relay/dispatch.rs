@@ -8,8 +8,8 @@
 //! `handle_history`) are `pub(super)` because the bilateral path
 //! (`bilateral::handle_user_op`) calls into them; `handle_history_inner`,
 //! `execute_op`, and `interrupt_root` stay private (same-module callers only).
-//! The encrypted/plaintext emit tails (`emit`, `emit_signal`) live in
-//! `bilateral` and are likewise `pub(super)`.
+//! The encrypted emit tail (`emit`) lives in `bilateral` and is likewise
+//! `pub(super)`; the plaintext signal uplink rides the upstream flusher.
 
 use super::*;
 

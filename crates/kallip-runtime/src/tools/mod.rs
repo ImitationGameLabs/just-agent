@@ -435,6 +435,10 @@ mod tests {
         // and an XDG_CONFIG_HOME with no `kallip` subdir (profiles dir absent).
         let home = tempfile::tempdir().unwrap();
         let xdg = tempfile::tempdir().unwrap();
+        // KALLIP_DATA_DIR needs its own neutralization: a live data dir with a
+        // profiles/ subdir contributes an extra hide-hole and fails the
+        // exact-match assert below wherever the env var is set.
+        let data = tempfile::tempdir().unwrap();
         // A real secret dir, a missing path, and a regular file — only the dir
         // qualifies (mount(2) needs a directory mountpoint).
         let secret_dir = tempfile::tempdir_in(home.path()).unwrap();
@@ -453,6 +457,7 @@ mod tests {
             [
                 ("HOME", Some(home.path().as_os_str())),
                 ("XDG_CONFIG_HOME", Some(xdg.path().as_os_str())),
+                ("KALLIP_DATA_DIR", Some(data.path().as_os_str())),
                 ("KALLIP_SECRET_HIDE_PATHS", Some(list.as_os_str())),
             ],
             || {

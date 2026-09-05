@@ -1,4 +1,4 @@
-// Projection read client (api-redesign §9): the lesche's cached, prompt-free
+// Projection read client: the lesche's cached, prompt-free
 // snapshot of a tagma plus the per-tagma dirty SSE. Reads are served from the
 // lesche's store (MIN3: offline tags keep serving, flagged `stale`), so the
 // browser no longer needs to poll the tagma's manage plane for roster/status.

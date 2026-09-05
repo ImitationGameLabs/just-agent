@@ -275,7 +275,7 @@ pub(crate) fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
 /// missing or zero-length). A dir-sync failure is logged and downgraded to a
 /// warning: by then the rename has already landed, so propagating an error
 /// would overstate the damage. Neither sync path is unit-testable; this is
-/// verified by walkthrough (design doc §7, context-persistence).
+/// verified by walkthrough.
 pub(crate) fn atomic_write(path: &Path, content: &str) -> Result<()> {
     let parent = path.parent().context("path has no parent")?;
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();

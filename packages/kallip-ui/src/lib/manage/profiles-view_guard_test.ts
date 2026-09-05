@@ -1,5 +1,5 @@
-// Decision-table tests for the dangling-save flow (P2) and the unsaved
-// leave guard (P4). The store's catch block and the host wrapper are thin
+// Decision-table tests for the dangling-save flow and the unsaved
+// leave guard. The store's catch block and the host wrapper are thin
 // layers over classifySaveFailure / leaveGuardIntercept /
 // leaveGuardDialogVisible — these tests pin the decisions directly.
 

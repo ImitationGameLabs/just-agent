@@ -1,10 +1,10 @@
 //! Async HTTP client for the kallip-lesche data-plane relay.
 //!
-//! Four surfaces, all authenticated with the tagma's `sk-tagma-` bearer:
+//! Authenticated with the tagma's `sk-tagma-` bearer:
 //! - [`LescheClient::post_envelope`] — post an agent envelope, retrying on 503.
 //! - [`LescheClient::post_key_exchange_response`] — post a KEX response.
-//! - [`LescheClient::post_status`] — post a periodic aggregate status snapshot.
-//! - [`LescheClient::post_signal`] — post a per-event runtime signal.
+//! - [`LescheClient::post_upstream`] — post a batch of plaintext metadata
+//!   events (status, signal, projection) over the single upstream channel.
 //! - [`LescheClient::open_tunnel`] — open the long-lived tunnel SSE and
 //!   yield parsed [`TunnelInbound`] events.
 //!
@@ -31,7 +31,7 @@ use kallip_archeion_common::ids::{ChannelId, ConversationId, TagmaId};
 use kallip_e2ee::DeviceKey;
 use kallip_lesche_common::control::KeyExchangeResponse;
 use kallip_lesche_common::direct::{DirectMessageView, DirectSessionId, DirectSessionView};
-use kallip_lesche_common::event::{SignalEvent, TagmaStatusPayload};
+use kallip_lesche_common::event::UpstreamEvent;
 use kallip_lesche_common::message::Envelope;
 use kallip_lesche_common::proof::tunnel_transcript;
 use kallip_lesche_common::rooms::{RoomId, TagmaRoomView};
@@ -65,6 +65,25 @@ pub struct RoomMessageView {
     pub ciphertext: kallip_archeion_common::bytes::Ciphertext,
     #[serde(with = "time::serde::iso8601")]
     pub created_at: time::OffsetDateTime,
+}
+
+/// Per-face live-subscriber counts echoed on an `/upstream` response (the
+/// piggyback reconcile channel). Both are 0/1 today (one app
+/// stream per owner; one projection channel per (user, tagma)) but stay
+/// counts on the wire -- the caller derives booleans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+pub struct UpstreamFaceCounts {
+    pub status: u64,
+    pub projection: u64,
+}
+
+/// The `/upstream` response body. `faces` is absent from a legacy lesche:
+/// the caller then reconciles nothing (the no-op leg of the mixed-version
+/// reverse window).
+#[derive(Debug, Clone, Copy, Default, serde::Deserialize)]
+pub struct UpstreamAck {
+    #[serde(default)]
+    pub faces: Option<UpstreamFaceCounts>,
 }
 
 /// A lesche HTTP failure with its status code, so a caller can distinguish a
@@ -304,80 +323,33 @@ impl LescheClient {
         Ok(())
     }
 
-    /// Post the tagma's periodic aggregate status snapshot (agent counts +
-    /// token budget). Not retried: status is idempotent and the next tick
-    /// supersedes a dropped POST, so retrying would only amplify a transient
-    /// stall. A failure here is logged by the caller, not surfaced to the
-    /// agent.
-    pub async fn post_status(
+    /// Post a batch of plaintext metadata events to the single upstream
+    /// channel (`POST /v1/tagmata/{id}/upstream`): one authenticated request
+    /// carries status, signal, and projection elements together, each
+    /// demultiplexed server-side into the same fan logic the per-kind
+    /// endpoints have always used. Best-effort like the per-kind calls it
+    /// supersedes; a failure here is logged by the caller. Returns the
+    /// [`UpstreamAck`] so the caller can reconcile its per-face gates
+    /// against the lesche's piggybacked subscriber counts.
+    pub async fn post_upstream(
         &self,
         tagma_id: &TagmaId,
-        payload: &TagmaStatusPayload,
-    ) -> Result<()> {
-        let url = self.url(&format!("/v1/tagmata/{tagma_id}/status"));
+        events: &[UpstreamEvent],
+    ) -> Result<UpstreamAck> {
+        let url = self.url(&format!("/v1/tagmata/{tagma_id}/upstream"));
         let resp = self
             .inner
             .http_post
             .post(&url)
             .bearer_auth(&self.inner.tagma_token)
-            .json(payload)
+            .json(&events)
             .send()
             .await
             .context("lesche POST failed")?;
         if !resp.status().is_success() {
             anyhow::bail!("lesche POST returned {}", resp.status());
         }
-        Ok(())
-    }
-
-    /// Put a full projection-state snapshot (roster + aggregate status) to
-    /// the lesche's state surface (api-redesign §9.1): PUT /state is an
-    /// idempotent whole-resource replace. Same best-effort contract as
-    /// [`post_status`](Self::post_status): not retried -- the state is a
-    /// pure cache, so the next push (signal nudge or fallback tick)
-    /// supersedes a dropped PUT, and a tunnel-down cancels the in-flight
-    /// request rather than waiting out the HTTP timeout.
-    pub async fn put_state(
-        &self,
-        tagma_id: &TagmaId,
-        snapshot: &kallip_lesche_common::projection::ProjectionSnapshot,
-    ) -> Result<()> {
-        let url = self.url(&format!("/v1/tagmata/{tagma_id}/state"));
-        let resp = self
-            .inner
-            .http_post
-            .put(&url)
-            .bearer_auth(&self.inner.tagma_token)
-            .json(snapshot)
-            .send()
-            .await
-            .context("lesche PUT failed")?;
-        if !resp.status().is_success() {
-            anyhow::bail!("lesche PUT returned {}", resp.status());
-        }
-        Ok(())
-    }
-
-    /// Post a tagma runtime signal (busy/idle presence, turn terminals,
-    /// errors) for plaintext rebroadcast as a `LescheEvent::TagmaSignal`. Like
-    /// [`post_status`](Self::post_status), not retried: a dropped signal just
-    /// means the UI misses a transient transition, and the tagma has already
-    /// logged it for observability. A failure here is logged by the caller.
-    pub async fn post_signal(&self, tagma_id: &TagmaId, event: &SignalEvent) -> Result<()> {
-        let url = self.url(&format!("/v1/tagmata/{tagma_id}/signal"));
-        let resp = self
-            .inner
-            .http_post
-            .post(&url)
-            .bearer_auth(&self.inner.tagma_token)
-            .json(event)
-            .send()
-            .await
-            .context("lesche POST failed")?;
-        if !resp.status().is_success() {
-            anyhow::bail!("lesche POST returned {}", resp.status());
-        }
-        Ok(())
+        resp.json().await.context("decode upstream ack")
     }
 
     /// Open the tunnel SSE and return a stream of parsed inbound events.
@@ -710,7 +682,7 @@ mod tests {
     use kallip_archeion_common::ids::{
         ConversationId, ParticipantId, ParticipantKind, TagmaId, TraceId,
     };
-    use kallip_lesche_common::event::AgentState;
+    use kallip_lesche_common::event::{AgentState, SignalEvent, TagmaStatusPayload};
     use kallip_lesche_common::message::{Envelope, Participant};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1029,54 +1001,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_status_posts_payload_to_tagma_status_path() {
+    async fn post_upstream_posts_batch_to_upstream_path() {
         let server = MockServer::start().await;
         let tagma_id = TagmaId::from("tagma-1".to_string());
         Mock::given(method("POST"))
-            .and(path(format!("/v1/tagmata/{tagma_id}/status")))
+            .and(path(format!("/v1/tagmata/{tagma_id}/upstream")))
             .and(header("authorization", "Bearer sk-tagma-test"))
-            .respond_with(ResponseTemplate::new(202))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"applied": 2, "faces": {"status": 1, "projection": 0}}),
+            ))
             .mount(&server)
             .await;
-        client(&server)
-            .post_status(
+        let ack = client(&server)
+            .post_upstream(
                 &tagma_id,
-                &TagmaStatusPayload {
-                    root_state: AgentState::Busy,
-                    subagents_total: 3,
-                    subagents_active: 2,
-                    token_budget: 50_000,
-                    token_consumed: 12_000,
-                },
+                &[
+                    UpstreamEvent::Status(TagmaStatusPayload {
+                        root_state: AgentState::Busy,
+                        subagents_total: 1,
+                        subagents_active: 1,
+                        token_budget: 9,
+                        token_consumed: 3,
+                    }),
+                    UpstreamEvent::Signal(SignalEvent::Idle),
+                ],
             )
             .await
-            .expect("202 ok");
-    }
-
-    #[tokio::test]
-    async fn post_status_bails_on_non_success() {
-        let server = MockServer::start().await;
-        let tagma_id = TagmaId::from("tagma-1".to_string());
-        // 503 is NOT retried for status (unlike envelopes) -- it bails.
-        Mock::given(method("POST"))
-            .and(path(format!("/v1/tagmata/{tagma_id}/status")))
-            .respond_with(ResponseTemplate::new(503))
-            .mount(&server)
-            .await;
-        let err = client(&server)
-            .post_status(
-                &tagma_id,
-                &TagmaStatusPayload {
-                    root_state: AgentState::Idle,
-                    subagents_total: 0,
-                    subagents_active: 0,
-                    token_budget: 0,
-                    token_consumed: 0,
-                },
-            )
-            .await
-            .expect_err("503");
-        assert!(err.to_string().contains("503"), "got: {err}");
+            .expect("200 ok");
+        assert_eq!(
+            ack.faces,
+            Some(UpstreamFaceCounts {
+                status: 1,
+                projection: 0,
+            }),
+            "piggybacked face counts surface to the caller",
+        );
     }
 
     #[tokio::test]
@@ -1109,7 +1068,7 @@ mod tests {
             TunnelInbound::Envelope { .. } => panic!("expected KeyExchange"),
             TunnelInbound::Wake => panic!("expected KeyExchange"),
             TunnelInbound::ManageRest { .. } => panic!("expected KeyExchange"),
-            TunnelInbound::SubscriptionHint { .. } => panic!("expected KeyExchange"),
+            TunnelInbound::OwnerSub { .. } => panic!("expected KeyExchange"),
         }
     }
 

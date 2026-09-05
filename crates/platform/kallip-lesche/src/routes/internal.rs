@@ -54,7 +54,7 @@ pub async fn file_delivered(
     let delivered = {
         let registry = state.read()?;
         match registry.app_stream(&user) {
-            Some(tx) => tx.send(event).is_ok(),
+            Some(stream) => stream.deliver(event).is_ok(),
             None => false,
         }
     };
@@ -73,14 +73,16 @@ mod tests {
     use tokio::sync::broadcast;
     use tower::ServiceExt;
 
-    fn app_with_stream(token: &str) -> (Router, broadcast::Receiver<LescheEvent>) {
+    fn app_with_stream(
+        token: &str,
+    ) -> (Router, broadcast::Receiver<crate::state::SequencedAppEvent>) {
         let (state, _control) = crate::test_support::make_state(60, Duration::from_secs(10));
         let user = UserId::from("u1".to_string());
-        let tx = {
+        let stream = {
             let mut registry = state.write().unwrap();
             registry.open_app_stream(&user)
         };
-        let rx = tx.subscribe();
+        let rx = stream.subscribe();
         let app = Router::new()
             .route("/file-delivered", post(file_delivered))
             .with_state(state)
@@ -135,7 +137,7 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let event = rx.try_recv().expect("the event lands on the stream");
-        match event {
+        match event.event {
             LescheEvent::FileDelivered {
                 path, name, size, ..
             } => {
@@ -145,5 +147,32 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    /// No live app stream: the event is dropped (not queued) and the endpoint
+    /// answers 200 with an honest `delivered: false`.
+    #[tokio::test]
+    async fn reports_delivered_false_without_a_live_stream() {
+        let (state, _control) = crate::test_support::make_state(60, Duration::from_secs(10));
+        let app = Router::new()
+            .route("/file-delivered", post(file_delivered))
+            .with_state(state)
+            .layer(middleware::from_fn_with_state(
+                TokenHash::of("secret"),
+                crate::middleware::internal_guard,
+            ));
+        let request = Request::builder()
+            .method("POST")
+            .uri("/file-delivered")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .header(AUTHORIZATION, "Bearer secret")
+            .body(Body::from(body()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(bytes.as_ref(), b"{\"delivered\":false}");
     }
 }

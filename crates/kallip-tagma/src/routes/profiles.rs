@@ -1216,6 +1216,7 @@ mod tests {
     // With `force` the same save proceeds: the config persists to disk and
     // the bound agent stays registered (its binding is now dangling).
     #[tokio::test]
+    #[serial_test::serial]
     async fn put_force_accepts_dangling_and_persists() {
         let state = make_state_two_sets();
         let sub = alt_bound_sub(&state).await;

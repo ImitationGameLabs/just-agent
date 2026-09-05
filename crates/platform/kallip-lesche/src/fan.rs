@@ -52,8 +52,8 @@ pub fn fan_envelope(
             continue;
         }
         let ok = match member.kind {
-            ParticipantKind::Human => registry.app_stream_by_member(&member.id).is_some_and(|tx| {
-                tx.send(LescheEvent::Envelope {
+            ParticipantKind::Human => registry.app_stream_by_member(&member.id).is_some_and(|s| {
+                s.deliver(LescheEvent::Envelope {
                     envelope: envelope.clone(),
                 })
                 .is_ok()
@@ -100,7 +100,7 @@ pub fn deliver_membership_changed(
                 .is_some_and(|p| p.tx.send(wake.clone()).is_ok()),
             ParticipantKind::Human => registry
                 .app_stream_by_member(&member.id)
-                .is_some_and(|tx| tx.send(event.clone()).is_ok()),
+                .is_some_and(|s| s.deliver(event.clone()).is_ok()),
         };
         if ok {
             delivered += 1;

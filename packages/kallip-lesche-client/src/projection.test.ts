@@ -1,4 +1,4 @@
-// Projection client tests (P2-c): the three cached GETs, the dirty-frame SSE
+// Projection client tests: the three cached GETs, the dirty-frame SSE
 // generator, and the linear backoff. The transport is a stubbed global fetch
 // (same seam the browser uses), so the assertions cover the exact paths and
 // the wire shapes the lesche serves.

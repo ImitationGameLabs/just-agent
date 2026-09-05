@@ -73,6 +73,8 @@ wiremock = { workspace = true }
 tempfile = { workspace = true }
 temp-env = { workspace = true }
 serial_test = { workspace = true }
+# Process-start constructor: installs a global default tracing subscriber before any test thread runs — tracing callsite interest-cache race guard.
+ctor = { workspace = true }
 kallip-shell = { workspace = true }
 # Relay op-tests (ported from the former standalone connector): mock lesche + inline AEAD app side.
 chacha20poly1305 = { workspace = true }

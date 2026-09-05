@@ -218,7 +218,7 @@ fn compose_system_prompt_static_tail_identical_across_variants() {
     );
 }
 
-// -- resolve_granted_class (the §2.3 reference-monitor decision, extracted) --
+// -- resolve_granted_class (the reference-monitor decision, extracted) --
 
 #[test]
 fn granted_accepts_supervisor_class_and_downgrades() {

@@ -3,4 +3,6 @@
 
 mod client;
 
-pub use client::{LescheClient, LescheClientBuilder, LescheHttpError};
+pub use client::{
+    LescheClient, LescheClientBuilder, LescheHttpError, UpstreamAck, UpstreamFaceCounts,
+};

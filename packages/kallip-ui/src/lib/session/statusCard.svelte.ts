@@ -136,7 +136,7 @@ class StatusCardStore {
     this.backend = backend;
     this.refreshRoster();
     if (backend.projectionFeed) {
-      // P2-c: the lesche's dirty SSE drives both refreshes the moment a
+      // The lesche's dirty SSE drives both refreshes the moment a
       // frame lands. A silently dead stream looks alive, so the visible
       // backstop intervals run alongside it (30s both, matching the
       // Offline cadence's slow leg): the poll is the only thing that

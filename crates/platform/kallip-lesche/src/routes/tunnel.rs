@@ -26,7 +26,7 @@ use kallip_archeion_common::proof::ProofError;
 use kallip_common::protocol::ApiError;
 use kallip_lesche_common::event::LescheEvent;
 use kallip_lesche_common::proof::verify_tunnel_proof;
-use kallip_lesche_common::tunnel::TunnelInbound;
+use kallip_lesche_common::tunnel::{Face, TunnelInbound};
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
@@ -152,22 +152,30 @@ async fn tunnel(
         // Announce online to the owner's app stream, if one is open. The tunnel
         // never *creates* an app stream (only `me_events` may); if the owner is
         // not connected now, they get this tagma in their snapshot on connect.
-        if let Some(app_tx) = reg.app_stream(&owner) {
-            let _ = app_tx.send(LescheEvent::TagmaOnline {
+        if let Some(app_stream) = reg.app_stream(&owner) {
+            let _ = app_stream.deliver(LescheEvent::TagmaOnline {
                 tagma_id: tagma_id.clone(),
             });
         }
         // Re-send the projection subscription hint on every reconnect (the
         // hint itself is unbuffered, so a tagma that was offline when a
         // flip happened would otherwise come back with a stale active
-        // flag; api-redesign §9.7). Live subscribers only.
+        // flag). Live subscribers only.
         if reg.projection_stream_live_for_tagma(&tagma_id)
             && let Some(presence) = reg.presence_by_tagma(&tagma_id)
         {
-            let _ = presence
-                .tx
-                .send(TunnelInbound::SubscriptionHint { active: true });
+            let _ = presence.tx.send(TunnelInbound::OwnerSub {
+                face: Face::Projection,
+                active: true,
+            });
         }
+        // Re-learn the status-face truth on every reconnect, UNCONDITIONALLY:
+        // unlike the projection block above, whose tagma-side
+        // default false covers the else, the status gate defaults OPEN -- a
+        // zero-subscriber tagma must receive `false` here to close it. A
+        // lost re-learn still self-heals within one push's piggyback.
+        let status_live = reg.has_app_stream(&owner);
+        reg.send_owner_sub(&tagma_id, Face::Status, status_live);
     }
     // Announce room-member presence to peers (best-effort, off the request path).
     // Presence is soft state; a dropped frame self-heals on the viewer's roster
@@ -215,8 +223,8 @@ async fn tunnel(
             };
             let removed = reg.take_presence_if_owned(&cleanup_tagma, &cleanup_id);
             if removed {
-                if let Some(app_tx) = reg.app_stream(&cleanup_owner) {
-                    let _ = app_tx.send(LescheEvent::TagmaOffline {
+                if let Some(app_stream) = reg.app_stream(&cleanup_owner) {
+                    let _ = app_stream.deliver(LescheEvent::TagmaOffline {
                         tagma_id: cleanup_tagma.clone(),
                     });
                 }
@@ -254,10 +262,13 @@ mod tests {
 
     use super::*;
     use crate::test_support::make_state;
+    use axum::response::IntoResponse;
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
+    use ed25519_dalek::Signer;
     use kallip_archeion_common::bytes::Ed25519PublicKey;
     use kallip_archeion_common::ids::{TagmaId, UserId};
+    use kallip_lesche_common::proof::tunnel_transcript;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn now_ts() -> i64 {
@@ -318,9 +329,62 @@ mod tests {
         assert_eq!(e_unknown.message, e_revoked.message);
         assert_eq!(e_unknown.message, e_pending.message);
     }
+    /// The reconnect re-learn is UNCONDITIONAL for the status
+    /// face: a tagma connecting while the owner's app stream is live gets
+    /// `{ face: "status", active: true }` as the first tunnel frame, and
+    /// one connecting with no stream gets `active: false` -- the
+    /// load-bearing else (the tagma-side status gate defaults open, so a
+    /// zero-subscriber tagma must be told to close). Deleting the else
+    /// or swapping the face turns this red.
+    #[tokio::test]
+    async fn tunnel_relearn_sends_the_unconditional_status_truth() {
+        for (open, expected_active) in [(true, true), (false, false)] {
+            let (state, control) = make_state(60, std::time::Duration::from_secs(2));
+            let owner = UserId::from("owner".to_string());
+            let tagma = TagmaId::from(format!("t-relearn-{open}"));
+            let signing = ed25519_dalek::SigningKey::from_bytes(&[0x5A; 32]);
+            let public = signing.verifying_key().to_bytes();
+            control.enroll_tagma(
+                &tagma,
+                owner.clone(),
+                Ed25519PublicKey(public.to_vec()),
+                "tok",
+            );
+            if open {
+                state.write().unwrap().open_app_stream(&owner);
+            }
+            let ts = now_ts();
+            let sig = signing.sign(&tunnel_transcript(tagma.as_ref(), ts));
+            let mut headers = gate_headers(ts);
+            headers.insert(
+                "X-Device-Proof",
+                STANDARD.encode(sig.to_bytes()).parse().unwrap(),
+            );
+            let sse = tunnel(State(state), as_tagma(&tagma), headers)
+                .await
+                .expect("tunnel establishes");
+            let mut frames = sse.into_response().into_body().into_data_stream();
+            let mut data = None;
+            for _ in 0..20 {
+                let frame = futures_util::StreamExt::next(&mut frames)
+                    .await
+                    .expect("sse stream yields")
+                    .expect("frame bytes");
+                let text = String::from_utf8_lossy(&frame);
+                if let Some(line) = text.lines().find(|l| l.starts_with("data:")) {
+                    data = Some(line[5..].trim().to_string());
+                    break;
+                }
+            }
+            let data = data.expect("the relearn OwnerSub arrives as the first event");
+            let v: serde_json::Value = serde_json::from_str(&data).unwrap();
+            assert_eq!(v["face"], "status", "the status face rides the wire");
+            assert_eq!(v["active"], expected_active, "open = {open}");
+        }
+    }
 }
 
-/// arch nail (P1-b): the manage-reply endpoint only accepts tagma
+/// Arch nail: the manage-reply endpoint only accepts tagma
 /// bearers -- an operator session (or anonymous) caller is 401.
 #[tokio::test]
 async fn manage_reply_rejects_non_tagma_principals() {

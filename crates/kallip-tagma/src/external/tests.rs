@@ -49,13 +49,10 @@ async fn record_outbound_persists_and_publishes() {
         Some("Tagma".into()),
         MessageLimits::default(),
     );
-    let mut rx = projector.subscribe();
+    let mut rx = state.bus.subscribe::<AuthoredFrame>().unwrap();
     projector.record_outbound("hello".into()).await.unwrap();
 
-    let (sender, reply) = match rx.recv().await.unwrap() {
-        ExternalFrame::Authored { sender, reply } => (sender, reply),
-        other => panic!("expected Authored, got {other:?}"),
-    };
+    let AuthoredFrame { sender, reply } = rx.recv().await.unwrap();
     assert!(
         sender.kind == ParticipantKind::Agent
             && sender.handle == "Tagma"
@@ -113,16 +110,13 @@ async fn record_inbound_persists_and_publishes() {
         Some("Tagma".into()),
         MessageLimits::default(),
     );
-    let mut rx = projector.subscribe();
+    let mut rx = state.bus.subscribe::<AuthoredFrame>().unwrap();
     let user = user_sender();
     projector
         .record_inbound(Some(user.clone()), "hi".into(), None)
         .await;
 
-    let (sender, reply) = match rx.recv().await.unwrap() {
-        ExternalFrame::Authored { sender, reply } => (sender, reply),
-        other => panic!("expected Authored, got {other:?}"),
-    };
+    let AuthoredFrame { sender, reply } = rx.recv().await.unwrap();
     assert!(sender.kind == ParticipantKind::Human);
     let id = match reply {
         TagmaReply::UserMessage {
@@ -187,10 +181,10 @@ async fn record_outbound_works_without_store() {
         None,
         MessageLimits::default(),
     );
-    let mut rx = projector.subscribe();
+    let mut rx = state.bus.subscribe::<AuthoredFrame>().unwrap();
     projector.record_outbound("hello".into()).await.unwrap();
     match rx.recv().await.unwrap() {
-        ExternalFrame::Authored {
+        AuthoredFrame {
             reply: TagmaReply::Event { history_id, .. },
             ..
         } => {

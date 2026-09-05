@@ -18,8 +18,7 @@ use std::path::PathBuf;
 /// once the chain-walking restore path is sufficiently tested.
 pub const DEFAULT_MAX_DEPTH: u8 = 3;
 
-/// FS-access permission class — the static baseline axis of the agent sandbox
-/// (`.draft/design/agent-sandbox.md` §2.3).
+/// FS-access permission class — the static baseline axis of the agent sandbox.
 ///
 /// Granted explicitly at spawn (never above the supervisor's own class) and
 /// re-validated against the supervisor chain on restore. `Ord` is derived

@@ -165,5 +165,7 @@ tempfile = "3"
 http-body-util = "0.1"
 wiremock = "0.6.5"
 serial_test = "3.5.0"
+# Dev-only: process-start constructor for the tagma test harness — installs a global default tracing subscriber before any test thread runs (callsite interest-cache race guard).
+ctor = "1.0.13"
 # Dev-only: the `spawn` benchmark in kallip-shell (criterion). Not a runtime dep.
 criterion = "0.8.2"

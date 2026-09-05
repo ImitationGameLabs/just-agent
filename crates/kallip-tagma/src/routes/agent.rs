@@ -358,6 +358,10 @@ pub async fn update_metadata(
     if let Some(desc) = &body.description {
         entry.identity_mut().config.description = desc.clone();
     }
+    // role/description land in the projected roster summary; wake the
+    // snapshot pumps — this raw get_mut flip bypasses the stores'
+    // embedded senders, so the explicit call is the invalidation.
+    state.invalidate();
     let summary = state.summarize(&id, entry);
     Ok(Json(summary))
 }

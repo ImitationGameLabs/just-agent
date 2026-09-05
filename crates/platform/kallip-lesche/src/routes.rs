@@ -11,6 +11,7 @@ mod signal;
 mod state;
 mod status;
 mod tunnel;
+mod upstream;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -23,7 +24,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use crate::state::SharedConvState;
 
 /// Data-plane routes, state-injected (`Router<()>`): `/conversations*`,
-/// `/me/events`, `/tagmata/{id}/status`, `/tagmata/{id}/signal`, and `/tunnel`.
+/// `/me/events`, and `/tunnel`.
 pub fn router(
     state: SharedConvState,
     internal_token_hash: Option<kallip_common::authtoken::TokenHash>,
@@ -34,12 +35,10 @@ pub fn router(
         .merge(direct::router().with_state(state.clone()))
         .merge(room_management::router().with_state(state.clone()))
         .merge(events::router().with_state(state.clone()))
-        .merge(signal::router().with_state(state.clone()))
-        .merge(status::router().with_state(state.clone()))
         .merge(tunnel::router().with_state(state.clone()))
         .merge(manage_proxy::router().with_state(state.clone()))
-        .merge(state::router().with_state(state.clone()));
-
+        .merge(state::router().with_state(state.clone()))
+        .merge(upstream::router().with_state(state.clone()));
     // The service-to-service `/internal/*` surface: mounted only when the
     // shared secret is configured (same discipline as the archeion's internal
     // nest; the files service pushes FileDelivered events here).
@@ -52,9 +51,10 @@ pub fn router(
     }
     app
 }
+
 /// The complete external route table: (verb, path) pairs the merged /v1
 /// router serves, exactly as registered above -- the registration
-/// registry's mirror (route-shape design §5). Adding a route means adding
+/// registry's mirror. Adding a route means adding
 /// a row here: the shape tests drive every row through the nested app and
 /// the CORS layer derives its preflight set from this table, so a stray
 /// /v1 in a registration, a singular alias, or an unadvertised verb fails
@@ -89,11 +89,9 @@ pub(crate) const ROUTE_TABLE: &[(&str, &str)] = &[
     ("GET", "/tagmata/{id}/budget"),
     ("ANY", "/tagmata/{id}/manage/{*path}"),
     ("GET", "/tagmata/{id}/state"),
-    ("PUT", "/tagmata/{id}/state"),
     ("GET", "/tagmata/{id}/work-schedule"),
     ("GET", "/tagmata/{tagma_id}/rooms"),
-    ("POST", "/tagmata/{tagma_id}/signal"),
-    ("POST", "/tagmata/{tagma_id}/status"),
+    ("POST", "/tagmata/{tagma_id}/upstream"),
     ("GET", "/tunnel"),
     ("POST", "/tunnel/manage-reply"),
 ];
@@ -116,21 +114,15 @@ pub fn cors_layer(origins: &str) -> CorsLayer {
     // Methods must be an explicit list, NOT `Any`: the Fetch spec forbids
     // `Access-Control-Allow-Credentials: true` together with a wildcard
     // (`Allow-Methods: *`), and tower-http panics at layer construction if
-    // they're combined. The list derives from ROUTE_TABLE, so a route row
-    // and its preflight advertisement cannot drift apart; the browser verb
-    // set is always included for the `ANY` manage-proxy pass-through.
+    // they're combined. The list is exactly the ROUTE_TABLE-derived set
+    // (ANY rows skipped): a route row and its preflight advertisement
+    // cannot drift apart.
     let mut methods: Vec<Method> = Vec::new();
     for (verb, _) in ROUTE_TABLE {
         if *verb == "ANY" {
             continue;
         }
         let m = Method::from_bytes(verb.as_bytes()).expect("table verb is concrete");
-        if !methods.contains(&m) {
-            methods.push(m);
-        }
-    }
-    for verb in ["GET", "POST", "PUT", "PATCH", "DELETE"] {
-        let m = Method::from_bytes(verb.as_bytes()).unwrap();
         if !methods.contains(&m) {
             methods.push(m);
         }
@@ -170,7 +162,7 @@ mod tests {
     use super::cors_layer;
     use axum::Router;
 
-    /// Route-shape nails (route-shape design §5): every ROUTE_TABLE row
+    /// Route-shape nails: every ROUTE_TABLE row
     /// must serve at its registered /v1 shape, the retired shapes must be
     /// gone (double prefix, singular alias, projection segment), and a
     /// wrong verb must answer 405. Status vocabulary: 401 = route reached
@@ -208,7 +200,10 @@ mod tests {
 
     /// The retired shapes stay dead: the double /v1 prefix (the original
     /// BUG-1/BUG-2 class), the singular /tagma alias, and the projection
-    /// segment the rename replaced must all 404.
+    /// segment the rename replaced (including the projection events GET)
+    /// must all 404 -- as must the two retired per-kind writers, status
+    /// POST and signal POST. A state PUT on the surviving route is a 405
+    /// (wrong verb), not a 404.
     #[tokio::test]
     async fn retired_shapes_are_not_mounted() {
         let (state, _control) =
@@ -222,7 +217,9 @@ mod tests {
             ("GET", "/v1/v1/tagma/t-a/manage/agents"),
             ("GET", "/v1/tagma/t-a/manage/agents"),
             ("POST", "/v1/tagmata/t-a/projection"),
+            ("POST", "/v1/tagmata/t-a/signal"),
             ("GET", "/v1/tagmata/t-a/projection/events"),
+            ("POST", "/v1/tagmata/t-a/status"),
         ];
         for (verb, path) in negatives {
             let status = shape_response(&app, verb, path).await;
@@ -245,6 +242,7 @@ mod tests {
         let wrong = [
             ("POST", "/v1/tagmata/t-a/agents"),
             ("DELETE", "/v1/tagmata/t-a/state"),
+            ("PUT", "/v1/tagmata/t-a/state"),
             ("GET", "/v1/tunnel/manage-reply"),
             ("DELETE", "/v1/conversations"),
         ];
@@ -254,7 +252,7 @@ mod tests {
         }
     }
 
-    /// Two-end reconciliation (route-shape design §5): the rust table and
+    /// Two-end reconciliation: the rust table and
     /// the TS clients must assert against one shared fixture, so a
     /// one-sided URL change fails a test on the other side too (the root
     /// cause of the original double-prefix bugs was each end proving
@@ -292,8 +290,9 @@ mod tests {
     /// Same pin as the archeion's: the advertised preflight set must equal
     /// the derived set exactly, so dropping a method (the omission that
     /// broke the archeion's provider vault) fails here instead of in a live
-    /// session. PATCH is advertised for the `ANY` manage-proxy pass-through
-    /// (the tagma manage surface answers PATCH); no concrete route uses it.
+    /// session. The manage surface's verbs are GET/POST/PUT per the tagma
+    /// frame allowlist; the three sources move together: frame allowlist,
+    /// ROUTE_TABLE, and the CORS methods (one change re-advertises all).
     #[tokio::test]
     async fn preflight_advertises_exactly_the_route_methods() {
         let app = Router::new()
@@ -315,7 +314,15 @@ mod tests {
             .unwrap();
         let mut advertised: Vec<&str> = advertised.split(',').map(str::trim).collect();
         advertised.sort_unstable();
-        assert_eq!(advertised, ["DELETE", "GET", "PATCH", "POST", "PUT"]);
+        let mut expected: Vec<&str> = Vec::new();
+        for (verb, _) in super::ROUTE_TABLE {
+            if *verb == "ANY" || expected.contains(verb) {
+                continue;
+            }
+            expected.push(*verb);
+        }
+        expected.sort_unstable();
+        assert_eq!(advertised, expected);
     }
 
     /// Assembly smoke test: the full router build (every sub-router

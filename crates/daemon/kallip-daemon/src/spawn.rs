@@ -731,6 +731,12 @@ mod tests {
             .then(|| PathBuf::from("/bin/bash"))
     }
 
+    /// Generous harvest budget for the behavior tests. The production
+    /// HARVEST_TIMEOUT (2 s) measures login init on a quiet host; a loaded
+    /// test runner can spend it there alone, which would map the asserted
+    /// outcomes to Timeout. The timeout-behavior test uses its own tight
+    /// 300 ms budget on purpose -- it asserts Timeout itself.
+    const HARVEST_TEST_BUDGET: Duration = Duration::from_secs(30);
     // --- parse_harvest_output ------------------------------------------
 
     #[test]
@@ -819,7 +825,7 @@ mod tests {
             home: Some(home.path().as_os_str().to_owned()),
             user: Some("probe".into()),
         };
-        let pairs = harvest_login_env(&bash, &seed, HARVEST_TIMEOUT).expect("harvest ok");
+        let pairs = harvest_login_env(&bash, &seed, HARVEST_TEST_BUDGET).expect("harvest ok");
         let marker = pairs.iter().find(|(k, _)| k == "KALLIP_UNIT_MARKER");
         assert_eq!(marker.map(|(_, v)| v.as_str()), Some("green"));
         let path = pairs.iter().find(|(k, _)| k == "PATH").expect("PATH");
@@ -838,7 +844,8 @@ mod tests {
         };
         let dir = tempdir();
         let bash = shim(dir.path(), "exit 3");
-        let error = harvest_login_env(&bash, &HarvestSeed::default(), HARVEST_TIMEOUT).unwrap_err();
+        let error =
+            harvest_login_env(&bash, &HarvestSeed::default(), HARVEST_TEST_BUDGET).unwrap_err();
         assert!(matches!(error, HarvestError::Exit(_)));
     }
 

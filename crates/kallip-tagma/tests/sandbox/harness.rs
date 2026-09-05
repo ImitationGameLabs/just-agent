@@ -2,6 +2,11 @@
 //! setup, the scripted wiremock LLM, tagma + `kallip-run` subprocess
 //! control, and history/assertion helpers. The scenario bodies
 //! ([`super::guest`], [`super::normal`], [`super::dirlock`]) compose these.
+//!
+//! Skip signature: a host without mount-ns capacity skips every scenario
+//! within ~0.01s total — a green lane that fast means "all skipped", not
+//! "all ran". A healthy run takes seconds per scenario. Lane
+//! declarations must report ran/skipped counts, never the bare summary.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -53,6 +58,43 @@ fn userns_disabled() -> bool {
     )
 }
 
+/// Functional check that this host can actually run a sandboxed child:
+/// static probes (`landlock unsupported`, userns sysctl) are necessary but
+/// not sufficient — a stripped-down container can pass both and still fail
+/// at `unshare`/`mount` time inside `apply` (observed 2026-09-05: scenarios
+/// died with empty bash histories while both static checks passed). Run
+/// the smallest possible child through the real `apply` path with a
+/// decision that forces mount-ns work (one hide hole => tmpfs overlay),
+/// and require a clean, speaking exit. `Err` carries the skip reason.
+pub async fn sandbox_runnable() -> Result<(), String> {
+    if unsupported() {
+        return Err("landlock/userns statically unsupported".to_string());
+    }
+    let scratch = tempfile::TempDir::new().map_err(|e| format!("probe scratch dir: {e}"))?;
+    let hole = scratch.path().join("secret");
+    std::fs::create_dir_all(&hole).map_err(|e| format!("probe hole dir: {e}"))?;
+    let mut cmd = tokio::process::Command::new("/bin/sh");
+    cmd.args(["-c", "echo probe-ok"]);
+    let decision = kallip_shell::landlock::AccessDecision {
+        read: kallip_shell::landlock::ReadPolicy::Broad,
+        writable: vec![],
+        readonly_holes: vec![],
+        hide_holes: vec![hole],
+    };
+    kallip_shell::landlock::apply(&mut cmd, &decision)
+        .map_err(|e| format!("sandbox apply failed: {e}"))?;
+    let out = cmd
+        .output()
+        .await
+        .map_err(|e| format!("sandbox probe spawn failed: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("sandbox probe child exited {:?}", out.status));
+    }
+    if !String::from_utf8_lossy(&out.stdout).contains("probe-ok") {
+        return Err("sandbox probe child produced no output".to_string());
+    }
+    Ok(())
+}
 /// The scratch root used for the sandbox scenarios' `home`/`data`/`workspace`
 /// dirs. It MUST live outside libsandbox's baseline-writable set (`/tmp`,
 /// `/var/tmp`, `$TMPDIR`): the permission model treats those as writable for

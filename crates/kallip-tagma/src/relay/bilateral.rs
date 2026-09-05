@@ -4,8 +4,8 @@
 //! Extracted from `mod.rs`. A child module of `relay`, so `use super::*` reuses
 //! the parent's private imports and grants access to [`RelayHandle`]'s private
 //! fields/methods. Every method here is `pub(super)`: `handle_kex` and
-//! `handle_user_op` are driven by `tunnel::dispatch`; `emit`/`emit_signal` are
-//! driven by `dispatch` and by the pump (`pump.rs`).
+//! `handle_user_op` are driven by `tunnel::dispatch`; `emit` is driven by
+//! `dispatch` and by the pump (`pump.rs`).
 
 use super::*;
 use kallip_archeion_common::ids::ChannelId;
@@ -230,33 +230,6 @@ impl RelayHandle {
             other => warn!(req_id, op = other, "unknown op; dropping"),
         }
     }
-
-    /// Push a runtime signal (busy/idle presence, turn terminals, errors) to
-    /// the relay for plaintext rebroadcast as a `LescheEvent::TagmaSignal`.
-    /// Signals are operator metadata: they do NOT enter the encrypted envelope
-    /// channel and are NOT persisted in `chat_history` (a reconnect only
-    /// replays authored messages). Best-effort and not retried, mirroring
-    /// [`post_status`](kallip_lesche_client::LescheClient::post_status): a
-    /// signal is a transient transition that the next event supersedes, so a
-    /// dropped POST just means the UI misses one frame of presence, and the
-    /// projector has already logged it for observability. `cancel` aborts an
-    /// in-flight POST on re-KEX/shutdown.
-    pub(super) async fn emit_signal(
-        &self,
-        event: kallip_common::protocol::SignalEvent,
-        cancel: Option<&CancellationToken>,
-    ) -> Result<()> {
-        let post = self.inner.client.post_signal(&self.inner.tagma_id, &event);
-        match cancel {
-            Some(token) => tokio::select! {
-                biased;
-                _ = token.cancelled() => Ok(()),
-                r = post => r,
-            },
-            None => post.await,
-        }
-    }
-
     /// Encrypt `reply` for the conversation and post an envelope attributed to
     /// `sender`. Returns `Err` when delivery is exhausted (the pump logs and
     /// carries on; app recovery is via host-history re-pull on reconnect).

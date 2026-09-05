@@ -175,6 +175,23 @@
     realtimeStore.setRoomReadCursorChangedSink((roomId, lastReadSeq) => {
       unreadStore.applyServerRead(roomId, lastReadSeq);
     });
+    // Wire resync plans into the fetch-time resync grounds: a loss burst
+    // (gap) or a regenerated stream (full -- the lesche restarted) refetches
+    // the rooms list, then each room's roster and conversation tail. Both
+    // per-room calls self-no-op for unmounted rooms and swallow their own
+    // fetch errors (the stores' polls retry), matching the sink discipline.
+    // The roster re-read also re-arms the `online` fields that heal a missed
+    // room_member_online/offline. Tagma presence and status need no action:
+    // presence is an idempotent set re-fired by every connect-time snapshot,
+    // and status is the 2s self-healing feed.
+    realtimeStore.setResyncSink((plan) => {
+      void roomsStore.refresh().then(() => {
+        for (const room of roomsStore.rooms) {
+          void roomConversationsStore.refreshRoster(room.room_id);
+          void roomConversationsStore.refresh(room.room_id);
+        }
+      });
+    });
 
     void configStore.ready.then(() => {
       const cfg = configStore.value;

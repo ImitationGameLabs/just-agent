@@ -188,7 +188,7 @@ async fn write_inside_writable_succeeds() {
     assert!(target.exists(), "the allowed write did not create the file");
 }
 
-/// **Mount-ns readonly hole** (§4.2): when the hole sits *under* a writable
+/// **Mount-ns readonly hole**: when the hole sits *under* a writable
 /// ancestor (the Normal broad-write case), landlock alone CANNOT block it —
 /// granting write on the ancestor covers the hole. The mount-ns layer (via
 /// libsandbox's `prepare_mount_holes`/`install_mount_holes`) bind+remount-ro's
@@ -390,10 +390,10 @@ async fn narrow_read_denies_paths_outside_allowlist() {
     );
 }
 
-/// **Guest recipe** (§4.3, post-correction): broad read + a secret hide-hole.
+/// **Guest recipe** (post-correction): broad read + a secret hide-hole.
 /// The agent can read anywhere (here a "cargo cache" dir, simulating `~/.cargo`)
 /// but the hide-hole dir is overlaid by an empty tmpfs — its real contents are
-/// invisible. This is the §2.1 conflict-b resolution for broad-read review/
+/// invisible. This is how broad-read review/
 /// research subagents: read source/caches, never the keys.
 #[tokio::test]
 async fn broad_read_with_hide_hole_hides_secret() {

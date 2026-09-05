@@ -79,10 +79,9 @@ pub async fn external_events(
     _auth: crate::auth::AuthIdentity,
     Path(id): Path<AgentId>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Hold the registry read-lock once for both the root check and the initial
-    // status snapshot. The snapshot is prepended to the SSE so the chat header
-    // renders at connect instead of after the next status-pump tick (~2 s).
-    let initial = {
+    // Root check first, in its own short read-lock hold: the rejection must
+    // not depend on, or race with, the subscribe/snapshot assembly below.
+    {
         let registry = state.registry.read().await;
         let is_root = registry
             .root_agent()
@@ -92,17 +91,53 @@ pub async fn external_events(
                 "external event stream is root-only; the direct conversation is the root's",
             ));
         }
-        let payload = crate::relay::status_pump::snapshot_status(&registry, &state.token_budget);
-        crate::direct::DirectFrame::Status(payload)
-    };
-    let direct = state
-        .direct
-        .get()
-        .ok_or_else(|| ApiError::unavailable("direct serving not initialized"))?;
-    let rx = direct.subscribe();
+    }
+    // Snapshot-then-live via the shared primitive: the three-topic bus
+    // subscription runs BEFORE the connect-time status capture, so a status
+    // published in the window between the two still lands in the live stream
+    // (the snapshot can only repeat it; last-wins absorbs the repeat). The
+    // old inline order — capture, then subscribe — lost exactly that frame,
+    // leaving the header stale until the next pump tick. The capture remains
+    // the MIN2b on-demand query through the shared pure function; the bus
+    // holds no latest-state.
+    let (subscribed, initial) = kallip_common::sse::open_snapshot_stream(
+        || {
+            (
+                state
+                    .bus
+                    .subscribe::<crate::bus::AuthoredFrame>()
+                    .expect("authored topic is registered"),
+                state
+                    .bus
+                    .subscribe::<crate::bus::SignalFrame>()
+                    .expect("signal topic is registered"),
+                state
+                    .bus
+                    .subscribe::<crate::bus::StatusSnapshot>()
+                    .expect("status topic is registered"),
+            )
+        },
+        || async {
+            let registry = state.registry.read().await;
+            vec![crate::sse::DirectFrame::Status(
+                crate::relay::status_pump::snapshot_status(&registry, &state.token_budget),
+            )]
+        },
+    )
+    .await;
+    let (authored, signals, status) = subscribed;
+    let frames = crate::sse::merge_direct_frames(authored, signals, status);
+    // The connect snapshot yields exactly one Status frame; the assert
+    // keeps a future multi-frame snapshot closure from silently dropping
+    // every frame after the first (the consumer takes only the head).
+    assert_eq!(
+        initial.len(),
+        1,
+        "connect snapshot must yield exactly one frame"
+    );
     Ok(crate::sse::direct_sse_stream(
-        rx,
-        Some(initial),
+        frames,
+        initial.into_iter().next(),
         state.shutdown.clone(),
     ))
 }

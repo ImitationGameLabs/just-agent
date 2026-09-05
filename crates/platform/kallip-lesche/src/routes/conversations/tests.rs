@@ -316,7 +316,7 @@ async fn post_envelope_tagma_echoes_owner_row_accepted() {
     .await
     .expect("tagma echo accepted");
     assert_eq!(status, StatusCode::ACCEPTED);
-    match app_rx.recv().await.expect("app stream delivery") {
+    match app_rx.recv().await.expect("app stream delivery").event {
         LescheEvent::Envelope { .. } => {}
         other => panic!("expected Envelope on app stream, got {other:?}"),
     }
@@ -340,7 +340,7 @@ async fn post_envelope_tagma_agent_reply_accepted() {
     .await
     .expect("agent reply accepted");
     assert_eq!(status, StatusCode::ACCEPTED);
-    match app_rx.recv().await.expect("app stream delivery") {
+    match app_rx.recv().await.expect("app stream delivery").event {
         LescheEvent::Envelope { .. } => {}
         other => panic!("expected Envelope on app stream, got {other:?}"),
     }
@@ -373,7 +373,7 @@ async fn post_envelope_tagma_legacy_sender_id_accepted() {
     .await
     .expect("legacy sender id accepted");
     assert_eq!(status, StatusCode::ACCEPTED);
-    match app_rx.recv().await.expect("app stream delivery") {
+    match app_rx.recv().await.expect("app stream delivery").event {
         LescheEvent::Envelope { .. } => {}
         other => panic!("expected Envelope on app stream, got {other:?}"),
     }

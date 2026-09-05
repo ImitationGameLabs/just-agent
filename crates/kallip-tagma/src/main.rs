@@ -1,7 +1,14 @@
+//! Shared-state conventions: `std::sync::Mutex` guards short critical
+//! sections that never span an `.await` (small cells: state bytes, optional
+//! snapshots); `tokio::sync::Mutex` guards state held across `.await`
+//! points (stores, approval tables). Field-level docs at each use site name
+//! the writers and readers; this note is the rule they assume.
+
 mod args;
 mod auth;
 mod backend;
 mod bridge;
+mod bus;
 mod credentials;
 mod delivery;
 mod direct;
@@ -13,6 +20,7 @@ mod lifecycle;
 mod messaging;
 mod probe;
 mod projector;
+mod pump_driver;
 mod relay;
 pub(crate) mod routes;
 mod shutdown;
@@ -132,6 +140,9 @@ async fn run(args: Args) -> Result<()> {
         kallip_runtime::config::policy_preset_from_env(),
     ));
 
+    // The typed topic bus registered inline at construction; surface the
+    // topic set once at boot (this is also the counters' live reader).
+    info!(topics = ?state.bus.stats(), "typed topic bus registered");
     // Load exec-hook rules (builtin preset + exec_hooks.toml overrides,
     // tagma-wide) here, once: a present-but-malformed file panics
     // (fail-closed — the operator asked for hooks and would otherwise
@@ -230,10 +241,11 @@ async fn run(args: Args) -> Result<()> {
         Some(history.clone()),
         conversation_id,
         tagma_id.clone(),
-        // The enrolled label is not yet plumbed from the archeion enroll response
-        // into local credentials; fall back to "Tagma" until that lands. The
-        // tagma_id (the load-bearing part for multi-tagma disambiguation) IS
-        // set, so the agent sender is correct.
+        // TODO(label-plumb): the enrolled label is not yet plumbed from the
+        // archeion enroll response into local credentials; fall back to
+        // "Tagma" until that lands (paired site: the RelayHandle::new call in
+        // `activate_relay`). The tagma_id (the load-bearing part for
+        // multi-tagma disambiguation) IS set, so the agent sender is correct.
         None,
         message_limits,
     );
@@ -293,9 +305,11 @@ async fn run(args: Args) -> Result<()> {
 
     let app = routes::router().with_state(state.clone());
 
-    // Apply body size limit first (outermost layer), then tracing.
-    // When max_body_size_kb > 0, enforce the configured limit.
-    // When 0, axum's built-in default (2 MB) applies instead.
+    // Layering: each `.layer` wraps what was built so far, so the LAST layer
+    // added (TraceLayer) is outermost and the body size limit is innermost.
+    // The limit is enforced when the body is extracted, and neither CORS nor
+    // tracing consumes it in passing. When max_body_size_kb > 0, enforce the
+    // configured limit; when 0, axum's built-in default (2 MB) applies.
     let app = if args.max_body_size_kb > 0 {
         app.layer(axum::extract::DefaultBodyLimit::max(
             args.max_body_size_kb * 1024,
@@ -478,6 +492,8 @@ struct InstanceRuntime {
 /// such as 0.0.0.0 or :: becomes 127.0.0.1 -- loopback is the only host a
 /// same-machine agent shell can assume), IPv6 hosts bracketed, and the
 /// actually-bound port. Same truth source as `write_instance_state`: the
+/// port is the one actually bound (read back from the listener), so the
+/// advertised URL and `runtime.json` always agree.
 fn derive_advertise_url(listen_addr: &str, port: u16) -> Result<String> {
     use std::net::IpAddr;
     let host = match listen_addr.rsplit_once(':') {
@@ -732,20 +748,12 @@ fn exec_hooks_toml_path() -> Result<std::path::PathBuf> {
     data_root().map(|d| d.join("exec_hooks.toml"))
 }
 
-/// Install the [`DirectServing`](crate::direct::DirectServing) handle. Always
-/// runs, independent of whether the relay is configured: the direct path
-/// serves any local frontend client over a plain SSE. It forwards the external
-/// projector's bus and owns no `chat_history` store of its own (the projector
-/// is the sole writer).
+/// Start the direct status driver. Always runs, independent of whether the
+/// relay is configured: the direct path serves any local frontend client
+/// over a plain SSE. It forwards the typed topic bus's topics and owns no
+/// `chat_history` store of its own (the projector is the sole writer).
 async fn init_direct(state: &Arc<AppState>) -> Result<()> {
-    let projector = state
-        .external
-        .get()
-        .expect("external projector installed before init_direct");
-    state.set_direct(crate::direct::DirectServing::new(
-        Arc::downgrade(state),
-        projector.clone(),
-    ));
+    crate::direct::start(&Arc::downgrade(state));
     Ok(())
 }
 
@@ -953,8 +961,8 @@ async fn activate_relay(
         lesche,
         entry.name.clone(),
         tagma_id,
-        // Label fallback (see projector construction): "Tagma" until the enrolled
-        // label is plumbed through.
+        // TODO(label-plumb): paired with the projector-construction site —
+        // "Tagma" until the enrolled label is plumbed through.
         "Tagma".to_string(),
         device,
         root_agent,

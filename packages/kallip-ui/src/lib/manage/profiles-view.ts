@@ -147,7 +147,7 @@ export function parkedLiveSnapshot(
   return agentCount > 0 ? { agentCount, profileIds: [...profileIds] } : null;
 }
 
-// --- save-failure classification and leave-guard decisions (P2/P4) ----
+// --- save-failure classification and leave-guard decisions ----
 // The store's catch block and the host wrapper's guard are thin layers
 // over these; the decision table lives here so tests drive it directly.
 

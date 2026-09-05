@@ -6,10 +6,10 @@
 //! the shell (which owns enforcement). It deliberately carries no agent
 //! identity or policy labels: the shell crate stays decoupled from the
 //! runtime, and the runtime maps its policy onto these mechanism types when it
-//! builds the snapshot closure (`.draft/design/agent-sandbox.md` §6.1).
+//! builds the snapshot closure.
 //!
 //! Effective access = baseline (read policy + writable set) ∩ dirlock overlay
-//! (readonly holes) ∩ secret hide-holes (tmpfs-over overlays). See §2.3 "正交叠加".
+//! (readonly holes) ∩ secret hide-holes (tmpfs-over overlays).
 
 #![cfg(all(target_os = "linux", feature = "landlock"))]
 

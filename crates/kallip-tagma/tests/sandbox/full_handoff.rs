@@ -19,7 +19,8 @@ use super::harness::*;
 #[tokio::test]
 #[serial_test::serial]
 async fn scenario5_full_handoff() {
-    if unsupported() {
+    if let Err(reason) = sandbox_runnable().await {
+        eprintln!("sandbox: skipping, {reason}");
         return;
     }
     let world = World::setup();

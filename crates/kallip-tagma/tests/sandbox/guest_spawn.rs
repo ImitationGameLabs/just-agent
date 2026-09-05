@@ -17,7 +17,8 @@ use super::harness::*;
 #[tokio::test]
 #[serial_test::serial]
 async fn scenario4_guest_spawn_downgrade() {
-    if unsupported() {
+    if let Err(reason) = sandbox_runnable().await {
+        eprintln!("sandbox: skipping, {reason}");
         return;
     }
     let world = World::setup();

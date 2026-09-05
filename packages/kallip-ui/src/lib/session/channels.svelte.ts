@@ -401,7 +401,7 @@ export class ChannelsStore {
     // mid-flight is swallowed here, and that open settles on whatever epoch
     // its KEX caught -- so a peer restart inside that millisecond window
     // can still land a stale-epoch channel, which survives until the NEXT
-    // online transition re-keys it. Same shape as the P0 this refresh
+    // online transition re-keys it. Same shape as the issue this refresh
     // cures, not a new failure mode; accepted.
     if (this.pendingOpens.has(tagma.tagma_id)) return;
     const budget = this.openBudgets.get(tagma.tagma_id);

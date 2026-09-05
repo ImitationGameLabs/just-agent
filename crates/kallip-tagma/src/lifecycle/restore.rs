@@ -157,7 +157,7 @@ fn validate_exec_policy_from_chain(
 }
 
 /// Validate the restored agent's `PermissionClass` against the supervisor
-/// chain (§2.3 class invariant). Mirrors the policy/exec validators: the
+/// chain (the class invariant). Mirrors the policy/exec validators: the
 /// agent's class must not exceed its immediate supervisor's, and the chain
 /// must be monotonic. This is the restore-side guard against a tampered
 /// `meta.json` elevating a child above its parent.
