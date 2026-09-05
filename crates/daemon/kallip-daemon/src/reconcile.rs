@@ -11,7 +11,7 @@
 //! observes without alerting, so pre-existing corpses don't fire.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kallip_daemon_common::wire::InstanceState;
@@ -40,11 +40,26 @@ pub async fn run(data_root: PathBuf) {
             tracing::warn!(
                 slug = %slug,
                 pid = ?pid,
-                log = %data_root.join(&slug).join("logs").display(),
+                log = %instance_logs_dir(&data_root, dirs::state_dir().as_deref(), &slug).display(),
                 "instance died: recorded pid is no longer a live kallip-tagma"
             );
         }
         tokio::time::sleep(RECONCILE_INTERVAL).await;
+    }
+}
+/// Where an instance's log files live: the state tree mirrors the data
+/// tree (`<state_home>/kallipai/tagmata/<slug>/logs`) because logs are
+/// pure output residue kept outside the portable instance tree. When
+/// the platform state home is undetermined, fall back to the in-tree
+/// location so the diagnostic still points somewhere real.
+fn instance_logs_dir(data_root: &Path, state_home: Option<&Path>, slug: &str) -> PathBuf {
+    match state_home {
+        Some(home) => home
+            .join("kallipai")
+            .join("tagmata")
+            .join(slug)
+            .join("logs"),
+        None => data_root.join(slug).join("logs"),
     }
 }
 
@@ -75,6 +90,22 @@ fn edge_reports(
 mod tests {
     use super::*;
     use kallip_daemon_common::wire::InstanceState::*;
+
+    #[test]
+    fn dead_instance_logs_point_at_the_state_tree() {
+        let dir = instance_logs_dir(
+            Path::new("/data/kallipai/tagmata"),
+            Some(Path::new("/state/home")),
+            "e2e",
+        );
+        assert_eq!(dir, PathBuf::from("/state/home/kallipai/tagmata/e2e/logs"));
+    }
+
+    #[test]
+    fn without_a_state_home_the_logs_pointer_falls_back_in_tree() {
+        let dir = instance_logs_dir(Path::new("/data/tagmata"), None, "e2e");
+        assert_eq!(dir, PathBuf::from("/data/tagmata/e2e/logs"));
+    }
 
     /// One observed instance at one tick.
     fn tick(

@@ -376,16 +376,58 @@ fn ensure_credentials_root() -> Result<std::path::PathBuf> {
     Ok(credentials_dir)
 }
 
-/// Logging shape: events land in `<data_root>/logs/` (daily-rolling
-/// files, tracing-appender, 7 files kept -- older days fall off) unless
-/// `KALLIP_TAGMA_LOG_TO_STDERR` asks for the terminal; stdout stays
-/// reserved for program output, so the terminal layer writes stderr.
-/// The variable accepts `1`/`true` case-insensitively; unset, empty, or
-/// any other value keeps the file default. A file layer that cannot be
-/// built degrades to stderr-only with a one-line eprintln notice. The
-/// panic hook chains the default stderr banner exactly when stderr is
-/// the writer -- the variable, or that fallback -- and suppresses it
-/// while the file layer is live: the details live in the log file.
+/// Where this tagma's log files live.
+///
+/// Daemon-managed instances (data root marked with the daemon's
+/// `meta.json`) log to the state tree --
+/// `<state_root>/tagmata/<slug>/logs`, the slug being the instance
+/// dir's basename, mirroring how the daemon names the tree. Logs are
+/// pure output residue, so they sit outside the portable instance
+/// data tree. Standalone runs keep logs inside the instance tree
+/// (`<data_root>/logs/`): an unmarked dir has no slug and stays a
+/// self-contained unit -- the same single-instance philosophy as the
+/// runtime.json publish ("no file is written"), and two standalone
+/// trees cannot cross-feed logs, which a basename derivation would
+/// risk. `None` means the directory cannot be placed (state home
+/// undetermined for a daemon-managed instance) and callers degrade
+/// to stderr-only.
+fn resolve_logs_dir(
+    data_root: &std::path::Path,
+    instance_dir: Option<&std::path::Path>,
+    state_root: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    match instance_dir {
+        None => Some(data_root.join("logs")),
+        Some(dir) => {
+            let slug = dir.file_name()?;
+            state_root.map(|home| home.join("tagmata").join(slug).join("logs"))
+        }
+    }
+}
+
+/// The concrete log directory for this process: the daemon-managed
+/// predicate decides state tree vs in-instance-tree placement.
+fn logs_target() -> Result<std::path::PathBuf> {
+    let root = data_root()?;
+    let instance_dir = daemon_managed_dir();
+    let state_root = match instance_dir {
+        Some(_) => Some(kallip_runtime::persistence::state_dir_root()?),
+        None => None,
+    };
+    resolve_logs_dir(&root, instance_dir.as_deref(), state_root.as_deref())
+        .ok_or_else(|| anyhow::anyhow!("cannot place the log directory"))
+}
+/// Logging shape: events land under the resolved log directory
+/// (daily-rolling files, tracing-appender, 7 files kept -- older
+/// days fall off) unless `KALLIP_TAGMA_LOG_TO_STDERR` asks for the
+/// terminal; stdout stays reserved for program output, so the
+/// terminal layer writes stderr. The variable accepts `1`/`true`
+/// case-insensitively; unset, empty, or any other value keeps the
+/// file default. A log directory that cannot be resolved or created
+/// degrades to stderr-only with a one-line eprintln notice. The
+/// panic hook chains the default stderr banner exactly when stderr
+/// is the writer -- the variable, or that fallback -- and suppresses
+/// it while the file layer is live: the details live in the log file.
 fn init_logging(filter: &tracing_subscriber::EnvFilter) {
     use tracing_subscriber::prelude::*;
 
@@ -397,19 +439,31 @@ fn init_logging(filter: &tracing_subscriber::EnvFilter) {
     let file_layer = if log_to_stderr_from_env() {
         None
     } else {
-        data_root()
+        logs_target()
             .map_err(|e| {
-                eprintln!("kallip-tagma: resolving the data root for logs failed, keeping stderr-only: {e}");
+                eprintln!("kallip-tagma: resolving the log dir failed, keeping stderr-only: {e}");
                 e
             })
             .ok()
-            .and_then(|root| {
+            .and_then(|dir| {
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    eprintln!(
+                        "kallip-tagma: creating the log dir failed, keeping stderr-only: {e}"
+                    );
+                    return None;
+                }
+                if let Err(e) = credentials::set_owner_only(&dir) {
+                    eprintln!(
+                        "kallip-tagma: restricting the log dir failed, keeping stderr-only: {e}"
+                    );
+                    return None;
+                }
                 let appender = tracing_appender::rolling::Builder::new()
                     .rotation(tracing_appender::rolling::Rotation::DAILY)
                     .filename_prefix("instance")
                     .filename_suffix("log")
                     .max_log_files(7)
-                    .build(root.join("logs"))
+                    .build(&dir)
                     .map_err(|e| {
                         eprintln!("kallip-tagma: file log init failed, keeping stderr-only: {e}");
                         e
@@ -1003,6 +1057,47 @@ async fn shutdown_signal(token: CancellationToken) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn standalone_logs_stay_inside_the_instance_tree() {
+        let dir = resolve_logs_dir(
+            Path::new("/data/standalone"),
+            None,
+            Some(Path::new("/state/kallipai")),
+        );
+        assert_eq!(dir, Some(PathBuf::from("/data/standalone/logs")));
+    }
+
+    #[test]
+    fn daemon_managed_logs_land_in_the_state_tree_under_the_slug() {
+        let dir = resolve_logs_dir(
+            Path::new("/data/kallipai/tagmata/e2e"),
+            Some(Path::new("/data/kallipai/tagmata/e2e")),
+            Some(Path::new("/state/kallipai")),
+        );
+        assert_eq!(dir, Some(PathBuf::from("/state/kallipai/tagmata/e2e/logs")));
+    }
+
+    #[test]
+    fn daemon_managed_without_a_state_home_yields_none() {
+        let dir = resolve_logs_dir(
+            Path::new("/data/kallipai/tagmata/e2e"),
+            Some(Path::new("/data/kallipai/tagmata/e2e")),
+            None,
+        );
+        assert_eq!(dir, None);
+    }
+
+    #[test]
+    fn a_root_like_instance_dir_yields_none() {
+        let dir = resolve_logs_dir(
+            Path::new("/"),
+            Some(Path::new("/")),
+            Some(Path::new("/state/kallipai")),
+        );
+        assert_eq!(dir, None);
+    }
 
     fn stored(id: &str, origin: Option<&str>) -> credentials::StoredTagma {
         credentials::StoredTagma {

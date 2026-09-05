@@ -467,6 +467,15 @@ async fn spawn_tagma(world: &World, permission_class: Option<&str>) -> TagmaProc
         ("KALLIP_MAX_TOOL_ROUNDS", "50".into()),
         ("HOME", world.home_path().display().to_string()),
         ("XDG_CONFIG_HOME", world.config_dir.display().to_string()),
+        (
+            "XDG_STATE_HOME",
+            world
+                .home_path()
+                .join(".local")
+                .join("state")
+                .display()
+                .to_string(),
+        ),
         ("KALLIP_POLICY_PRESET", "allow-all".into()),
         ("KALLIP_TAGMA_ADDR", format!("127.0.0.1:{port}")),
         ("KALLIP_ADVERTISE_URL", url.clone()),
