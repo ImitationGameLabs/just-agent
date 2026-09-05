@@ -110,8 +110,8 @@ let
   # Unset defaults: the HOST daemon's standard dirs, so a plain arion up
   # has the service manage the SAME real daemon + instance tree a
   # host-side kallipctl sees (the daemon's own code defaults -- see
-  # crates/daemon/kallip-daemon/src/main.rs; the data default is
-  # ~/.local/share/kallip).
+  # crates/daemon/kallip-daemon/src/main.rs; the instance-tree default is
+  # ~/.local/share/kallipai/tagmata).
   homeDir = builtins.getEnv "HOME";
   daemonDir =
     if homeDir == "" then
@@ -119,10 +119,10 @@ let
     else
       sub: "${homeDir}/.local/${sub}";
   instancesStateBind = bindOverride "KALLIP_ARION_INSTANCES_STATE_PATH" "/state" (
-    daemonDir "state/kallip-daemon"
+    daemonDir "state/kallipai/daemon"
   );
   instancesDataBind = bindOverride "KALLIP_ARION_INSTANCES_DATA_PATH" "/data" (
-    daemonDir "share/kallip"
+    daemonDir "share/kallipai/tagmata"
   );
 
   # Parallel-stack overrides (the same env pattern as bindOverride above):

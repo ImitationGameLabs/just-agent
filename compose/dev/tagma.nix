@@ -52,14 +52,16 @@ let
       throw "arion: ${name} must be an absolute, colon-free host path other than '/' (got '${v}')"
     else
       "${v}:${target}";
-  dataBind = bindOverride "KALLIP_ARION_DATA_PATH" "/var/lib/kallip";
+  dataBind = bindOverride "KALLIP_ARION_DATA_PATH" "/var/lib/kallipai/tagmata/main";
   workspaceBind = bindOverride "KALLIP_ARION_WORKSPACE_PATH" "/workspace";
-  skillsBind = bindOverride "KALLIP_ARION_SKILLS_PATH" "/var/lib/kallip/skills";
-  cronDataBind = bindOverride "KALLIP_ARION_CRON_DATA_PATH" "/var/lib/kallip-cron";
+  skillsBind = bindOverride "KALLIP_ARION_SKILLS_PATH" "/var/lib/kallipai/tagmata/main/skills";
+  cronDataBind = bindOverride "KALLIP_ARION_CRON_DATA_PATH" "/var/lib/kallipai/cron";
 
-  dataVolume = if dataBind != null then dataBind else "tagma_data:/var/lib/kallip";
+  dataVolume =
+    if dataBind != null then dataBind else "kallipai_tagma_data:/var/lib/kallipai/tagmata/main";
   workspaceVolume = if workspaceBind != null then workspaceBind else "tagma_workspace:/workspace";
-  cronDataVolume = if cronDataBind != null then cronDataBind else "cron_data:/var/lib/kallip-cron";
+  cronDataVolume =
+    if cronDataBind != null then cronDataBind else "kallipai_cron_data:/var/lib/kallipai/cron";
 
   # Tagma port override (mirrors the bindOverride pattern). Unset -> 3000
   # (the existing default). Set via env or .env (direnv sources it into the
@@ -74,9 +76,9 @@ in
 
     docker-compose.volumes =
       { }
-      // lib.optionalAttrs (dataBind == null) { tagma_data = { }; }
+      // lib.optionalAttrs (dataBind == null) { kallipai_tagma_data = { }; }
       // lib.optionalAttrs (workspaceBind == null) { tagma_workspace = { }; }
-      // lib.optionalAttrs (cronDataBind == null) { cron_data = { }; };
+      // lib.optionalAttrs (cronDataBind == null) { kallipai_cron_data = { }; };
 
     services.tagma = {
       service.capabilities.SYS_ADMIN = true;
@@ -114,12 +116,12 @@ in
         # flakes/nix-command are off. Enable them client-side; the daemon still
         # owns build/substitution policy.
         NIX_CONFIG = "extra-experimental-features = nix-command flakes";
-        HOME = "/var/lib/kallip";
-        KALLIP_DATA_DIR = "/var/lib/kallip";
+        HOME = "/var/lib/kallipai/tagmata/main";
+        KALLIP_DATA_DIR = "/var/lib/kallipai/tagmata/main";
         # The tagma eagerly creates the singleton root agent at startup; its
         # workspace is resolved by AgentConfig::load from KALLIP_WORKSPACE_ROOT.
         # Pin the mounted workspace volume, which is disjoint from
-        # /var/lib/kallip (the data dir) -- a CWD fallback would be "/" in the
+        # /var/lib/kallipai/tagmata/main (the data dir) -- a CWD fallback would be "/" in the
         # container, overlap the data tree, and fail startup
         # (ensure_workspace_disjoint rejects the overlap).
         KALLIP_WORKSPACE_ROOT = "/workspace";
@@ -159,8 +161,8 @@ in
       service.command = [ "${workspace}/bin/kallip-cron-daemon" ];
       service.environment = {
         PATH = "${workspace}/bin:${binPath}";
-        HOME = "/var/lib/kallip-cron";
-        KALLIP_CRON_DATA_DIR = "/var/lib/kallip-cron";
+        HOME = "/var/lib/kallipai/cron";
+        KALLIP_CRON_DATA_DIR = "/var/lib/kallipai/cron";
         # Loopback only — cron is an internal tagma-side service, never
         # network-exposed (no cron-specific token; the management API is gated
         # by per-request agent-token verification via the tagma).

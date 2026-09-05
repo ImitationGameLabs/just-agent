@@ -34,7 +34,7 @@ in
     # bind overrides are a dev-only convenience; prod pins storage at the docker
     # layer (data-root) or via a compose edit.
     docker-compose.volumes = {
-      data = { };
+      kallipai_tagma_data = { };
       workspace = { };
     };
 
@@ -46,7 +46,7 @@ in
       out.service.security_opt = [ "seccomp=unconfined" ];
       service.ports = [ "3000:3000" ];
       service.volumes = [
-        "data:/var/lib/kallip"
+        "kallipai_tagma_data:/var/lib/kallipai/tagmata/main"
         "workspace:/workspace"
       ];
       service.env_file = [ ".env" ];
@@ -62,8 +62,8 @@ in
       # `restart: unless-stopped`
       # brings it back once the code is supplied / the archeion is reachable.
       service.environment = {
-        HOME = "/var/lib/kallip";
-        KALLIP_DATA_DIR = "/var/lib/kallip";
+        HOME = "/var/lib/kallipai/tagmata/main";
+        KALLIP_DATA_DIR = "/var/lib/kallipai/tagmata/main";
         KALLIP_WORKSPACE_ROOT = "/workspace";
         KALLIP_TAGMA_ADDR = "0.0.0.0:3000";
         RUST_LOG = "info";

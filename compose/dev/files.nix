@@ -45,7 +45,7 @@ in
     # prefixes every volume, so the internal name carries the suffix only.
     docker-compose.volumes = {
       files_pgdata = { };
-      files_blobs = { };
+      kallipai_files_blobs = { };
     };
 
     services.files-postgres = {
@@ -87,7 +87,7 @@ in
         # Blob root inside the container, backed by the named volume below.
         # Service-owned data, not shared with the host daemon tree (unlike
         # the instances binds).
-        KALLIP_FILES_BLOB_ROOT = "/data/blobs";
+        KALLIP_FILES_BLOB_ROOT = "/var/lib/kallipai/files/blobs";
         # Private compose-network hop to the archeion's /internal surface; never
         # routed through the public edge.
         KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://archeion:7100";
@@ -100,7 +100,7 @@ in
         KALLIP_FILES_NOTIFY_TOKEN = "dev-internal-secret";
         RUST_LOG = "info";
       };
-      service.volumes = [ "files_blobs:/data/blobs" ];
+      service.volumes = [ "kallipai_files_blobs:/var/lib/kallipai/files/blobs" ];
     };
   };
 }

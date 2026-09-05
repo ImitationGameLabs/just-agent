@@ -75,7 +75,7 @@ let
   # the image/compose; the package itself is not part of the public surface
   # (callers that want the package use the flake output).
   sharedSkills = import ./shared-skills.nix { inherit pkgs; };
-  skillsSeed = "${sharedSkills}/share/kallip/skills";
+  skillsSeed = "${sharedSkills}/share/kallipai/skills";
 in
 {
   inherit

@@ -48,7 +48,7 @@ in
       # reads the seed -- the agent-side kallip CLI sharing its bin/
       # directory never does, so it stays unwrapped.
       wrapProgram $out/bin/kallip-tagma \
-        --set-default KALLIP_SKILLS_SEED ${sharedSkills}/share/kallip/skills
+        --set-default KALLIP_SKILLS_SEED ${sharedSkills}/share/kallipai/skills
     '';
   });
   # The archeion control-plane server (pure HTTP/Postgres; no shell-out deps).

@@ -42,7 +42,7 @@ in
       archeion_pgdata = { };
       lesche_pgdata = { };
       files_pgdata = { };
-      files_blobs = { };
+      kallipai_files_blobs = { };
     };
 
     # POSTGRES_USER/PASSWORD/DB come from .env ONLY and are read by all
@@ -135,12 +135,12 @@ in
       build.image = lib.mkForce filesImage;
       service.command = [ "${files}/bin/kallip-files" ];
       service.env_file = [ ".env" ];
-      service.volumes = [ "files_blobs:/data/blobs" ];
+      service.volumes = [ "kallipai_files_blobs:/var/lib/kallipai/files/blobs" ];
       service.environment = {
         KALLIP_FILES_ADDR = "0.0.0.0:7400";
-        # The blob root INSIDE the container; must equal the files_blobs
+        # The blob root INSIDE the container; must equal the kallipai_files_blobs
         # volume mount target above.
-        KALLIP_FILES_BLOB_ROOT = "/data/blobs";
+        KALLIP_FILES_BLOB_ROOT = "/var/lib/kallipai/files/blobs";
         # Private compose-network hop to the archeion's /internal surface;
         # never routed through the public edge.
         KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://archeion:7100";

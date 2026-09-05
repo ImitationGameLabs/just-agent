@@ -14,6 +14,6 @@
 # (`nix/packages/` -> repo root). As a flake-path it is VCS-filtered, so only
 # git-tracked skill files enter the store.
 pkgs.runCommand "kallip-shared-skills" { } ''
-  mkdir -p $out/share/kallip/skills
-  cp -r ${../../skills}/. $out/share/kallip/skills/
+  mkdir -p $out/share/kallipai/skills
+  cp -r ${../../skills}/. $out/share/kallipai/skills/
 ''

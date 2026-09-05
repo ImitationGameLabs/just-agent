@@ -91,7 +91,7 @@ in
         # the buildEnv symlink into a sub-store path, not the shared bin/.
         KALLIP_BIN_DIR = "${integrationTests}/bin";
         KALLIP_TESTDATA_DIR = "/testdata";
-        HOME = "/var/lib/kallip";
+        HOME = "/var/lib/kallipai";
         RUST_LOG = "info";
       };
     };
