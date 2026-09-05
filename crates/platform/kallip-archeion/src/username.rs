@@ -78,7 +78,7 @@ fn is_valid_handle(s: &str) -> bool {
     })
 }
 
-/// The reserved-name registry (operator ruling 2026-08-31, minimal list).
+/// The reserved-name registry (deliberately minimal).
 /// These handles would collide with the platform's own faces: the operator
 /// account (hardcoded `admin`), staff/ops roles a squatter could pose as,
 /// and the service/brand names (`kallip`, `kallipai`, `archeion`, `lesche`,

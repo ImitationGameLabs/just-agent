@@ -16,7 +16,7 @@
 //! | 1 | User(U) | `/users/{U}/**` | full (space owner) |
 //! | 2 | Tagma(T) | `/users/{U}/tagmas/{T}/**` | full, T enrolled in U |
 //! | 3 | Tagma(T) | `/users/{U}/shared/**` | read/write, T enrolled in U |
-//! | 4 | User(U1) | `/users/{U2}/**`, U1 != U2 | denied (N3 hard isolation) |
+//! | 4 | User(U1) | `/users/{U2}/**`, U1 != U2 | denied (cross-user hard isolation) |
 //! | 5 | Tagma(T1) | `/users/{U}/tagmas/{T2}/**`, T1 != T2 | denied |
 //! | 6 | Tagma(T1) -> T2 | single file | server-side delivery only |
 //! | 7 | User(U1) -> U2 | room reference | not adopted (postponed) |
@@ -98,7 +98,7 @@ pub enum Action {
 }
 
 /// A tagma principal's enrollment facts, resolved per request from the
-/// control plane. The consumer contract (B3a correctness A2): a missing set
+/// control plane. The consumer contract: a missing set
 /// is denial -- no code path may structurally assume the requester's own
 /// presence in `enrolled`.
 #[derive(Debug, Clone)]
@@ -119,7 +119,7 @@ pub fn admin_can_content() -> bool {
 /// Rows #1/#4/#9: a user principal against a parsed space path. Full rights
 /// in the user's own space -- shared region, the tagmas' private regions
 /// (arranging, not sending), and the inbox -- and every other user's space
-/// denied, which is N3's hard isolation. Row 9 (delivery into another user's
+/// denied -- the hard cross-user isolation. Row 9 (delivery into another user's
 /// inbox) is unreachable here by design: it is a server-side write in the
 /// send flow, never a path grant.
 pub fn user_can(user: &str, path: &SpacePath, _action: Action) -> bool {
@@ -255,7 +255,7 @@ mod tests {
         }
     }
 
-    // --- row 4: user's hard isolation (N3) ---
+    // --- row 4: cross-user hard isolation ---
 
     #[test]
     fn row4_user_denied_in_other_user_space_everywhere() {

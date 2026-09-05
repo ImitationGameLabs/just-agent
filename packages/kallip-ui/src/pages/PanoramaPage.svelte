@@ -2,7 +2,7 @@
   // The panorama: the product home ('/'), desktop-only. A 12-column bento --
   // the sessions region (8 cols) and the tagmata column (4 cols) project the
   // same stores the chats hub reads; the second bento row carries the files
-  // entry card (design D3); the extension slot stays reserved and renders
+  // entry card; the extension slot stays reserved and renders
   // nothing (no placeholder card, no copy). Small screens never see
   // this page: the root route's load redirects to /chats before mount, and
   // the listener below covers a desktop->mobile crossing afterwards. Pure
@@ -98,7 +98,7 @@
 
 <div class="p-6 max-w-6xl mx-auto grid grid-cols-12 gap-6 items-start">
   <!-- Bento template: sessions 8 + tagmata 4 fill the first row; the second
-       row's files slot (8) carries the D3 entry card; extension (4) stays
+       row's files slot (8) carries the entry card; extension (4) stays
        reserved, so the column budget stays honest. -->
   <section class="col-span-8 space-y-3" aria-label={nav_chats()}>
     <div class="flex items-baseline justify-between gap-4">
@@ -145,9 +145,9 @@
       <HubRow href="/tagmata" Icon={Cpu} label={nav_manage()} />
     </div>
   </section>
-  <!-- The files region (design D3): a static entry card -- title, one
-       line of copy, one link. Zero data dependencies by design (the
-       decoupling the scope ruling asked for). -->
+  <!-- The files region: a static entry card -- title, one
+       line of copy, one link. Zero data dependencies by design -- the
+       region stays fully decoupled from live stores. -->
   <section class="col-span-8 space-y-3" aria-label={files_heading()}>
     <h2 class="text-sm font-semibold uppercase tracking-wide opacity-60">
       {files_heading()}

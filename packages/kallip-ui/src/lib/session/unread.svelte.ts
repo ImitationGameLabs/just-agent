@@ -1,20 +1,20 @@
-// UnreadStore: the per-conversation unread-badge state (the N2 unread chain).
+// UnreadStore: the per-conversation unread-badge state.
 // One entry per conversation key -- `room:{room_id}` for multi-member rooms,
 // `tagma:{tagma_id}` for bilateral 1:1 chats -- tracking:
 //
 //   count      the number the badge shows (rendered through {@link badgeLabel},
 //              which caps the display at "99+").
 //   knownSeq   the highest line seq this session has SEEN from any source (SSE
-//              live frame, catch-up page, room pull). The dedup fence (plan
-//              c-F1): any line at or below it is a replay and is ignored,
+//              live frame, catch-up page, room pull). The dedup fence:
+//              any line at or below it is a replay and is ignored,
 //              whatever path carried it -- so live frames racing a catch-up
 //              pull can never double-count.
-//   readSeq    the server-acknowledged read cursor (rooms; the N1
+//   readSeq    the server-acknowledged read cursor (rooms; the
 //              room_read_cursors watermark). 1:1 has no server cursor, so
 //              readSeq tracks knownSeq locally.
 //   unreadFrom the cursor position the current count was computed against. A
 //              cursor-changed event reduces the count by exactly the watermark
-//              advance (the q-seat reduction form), so an out-of-order or
+//              advance, so an out-of-order or
 //              partial event can neither resurrect unread nor push the count
 //              negative.
 //
@@ -35,7 +35,7 @@
 //     mid-pull leaves a dirty flag for one trailing re-pull, so a burst can
 //     hide rows.
 //
-// Viewing discipline (plan q-M4): only an explicitly opened conversation page
+// Viewing discipline: only an explicitly opened conversation page
 // is "viewing" -- boot auto-open never calls enter(), so a login can never
 // silently clear badges. Scope note: viewing keys on the page being mounted,
 // not on document visibility; a background tab with the room page open still
@@ -45,7 +45,7 @@
 // While viewing, the room page's line tick ({@link noteViewedLines}) advances
 // knownSeq and coalesces the cursor write into one request per
 // PUT_THROTTLE_MS window (a busy chat must not POST per line); the leave path
-// flushes once. The client-side defense for the q-seat N1 advisory lives in
+// flushes once. The client-side defense lives in
 // putRoomCursor: only a safe non-negative integer the client actually
 // observed is ever sent -- the store never invents a value the server's
 // max-clamp would pin irreversibly (and a late lower write cannot regress the
@@ -173,7 +173,7 @@ class UnreadStore {
     this.armTimer = f ?? defaultArmTimer;
   }
 
-  /** Seed room entries from the registry list (the N1 list_rooms response
+  /** Seed room entries from the registry list (the list_rooms response
    *  carries the caller-scoped last_read_seq -- the zero-extra-request
    *  initialization). First sight seeds the watermarks and schedules the
    *  counting pull; a re-list only advances a server watermark that another
@@ -242,7 +242,7 @@ class UnreadStore {
       void putReadWatermark(tagmaId, historyId);
       return;
     }
-    if (historyId <= entry.knownSeq) return; // dedup fence (c-F1)
+    if (historyId <= entry.knownSeq) return; // dedup fence
     entry.knownSeq = historyId;
     if (!this.viewing.has(key)) entry.count += 1;
     // Viewing or not, the watermark persists: the badge survives a reload.
@@ -421,7 +421,7 @@ class UnreadStore {
         const live = this.entries.get(key);
         if (!live || this.viewing.has(key)) return;
         for (const row of rows) {
-          if (row.seq <= live.knownSeq) continue; // dedup fence (c-F1)
+          if (row.seq <= live.knownSeq) continue; // dedup fence
           live.knownSeq = row.seq;
           // Read on another session: the watermark covers it (knownSeq still
           // advances so the fence holds).
@@ -457,7 +457,7 @@ class UnreadStore {
   }
 
   private async putRoomCursor(roomId: string, seq: number): Promise<void> {
-    // Client-side defense (q-seat N1 advisory): only an observed, safe,
+    // Client-side defense: only an observed, safe,
     // non-negative integer is ever sent. The server clamps to max, so a late
     // lower write cannot regress the cursor -- it is a no-op, not a hazard.
     if (!Number.isSafeInteger(seq) || seq < 0) return;

@@ -65,7 +65,7 @@ type StatusSink = (
  * drops. */
 type RoomMembershipChangedSink = (roomId: string) => void;
 
-/** Sink for `room_read_cursor_changed` echoes (the N1 read-cursor fan). Bound
+/** Sink for `room_read_cursor_changed` echoes (the read-cursor fan). Bound
  * by the shell to `unreadStore.applyServerRead` so another session's cursor
  * advance converges this session's badge in real time. `null` (the default)
  * drops -- safe only in that the next room-list fetch resyncs anyway. */

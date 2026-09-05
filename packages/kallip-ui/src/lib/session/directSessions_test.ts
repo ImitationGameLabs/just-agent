@@ -1,7 +1,7 @@
 // Tests for the direct-session store's merge legs (canonical-min dedup across
 // the two daemons' views of one pair, max-side-only retention, min-side
 // replacement, prune aging) and the transcript fetch's bounded 502 downgrade
-// (arch ADV-a: the manage bridge drops an oversized page WHOLE, so the same
+// (the manage bridge drops an oversized page WHOLE, so the same
 // params must never be retried -- the limit halves to a floor of 1).
 //
 // Seams (the channels_refresh_test pattern): a Harness subclass scripts

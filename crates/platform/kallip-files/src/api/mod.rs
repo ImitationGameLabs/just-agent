@@ -32,7 +32,7 @@ pub async fn health() -> &'static str {
 
 /// Load one file record, 404 when absent. The record id is a server-minted
 /// UUID; nothing on the wire can address a record before the service made
-/// it (the design invariant: records come into being only through a real
+/// it (the invariant: records come into being only through a real
 /// upload or a delivery).
 pub(crate) async fn load_record(
     state: &AppState,
@@ -65,7 +65,7 @@ pub(crate) fn parse_record_path(space_path: &str) -> Result<SpacePath, ApiError>
 ///   deny with 403 instead of erroring. Verification is never degraded
 ///   either way.
 ///
-/// The consumer discipline on the facts (B3a correctness A2): absence from
+/// The consumer discipline on the facts: absence from
 /// `enrolled` is denial; no code may unwrap or assume the requester's own
 /// membership.
 pub(crate) async fn tagma_facts(

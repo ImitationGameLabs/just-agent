@@ -376,12 +376,12 @@
     return pathMatches(pathname, href);
   }
 
-  // The rooms notification path (plan D4). The envelope demux is the only
+  // The rooms notification path. The envelope demux is the only
   // point that sees room traffic for conversations nobody is looking at.
   // The floor is the unread store's watermark count: a viewed room never
   // notifies (its transcript is the delivery), an own echo never does, and
   // a zero count means nothing unread (the envelope-before-pull race then
-  // suppresses -- the adjudicated conservative direction). The tag is the
+  // suppresses -- the conservative direction). The tag is the
   // conversation key so a room's burst stays one notification.
   function maybeNotifyRoom(env: Envelope): void {
     // Mirror the transcript's warn-drop (deliverLive/renderPublic): one

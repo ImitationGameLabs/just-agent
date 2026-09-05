@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn harvest_background_pipe_holder_is_bounded() {
-        // The wedge shape from review: a profile background job holds
+        // The wedge shape: a profile background job holds
         // the stdout pipe after the shell itself exits. The wait for the
         // reader must stay inside the budget, not inside the job's
         // lifetime (10s here — an unbounded join blocks exactly that

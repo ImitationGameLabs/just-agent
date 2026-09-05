@@ -2,8 +2,8 @@
   // Online agent detail: resolves the RelayChannel for the given tagma and
   // constructs a dedicated OnlineBackend for this page. Unlike
   // OnlineManagePage this deliberately does NOT switch the global stores --
-  // the page must render self-sufficiently from the route's tagmaId
-  // (arch M2), because a deep link carries no guarantee that the manage hub
+  // the page must render self-sufficiently from the route's tagmaId,
+  // because a deep link carries no guarantee that the manage hub
   // ran first. The placeholder rows mirror OnlineManagePage's channel
   // states; the wiring pattern is shared with it for the same reason.
   import { channelsStore } from "../../lib/session/channels.svelte.ts";

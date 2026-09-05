@@ -1,4 +1,4 @@
-// Tests for the notification send-face (the N3 choke point): the guard chain
+// Tests for the notification send-face choke point: the guard chain
 // (window visibility -> user switch -> permission) silently suppresses, the
 // single backend slot routes show() to exactly one face (the structural
 // double-send impossibility), and the rooms floor decision is the pure
@@ -134,7 +134,7 @@ Deno.test(
 );
 
 Deno.test("the slot is single: re-injection replaces the route", async () => {
-  // The plan's double-send impossibility, structural: initNotificationBackend
+  // The double-send impossibility, structural: initNotificationBackend
   // swaps the ONLY slot, so the superseded backend can never see a show.
   const first = fakeBackend("granted");
   const second = fakeBackend("granted");
@@ -171,7 +171,7 @@ Deno.test("permission queries route to the injected backend", async () => {
 Deno.test(
   "shouldNotifyRoom: own echo, viewing, or zero count all suppress",
   () => {
-    // The floor is the unread watermark count (plan D4). The zero-count row is
+    // The floor is the unread watermark count. The zero-count row is
     // the envelope-before-pull race: suppressed, not faked (conservative).
     assertEquals(
       shouldNotifyRoom({ unreadCount: 3, viewing: false, own: false }),

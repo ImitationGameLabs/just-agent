@@ -1,6 +1,6 @@
 import { assert } from "@std/assert";
 
-// Source-read pins for the shared ManageGrid mount (extracted in M2a C2).
+// Source-read pins for the shared ManageGrid mount.
 // The hub pages have no runtime tests, and neither svelte-check nor lint
 // flags a component that is imported but never rendered -- the gap let an
 // empty <nav></nav> land on /local/manage with the whole suite green.

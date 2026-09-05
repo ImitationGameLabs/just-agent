@@ -1,6 +1,6 @@
 /**
- * Single source for the app's URLs (the path-builder from the online IA
- * plan, tagma-centric at first; global pages like /files live here too).
+ * Single source for the app's URLs (the path-builder; tagma-centric at
+ * first; global pages like /files live here too).
  * a future route rename is a one-line change instead of a repo-wide string
  * hunt. Route params are interpolated verbatim; callers pass real tagma ids.
  */

@@ -5,22 +5,22 @@
 //! serializes drained frames into batched `POST /v1/tagmata/{id}/upstream`
 //! requests. This is where the drivers' former per-driver POST/PUT arms
 //! converged: the drivers publish typed snapshots, the flusher alone speaks
-//! `UpstreamEvent` on the wire (MIN1 — the enum never enters the bus).
+//! `UpstreamEvent` on the wire (the enum never enters the bus).
 //!
-//! Face-S gate: the status face carries its own subscriber gate
+//! The status face carries its own subscriber gate
 //! here, at the send decision -- the only place a gate can suppress the
 //! wire without touching the bus (the in-process SSE assembler keeps
-//! receiving every StatusSnapshot regardless; INV-2). While gated, a
+//! receiving every StatusSnapshot regardless). While gated, a
 //! drained status snapshot RETAINS in its keep-last slot instead of
 //! reaching the wire; the open edge (an `OwnerSub` frame, a piggybacked
 //! count, or a tunnel re-learn) wakes the flusher via
 //! `status_gate_notify` and the retained full snapshot POSTs immediately
 //! -- resume is the keep-last structure itself, nothing partial exists.
-//! The gate defaults OPEN: a lesche that never sends Face-S truth
+//! The gate defaults OPEN: a lesche that never signals the gate
 //! degrades to the shipped always-push semantics, while an erroneously
 //! open gate self-corrects within one push's piggyback.
 //!
-//! Per-topic policy (the parameterized strategy the design calls for):
+//! Per-topic policy (the parameterized strategy):
 //! - status / projection: keep-last. A failed POST retains the newest
 //!   snapshot per topic and retries on a short tick — snapshots are
 //!   idempotent latest-wins server-side, so a retained retry can never
@@ -123,7 +123,7 @@ impl RelayHandle {
             // Serialize the batch: retained snapshots first (retry order),
             // then fresh signals. Same-topic duplicates collapsed above.
             let mut batch: Vec<UpstreamEvent> = Vec::new();
-            // Face-S gate: take the retained snapshot into the batch only
+            // Status gate: take the retained snapshot into the batch only
             // when the gate is open (keep-last-while-gated). The
             // read is post-drain, pre-batch: the gate never touches the bus,
             // so draining continues while gated and no receiver lag builds.
@@ -571,7 +571,7 @@ mod tests {
             .collect()
     }
 
-    /// Face-S gate, default + flip + idempotent re-send:
+    /// Status gate, default + flip + idempotent re-send:
     /// a fresh relay pushes (the OPEN default), a close suppresses the
     /// wire while the keep-last slot retains, the open edge pushes the
     /// retained snapshot on the wake, and a same-value re-send (the
@@ -612,7 +612,7 @@ mod tests {
         handle.stop_upstream_flusher().await;
     }
 
-    /// In-process immunity (INV-2), asserted not assumed: the gate lives
+    /// In-process immunity, asserted not assumed: the gate lives
     /// only in the flusher's send decision, so the local SSE assembler's
     /// bus subscription keeps receiving every StatusSnapshot while the
     /// wire is gated.

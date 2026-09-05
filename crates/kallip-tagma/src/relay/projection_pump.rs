@@ -3,7 +3,7 @@
 //! changed and someone is actually reading it.
 //!
 //! Three sources wake the pump:
-//! - tunnel-up: an unconditional full first snapshot (the M1 self-heal — the
+//! - tunnel-up: an unconditional full first snapshot (the self-heal — the
 //!   lesche's in-memory projection dies with its process, and a reconnecting
 //!   tagma must repopulate it regardless of any buffered hint, which by
 //!   definition cannot have survived either side's restart);
@@ -12,7 +12,7 @@
 //! - registry invalidations (a watch the AppState bumps on the discrete
 //!   mutation classes the Signal vocabulary cannot see — roster changes
 //!   (spawn/remove), duty flips, budget-limit writes, work-schedule edits);
-//! - a low-frequency fallback ticker as the staleness bound (design R4): it
+//! - a low-frequency fallback ticker as the staleness bound: it
 //!   catches anything the invalidation source missed.
 //!
 //! Everything is suppressed while `projection_active` is false (no subscriber
@@ -63,7 +63,7 @@ fn snapshot_projection(
 }
 
 /// Project the tagma's work-schedule singleton into its prompt-free wire
-/// form (MIN1: `wake_prompt`/`final_warn_prompt` are dropped here).
+/// form (`wake_prompt`/`final_warn_prompt` are dropped here).
 fn work_schedule_projection(
     ws: &crate::work_schedule::WorkSchedule,
 ) -> kallip_lesche_common::projection::WorkScheduleProjection {
@@ -82,7 +82,7 @@ fn work_schedule_projection(
 /// under the registry read-lock, stamping the connection-lifetime push seq
 /// (the lesche keys same-generation replay rejection on it; never reset by a
 /// pump restart). The guard is dropped before any await (lock discipline
-/// invariant #1); a store read failure degrades that push to no-schedule
+/// discipline); a store read failure degrades that push to no-schedule
 /// rather than blocking the whole snapshot. `None` when the `AppState` is
 /// gone: the tagma is shutting down.
 struct ProjectionSource {
@@ -324,7 +324,7 @@ mod tests {
         );
         handle.stop_projection_pump().await;
     }
-    /// M1 self-heal: tunnel-up (pump start) pushes one full snapshot
+    /// Self-heal: tunnel-up (pump start) pushes one full snapshot
     /// unconditionally, and a stop/start cycle (the tagma's tunnel
     /// reconnect, or a full restart) pushes another one without any hint
     /// traffic.
@@ -417,7 +417,7 @@ mod tests {
         handle.stop_projection_pump().await;
     }
 
-    /// q-M-2 content nail: the work-schedule projection is prompt-free by
+    /// Content nail: the work-schedule projection is prompt-free by
     /// construction -- `wake_prompt`/`final_warn_prompt` never reach the
     /// wire, and the projected fields round-trip faithfully.
     #[tokio::test]

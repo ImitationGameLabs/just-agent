@@ -1,6 +1,6 @@
 //! HTTP integration tests for the files service: the ACL matrix over real
 //! routes, the send combinations, Range semantics, the body-cap streaming
-//! contract, and the design invariant that records are born only from real
+//! contract, and the invariant that records are born only from real
 //! uploads and deliveries.
 
 mod common;
@@ -860,7 +860,7 @@ async fn streaming_reads_stay_windowed() {
     );
 }
 
-// --- notify push contract (the quality MAJOR from the F0 review) ---
+// --- notify push contract regression guard ---
 
 /// Records every push the send transaction hands over.
 type PushLog = std::sync::Arc<std::sync::Mutex<Vec<PushRecord>>>;

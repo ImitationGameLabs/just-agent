@@ -21,7 +21,7 @@ Deno.test(
     assert(src.includes("<ConfirmDialog"));
     assert(src.includes('tone="danger"'));
     assert(src.includes("open={deleteTarget !== null}"));
-    // D8: the list reloads from the server after the mutation.
+    // The list reloads from the server after the mutation.
     assert(src.includes("await load()"));
   },
 );
@@ -37,7 +37,7 @@ Deno.test(
     assert(src.includes("common_retry()"));
     assert(src.includes("files_empty()"));
     assert(src.includes("files_empty_filtered()"));
-    // D6: the honest ==500 tail note, not fake pagination.
+    // The honest ==500 tail note, not fake pagination.
     assert(src.includes("{#if limitHit}"));
     assert(src.includes("files_limit_note()"));
   },
@@ -49,7 +49,7 @@ Deno.test(
   () => {
     const src = source(DASHBOARD);
     assert(src.includes('uploadPrefix = $state("shared/")'));
-    // D5-A: the free-form input is retired; the select offers only the
+    // The free-form input is retired; the select offers only the
     // server-legal areas and the 400 stays as the client-side fallback.
     assert(src.includes("<select"));
     assert(src.includes("uploadAreas()"));
@@ -69,7 +69,7 @@ Deno.test(
       const src = source(url);
       assert(src.includes("saveBlob("));
       // The inline triple (createObjectURL + synthetic click + revoke)
-      // was the duplication the C2 extraction retired.
+      // was the duplication the saveBlob extraction retired.
       assert(
         !src.includes("URL.createObjectURL"),
         "download I/O must ride the shared saveBlob helper",

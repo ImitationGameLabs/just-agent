@@ -66,7 +66,7 @@
   const conv = $derived(channelsStore.get(conversationId));
   const isLocal = $derived(conversationId === "local");
 
-  // Viewing (plan q-M4): the open chat page clears the badge for the tagma's
+  // Viewing: the open chat page clears the badge for the tagma's
   // 1:1 conversation; the line-entry hook (RelayConversation.onLineLanded)
   // keeps the local watermark fresh while viewing, and cleanup only ends the
   // viewing flag (the watermark persists per line). Local conversations

@@ -57,7 +57,7 @@
   const mode = $derived(shellMode());
   const offlineUrl = $derived(configStore.value?.offline?.tagmaUrl ?? "");
 
-  // -- notifications (all hosts; the plan's web+tauri single switch) ------
+  // -- notifications (all hosts; one web+tauri switch) ------
   // The toggle click IS the user gesture: enabling requests permission right
   // here (MDN: browsers drop prompt-less requests), and only a granted
   // answer persists the switch. Denied is a browser-level terminal state --

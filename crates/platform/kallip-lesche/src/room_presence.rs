@@ -75,7 +75,7 @@ pub(crate) async fn fan_member_presence(
 
     // Sends under the registry read lock. The guard lives to function return, but
     // every operation in the loop is synchronous (`broadcast::send` is non-async),
-    // so lock-discipline invariant #1 (no `.await` under a lock) holds. Registry
+    // so lock-discipline (no `.await` under a lock) holds. Registry
     // poison is swallowed deliberately: presence is best-effort soft state, and a
     // 500 here would be wrong (the roster poll resyncs); contrast the roster path,
     // which surfaces poison as a 500 because the roster is authoritative.

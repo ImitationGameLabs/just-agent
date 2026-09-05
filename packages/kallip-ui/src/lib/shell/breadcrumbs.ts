@@ -120,7 +120,7 @@ export const trailTable: TrailEntry[] = [
         label: nav_breadcrumb_agents(),
         href: tagmaDetailsSectionPath(id, "agents"),
       },
-      // The agent's role lives in the page's own backend (arch M2 keeps this
+      // The agent's role lives in the page's own backend (which keeps this
       // route off the global store), so the trail tail carries the id prefix
       // and the page header carries the role -- the same fallback branch the
       // page itself used before the trail moved here.

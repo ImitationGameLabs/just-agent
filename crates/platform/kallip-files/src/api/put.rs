@@ -63,9 +63,9 @@ pub async fn put_file(
         }
     };
 
-    // Quota: a deliberate placeholder, off by design -- the plan's single
-    // registered stub. Removal point: the Q2 quota ruling (which settles
-    // the granularity); until then no space is quota-checked and uploads
+    // Quota: a deliberate placeholder, off by design -- no quota check
+    // exists yet. When a quota policy lands it settles the granularity;
+    // until then no space is quota-checked and uploads
     // are bounded only by the body cap below.
 
     let blob_id = {

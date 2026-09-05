@@ -98,7 +98,7 @@ pub async fn external_events(
     // (the snapshot can only repeat it; last-wins absorbs the repeat). The
     // old inline order — capture, then subscribe — lost exactly that frame,
     // leaving the header stale until the next pump tick. The capture remains
-    // the MIN2b on-demand query through the shared pure function; the bus
+    // the on-demand query through the shared pure function; the bus
     // holds no latest-state.
     let (subscribed, initial) = kallip_common::sse::open_snapshot_stream(
         || {

@@ -405,7 +405,7 @@ mod tests {
         .await
         .unwrap();
         // Every child row cascaded away (the cursor row checked via raw SQL:
-        // nothing reads the cursors table through an entity in B1).
+        // nothing reads the cursors table through a query entity).
         assert!(find_session(&db, "s-1").await.unwrap().is_none());
         assert!(read_since(&db, "s-1", 0, 100).await.unwrap().is_empty());
         let row = db

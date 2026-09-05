@@ -1,4 +1,4 @@
-// Tests for the unread store (the N2 badge model): the per-key watermark
+// Tests for the unread store badge model: the per-key watermark
 // fence counts every source exactly once (1:1 line-entry hook, room
 // catch-up pull), explicit-open viewing clears without touching other keys,
 // the cursor-changed reduction converges order-safely, and the room cursor
@@ -6,7 +6,7 @@
 // under `deno test`: passthrough $state shim (the statusCard_test pattern).
 // The store's IndexedDB watermark persistence degrades to null here (no IDB
 // in deno), which is exactly the seed-pending branch a fresh device takes;
-// the durable round-trip is a browser walkthrough concern (V1), not a unit
+// the durable round-trip is a browser walkthrough concern, not a unit
 // one. All IO seams are stubbed; no network, no real timers.
 
 declare global {

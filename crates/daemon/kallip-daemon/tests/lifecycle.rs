@@ -284,7 +284,7 @@ fn spawn_health_stop_round_trip() {
     };
     assert_eq!(stopped_again_slug, "e2e");
 
-    // M1 quiet-Dead: after the graceful exit, repeated polls classify
+    // Quiet-Dead: after the graceful exit, repeated polls classify
     // the dead pid as Gone with zero degraded-match warnings — a dead
     // pid must never trip the "matches only by name" warn.
     for _ in 0..2 {

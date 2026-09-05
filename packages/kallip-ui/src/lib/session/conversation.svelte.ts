@@ -659,7 +659,7 @@ export class RelayConversation extends ConversationBase {
     super.applyReplyCore(reply, sender);
   }
 
-  /** Unread counting at the unified line-entry point (plan D2): the reducer
+  /** Unread counting at the unified line-entry point: the reducer
    *  path carries both live frames and catch-up/refresh rows, so offline-
    *  window replay lines are counted exactly once by the store's watermark
    *  fence. Only the peer's authored content counts: `event` frames are the

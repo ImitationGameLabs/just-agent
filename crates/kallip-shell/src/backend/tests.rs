@@ -553,7 +553,7 @@ async fn converted_grandchild_pipe_drain_reaches_terminal() {
     // watcher).
 }
 
-/// C-I4: after a converted task exits, the terminal drain must not
+/// After a converted task exits, the terminal drain must not
 /// consume the captures — bg_read still returns the retained output
 /// (clipped head+tail view) with the real exit code.
 #[tokio::test]

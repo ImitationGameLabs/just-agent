@@ -182,8 +182,8 @@ pub(crate) fn merge_direct_frames(
     let status = status
         .into_stream()
         .map(|frame| DirectFrame::Status(frame.0));
-    // Three erased sources, interleaved as they yield (see the ordering
-    // ruling above); a lagged source is skipped here — the same skip
+    // Three erased sources, interleaved as they yield (no cross-source
+    // ordering promise); a lagged source is skipped here — the same skip
     // semantics as the old single-channel stream — and its loss lands in
     // the topic's lagged counter (`into_stream` keeps the counting leg at
     // the bus core). All three sources are counted alike now — the legacy
@@ -355,7 +355,7 @@ mod tests {
     /// The endpoint merge carries all three sources — the authored topic, the
     /// signal topic, and the status topic — as `DirectFrame`s. It closes
     /// once its sources end. Order-agnostic asserts: the merge makes
-    /// no cross-source ordering promise (the ruling at `merge_direct_frames`).
+    /// no cross-source ordering promise.
     #[tokio::test]
     async fn merge_direct_frames_carries_all_three_sources() {
         use kallip_archeion_common::ids::{ParticipantId, ParticipantKind, UserId};

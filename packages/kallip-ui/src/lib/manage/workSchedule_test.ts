@@ -496,7 +496,7 @@ Deno.test("the mask rotates with the start minute's day carry (+8)", () => {
     toFrame(weeklySpec(0b1, 540, 1020), 480),
     weeklySpec(0b1, 1020, 60),
   );
-  // B2 regression: frame Mon–Fri 06:00–14:00 at +8 becomes UTC Sun–Thu
+  // Regression: frame Mon–Fri 06:00–14:00 at +8 becomes UTC Sun–Thu
   // 22:00–06:00 — the mask must rotate back a day, not just the minutes.
   assertEquals(
     fromFrame(weeklySpec(0b0001_1111, 360, 840), 480),
@@ -513,7 +513,7 @@ Deno.test("the mask rotates forward for west offsets (−8)", () => {
   );
 });
 
-Deno.test("B1 regression: preset literals save as UTC-shifted minutes", () => {
+Deno.test("regression: preset literals save as UTC-shifted minutes", () => {
   // The 9-to-5 preset applies frame literals (540/1020); at +8 the wire
   // must hold 60/540, never the frame numbers themselves.
   assertEquals(

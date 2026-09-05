@@ -1,9 +1,9 @@
 import { assert } from "@std/assert";
 
-// Source-read pins for the shell breadcrumb chrome (unified breadcrumbs
-// plan, E batch). Since the E batch the trail lives in the shell: the
+// Source-read pins for the shell breadcrumb chrome. The trail lives in
+// the shell: the
 // route table (lib/shell/breadcrumbs.ts) owns the segments and the
-// desktop shell's chrome bar renders them (DesktopShell since the M1
+// desktop shell's chrome bar renders them (DesktopShell since the
 // split). A typecheck cannot see that a page still mounts its own
 // trail, that the tagma segments point at the details hub, or that the
 // bar carries its divider -- these pins guard exactly that, same
@@ -15,7 +15,7 @@ const DESKTOP_SHELL = new URL(
   import.meta.url,
 );
 
-// Every page the E batch migrated off per-page trails. The negative pin
+// Every page migrated off per-page trails. The negative pin
 // below keeps them mount-free: a trail comes from the table, never from
 // a page-level <Breadcrumbs> mount.
 const MIGRATED_PAGES = [
@@ -48,11 +48,11 @@ Deno.test(
     );
     assert(
       !src.includes("tagmaChatPath"),
-      "the chat path must not appear in the table (R2: one target per label)",
+      "the chat path must not appear in the table (one target per label)",
     );
     assert(
       src.split("entry(").length - 1 === 14,
-      "the table must cover the twelve migrated routes + the B3 direct-session + the files page",
+      "the table must cover the twelve migrated routes + the direct-session page + the files page",
     );
   },
 );
@@ -69,7 +69,7 @@ Deno.test(
     );
     assert(
       src.includes("border-b border-surface-200-800"),
-      "the bar must carry the divider (operator ruling: one border everywhere)",
+      "the bar must carry the divider (one border everywhere)",
     );
     assert(
       src.includes("min-h-9"),

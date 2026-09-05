@@ -517,7 +517,7 @@ async fn scan_references(state: &SharedState, name: &str) -> (Vec<SetReference>,
     (refs, root)
 }
 
-/// M8 gate for the delete sweep: a post-interrupt reference scan blocks the
+/// Gate for the delete sweep: a post-interrupt reference scan blocks the
 /// delete when it shows a reference outside the interrupted set, or the root
 /// landed on the set. Interrupted records keep their binding (the dangling
 /// state the delivery gate rejects), so "new" means outside the interrupted
@@ -594,7 +594,7 @@ pub async fn delete_profile_set(
                 super::agent::interrupt_core(&state, &r.id).await?;
             }
         }
-        // M8: the interrupt-to-persist window can admit a new binding —
+        // The interrupt-to-persist window can admit a new binding —
         // re-validate before the write, or a spawn landing in the gap would
         // strand on a set that no longer exists. Interrupted records keep
         // their binding (the dangling state the delivery gate rejects), so

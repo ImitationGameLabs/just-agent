@@ -71,7 +71,7 @@ impl AgentPolicy {
     /// Post-call hook notes for a `tool_name` invocation whose command ran.
     ///
     /// v1 observes `bash_exec` only, and callers invoke this exclusively
-    /// once the command has been dispatched (the design's post phase): use
+    /// once the command has been dispatched (the post phase): use
     /// is the trigger, so a non-zero exit still notes. Deny/Ask paths —
     /// the command never ran — never produce notes. Empty rules
     /// short-circuit before any parsing — no rules configured means zero

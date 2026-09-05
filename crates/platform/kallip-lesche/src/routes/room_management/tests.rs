@@ -1135,7 +1135,7 @@ async fn non_member_owner_removes_own_tagma_succeeds() {
 
 /// The owner path uses a raw `owner_user_id == caller` compare, NOT
 /// `bilateral_resolvable` (which requires `enrolled`): an owner may pull a
-/// revoked tagma out of a room. Locks the design against a future "simplify".
+/// revoked tagma out of a room. Locks the behavior against a future "simplify".
 #[tokio::test]
 async fn owner_removes_revoked_own_tagma_succeeds() {
     let (state, control) = db_state().await;

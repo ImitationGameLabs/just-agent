@@ -62,7 +62,7 @@ in
     # volume) + record metadata in its own Postgres; identity and enrollment
     # facts stay in the archeion, reached through the /internal ControlPlane
     # surface over the compose network. Reached by the `kallip file` CLI and,
-    # since the files page (F1) by the browser: published on all host
+    # since the files page landed, by the browser: published on all host
     # interfaces (the lesche pattern); the Caddy files.<devDomain> route in
     # the TLS shape fronts the same port.
     services.files = {

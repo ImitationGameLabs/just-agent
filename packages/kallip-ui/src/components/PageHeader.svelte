@@ -5,7 +5,7 @@
   // (extracted verbatim from RoomConversationPage's bar as the reuse proof).
   // A page passes its title block and, optionally, badges, actions, and a
   // breadcrumb trail (Breadcrumbs.svelte); absent snippets render nothing, so
-  // the bar stays a single flex row. The details-tree trail mounts in B3.
+  // the bar stays a single flex row; the details-tree trail mounts inside it.
   let {
     title,
     badges = undefined,

@@ -81,7 +81,7 @@ export function putEchoedOurKey(
   return echoed.endsWith(tail) && echoed.includes("*");
 }
 
-/** True when apply reached at least one live agent (the D3' delivery bar). */
+/** True when apply reached at least one live agent (the delivery bar). */
 export function applyReachedAgent(response: ProfileApplyResponse): boolean {
   return response.applied >= 1;
 }
@@ -182,7 +182,7 @@ export function buildPushConfig(
 }
 
 /**
- * The D5 verification request: probe just our endpoint inline (api_key null
+ * The verification request: probe just our endpoint inline (api_key null
  * resolves to the definition we just PUT). Set refs stay empty -- probe
  * validates counts only, so an endpoint without referencing profiles is
  * fine.
@@ -237,7 +237,7 @@ function failureMessage(e: unknown): string {
  * Run the push loop to a terminal state. Attempt one fires immediately
  * (a fast enroll beats polling); retries wait out the fixed interval and
  * the whole loop folds at the deadline into "unreachable". The single
- * post-push probe never fails the push (plan D5: no rollback).
+ * post-push probe never fails the push (no rollback).
  */
 export async function pushCredentials(
   target: PushTarget,

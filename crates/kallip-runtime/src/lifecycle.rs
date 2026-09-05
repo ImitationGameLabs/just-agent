@@ -1,7 +1,7 @@
 //! The agent lifecycle state machine — the authoritative runtime state.
 //!
 //! The outer loop keeps a single `select!` whose per-state arm differences are
-//! encoded as guards (the design's guard matrix), so this enum exists to own
+//! encoded as guards (the guard matrix), so this enum exists to own
 //! the *state* — replacing the parallel `wait_until`/`parked_reason`/
 //! `parked_at`/`retry_at` Option-fields that previously scattered it — and to
 //! make illegal transitions loud via [`LifecycleState::transition`].
@@ -113,7 +113,7 @@ mod tests {
         }
     }
 
-    /// Every legal edge (the design's table minus birth-as-construction) is
+    /// Every legal edge (the table minus birth-as-construction) is
     /// walkable: chains that collectively cover all 13 callable edges, with
     /// the landed state asserted, so a regression in the table reds here
     /// before it can silence an illegal path in production code.

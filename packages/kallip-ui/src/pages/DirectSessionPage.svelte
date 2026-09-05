@@ -5,8 +5,8 @@
   // open channel's manage bridge (see directSessions.svelte.ts): a paged tail
   // hydrate (25/page from the top, bounded at 20 pages -- transcripts beyond
   // that are a candidate-pool tail-probe) then an incremental poll every 15s
-  // keyed on the last seq. Read-only in v1: sending is the agent's voice, and
-  // an operator-facing send path is a separate trust ruling. The chat-domain
+  // keyed on the last seq. Read-only in v1: sending is the agent's voice;
+  // an operator-facing send path would need its own trust review. The chat-domain
   // chrome (back row to the chats hub) derives from the trail table, same as
   // /chat/{id}.
   import type { FileAttachment } from "@kallipai/kallip-lesche-client";

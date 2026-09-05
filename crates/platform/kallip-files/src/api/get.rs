@@ -1,8 +1,7 @@
 //! GET / HEAD /v1/files/{id}: authorize on the record's space path, then
 //! stream the blob through windowed `get_range` calls. Large blobs are
 //! never read whole: the response body is a sequence of fixed-size windows,
-//! so peak memory is one window regardless of file size (the B1 advisory
-//! the plan folded in here).
+//! so peak memory is one window regardless of file size.
 
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -110,7 +109,7 @@ pub(crate) enum RangeOutcome {
 }
 
 /// Parse a single-range `bytes=` header. Multi-range forms are unsupported
-/// and ignored (`Full`), per the plan; malformed values are ignored too; a
+/// and ignored (`Full`); malformed values are ignored too; a
 /// valid but unservable range (start at/after EOF, zero-length suffix, an
 /// inverted span) is `Unsatisfiable`.
 pub(crate) fn parse_range(header: Option<&str>, size: u64) -> RangeOutcome {

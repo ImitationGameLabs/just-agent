@@ -96,7 +96,7 @@
     if (!archeionSession.participantId) return;
     untrack(() => {
       void roomConversationsStore.open(roomId);
-      // Viewing (plan q-M4): an explicitly opened room page clears its badge
+      // Viewing: an explicitly opened room page clears its badge
       // and starts the cursor-write schedule; the cleanup (unmount or a
       // participantId re-fire) syncs the watermark to the conversation's live
       // cursor and flushes the write.
@@ -130,8 +130,8 @@
   });
 
   // The viewing line tick: lines rendered on the open conversation count as
-  // read and coalesce the cursor write into the 5s throttle window (plan:
-  // a busy chat must not POST per line; the leave path flushes).
+  // read and coalesce the cursor write into the 5s throttle window: a
+  // busy chat must not POST per line; the leave path flushes.
   //
   // Only the rendered-line count is the trigger. noteViewedLines runs inside
   // `untrack`: its internal knownSeq fence reads the same entry field the

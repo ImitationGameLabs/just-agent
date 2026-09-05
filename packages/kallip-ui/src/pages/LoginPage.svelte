@@ -54,7 +54,7 @@
   // deployment-driven: the app shell passes offlineLogin from its build-time
   // injection, so a cloud build never renders it (two-way information
   // hiding). "offline" here names the LOGIN branch only -- the session it
-  // produces is the standard online form (see the design's terminology note);
+  // produces is the standard online form;
   // it is unrelated to the AppMode offline of the legacy /local family.
   let mode = $state<"online" | "offline">("online");
   let adminKey = $state("");

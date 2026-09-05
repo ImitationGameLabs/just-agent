@@ -1,5 +1,5 @@
 // Unit tests for the files page view model: prefix stripping, first-segment
-// grouping (D4), and the case-insensitive from-the-start filter. Pure
+// grouping, and the case-insensitive from-the-start filter. Pure
 // functions -- no store, no fetch, no DOM.
 import { assert, assertEquals } from "@std/assert";
 import type { FileEntryView } from "@kallipai/kallip-files-client";

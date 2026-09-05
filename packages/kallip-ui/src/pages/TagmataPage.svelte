@@ -114,7 +114,7 @@
   let createError = $state<string | null>(null);
   // The just-spawned success line lives here (not in the dialog): it must
   // outlive the dialog, which closes on success. The credential push runs
-  // after spawn returns (D4 window), so its own status rides alongside.
+  // after spawn returns, so its own status rides alongside.
   let spawnResult = $state<{ slug: string; port: number } | null>(null);
   let pushStatus = $state<{
     slug: string;
@@ -652,8 +652,8 @@
     {/if}
 
     {#if shellMode() === "online"}
-      <!-- Rooms management section: visibility keys on the shell mode only
-           (C review N-1) -- a transient rooms fetch error must not hide the
+      <!-- Rooms management section: visibility keys on the shell mode only --
+           a transient rooms fetch error must not hide the
            standing /rooms entry. roomsLoaded only picks rows-vs-empty inside. -->
       <section class="space-y-3" aria-label={nav_rooms()}>
         <h2 class="text-sm font-semibold uppercase tracking-wide opacity-60">

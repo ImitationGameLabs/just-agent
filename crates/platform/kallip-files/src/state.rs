@@ -20,7 +20,7 @@ use kallip_archeion_common::control_plane::ControlPlane;
 #[derive(Debug, Clone)]
 pub struct FilesConfig {
     /// Maximum accepted upload body, in bytes; a longer stream is cut off
-    /// with 413. The value is a size ceiling only (Q1 default 100 MB; the
+    /// with 413. The value is a size ceiling only (default 100 MB; the
     /// operator may tune it), never a chunking boundary.
     pub max_body_bytes: u64,
     /// Comma-separated CORS allowed origins (the app's origin). Empty = no
@@ -149,8 +149,8 @@ fn cors_layer(origins: &str) -> CorsLayer {
 
 /// Boot sequence: connect and migrate the metadata store, build the state,
 /// start the GC driver (its first tick is the startup audit), and serve.
-/// Migration failure is fatal (fail fast, the plan's connect_and_migrate
-/// posture) -- the caller sees the error and the process exits nonzero.
+/// Migration failure is fatal (fail fast: connect, migrate, or exit) --
+/// the caller sees the error and the process exits nonzero.
 pub async fn run(boot: BootConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
     let db = metadata::connect_and_migrate(&boot.database_url).await?;
     let state = AppState {
@@ -173,7 +173,7 @@ pub async fn run(boot: BootConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
 
 /// Start the background GC driver: sweep + reconcile each interval tick.
 /// The first `interval` tick fires immediately, so the driver doubles as
-/// the startup audit (the plan's "startup + periodic" self-check). Drift
+/// the startup audit, then the periodic self-check. Drift
 /// found by reconcile is a warning, never an error: reconciliation is a
 /// detector, not a repairer (the GC module owns that distinction).
 pub fn spawn_gc_driver(state: AppState) -> tokio::task::JoinHandle<()> {

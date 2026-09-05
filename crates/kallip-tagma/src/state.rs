@@ -230,7 +230,7 @@ pub struct AppState {
     /// discrete registry mutation classes — roster changes ([`AgentRegistry`]),
     /// duty flips ([`crate::duty::DutyStore`]), budget-limit writes, work-schedule edits —
     /// bump the generation and wake every snapshot pump instantly; the pumps'
-    /// fallback tickers stay as the staleness lower bound (design R4).
+    /// fallback tickers stay as the staleness lower bound.
     /// Continuous consumption (`TokenBudget::record_usage`) is deliberately
     /// NOT notified: turn-lifecycle signals already cover it, and the ticker
     /// bounds the residual drift.
@@ -334,7 +334,7 @@ pub struct FaultedEntry {
 
 /// Bridge-written parked snapshot: why the agent parked and when (the `when`
 /// backs the kick turn's "parked N ago" text and is NOT persisted — a
-/// restart degrades Parked to Idle per the design's restore semantics).
+/// restart degrades Parked to Idle per the restore semantics).
 #[derive(Debug, Clone)]
 pub struct ParkedSnapshot {
     pub reason: ParkedReason,

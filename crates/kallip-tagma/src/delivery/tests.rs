@@ -219,7 +219,7 @@ async fn delivery_rejected_for_parked_kick() {
     );
 }
 
-/// The delivery fast path observes lock visibility (F2-B): a live
+/// The delivery fast path observes lock visibility: a live
 /// Normal-class agent missing its workspace lock logs one WARN — and stays
 /// silent once the lock is back. Log-only: the delivery itself is unaffected.
 #[tokio::test]

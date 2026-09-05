@@ -134,7 +134,7 @@ pub struct AgentContext {
     /// outcome. Hard-parks (surfaces to the operator) once it exceeds
     /// `config.max_transient_retries`.
     pub transient_fails: u32,
-    /// Authoritative lifecycle state (the design's C4 shape: the outer loop keeps
+    /// Authoritative lifecycle state (the outer loop keeps
     /// a single `select!` whose per-state arm differences are guards; this enum
     /// owns the state itself, replacing the scattered wait/park Option-fields).
     /// Written only via `LifecycleState::transition`, which asserts the
@@ -600,7 +600,7 @@ pub async fn run_and_report(
                 consumed,
                 budget,
             })) => {
-                // Non-fatal: the task stays alive — and per the design's
+                // Non-fatal: the task stays alive — and per the
                 // budget-probe decision it stays *Waiting* with a re-armed
                 // timer rather than parking: the next timer wake re-checks
                 // the budget before any LLM call (the round gate runs
@@ -919,7 +919,7 @@ mod tests {
     /// stored permit is inert once the retry deadline was cleared — a sleep
     /// that fired after an external wake won the race cannot fire a turn.
     /// Together with the wait twin this pins both directions of the
-    /// design's silent-retry-loss suspicion: permits are doorbells only,
+    /// silent-retry-loss suspicion: permits are doorbells only,
     /// the deadline check is the sole authority.
     #[tokio::test]
     async fn stale_retry_permit_is_inert_after_clear() {

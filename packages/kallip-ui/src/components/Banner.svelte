@@ -2,7 +2,7 @@
   // Tone -> Skeleton `preset-filled-*` utility. Each bundles the solid tone
   // fill with its paired contrast text, so the banner reads boldly, never lets
   // the content beneath bleed through, and stays in lockstep with Skeleton's
-  // own component styling. Add tones here as the design calls for them; `error`
+  // own component styling. Add tones here; `error`
   // is the only one wired today.
   export const bannerTones = {
     error: "preset-filled-error-500",

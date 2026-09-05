@@ -22,7 +22,7 @@ use crate::state::SharedConvState;
 
 /// The batched upstream channel's status fan: presence-cache write +
 /// owner-stream broadcast. Single shared implementation so wire paths
-/// cannot drift (R3).
+/// cannot drift.
 pub(super) async fn relay_status(
     state: &SharedConvState,
     tagma_id: TagmaId,
@@ -32,10 +32,10 @@ pub(super) async fn relay_status(
     // open by `register_presence`). The status pump runs only while the tunnel
     // is live, so presence is guaranteed present; a missing entry means the
     // tunnel is gone -- surface 404 rather than silently masking a routing
-    // gap. Guard is dropped before any await (lock discipline invariant #1).
+    // gap. Guard is dropped before any await (lock discipline).
     let app_stream = {
         // WRITE lock: the cache write mutates `latest_status` (lock discipline
-        // invariant #1 still holds -- no awaits inside this CS).
+        // discipline still holds -- no awaits inside this CS).
         let mut reg = state.write()?;
         let entry = reg
             .presence_by_tagma_mut(&tagma_id)

@@ -5,7 +5,6 @@
 //! redirection). They never gate a call (that is the
 //! classifier's job) and never touch the tool result; the executor delivers
 //! matched notes as independent `[hook] NOTE:` messages on the notice channel
-//! (design: `.draft/design/toolcall-hooks.md`).
 //!
 //! The same `rable` parse and the same literal-word policy as the classifier
 //! are reused — there is no second parser, only a different walk over the same

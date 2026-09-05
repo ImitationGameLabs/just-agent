@@ -397,7 +397,7 @@ export class ChannelsStore {
     tagma: TagmaView,
     opts: { explicit?: boolean; refresh?: boolean } = {},
   ): Promise<void> {
-    // Guard note (arch review F1): a refresh arriving while an openRelay is
+    // Guard note: a refresh arriving while an openRelay is
     // mid-flight is swallowed here, and that open settles on whatever epoch
     // its KEX caught -- so a peer restart inside that millisecond window
     // can still land a stale-epoch channel, which survives until the NEXT

@@ -215,7 +215,7 @@ fn harvest_supplies_login_env_and_daemon_keys_stay_owned() {
         Some("/kallip-harvest-fixture/bin:/usr/bin:/bin")
     );
     // Full harvest, not PATH-only: the profile marker arrives, and so does
-    // HOME (the operator ruling folded it into the same harvest).
+    // HOME -- both ride the same harvest pass.
     assert_eq!(get(&env, "KALLIP_HARVEST_MARKER"), Some("stage-one"));
     let home_str = home.path().display().to_string();
     assert_eq!(get(&env, "HOME"), Some(home_str.as_str()));
@@ -384,7 +384,7 @@ fn harvested_env_is_not_persisted() {
     stop_and_wait(&client, relaunched);
 }
 
-/// The review's wedge shape, end to end: a profile background job that
+/// The wedge shape, end to end: a profile background job that
 /// holds the harvest's stdout pipe must not hold the spawn RPC — the
 /// daemon kills the whole process group, degrades to the fallback PATH,
 /// and the instance still boots. (Unfixed, the RPC blocks for the

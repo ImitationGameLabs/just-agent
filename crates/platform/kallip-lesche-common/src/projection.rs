@@ -36,7 +36,7 @@ pub struct ProjectionSnapshot {
     /// The tagma's per-connection push counter; see the type doc.
     pub push_seq: u64,
 
-    /// The tagma's work schedule, prompt-free projection (MIN1: the
+    /// The tagma's work schedule, prompt-free projection (the
     /// `wake_prompt`/`final_warn_prompt` texts never ride the projection).
     /// `None` while the tagma has no schedule.
     pub work_schedule: Option<WorkScheduleProjection>,

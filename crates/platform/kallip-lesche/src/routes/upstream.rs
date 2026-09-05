@@ -5,7 +5,7 @@
 //! POST / signal POST / state PUT) served individually.
 //! The tagma's upstream flusher serializes its bus topics into the
 //! wire enum; here each element demultiplexes into the fan logic those
-//! endpoints used, now the only copy (R3). The retired per-kind shapes are
+//! endpoints used, now the only copy. The retired per-kind shapes are
 //! nailed dead by the route-shape negative legs in `routes.rs` (the
 //! deprecation window closed with this deletion).
 //!

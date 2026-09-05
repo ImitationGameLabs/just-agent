@@ -162,7 +162,7 @@ pub struct TagmaStatusPayload {
 /// plaintext metadata event on the single upstream channel. The batch body
 /// is `Vec<UpstreamEvent>`; the lesche demultiplexes each element into the
 /// same fan logic the three per-kind endpoints (status POST / signal POST /
-/// state PUT) have always used, so the two paths cannot drift (R3).
+/// state PUT) have always used, so the two paths cannot drift.
 /// Adjacently tagged because the payload variants mix structs and an enum
 /// (`SignalEvent` is itself internally tagged, which rules out an internal
 /// tag here). Authored envelope traffic never joins this channel: envelopes

@@ -8,7 +8,7 @@ The project brand is `kallipai` (literally `kallip` + `ai`); the technical stem 
 
 ## Comments
 
-Code and test comments are self-contained: do not reference out-of-repo documents, do not carry schedule codenames, and point references only at objects resolvable inside the repository.
+Code and test comments are self-contained: do not reference out-of-repo documents, do not carry schedule codenames, and point references only at objects resolvable inside the repository. References to published external standards (RFC, W3C) are exempt.
 
 ## Directory Structure
 

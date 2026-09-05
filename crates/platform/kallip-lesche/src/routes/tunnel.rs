@@ -384,7 +384,7 @@ mod tests {
     }
 }
 
-/// Arch nail: the manage-reply endpoint only accepts tagma
+/// Bearer nail: the manage-reply endpoint only accepts tagma
 /// bearers -- an operator session (or anonymous) caller is 401.
 #[tokio::test]
 async fn manage_reply_rejects_non_tagma_principals() {

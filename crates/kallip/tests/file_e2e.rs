@@ -2,7 +2,7 @@
 //! real boot migration on a test Postgres, the real router, real HTTP)
 //! with a mini archeion `/internal` mock. The client is driven function-level
 //! through `kallip::file`; the binary-invoke path (arg parsing to exit
-//! code) is compose-smoke territory (B4b).
+//! code) is compose-smoke territory.
 
 mod common;
 

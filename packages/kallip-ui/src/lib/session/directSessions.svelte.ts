@@ -137,7 +137,7 @@ export class DirectSessionsStore {
    * tail poll: `afterSeq` is exclusive, rows ascend. Bounded 502 downgrade:
    * the manage bridge drops a response over its 256 KiB cap WHOLE, so a
    * too-big page is retried at half the limit down to a floor of 1 -- never
-   * the same params twice (arch ADV-a). */
+   * the same params twice. */
   async fetchTranscript(
     tagmaId: string,
     peerId: string,

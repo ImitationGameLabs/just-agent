@@ -157,7 +157,7 @@ impl RelayHandle {
     /// `Weak::upgrade() == None` (AppState dropped) ends the loop: the tagma
     /// is shutting down. The registry read-guard drops inside the capture,
     /// before the publish, so no `.await` is held under the lock (lock
-    /// discipline invariant #1); `state_for_summary` and
+    /// discipline); `state_for_summary` and
     /// `token_budget.snapshot` are lock-free (atomics).
     async fn run_status_pump(self, cancel: CancellationToken) {
         info!(tagma = %self.inner.tagma_id, "relay status pump started");
@@ -253,7 +253,7 @@ mod tests {
         );
     }
 
-    /// Watch invalidation (R4 per-class leg, roster class, end-to-end
+    /// Watch invalidation (per-class leg, roster class, end-to-end
     /// through the driver): a roster mutation wakes the pump between ticks
     /// — the second publish lands well inside the 2 s cadence, which the
     /// ticker alone could not have produced.

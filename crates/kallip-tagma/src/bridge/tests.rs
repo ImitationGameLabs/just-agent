@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::state::RegistryEntry;
 use crate::test_helpers::*;
 
-/// Spawn `bridge_task` with fresh parked/retrying cells — the standard C3
+/// Spawn `bridge_task` with fresh parked/retrying cells — the standard
 /// call shape. Returns the cells so tests can assert terminal payloads.
 fn spawn_bridge(
     agent_id: AgentId,
@@ -301,7 +301,7 @@ async fn notification_delivered_to_direct_superior_inbox() {
     assert!(msg.contains("approval-1"), "includes the action id");
     assert!(
         msg.contains("re-checked at approval time"),
-        "carries the static review guidance"
+        "carries the re-check guidance"
     );
 }
 
@@ -1212,7 +1212,7 @@ fn all_agent_events() -> Vec<AgentEvent> {
     ]
 }
 
-// -- C3: terminal-state triage (Waiting / Retrying / Parked payloads) --
+// -- terminal-state triage (Waiting / Retrying / Parked payloads) --
 
 /// A Waiting terminal event marks the agent WAITING (not idle) and notifies
 /// the superior with the timer length — the notification is the operator's
@@ -1478,7 +1478,7 @@ async fn bridge_token_budget_marks_waiting() {
 
 /// The final FCE after the last allowed retry parks as TransientRetryExhausted.
 /// The distinguishing evidence is the retrying cell the previous armed FCE
-/// wrote (attempt == max), which the unarmed FCE consumes: covered in C5's
+/// wrote (attempt == max), which the unarmed FCE consumes: covered in the
 /// arm-exhaustion sequence; here the unarmed-FCE-with-spent-cell single hop.
 #[tokio::test]
 async fn bridge_fce_after_spent_budget_parks_retry_exhausted() {

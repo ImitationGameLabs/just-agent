@@ -242,8 +242,8 @@ async fn lag_is_reported_and_counted() {
 }
 
 /// The dispatch cost — one index lookup plus one downcast per publish,
-/// never per receiver (the mid-envelope form, arch final ruling) — is the
-/// R1 measured-upgrade evidence. The leg prints the per-publish figure
+/// never per receiver (the mid-envelope form) — is the
+/// measured-upgrade evidence. The leg prints the per-publish figure
 /// for the report and asserts only a pathological ceiling, so it cannot
 /// flake on a loaded runner.
 #[tokio::test]

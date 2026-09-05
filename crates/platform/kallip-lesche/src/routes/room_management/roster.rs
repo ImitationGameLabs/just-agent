@@ -221,7 +221,7 @@ async fn resolve_member_profiles(
         })
         .collect();
     // Stamp the live `online` flag from the registry AFTER all the awaits above
-    // (lock-discipline invariant #1: no `.await` under a lock). The lookups in
+    // (lock-discipline: no `.await` under a lock). The lookups in
     // `set_online_flags` are synchronous and the guard is dropped at the call's
     // end; a future registry RPC added here MUST stay above this line.
     set_online_flags(state, &mut profiles)?;

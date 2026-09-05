@@ -1,4 +1,4 @@
-// The notification send-face (the N3 notification layer). Every system
+// The notification send-face. Every system
 // notification funnels through {@link notify}: one choke point that owns the
 // guard chain, with the platform specifics behind a single-slot backend.
 //
@@ -6,10 +6,10 @@
 //   - App shell: the host injects the tauri notification plugin backend at
 //     bootstrap (initNotificationBackend in kallip-app's root layout). The
 //     slot holds exactly ONE backend, so a shell can never send through both
-//     faces -- the plan's double-send impossibility is structural, not
+//     faces -- the double-send impossibility is structural, not
 //     discipline.
 //
-// Guard chain, all silent-return (plan D4: an ineligible notification is
+// Guard chain, all silent-return (an ineligible notification is
 // never an error):
 //   1. Window visibility. A visible window never notifies -- the transcript
 //      IS the delivery. Hidden-window semantics live HERE: the unread store
@@ -25,7 +25,7 @@
 // passes it as the WHATWG `tag` (same-origin same-tag replacement). The
 // tauri plugin has no WHATWG tag; its backend maps tag -> `group` (the
 // platform thread/group identifier) -- threads the burst, but is NOT a
-// strict replacement; the asymmetry is disclosed in the N3 walkthrough.
+// strict replacement; the asymmetry is inherent to platform grouping.
 
 import { configStore } from "../config/config.svelte.ts";
 
@@ -146,12 +146,12 @@ export async function notify(notification: {
   }
 }
 
-/** The rooms floor decision (plan D4: floor = unread watermark comparison).
+/** The rooms floor decision (floor = unread watermark comparison).
  *  Pure so the truth table is unit-testable without stores or DOM:
  *  a notification fires only for a room that is not being viewed, a line
  *  that is not my own echo, and a NON-ZERO unread count. The count test is
  *  conservative in the envelope-before-pull race (the store has not counted
- *  the first message yet -> suppressed, not faked) -- the N2-adjudicated
+ *  the first message yet -> suppressed, not faked) -- the conservative
  *  seed-0 direction: a rare missed notification beats a wrong one. */
 export function shouldNotifyRoom(args: {
   unreadCount: number;

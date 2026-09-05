@@ -225,7 +225,7 @@ struct Inner {
     /// to: the last per-face truth received for the status face (an
     /// `OwnerSub { face: Status }` frame, an `/upstream` piggyback
     /// count, or the tunnel-establishment re-learn). Defaults OPEN
-    /// (an open default): an old lesche never sends Face-S truth, so a closed
+    /// (an open default): an old lesche never signals the gate, so a closed
     /// default would silently gate status for the whole mixed-version
     /// window, while an erroneously-open gate self-corrects within one
     /// push's piggyback and a wrongly-closed gate has no carrier. The

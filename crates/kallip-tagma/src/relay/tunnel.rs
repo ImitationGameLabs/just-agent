@@ -264,7 +264,7 @@ mod manage_rest_tests {
 
     #[test]
     fn allowlist_denies_prompt_and_unlisted_routes() {
-        // arch C4: prompt-bearing bodies must never ride the frame surface.
+        // Prompt-bearing bodies must never ride the frame surface.
         for (method, path) in [
             ("GET", "/profiles/sets/main"),
             ("PUT", "/profiles/sets/main"),
@@ -300,7 +300,7 @@ fn frame_allowed_is_order_sensitive() {
 /// against a mock lesche that records the manage-reply POST. Pins the
 /// (path, method) call order at the real dispatch site: the correct order
 /// must reach the router (200), and a swapped call must deny (404) --
-/// the exact regression C-1 was.
+/// the exact regression this pins.
 #[cfg(test)]
 mod manage_frame_tests {
     use super::*;
@@ -348,7 +348,7 @@ mod manage_frame_tests {
         handle
             .handle_manage_rest(1, "/agents", "GET", &trace, serde_json::json!({}))
             .await;
-        // Swapped order (the C-1 bug): frame_allowed denies.
+        // Swapped order regression: frame_allowed denies.
         handle
             .handle_manage_rest(2, "GET", "/agents", &trace, serde_json::json!({}))
             .await;

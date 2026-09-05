@@ -364,8 +364,8 @@ impl DirLockManager {
 
     /// Snapshot of the canonical directories `agent` currently holds a
     /// write-lock on — the writable set the landlock enforcement layer derives
-    /// each command's domain from. Point-in-time; see the plan's "Known
-    /// limitations" (one-command overlap after release).
+    /// each command's domain from. Point-in-time; a one-command
+    /// overlap window exists after release.
     pub fn write_paths(&self, agent: &AgentId) -> io::Result<Vec<PathBuf>> {
         let dirs = locked(&self.dirs);
         Ok(dirs

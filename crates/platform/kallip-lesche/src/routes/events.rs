@@ -55,7 +55,7 @@ async fn me_events(
         // The 0 -> 1 edge: announce room presence only on the user's FIRST live
         // app stream, so a second tab re-opening does not re-announce. Race-free
         // under this write lock; relies on `me_events` being the sole
-        // `app_streams` creator (state.rs invariant #3) -- a future caller
+        // `app_streams` creator -- a future caller
         // outside `me_events` would need to revisit.
         let was_first = !reg.has_app_stream(&user_id);
         let stream = reg.open_app_stream(&user_id);
@@ -372,7 +372,7 @@ mod tests {
         )
     }
 
-    /// Invariant #3 made observable: two tabs on one user share the one
+    /// Made observable: two tabs on one user share the one
     /// stream, so a frame fanned once carries the identical `(epoch, seq)`
     /// on both tabs.
     #[tokio::test]

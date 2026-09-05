@@ -65,7 +65,7 @@ pub struct SequencedAppEvent {
 /// it (or under it — `send_lock` is a leaf lock, see below).
 pub struct AppStream {
     /// Outbound broadcast ring (`BROADCAST_CAPACITY`), shared by every tab of
-    /// the user (invariant #3: one stream per user), so all tabs observe
+    /// the user (one stream per user), so all tabs observe
     /// identical `(epoch, seq)` per frame.
     pub tx: broadcast::Sender<SequencedAppEvent>,
     /// Stream generation. Changes when the channel is recreated (last tab
@@ -275,7 +275,7 @@ pub struct Registry {
     /// Per-tagma projection cache (registry bypass) and
     /// per-(user, tagma) projection SSE channels. Private: mutated only via
     /// the projection methods below. The projection table outlives the
-    /// tagma's presence (MIN3): offline tags keep serving stale reads.
+    /// tagma's presence: offline tags keep serving stale reads.
     projections: HashMap<ParticipantId, ProjectionEntry>,
     projection_streams: HashMap<(ParticipantId, ParticipantId), broadcast::Sender<ProjectionDirty>>,
     /// Teardown lag for projection SSE unsubscribes, in milliseconds (30s
@@ -302,15 +302,15 @@ pub struct PresenceEntry {
 /// tunnel connection the snapshot came in on (an `Arc::ptr_eq` against the
 /// live [`PresenceEntry::id`]): a push from a different generation is a
 /// reconnect whose push counter restarted, so it is accepted
-/// unconditionally (M1); a same-generation push must carry a strictly
+/// unconditionally; a same-generation push must carry a strictly
 /// newer `push_seq` or it is an out-of-order replay.
 #[derive(Clone)]
 pub struct ProjectionEntry {
     /// Store-side seq: increments once per accepted push.
     pub seq: u64,
     /// The owning user, captured at accept time from the tagma's presence:
-    /// offline tags keep serving stale reads (MIN3), and this is what makes
-    /// the C1 owner check possible without a live presence entry.
+    /// offline tags keep serving stale reads, and this is what makes
+    /// the owner check possible without a live presence entry.
     pub owner: UserId,
     /// The tagma-side push counter at accept time.
     pub last_push_seq: u64,
@@ -374,7 +374,7 @@ impl Registry {
     }
 
     /// Ensure an app event stream exists for `user` and return its handle.
-    /// Sole creator of `app_streams` entries (invariant #3); only a fresh
+    /// Sole creator of `app_streams` entries; only a fresh
     /// channel consumes an epoch — an existing stream keeps its own, so a
     /// second tab joining mid-stream observes no epoch change.
     pub fn open_app_stream(&mut self, user: &UserId) -> Arc<AppStream> {
@@ -386,7 +386,7 @@ impl Registry {
         self.app_streams
             .insert(ParticipantId::for_user(user), stream.clone());
         // The 0 -> 1 subscription edge for the status face: the
-        // create IS the edge (invariant #3: this is the sole creator), so
+        // create IS the edge (this is the sole creator), so
         // the open hint fans to every live tagma of the owner here, inside
         // the caller's write lock, exactly like the projection hint fires
         // inside `open_projection_stream`.
@@ -460,7 +460,7 @@ impl Registry {
                 }
                 // Store seq keeps climbing across generations: clients use
                 // it to detect a reset, so only the tagma push_seq
-                // expectation is voided by a new generation (M1).
+                // expectation is voided by a new generation.
                 stored.seq + 1
             }
             None => 1,
@@ -484,7 +484,7 @@ impl Registry {
     }
 
     /// The stored projection for `tagma`, if any push was ever accepted.
-    /// Outlives the tagma's presence (MIN3): offline tags keep serving
+    /// Outlives the tagma's presence: offline tags keep serving
     /// stale reads from this.
     pub fn projection(&self, tagma: &TagmaId) -> Option<&ProjectionEntry> {
         self.projections.get(&ParticipantId::for_tagma(tagma))

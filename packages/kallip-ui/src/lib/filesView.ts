@@ -1,4 +1,4 @@
-// Pure client-side view model for the files page (design D4): strip the
+// Pure client-side view model for the files page: strip the
 // caller's /users/{me}/ prefix, then group by the first user-space segment.
 // The server returns space_path ASC with no cursor, so groups keep the
 // server order via first appearance. Label resolution for tagma groups
@@ -16,7 +16,7 @@ export interface FileRowView {
   createdAt: string;
 }
 
-/** A first-segment group of rows. The upload prefix is free-form (D5), so
+/** A first-segment group of rows. The upload prefix is free-form, so
  * beyond the three named families an entry can sit at the space root
  * ("root": uploaded with an empty prefix) or under a user-named folder
  * ("folder": rendered under its own segment name). */
@@ -83,7 +83,7 @@ export function groupFileEntries(
   return groups;
 }
 
-/** Case-insensitive prefix match from the start of the display path (D4:
+/** Case-insensitive prefix match from the start of the display path:
  * a string prefix filter, not a substring search -- "rep" matches
  * report.pdf but not shared/report.pdf). An empty query matches all. */
 export function matchesFileFilter(displayPath: string, query: string): boolean {

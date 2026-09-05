@@ -302,7 +302,7 @@ pub(crate) async fn enqueue_prompt(
             ))
         })?;
         if !live.agent.prompt_tx.is_closed() {
-            // F2-B observe: a live Normal-class agent must hold the write-lock
+            // A live Normal-class agent must hold the write-lock
             // on its workspace at every delivery; absence here is the
             // lock-evaporation signature. Log-only probe — the delivery
             // itself is unaffected.

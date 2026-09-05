@@ -2,8 +2,8 @@
 //! channels keyed by event type, published and subscribed through generic
 //! typed APIs.
 
-//! Shape (mid-envelope dispatch per
-//! the arch final ruling): every topic is registered at construction —
+//! Shape (mid-envelope dispatch):
+//! every topic is registered at construction —
 //! `build` rejects a duplicate event type — so `publish` pays one index
 //! lookup and one downcast per call (not per receiver). The registry itself
 //! is the idempotence guard; call sites never check. Topics carry bounded
@@ -11,7 +11,7 @@
 //! detectable (per-topic lagged counter + loss range) and receivers self-heal via
 //! history re-pull / snapshot cadence.
 
-//! This core will never grow (arch A3, permanent): no middleware, no
+//! This core will never grow (permanent): no middleware, no
 //! priorities, no cross-topic routing, no persistence, no observer-style
 //! callbacks — the bus is the buffered, pulled half of the event system
 //! only. New topics are one `Event` impl + one line at the registration
@@ -89,7 +89,7 @@ impl Event for ProjectionSnapshot {
     const TOPIC: &'static str = "projection_snapshot";
 }
 
-/// Per-topic capacities (M1 sketch). Bounded memory with lag-drop is the
+/// Per-topic capacities. Bounded memory with lag-drop is the
 /// written contract: a receiver that falls `capacity` behind loses frames and
 /// must self-heal (history re-pull / snapshot cadence). Snapshot topics carry
 /// 16 slots: a snapshot's self-heal is the NEXT snapshot, so capacity beyond
@@ -244,14 +244,13 @@ impl EventBus {
     /// Sending with no receivers is benign (live-only topics need no
     /// durable echo; the authored half is durable via the projector's
     /// persist-once), so only registry-level faults are errors. The hot
-    /// path never panics: an error means log-and-drop at the call site
-    /// (the R1 mitigation).
+    /// path never panics: an error means log-and-drop at the call site.
     /// Each accepted event takes the topic's next sequence number under
     /// the per-topic ordering lock: in-channel order == allocation order,
     /// the precondition every downstream gap rule relies on.
     /// Returns the allocated seq; the per-site debug traces of
     /// it at the static call sites are what attribute a lost range to
-    /// the site that dropped it (the caller-site ruling).
+    /// the site that dropped it.
     pub(crate) fn publish<E: Event>(&self, event: E) -> Result<u64, PublishError> {
         let type_name = std::any::type_name::<E>();
         let slot = self

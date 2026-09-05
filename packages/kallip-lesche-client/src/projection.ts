@@ -1,8 +1,8 @@
 // Projection read client: the lesche's cached, prompt-free
 // snapshot of a tagma plus the per-tagma dirty SSE. Reads are served from the
-// lesche's store (MIN3: offline tags keep serving, flagged `stale`), so the
+// lesche's store (offline tags keep serving, flagged `stale`), so the
 // browser no longer needs to poll the tagma's manage plane for roster/status.
-// All endpoints are owner-gated (C1) with the shared session cookie.
+// All endpoints are owner-gated with the shared session cookie.
 
 import { parseSseStream } from "@kallipai/kallip-common";
 import { sseFetch } from "./http.ts";

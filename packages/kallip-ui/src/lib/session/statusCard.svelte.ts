@@ -44,7 +44,7 @@ export interface StatusCardRow {
 }
 
 // Attention order: work states rise, terminal anomalies stay visible above
-// idle (operator 04:36 ruling -- a fault must be seen), idle sinks into the
+// idle (a fault must be seen), idle sinks into the
 // fold. Keys are state + id only, never activity text, so a poll refresh
 // re-renders in place instead of reshuffling rows.
 const STATE_ORDER: Record<AgentState, number> = {

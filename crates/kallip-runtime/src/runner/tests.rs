@@ -957,7 +957,7 @@ async fn other_tools_remain_bounded_by_outer_timeout() {
     }
 }
 
-// --- C5: retry exhaustion / budget probe / silent-retry-loss ---
+// --- retry exhaustion / budget probe / silent-retry-loss ---
 
 /// Full-loop pin of the exhaustion path: with `max_transient_retries` spent,
 /// the final FCE carries no retry payload and no fuse stays armed — nothing

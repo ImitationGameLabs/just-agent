@@ -1,11 +1,11 @@
 //! The tagma state plane: the per-tagma read
 //! endpoints that serve the stored snapshot (stale reads included -- the
-//! table outlives presence, MIN3), and the per-tagma SSE change-notification
+//! table outlives presence), and the per-tagma SSE change-notification
 //! stream whose subscription-count flips drive `OwnerSub` over the tagma's
 //! tunnel. Snapshots enter via the batched `POST /upstream` channel, whose
 //! demux fans into `accept_projection` here.
 //!
-//! Every client-facing route re-checks C1 (the stored/live owner must be the
+//! Every client-facing route re-checks ownership (the stored/live owner must be the
 //! caller) so cross-tenant reads are 403; the tagma-side push auth lives in
 //! the upstream channel's batch-level check, not on the read plane.
 use axum::Router;
@@ -36,7 +36,7 @@ pub fn router() -> Router<SharedConvState> {
         .route("/tagmata/{id}/work-schedule", get(read_work_schedule))
 }
 
-/// C1 for the read/SSE plane, offline-safe: the owner recorded on the stored
+/// Owner gate for the read/SSE plane, offline-safe: the owner recorded on the stored
 /// projection entry (or the live presence) must be the caller. `None` when
 /// the tagma has no stored projection at all.
 #[allow(clippy::result_large_err)] // one-line helper; boxing the error costs more
@@ -64,8 +64,8 @@ fn require_owner(
 }
 
 /// The upstream channel's projection fan: accept into the projection store
-/// (M1 generation logic inside) + dirty fan. One shared implementation so
-/// wire paths cannot drift (R3).
+/// (generation logic inside) + dirty fan. One shared implementation so
+/// wire paths cannot drift.
 pub(super) async fn accept_projection(
     state: &SharedConvState,
     tagma_id: TagmaId,
@@ -112,7 +112,7 @@ pub(super) async fn accept_projection(
     }
 }
 
-/// Shared read core: C1, then the stored entry and its staleness (a tagma
+/// Shared read core: owner gate, then the stored entry and its staleness (a tagma
 /// with no live presence serves its projection as `stale`).
 #[allow(clippy::result_large_err)] // sibling helper of require_owner
 fn read_entry(
@@ -200,7 +200,7 @@ async fn state_events(
     AuthPrincipal(principal): AuthPrincipal,
     Path(id): Path<String>,
 ) -> Result<Sse<axum::response::sse::KeepAliveStream<OnDrop>>, StatusCode> {
-    // q-M-1: the SSE plane is owner-gated like the read plane -- a
+    // The SSE plane is owner-gated like the read plane -- a
     // cross-tenant subscriber must not be able to flip the tagma's
     // subscription hint (remote pump start) or probe existence.
     let tagma_id = TagmaId::from(id);
@@ -337,7 +337,7 @@ mod tests {
         rx
     }
 
-    /// Cross-tenant reads are 403 (C1) and an unknown tagma is 404.
+    /// Cross-tenant reads are 403 and an unknown tagma is 404.
     #[tokio::test]
     async fn cross_tenant_read_is_forbidden() {
         let (state, _control) = db_state().await;
@@ -416,7 +416,7 @@ mod generation_tests {
     use crate::routes::test_support::db_state;
     use kallip_lesche_common::tunnel::TunnelInbound;
 
-    /// M1: a reconnecting tagma's push counter restarted, so the first push
+    /// A reconnecting tagma's push counter restarted, so the first push
     /// of the new generation is accepted unconditionally even though its
     /// push_seq is lower than the previous generation's last one.
     #[tokio::test]
@@ -478,7 +478,7 @@ mod generation_tests {
             reg.remove_projection_stream_if_last(&owner, &tagma, &tx)
         };
         assert!(removed, "last unsubscribe is the 1 -> 0 edge");
-        // q-M-2: the false half of the flip actually reaches the tunnel.
+        // The false half of the flip actually reaches the tunnel.
         assert!(matches!(
             hint_rx.try_recv(),
             Ok(TunnelInbound::OwnerSub {
@@ -488,7 +488,7 @@ mod generation_tests {
         ));
     }
 
-    /// q-M-2: the teardown lag gates the false flip. A subscriber that
+    /// The teardown lag gates the false flip. A subscriber that
     /// re-subscribes inside the window re-arms the hint (its open is the
     /// new 0 -> 1 edge) and the pending teardown no-ops; only the true
     /// last departure fans `false` and removes the channel.
@@ -693,9 +693,9 @@ mod generation_tests {
         drop(r2);
     }
 
-    /// q-M-2: the offline arm of the read plane -- with the tagma's
-    /// presence gone, the stored projection still serves the owner
-    /// (MIN3), flagged `stale`, at the same seq the online read showed.
+    /// The offline arm of the read plane -- with the tagma's
+    /// presence gone, the stored projection still serves the owner,
+    /// flagged `stale`, at the same seq the online read showed.
     #[tokio::test]
     async fn offline_tagma_serves_stale_projection() {
         let (state, _control) = db_state().await;
@@ -736,7 +736,7 @@ mod generation_tests {
         assert_eq!(json["stale"], true, "offline tagma reads as stale");
     }
 
-    /// q-M-1: the SSE plane is owner-gated like the read plane -- a
+    /// The SSE plane is owner-gated like the read plane -- a
     /// cross-tenant subscriber gets 403 and can neither start the tagma's
     /// pump remotely nor probe the tagma's existence.
     #[tokio::test]
@@ -756,7 +756,7 @@ mod generation_tests {
         assert_eq!(err, StatusCode::FORBIDDEN);
     }
 
-    /// q-M-2 end-to-end: the real OnDrop path -- drop the SSE response,
+    /// End-to-end: the real OnDrop path -- drop the SSE response,
     /// the injected lag elapses, then the false hint reaches the tunnel
     /// and the channel is torn down (this is what consumes the setter).
     #[tokio::test]

@@ -27,7 +27,7 @@
 //!
 //! The writable set is read fresh at each spawn (one `bash` per command), so
 //! the domain always reflects the agent's locks *as of
-//! that command*. See the plan's "Known limitations": a one-command overlap
+//! that command*. Known limitation: a one-command overlap
 //! window exists after release, and the snapshot is point-in-time.
 //!
 //! # Fail-closed

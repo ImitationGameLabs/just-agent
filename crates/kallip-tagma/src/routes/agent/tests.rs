@@ -893,7 +893,7 @@ async fn create_agent_rejects_duplicate_role() {
     let holder = seed_role_agent(&state, "scout").await;
     let sup = AgentId::random();
     // A workspace inside the root supervisor's /tmp tree but outside the
-    // test data dir (which the C1 isolation guard also parks under /tmp).
+    // test data dir (which the isolation guard also parks under /tmp).
     let ws = std::env::temp_dir().join("kallip-agent-ws-test");
     std::fs::create_dir_all(&ws).expect("create test workspace");
 

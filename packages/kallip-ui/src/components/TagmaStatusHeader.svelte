@@ -5,7 +5,7 @@
   // ultra-wide screens instead of pinning the segments apart
   // across the void. The inner block centers at max-w-[56rem] --
   // tighter than the transcript column: the status-card area
-  // clusters instead of stretching with the chat (operator ruling).
+  // clusters instead of stretching with the chat.
   // The agent rows below center at their own 40rem -- tighter still
   // (dense list); bar and rows widths are deliberately different.
   // The bar spans the full main area as chrome (the old centered

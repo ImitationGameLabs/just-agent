@@ -300,7 +300,7 @@ export interface ProjectionDirty {
 
 /** `GET /v1/tagmata/{id}/agents` -- the stored projection's
  * roster and aggregate status, plus the seq/staleness bookkeeping.
- * `stale` is true when the tagma has no live presence (MIN3: offline
+ * `stale` is true when the tagma has no live presence (offline
  * tags keep serving the last known projection). */
 export interface ProjectionAgentsResponse {
   readonly stale: boolean;

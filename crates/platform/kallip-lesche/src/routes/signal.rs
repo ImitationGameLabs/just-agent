@@ -27,7 +27,7 @@ use crate::state::SharedConvState;
 
 /// The batched upstream channel's signal fan: owner-stream rebroadcast of
 /// one runtime signal. Single shared implementation so wire paths cannot
-/// drift (R3).
+/// drift.
 pub(super) async fn relay_signal(
     state: &SharedConvState,
     tagma_id: TagmaId,

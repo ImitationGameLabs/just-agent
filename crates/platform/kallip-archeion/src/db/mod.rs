@@ -3,8 +3,8 @@
 //! Holds the identity / credentials / provisioning layer: users, passkeys,
 //! enrollment tokens, tagmata, tagma tokens, sessions, and WebAuthn
 //! challenges. The soft-state data plane (presence, routing, dedup, key-exchange
-//! correlation) stays in the bin's in-memory `Registry` — see
-//! `.draft/design/relay-service.md` for the durable/soft-state boundary.
+//! correlation) stays in the bin's in-memory `Registry`; the
+//! durable/soft-state boundary follows that split.
 //!
 //! The migrations under [`migration`] prime the full schema.
 

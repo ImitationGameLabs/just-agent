@@ -198,8 +198,8 @@ mod tests {
         }
     }
 
-    /// The retired shapes stay dead: the double /v1 prefix (the original
-    /// BUG-1/BUG-2 class), the singular /tagma alias, and the projection
+    /// The retired shapes stay dead: the double /v1 prefix, the
+    /// singular /tagma alias, and the projection
     /// segment the rename replaced (including the projection events GET)
     /// must all 404 -- as must the two retired per-kind writers, status
     /// POST and signal POST. A state PUT on the surviving route is a 405
@@ -329,9 +329,8 @@ mod tests {
     /// merged, the internal nest conditionally mounted) must not panic.
     /// axum 0.8 panics on a same-path merge conflict at construction,
     /// and only the binary's startup path builds the whole router -- the
-    /// per-sub-router tests never exercise this (the quality CRITICAL
-    /// from the F0 review: a duplicated merge line crashed startup while
-    /// the test suite stayed green).
+    /// per-sub-router tests never exercise this: a duplicated merge line once
+    /// crashed startup while the test suite stayed green.
     #[test]
     fn full_router_assembly_does_not_panic() {
         let (state, _control) =

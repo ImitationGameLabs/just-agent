@@ -13,7 +13,7 @@
 //!   differential as relay (the declared unification); publishes
 //!   `StatusSnapshot` only.
 //!
-//! Complexity guard (arch A3, same family as the bus core): this module is a
+//! Complexity guard (same family as the bus core): this module is a
 //! loop and two traits, not a framework — no middleware, no priorities, no
 //! dynamic dispatch. A new wake source or policy shape is a design-gate
 //! question, not a silent extension.
@@ -48,7 +48,7 @@ pub(crate) struct SnapshotPumpConfig {
     pub activity: Option<std::sync::Arc<AtomicBool>>,
     /// One unconditional capture+emit before the loop, bypassing the
     /// activity gate and the differential check (the projection's
-    /// tunnel-up first shot — the M1 self-heal). A landed first shot
+    /// tunnel-up first shot — the self-heal). A landed first shot
     /// still seeds the differential bookkeeping (`last`), so a
     /// consumer that gates differentially starts from it instead of
     /// re-sending the unchanged snapshot on its next wake. The status

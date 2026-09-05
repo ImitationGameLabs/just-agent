@@ -8,8 +8,8 @@
 // tag -> `group`: the plugin has no WHATWG tag option; `group` is the
 // platform thread/group identifier (iOS threadIdentifier, Android group), so
 // a conversation's burst at least threads together. It is NOT a strict
-// same-tag replacement -- the asymmetry is disclosed in the N3 walkthrough
-// and stays a V4 device-verification item.
+// same-tag replacement -- the asymmetry is inherent to platform grouping
+// and still needs on-device verification.
 //
 // permission(): the plugin only answers a boolean, which cannot distinguish
 // "never asked" from "refused". The last requestPermission() answer is

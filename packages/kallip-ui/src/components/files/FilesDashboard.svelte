@@ -1,9 +1,9 @@
 <script lang="ts">
-  // The files page surface (design D1-D8): one list(space=self, limit=500)
+  // The files page surface: one list(space=self, limit=500)
   // call, client-side grouping and prefix filter (filesView), download via
   // the shared saveBlob, delete behind ConfirmDialog, upload through a
   // small dialog (read-only name, area dropdown defaulting to shared/).
-  // No optimistic updates (D8): every mutation reloads the list -- at the
+  // No optimistic updates: every mutation reloads the list -- at the
   // 500 cap the refetch is cheap and the state stays simple. Row density
   // and dialog width ride the CSS 48rem variants (the one breakpoint).
   import { Dialog, Portal } from "@skeletonlabs/skeleton-svelte";
@@ -54,7 +54,7 @@
     files_upload_title,
   } from "../../paraglide/messages.js";
 
-  // The server's hard list cap (D6): one page, no cursor; ==500 means
+  // The server's hard list cap: one page, no cursor; ==500 means
   // "maybe more" and the fixed tail note says so instead of faking pages.
   const LIMIT = 500;
 
@@ -63,7 +63,7 @@
   let phase = $state<Phase>("loading");
   let entries = $state<FileEntryView[]>([]);
   let filter = $state("");
-  // The one inline action error (D8): the failing row keeps its message
+  // The one inline action error: the failing row keeps its message
   // until the next action or reload replaces it.
   let errorRowId = $state<string | null>(null);
   let errorMessage = $state("");
@@ -99,10 +99,10 @@
     const label = archeionSession.enrolledCards.find(
       (t) => t.tagmaId === group.tagmaId,
     )?.label;
-    // Unenrolled tagma groups keep the raw id segment (D4: never explode).
+    // Unenrolled tagma groups keep the raw id segment (never explode).
     return files_group_tagma({ label: label ?? group.tagmaId ?? "" });
   }
-  // The upload areas (D5-A): the three server-legal prefixes only, so
+  // The upload areas: the three server-legal prefixes only, so
   // the dialog cannot emit a path the files service would 400. An
   // unenrolled tagma has no source to appear from; the hint says so.
   function uploadAreas() {
@@ -191,7 +191,7 @@
         uploadFile,
       );
       uploadOpen = false;
-      // The highlight is the success signal (D5): yield the filter so the
+      // The highlight is the success signal: yield the filter so the
       // new row is actually visible instead of highlighting into the void.
       filter = "";
       highlightId = minted.record_id;

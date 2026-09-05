@@ -52,7 +52,7 @@
   }: {
     id: string;
     basePath?: string;
-    /** Single injected source (arch M2): local callers fall back to the
+    /** Single injected source: local callers fall back to the
      * offline backend; the online route injects a tagma-resolved
      * OnlineBackend so a deep link renders without store switching. */
     backend?: ManagementBackend;
@@ -111,7 +111,7 @@
 
   // Identity comes from the same injected backend as everything else
   // here: a deep link must render without a prior page having switched
-  // the global agents store to this tagma (arch M2 self-sufficiency).
+  // the global agents store to this tagma (self-sufficiency).
   async function refreshAgents() {
     try {
       agents = [...(await backend.listAgents()).agents];
