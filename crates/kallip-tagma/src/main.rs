@@ -540,11 +540,26 @@ fn forward_panic_to_tracing(info: &std::panic::PanicHookInfo) {
 /// `runtime.json` payload — the tagma-written half of the instance-dir
 /// contract (the daemon writes `meta.json`; the tagma instance writes
 /// `runtime.json`). kallip-daemon deserializes its own mirror of these
-/// keys, so the two definitions must stay in lockstep.
+/// keys, so the two definitions must stay in lockstep. `starttime` is
+/// the kernel start time of this process: the daemon's adoption
+/// credential, proving the live pid is the incarnation that wrote
+/// this file. `0` means not captured (no credential for the daemon).
 #[derive(serde::Serialize)]
 struct InstanceRuntime {
     pid: u32,
     port: u16,
+    starttime: u64,
+}
+/// The kernel start time of this process (`/proc/self/stat` field 22,
+/// clock ticks since boot) — the same incarnation discriminator the
+/// daemon parses from `/proc/<pid>/stat`. Parsed after the comm's
+/// closing paren because comm may contain spaces and parentheses of
+/// its own. `None` off Linux or on a read/parse failure; the runtime
+/// file then carries `0`.
+fn proc_starttime() -> Option<u64> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let after_comm = stat.rfind(')')? + 1;
+    stat[after_comm..].split_whitespace().nth(19)?.parse().ok()
 }
 /// Build the advertise URL for an unset `--advertise-url` from the bound
 /// socket: scheme http, the listen address's host (an unspecified host
@@ -570,12 +585,13 @@ fn derive_advertise_url(listen_addr: &str, port: u16) -> Result<String> {
     Ok(format!("http://{bracketed_host}:{port}"))
 }
 
-/// Publish the runtime identity of this instance (pid + actually bound
-/// port) into `dir` as a single `runtime.json`, for the local instance
-/// daemon's spawn pipeline. The key set is a cross-crate contract with
-/// the daemon's reader, kept in lockstep by hand — tagma does not
-/// depend on the daemon crates. Owner-only via tmp+rename; the port is
-/// read back from the listener so a `:0` bind is discoverable.
+/// Publish the runtime identity of this instance (pid, actually bound
+/// port, kernel start time) into `dir` as a single `runtime.json`, for
+/// the local instance daemon's spawn pipeline. The key set is a
+/// cross-crate contract with the daemon's reader, kept in lockstep by
+/// hand — tagma does not depend on the daemon crates. Owner-only via
+/// tmp+rename; the port is read back from the listener so a `:0` bind
+/// is discoverable.
 fn write_instance_state(dir: &std::path::Path, listener: &tokio::net::TcpListener) -> Result<()> {
     let port = listener
         .local_addr()
@@ -584,6 +600,7 @@ fn write_instance_state(dir: &std::path::Path, listener: &tokio::net::TcpListene
     let runtime = InstanceRuntime {
         pid: std::process::id(),
         port,
+        starttime: proc_starttime().unwrap_or(0),
     };
     write_owner_only(&dir.join("runtime.json"), &serde_json::to_string(&runtime)?)
         .context("writing the instance runtime file")?;

@@ -1,7 +1,7 @@
 //! Stop semantics: read the pid from runtime.json → verify it is this
-//! instance's own live tagma (launch anchor or name chain; the pid
-//! reuse guard) → SIGTERM → poll for exit within the grace period →
-//! SIGKILL. runtime.json stays (adoption semantics: a daemon restart
+//! instance's own live tagma (launch anchor, self-report adoption, or
+//! name chain; the pid reuse guard) → SIGTERM → poll for exit within
+//! the grace period → SIGKILL. runtime.json stays (a daemon restart
 //! rebuilds its view from the tree).
 
 use std::path::Path;
@@ -33,7 +33,8 @@ const GRACE: Duration = Duration::from_secs(10);
 
 /// Blocking stop. Identity is judged by `scan::identity_matches` —
 /// the anchored pid/starttime when meta.json carries one, the
-/// exe/comm name chain otherwise — so a recycled pid is refused.
+/// runtime.json self-report (adoption) or the exe/comm name chain
+/// otherwise — so a recycled pid is refused.
 pub fn stop(data_root: &Path, slug: &str) -> Result<(), StopError> {
     let instance_dir = data_root.join(slug);
     let pid: u32 = crate::scan::read_runtime(&instance_dir)

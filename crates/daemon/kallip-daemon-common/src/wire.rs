@@ -102,12 +102,17 @@ pub enum OkPayload {
 }
 
 /// One managed instance as seen by a directory scan.
-/// The daemon's three-way liveness word. Clients match on this, never on
-/// the prose in `detail`.
+/// The daemon's four-way liveness word. Clients match on this, never
+/// on the prose in `detail`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstanceState {
     Running,
+    /// Live and verified through the runtime.json self-report rather
+    /// than a launch anchor: a manually launched instance the daemon
+    /// recognized (pid alive, self-reported kernel start time matches
+    /// /proc, and the process exe names a kallip-tagma binary).
+    Adopted,
     Stopped,
     Dead,
 }
@@ -117,6 +122,7 @@ impl InstanceState {
     pub fn as_str(&self) -> &'static str {
         match self {
             InstanceState::Running => "running",
+            InstanceState::Adopted => "adopted",
             InstanceState::Stopped => "stopped",
             InstanceState::Dead => "dead",
         }
@@ -130,8 +136,9 @@ pub struct InstanceInfo {
     pub instance_id: String,
     pub workspace: String,
     pub running: bool,
-    /// Mirrors `state == Running`, kept for one-field boolean checks
-    /// (the web render still keys on it); retire once `state` is settled.
+    /// True while the instance is live (`state` Running or Adopted),
+    /// kept for one-field boolean checks (the web render keys on it).
+    /// Mirrors the liveness half of `state`, not the state itself.
     pub state: InstanceState,
     /// Owning uid recorded at spawn (SO_PEERCRED of the requesting
     /// peer); None when an adopted directory predates the field.
@@ -145,9 +152,10 @@ pub struct InstanceInfo {
     #[serde(default)]
     pub tagma_id: Option<String>,
     /// The instance's live listen port; None unless the instance is
-    /// currently Running (a surviving runtime.json from a stopped or dead
-    /// instance never surfaces its stale port). Surfaced so clients no
-    /// longer rely on session-only spawn memory.
+    /// currently live, Running or Adopted (a surviving runtime.json
+    /// from a stopped or dead instance never surfaces its stale
+    /// port). Surfaced so clients no longer rely on session-only
+    /// spawn memory.
     #[serde(default)]
     pub port: Option<u16>,
 }
@@ -157,8 +165,9 @@ pub struct InstanceInfo {
 pub struct HealthReport {
     pub slug: Option<String>,
     pub running: bool,
-    /// Mirrors `state == Running`, kept for one-field boolean checks
-    /// (the web render still keys on it); retire once `state` is settled.
+    /// True while the instance is live (`state` Running or Adopted),
+    /// kept for one-field boolean checks (the web render keys on it).
+    /// Mirrors the liveness half of `state`, not the state itself.
     pub state: InstanceState,
     /// Human-readable supplement when `running` is false; consumers must
     /// not parse this — match `state` instead.

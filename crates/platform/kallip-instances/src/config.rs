@@ -109,6 +109,29 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::os::unix::net::UnixListener::bind(path).unwrap()
     }
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Set/clear env keys for the closure's duration. Serial under
+    /// ENV_LOCK; mirrors the daemon-common socket tests.
+    fn with_env<R>(vars: &[(&str, Option<&std::ffi::OsStr>)], f: impl FnOnce() -> R) -> R {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let mut applied: Vec<(&str, Option<std::ffi::OsString>)> = Vec::new();
+        for (key, value) in vars {
+            applied.push((key, std::env::var_os(key)));
+            match value {
+                Some(v) => unsafe { std::env::set_var(key, v) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+        let out = f();
+        for (key, old) in applied {
+            match old {
+                Some(v) => unsafe { std::env::set_var(key, v) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+        out
+    }
 
     #[test]
     fn flag_socket_wins() {
@@ -132,22 +155,35 @@ mod tests {
 
     #[test]
     fn no_reachable_socket_names_the_tried_candidates() {
-        let config = Config {
-            addr: "127.0.0.1:7300".into(),
-            daemon_socket: None,
-            token: None,
-            backend: "daemon".into(),
-            relay_archeion_url: String::new(),
-            relay_lesche_url: String::new(),
-            archeion_internal_url: None,
-            archeion_internal_token: None,
-            allowed_hosts_raw: String::new(),
-            cors_origins: String::new(),
-        };
-        let err = config.resolve_socket().unwrap_err();
-        assert!(
-            err.to_string().contains("no reachable daemon socket"),
-            "{err}"
+        // Pin the environment legs at empty scratch trees so a live
+        // daemon elsewhere on the host cannot answer the probe.
+        let runtime = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        with_env(
+            &[
+                ("XDG_RUNTIME_DIR", Some(runtime.path().as_os_str())),
+                ("XDG_STATE_HOME", Some(state.path().as_os_str())),
+                ("KALLIP_DAEMON_SOCKET", None),
+            ],
+            || {
+                let config = Config {
+                    addr: "127.0.0.1:7300".into(),
+                    daemon_socket: None,
+                    token: None,
+                    backend: "daemon".into(),
+                    relay_archeion_url: String::new(),
+                    relay_lesche_url: String::new(),
+                    archeion_internal_url: None,
+                    archeion_internal_token: None,
+                    allowed_hosts_raw: String::new(),
+                    cors_origins: String::new(),
+                };
+                let err = config.resolve_socket().unwrap_err();
+                assert!(
+                    err.to_string().contains("no reachable daemon socket"),
+                    "{err}"
+                );
+            },
         );
     }
 

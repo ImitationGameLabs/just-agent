@@ -21,7 +21,10 @@ export interface InstanceInfo {
   instance_id: string;
   workspace: string;
   running: boolean;
-  state: "running" | "stopped" | "dead";
+  /** Live states: `running` = launch-anchor verified, `adopted` =
+   * verified through the runtime.json self-report (a manually launched
+   * instance the daemon recognized). */
+  state: "running" | "adopted" | "stopped" | "dead";
   /** The instance's current listen port (from runtime.json via the wire)
    * when running; null/absent when stopped or the daemon predates it. */
   port?: number | null;
@@ -38,7 +41,8 @@ export interface InstanceInfo {
 export interface InstanceHealth {
   slug: string | null;
   running: boolean;
-  state: "running" | "stopped" | "dead";
+  /** Live states: see InstanceInfo.state. */
+  state: "running" | "adopted" | "stopped" | "dead";
   detail: string | null;
 }
 

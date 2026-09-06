@@ -666,6 +666,82 @@ fn manual_boot_with_slug_publishes_runtime_json() {
     );
 }
 
+/// A manually launched tagma whose instance dir carries a hand-written
+/// minimal meta.json is adopted: list reports state `adopted` (the
+/// self-report triple verified), the port surfaces, and stop lands
+/// like on any managed instance.
+#[test]
+fn manually_launched_tagma_is_adopted_then_stoppable() {
+    let daemon = start_daemon();
+    let client = DaemonClient::new(&daemon.socket);
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe bind");
+    let port = probe.local_addr().expect("probe addr").port();
+    drop(probe);
+    let instance_dir = daemon
+        .data_dir
+        .path()
+        .join("kallipai")
+        .join("tagmata")
+        .join("adopted");
+    std::fs::create_dir_all(&instance_dir).expect("instance dir");
+    // The hand-written marker: the manual-launch half of the contract
+    // (the tagma itself publishes runtime.json on bind).
+    std::fs::write(
+        instance_dir.join("meta.json"),
+        r#"{"instance_id":"manual-1","owner_uid":1000}"#,
+    )
+    .expect("write meta.json");
+    let mut tagma = std::process::Command::new(resolve_bin("kallip-tagma"))
+        .env("KALLIP_TAGMA_SLUG", "adopted")
+        .env("XDG_DATA_HOME", daemon.data_dir.path())
+        .env("KALLIP_TAGMA_ADDR", format!("127.0.0.1:{port}"))
+        .env("KALLIP_OPERATOR_TOKEN", "test-op-token")
+        .env("KALLIP_LLM_PROVIDER", "deepseek")
+        .env("KALLIP_LLM_MODEL", "test-model")
+        .env("KALLIP_LLM_DEEPSEEK_API_KEY", "test-key")
+        // Test-env isolation: ambient relay vars trip the tagma relay
+        // fail-fast and this local-only boot never listens.
+        .env_remove("KALLIP_TAGMA_RELAY_ARCHEION_URL")
+        .env_remove("KALLIP_TAGMA_RELAY_LESCHE_URL")
+        .env_remove("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("manual tagma boot");
+    let mut connected = false;
+    for _ in 0..200 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            connected = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(connected, "manual tagma never listened on {port}");
+    let list = tokio_block_on(client.call(RequestBody::List));
+    let OkPayload::List { instances } = expect_ok(list) else {
+        panic!("expected list payload")
+    };
+    let mine = instances
+        .iter()
+        .find(|i| i.slug == "adopted")
+        .expect("adopted instance listed");
+    assert_eq!(mine.state, InstanceState::Adopted);
+    assert!(mine.running);
+    assert_eq!(mine.port, Some(port));
+    // Stop lands on the adopted instance like on a spawned one.
+    let stopped = tokio_block_on(client.call(RequestBody::Stop {
+        slug: "adopted".into(),
+    }));
+    expect_ok(stopped);
+    let _ = tagma.wait();
+    let after = tokio_block_on(client.call(RequestBody::Health {
+        slug: Some("adopted".into()),
+    }));
+    let OkPayload::Health { report } = expect_ok(after) else {
+        panic!("expected health payload")
+    };
+    assert_eq!(report.state, InstanceState::Dead);
+}
 /// The stop guard's two legs: a runtime.json retargeted at a foreign
 /// live pid is refused even though the pid is alive (the anchor names
 /// a different incarnation), and once the tree is restored the same

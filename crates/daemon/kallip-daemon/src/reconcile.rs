@@ -81,7 +81,9 @@ fn edge_reports(
     for (slug, state, pid) in now {
         live_slugs.insert(slug.clone());
         let was = seen.insert(slug.clone(), state);
-        if was == Some(InstanceState::Running) && state == InstanceState::Dead {
+        if matches!(was, Some(InstanceState::Running | InstanceState::Adopted))
+            && state == InstanceState::Dead
+        {
             reports.push((slug, pid));
         }
     }

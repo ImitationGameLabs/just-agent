@@ -357,6 +357,37 @@ one-shot env overlay (same allowlist as spawn: KALLIP_*, RUST_LOG, PATH);
 the overlay is never written to the instance's meta.json, so the next
 start returns to the recorded env.
 
+### Instance identity and adoption
+
+An instance directory carries two files: `meta.json`, written by the
+daemon's spawn pipeline (the managed-instance marker: instance id,
+owning uid, workspace, user env, and the launch anchor), and
+`runtime.json`, written by the tagma itself (the self-report: `pid`,
+`port`, and `starttime` — the kernel start time of the writing
+process).
+
+`kallipctl list` classifies each recorded pid:
+
+- `running` — the pid is the launch anchor's exact incarnation
+  (anchor starttime verified against `/proc`)
+- `adopted` — no anchor claim holds, but the live process matches the
+  runtime.json self-report (pid alive, starttime equal, and its
+  `/proc/<pid>/exe` names a kallip-tagma binary): a manually launched
+  instance, recognized without a daemon spawn
+- `stopped` — no runtime.json pid on file
+- `dead` — anything else (dead pid, reused pid, self-report mismatch)
+
+To launch an instance by hand: create
+`<data root>/<slug>/meta.json` with at least `instance_id` and
+`owner_uid`, then boot the tagma with `KALLIP_TAGMA_SLUG=<slug>` —
+it publishes `runtime.json` on bind and is adopted on the next list.
+Adoption requires same-uid: the daemon must read `/proc/<pid>/exe`
+and signal the process, so a cross-uid tagma is refused (`dead`, with
+the reason in the health detail). A live process is never adopted
+over a still-running anchored incarnation. `stop` works on adopted
+instances exactly like on spawned ones; `start` refuses a live one
+(slug taken) — stop first, then start re-spawns and re-anchors.
+
 Source:
 [`crates/daemon/kallip-daemon/src/main.rs`](../../crates/daemon/kallip-daemon/src/main.rs).
 
