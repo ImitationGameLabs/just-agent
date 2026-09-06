@@ -20,8 +20,6 @@ use crate::policy::{ToolCallOutcome, error_result, skipped_tool_result, timed_ou
 use crate::runner::BreakUntil;
 use crate::tools::DEFAULT_BREAK_TIMEOUT_SECS;
 use just_llm_client::types::chat::{ChatMessage, ToolCallsMessage};
-use kallip_common::toolresult::ToolResultEnvelope;
-
 // ---------------------------------------------------------------------------
 // Tool-call execution
 // ---------------------------------------------------------------------------
@@ -58,18 +56,16 @@ const OWNS_TIMEOUT_TOOLS: &[&str] = &["bash_exec"];
 
 /// Cap a tool result's token size before it enters the recorded context.
 ///
-/// Envelope results pass through untouched: they carry their own paging
-/// discipline, and cutting one would corrupt the JSON contract. Plain results
-/// at or under [`DEFAULT_TOOL_RESULT_FULL_TOKENS`] estimated tokens also pass
-/// through byte-for-byte. Anything larger is cut to a head+tail slice of
-/// roughly [`DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS`] tokens plus a banner
-/// stating what was kept and how to get at the rest — the feed side of the
-/// 2026-09-06 compaction stall, where one clipped command result entered
+/// No result gets special treatment — not even envelope-shaped ones. An
+/// envelope over the cap means its own paging discipline failed, and cutting
+/// it makes that loud instead of silently feeding the bloat into context.
+/// Plain results at or under [`DEFAULT_TOOL_RESULT_FULL_TOKENS`] estimated
+/// tokens pass through byte-for-byte. Anything larger is cut to a head+tail
+/// slice of roughly [`DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS`] tokens plus a
+/// banner stating what was kept and how to get at the rest — the feed side of
+/// the 2026-09-06 compaction stall, where one clipped command result entered
 /// context as a ~503K-token turn and wedged the compressor behind it.
 fn cap_tool_result(result: String) -> String {
-    if serde_json::from_str::<ToolResultEnvelope>(&result).is_ok() {
-        return result;
-    }
     let full_est = estimate_text(&result);
     if full_est <= DEFAULT_TOOL_RESULT_FULL_TOKENS {
         return result;
@@ -509,6 +505,7 @@ mod tests {
 #[cfg(test)]
 mod cap_tests {
     use super::*;
+    use kallip_common::toolresult::ToolResultEnvelope;
 
     #[test]
     fn small_tool_result_passes_through_untouched() {
@@ -538,16 +535,26 @@ mod cap_tests {
     }
 
     #[test]
-    fn envelope_tool_result_is_never_truncated() {
+    fn oversized_envelope_is_cut_like_any_other() {
+        // An envelope over the cap means its own paging discipline failed;
+        // the cut makes that loud instead of silently feeding the bloat.
         let env = ToolResultEnvelope {
             ok: true,
             tool_name: "bash_exec".to_string(),
-            result: Some(serde_json::json!({ "out": "x".repeat(200_000) })),
+            result: Some(serde_json::json!({ "out": "错".repeat(50_000) })),
             error: None,
             pending_approval: None,
             rest: Default::default(),
         };
         let s = serde_json::to_string(&env).unwrap();
-        assert_eq!(cap_tool_result(s.clone()), s);
+        let capped = cap_tool_result(s);
+        assert!(
+            capped.contains("truncated"),
+            "oversized envelope must be cut"
+        );
+        assert!(
+            estimate_text(&capped) <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS + 200,
+            "cut envelope must land at the cap"
+        );
     }
 }
