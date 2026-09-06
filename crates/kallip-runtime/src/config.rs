@@ -15,6 +15,7 @@ use defaults::{
     DEFAULT_TOKEN_BUDGET_WARNINGS, DEFAULT_TOOL_TIMEOUT_SECS, MAX_RETRIES_LIMIT,
     RETRY_DELAY_SECS_LIMIT, RETRY_TIMEOUT_SECS_LIMIT,
 };
+pub(crate) use defaults::{DEFAULT_TOOL_RESULT_FULL_TOKENS, DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS};
 mod exec_hooks;
 pub use exec_hooks::{builtin_exec_hook_rules, load_exec_hook_rules};
 mod env;
@@ -231,6 +232,8 @@ impl AgentConfig {
             output_reserve_tokens,
             summary_max_tokens,
             pinned_budget_ratio,
+            DEFAULT_TOOL_RESULT_FULL_TOKENS,
+            DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS,
         )?;
         if context_thresholds.len() < 2 {
             bail!(
@@ -358,6 +361,8 @@ impl AgentConfig {
             self.output_reserve_tokens,
             self.summary_max_tokens,
             self.pinned_budget_ratio,
+            DEFAULT_TOOL_RESULT_FULL_TOKENS,
+            DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS,
         )
     }
 }
@@ -372,6 +377,8 @@ fn check_context_budget(
     output_reserve_tokens: usize,
     summary_max_tokens: u32,
     pinned_budget_ratio: f64,
+    tool_result_full_tokens: usize,
+    tool_result_truncated_tokens: usize,
 ) -> Result<()> {
     if context_window_tokens == 0 {
         bail!("context_window_tokens must be greater than zero");
@@ -390,6 +397,21 @@ fn check_context_budget(
              effective_budget {effective_budget} × ratio {pinned_budget_ratio}). \
              Increase the context window or pinned_budget_ratio, or reduce summary_max_tokens."
         );
+    }
+    let summarizer_input_budget = effective_budget.saturating_sub(summary_max_tokens as usize);
+    if tool_result_truncated_tokens * 2 >= summarizer_input_budget {
+        bail!(concat!(
+            "tool result truncated cap ({tool_result_truncated_tokens}) must stay well below ",
+            "the summarizer input budget ({summarizer_input_budget} = effective_budget ",
+            "{effective_budget} − summary_max_tokens {summary_max_tokens}): a cap this ",
+            "large re-creates the oversized-turn compaction wedge the cap exists to prevent"
+        ));
+    }
+    if tool_result_full_tokens <= tool_result_truncated_tokens {
+        bail!(concat!(
+            "tool result full cap ({tool_result_full_tokens}) must be greater than the ",
+            "truncated cap ({tool_result_truncated_tokens})"
+        ));
     }
     Ok(())
 }

@@ -56,3 +56,13 @@ pub(crate) const RETRY_TIMEOUT_SECS_LIMIT: u64 = 86_400;
 pub(crate) const DEFAULT_PINNED_BUDGET_RATIO: f64 = 0.25;
 pub(crate) const DEFAULT_CONTEXT_THRESHOLDS: &[u8] = &[50, 60, 70, 80];
 pub(crate) const DEFAULT_TOKEN_BUDGET_WARNINGS: &[u8] = &[80, 95];
+
+/// Tool results at or under this estimate enter context untouched.
+pub(crate) const DEFAULT_TOOL_RESULT_FULL_TOKENS: usize = 30_000;
+/// Above the full-result threshold a result is cut to roughly this many
+/// tokens (head+tail slice plus a banner describing what was kept). Both
+/// caps are system safety parameters, not user knobs: they are validated
+/// against the summarizer input budget in `config::check_context_budget`
+/// (startup and failover), because a cap loose enough to survive that
+/// budget would re-create the oversized-turn compaction wedge.
+pub(crate) const DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS: usize = 10_000;

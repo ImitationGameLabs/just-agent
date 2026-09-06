@@ -85,20 +85,35 @@ fn default_system_prompt_stays_high_altitude() {
 
 #[test]
 fn check_context_budget_rejects_zero_window() {
-    assert!(check_context_budget(0, 100, 50, 0.25).is_err());
+    assert!(check_context_budget(0, 100, 50, 0.25, 30_000, 10_000).is_err());
 }
 
 #[test]
 fn check_context_budget_rejects_reserve_ge_window() {
-    assert!(check_context_budget(1000, 1000, 100, 0.25).is_err()); // equal
-    assert!(check_context_budget(1000, 1001, 100, 0.25).is_err()); // greater
+    assert!(check_context_budget(1000, 1000, 100, 0.25, 30_000, 10_000).is_err()); // equal
+    assert!(check_context_budget(1000, 1001, 100, 0.25, 30_000, 10_000).is_err()); // greater
 }
 
 #[test]
 fn check_context_budget_rejects_summary_exceeding_pinned() {
-    // effective = 1000 − 200 = 800; pinned = 800 × 0.25 = 200.
-    assert!(check_context_budget(1000, 200, 201, 0.25).is_err()); // over
-    assert!(check_context_budget(1000, 200, 200, 0.25).is_ok()); // boundary ok
+    // Real-magnitude window: effective = 500000 − 8192 = 491808; pinned = × 0.25.
+    assert!(check_context_budget(500_000, 8_192, 122_953, 0.25, 30_000, 10_000).is_err()); // over
+    assert!(check_context_budget(500_000, 8_192, 122_952, 0.25, 30_000, 10_000).is_ok()); // boundary ok
+}
+
+#[test]
+fn check_context_budget_rejects_truncated_cap_shadowing_summarizer_budget() {
+    // effective = 1000 − 200 = 800; summarizer input = 800 − 100 = 700.
+    // A truncated cap of 400 needs 2× 400 = 800 ≥ 700 of summarizer headroom.
+    assert!(check_context_budget(1000, 200, 100, 0.25, 30_000, 400).is_err());
+    // Half that cap clears the bar comfortably.
+    assert!(check_context_budget(1000, 200, 100, 0.25, 30_000, 200).is_ok());
+}
+
+#[test]
+fn check_context_budget_rejects_full_cap_not_above_truncated() {
+    assert!(check_context_budget(1000, 200, 100, 0.25, 200, 400).is_err()); // inverted
+    assert!(check_context_budget(1000, 200, 100, 0.25, 400, 400).is_err()); // equal
 }
 
 #[test]

@@ -24,6 +24,7 @@ mod warnings;
 pub use compose::compose_context;
 pub use store::{AgenticContext, ContextStore};
 pub use summarize::{ContextSummarizer, Summary};
+pub(crate) use tokens::estimate_text;
 pub use turn::Turn;
 pub use turn::TurnId;
 pub use turn::TurnKind;

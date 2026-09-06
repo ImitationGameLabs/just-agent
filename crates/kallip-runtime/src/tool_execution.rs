@@ -13,11 +13,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::acquisition::StreamConsumed;
 use crate::agent_task::AgentContext;
+use crate::config::{DEFAULT_TOOL_RESULT_FULL_TOKENS, DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS};
+use crate::context::estimate_text;
 use crate::event::AgentEvent;
 use crate::policy::{ToolCallOutcome, error_result, skipped_tool_result, timed_out_tool_result};
 use crate::runner::BreakUntil;
 use crate::tools::DEFAULT_BREAK_TIMEOUT_SECS;
 use just_llm_client::types::chat::{ChatMessage, ToolCallsMessage};
+use kallip_common::toolresult::ToolResultEnvelope;
 
 // ---------------------------------------------------------------------------
 // Tool-call execution
@@ -49,6 +52,65 @@ pub(crate) enum ToolExecResult {
 /// name, and exempting it would unbound every redeemed tool.
 const OWNS_TIMEOUT_TOOLS: &[&str] = &["bash_exec"];
 
+// ---------------------------------------------------------------------------
+// Tool-result token cap
+// ---------------------------------------------------------------------------
+
+/// Cap a tool result's token size before it enters the recorded context.
+///
+/// Envelope results pass through untouched: they carry their own paging
+/// discipline, and cutting one would corrupt the JSON contract. Plain results
+/// at or under [`DEFAULT_TOOL_RESULT_FULL_TOKENS`] estimated tokens also pass
+/// through byte-for-byte. Anything larger is cut to a head+tail slice of
+/// roughly [`DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS`] tokens plus a banner
+/// stating what was kept and how to get at the rest — the feed side of the
+/// 2026-09-06 compaction stall, where one clipped command result entered
+/// context as a ~503K-token turn and wedged the compressor behind it.
+fn cap_tool_result(result: String) -> String {
+    if serde_json::from_str::<ToolResultEnvelope>(&result).is_ok() {
+        return result;
+    }
+    let full_est = estimate_text(&result);
+    if full_est <= DEFAULT_TOOL_RESULT_FULL_TOKENS {
+        return result;
+    }
+    let total = result.chars().count();
+    // Density-derived character cap, then re-derived once from the cut's own
+    // measured density: the tokenx scan is linear, but measuring the actual
+    // cut is cheaper than proving it so.
+    let mut chars_cap = (DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS * total / full_est).max(1);
+    let (mut head, mut tail, mut kept) = head_tail_slice(&result, chars_cap);
+    for _ in 0..2 {
+        let kept_est = estimate_text(&kept);
+        if kept_est <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS {
+            break;
+        }
+        chars_cap = chars_cap * DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS / kept_est.max(1);
+        (head, tail, kept) = head_tail_slice(&result, chars_cap);
+    }
+    let banner = format!(
+        "{kept}\n[... truncated: kept first {head} and last {tail} of {total} chars (~{} of ~{full_est} estimated tokens). Narrow the command's output and re-run to see other parts ...]",
+        estimate_text(&kept)
+    );
+    banner
+}
+
+/// Head (60%) + tail (40%) character slice of `text` within `cap_chars`.
+/// Returns `(head_chars, tail_chars, sliced)`.
+fn head_tail_slice(text: &str, cap_chars: usize) -> (usize, usize, String) {
+    let total = text.chars().count();
+    if total <= cap_chars {
+        return (total, 0, text.to_owned());
+    }
+    let head = cap_chars * 3 / 5;
+    let tail = cap_chars - head;
+    let sliced: String = text
+        .chars()
+        .take(head)
+        .chain(text.chars().skip(total - tail))
+        .collect();
+    (head, tail, sliced)
+}
 /// Run one tool call, applying the outer timeout only when the tool does
 /// not own its own bound (see [`OWNS_TIMEOUT_TOOLS`]).
 pub(crate) async fn run_tool_bounded<F>(
@@ -204,6 +266,7 @@ pub(crate) async fn execute_tool_calls(
             }
         };
 
+        let result = cap_tool_result(result);
         tx.send(AgentEvent::ToolResult(result.clone())).await.ok();
         turn_messages.push(ChatMessage::tool_result(result, call.id));
     }
@@ -440,5 +503,50 @@ mod tests {
         let plain = vec![ChatMessage::user("hi"), ChatMessage::assistant("hello")];
         assert!(unanswered_call_ids(&plain).is_empty());
         assert!(orphan_result_ids(&plain).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    #[test]
+    fn small_tool_result_passes_through_untouched() {
+        let r = "plain small output".to_string();
+        assert_eq!(cap_tool_result(r.clone()), r);
+    }
+
+    #[test]
+    fn oversized_tool_result_is_cut_with_banner() {
+        // CJK at tokenx's ~1 token/char keeps the premise deterministic.
+        let big = "错".repeat(50_000);
+        assert!(estimate_text(&big) > DEFAULT_TOOL_RESULT_FULL_TOKENS);
+
+        let capped = cap_tool_result(big.clone());
+        assert!(capped.contains("truncated"), "banner must be present");
+        let head: String = big.chars().take(32).collect();
+        assert!(capped.starts_with(&head), "head must be kept");
+        let tail: String = big.chars().rev().take(32).collect();
+        assert!(capped.contains(&tail), "tail must be kept");
+        // The cap covers the banner too: everything over it is the marker text.
+        assert!(
+            estimate_text(&capped) <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS + 200,
+            "kept estimate {} exceeded the cap",
+            estimate_text(&capped)
+        );
+    }
+
+    #[test]
+    fn envelope_tool_result_is_never_truncated() {
+        let env = ToolResultEnvelope {
+            ok: true,
+            tool_name: "bash_exec".to_string(),
+            result: Some(serde_json::json!({ "out": "x".repeat(200_000) })),
+            error: None,
+            pending_approval: None,
+            rest: Default::default(),
+        };
+        let s = serde_json::to_string(&env).unwrap();
+        assert_eq!(cap_tool_result(s.clone()), s);
     }
 }
