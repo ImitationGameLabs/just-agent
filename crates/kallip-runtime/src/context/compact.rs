@@ -7,6 +7,7 @@ use anyhow::Result;
 use just_llm_client::types::chat::ChatMessage;
 use tracing::{info, warn};
 
+use super::turn::{Turn, TurnKind};
 use crate::agent_task::AgentContext;
 use crate::context::AgenticContext;
 use crate::history::{RecordKind, SystemEvent};
@@ -21,6 +22,54 @@ pub(crate) enum CompactOutcome {
     BudgetExceeded { consumed: u64, budget: u64 },
 }
 
+/// Character cap for the head+tail slice taken from an oversized queue-head
+/// turn: `min(100_000, 90% of the summarizer input budget)`. 100K chars
+/// estimates to at most ~100K tokens even at CJK 1:1 density, and the 90%
+/// guard keeps the slice inside the budget for small windows, where a fixed
+/// cap would re-create the wedge one level down (the summarizer would skip
+/// the slice and the pass would make no progress). At the default 500K
+/// window this resolves to the full 100K chars.
+const WEDGE_SLICE_MAX_CHARS: usize = 100_000;
+
+/// Build a summarizable slice turn from an oversized queue-head turn.
+///
+/// Keeps the head (60%) and tail (40%) of the turn's message text up to the
+/// character cap derived from `input_budget`, marking the omitted middle.
+/// Heads of tool output carry the command echo and first errors; tails carry
+/// the final state — the middle of a megabyte of repeated errors rarely adds
+/// signal. The returned turn is a temporary summarizer input only: it is
+/// never pushed to the store, and the write phase evicts the original turn.
+fn slice_oversized_turn(turn: &Turn, input_budget: usize) -> Turn {
+    let cap_chars = WEDGE_SLICE_MAX_CHARS.min(input_budget * 9 / 10);
+    let mut text = String::new();
+    for message in &turn.messages {
+        if let Some(content) = message.content() {
+            text.push_str(content);
+            text.push('\n');
+        }
+    }
+    let total = text.chars().count();
+    let sliced = if total <= cap_chars {
+        text
+    } else {
+        let head_chars = cap_chars * 3 / 5;
+        let tail_chars = cap_chars - head_chars;
+        let omitted = total - head_chars - tail_chars;
+        let head: String = text.chars().take(head_chars).collect();
+        let tail: String = text.chars().skip(total - tail_chars).collect();
+        format!("{head}\n[... {omitted} chars omitted ...]\n{tail}")
+    };
+    let messages = vec![ChatMessage::user(format!(
+        "[Turn {} exceeded the summarizer budget; head+tail slice]\n{sliced}",
+        turn.id.0
+    ))];
+    Turn {
+        id: turn.id,
+        estimated_tokens: Turn::estimate_tokens(&messages),
+        messages,
+        kind: TurnKind::Conversation,
+    }
+}
 /// Summarize turns to bring context within budget.
 ///
 /// Loops in bounded passes: each pass summarizes the oldest turns that fit
@@ -62,9 +111,32 @@ pub(crate) async fn summarize_and_evict(ctx: &AgentContext) -> Result<CompactOut
                 window.push(turn.clone());
             }
             if window.is_empty() {
-                break;
+                // The oldest non-pinned turn alone exceeds the summarizer input
+                // budget: the queue-head wedge that stalled compaction silently
+                // (2026-09-06 incident: a 502K-token tool result blocked 60
+                // passes over 2.5h). Summarize a head+tail slice of it instead —
+                // the slice fits the budget by construction, and the write
+                // phase's evict clears the wedge so later passes proceed.
+                match guard.turns().iter().find(|t| !t.is_pinned()) {
+                    Some(wedge) => {
+                        warn!(
+                            turn_id = wedge.id.0,
+                            estimated_tokens = wedge.estimated_tokens,
+                            "oversized queue-head turn exceeds the summarizer input budget; summarizing a head+tail slice"
+                        );
+                        (
+                            vec![slice_oversized_turn(wedge, summarizer_input_budget)],
+                            existing_summary,
+                        )
+                    }
+                    None => {
+                        warn!("compaction window empty and no evictable turn; stopping compaction");
+                        break;
+                    }
+                }
+            } else {
+                (window, existing_summary)
             }
-            (window, existing_summary)
         };
 
         // LLM call — lock released during this potentially long await.
@@ -168,5 +240,140 @@ pub(crate) async fn compact_if_needed(ctx: &AgentContext) -> Result<bool> {
             );
             Ok(true)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::retry::RetryPolicy;
+    use crate::test_support::{MapSource, ctx_from_source, profile};
+    use just_llm_client::LlmBackend;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// Fast retry policy so the wiremock suite stays snappy.
+    fn fast_policy() -> RetryPolicy {
+        RetryPolicy {
+            max_retries: 2,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(5),
+            retry_timeout: Duration::from_secs(10),
+        }
+    }
+
+    /// A real OpenAI-compatible backend pointed at `uri` (a wiremock server).
+    fn wiremock_backend(uri: &str) -> Arc<dyn LlmBackend> {
+        just_llm_client::provider::OpenAiCompatBackend::new(
+            reqwest::Client::builder().use_rustls_tls(),
+            "test-key",
+            Some(uri),
+        )
+        .expect("openai-compat backend constructs without network")
+    }
+
+    /// Mount a 200 JSON completion response carrying `content` — the summarizer
+    /// calls the non-streaming `chat_completion`, so this is not SSE.
+    async fn mount_summary(server: &MockServer, content: &str) {
+        let body = format!(
+            "{{\"id\":\"1\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"m\",\"choices\":[{{\"index\":0,\"message\":{{\"role\":\"assistant\",\"content\":\"{content}\"}},\"finish_reason\":\"stop\"}}],\"usage\":{{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}}}"
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/json")
+                    .set_body_raw(body.into_bytes(), "application/json"),
+            )
+            .mount(server)
+            .await;
+    }
+
+    /// An agent whose profiles point at a wiremock server that answers every
+    /// completion with the text `summary`. The server is returned alongside and
+    /// must be held for the test's lifetime: dropping it frees the port and, under
+    /// parallel tests, another binder can take it over while the client still aims
+    /// at it.
+    async fn summary_ctx() -> (AgentContext, MockServer) {
+        let server = MockServer::start().await;
+        mount_summary(&server, "summary").await;
+        let map = HashMap::from([(("ep1".to_string()), wiremock_backend(&server.uri()))]);
+        let ctx = ctx_from_source(
+            vec![profile("p1", "ep1", 500_000)],
+            Arc::new(MapSource(map)),
+            fast_policy(),
+        )
+        .await;
+        (ctx, server)
+    }
+
+    /// The summarizer input budget for `test_config`'s 500K window: window −
+    /// output reserve − summary max. A queue-head turn above this is the wedge.
+    const SUMMARIZER_INPUT_BUDGET: usize = 500_000 - 8_192 - 1_200;
+
+    /// A conversation turn whose estimate provably exceeds the budget: 600K CJK
+    /// chars at tokenx's ~1 token/char. The assertion pins the precondition so a
+    /// tokenx drift fails loudly here instead of silently un-testing the slice.
+    fn oversized_content() -> String {
+        "错".repeat(600_000)
+    }
+
+    /// The wedge stalls nothing: after its predecessors are summarized, the
+    /// oversized head turn itself is slice-summarized and evicted, and the
+    /// loop reports Compacted instead of silently returning NothingToCompact
+    /// (the 2026-09-06 incident path).
+    #[tokio::test]
+    async fn oversized_head_turn_is_slice_summarized_and_evicted() {
+        let (ctx, _server) = summary_ctx().await;
+        {
+            let mut s = ctx.store.lock().await;
+            s.push_turn(vec![ChatMessage::tool_result(oversized_content(), "w0")]);
+            s.push_turn(vec![ChatMessage::user("small one")]);
+            let wedge_est = s.turns()[0].estimated_tokens;
+            assert!(
+                wedge_est > SUMMARIZER_INPUT_BUDGET,
+                "precondition: wedge ({wedge_est}) must exceed the input budget ({SUMMARIZER_INPUT_BUDGET})"
+            );
+        }
+        let outcome = summarize_and_evict(&ctx).await.unwrap();
+        assert!(
+            matches!(outcome, CompactOutcome::Compacted),
+            "oversized head turn must not wedge compaction into NothingToCompact"
+        );
+        let s = ctx.store.lock().await;
+        // Turns within budget legitimately survive (compaction only drains the
+        // excess); the wedge itself must be gone.
+        let wedged = s
+            .turns()
+            .iter()
+            .filter(|t| !t.is_pinned())
+            .any(|t| t.estimated_tokens > SUMMARIZER_INPUT_BUDGET);
+        assert!(
+            !wedged,
+            "no turn above the summarizer input budget may survive compaction"
+        );
+        assert!(
+            s.pinned_labels().iter().any(|l| l == "context_summary"),
+            "the slice summary must be pinned"
+        );
+    }
+
+    /// A lone oversized turn (nothing else evictable) is handled by the same
+    /// slice path: compacted, not wedged.
+    #[tokio::test]
+    async fn lone_oversized_turn_is_slice_summarized() {
+        let (ctx, _server) = summary_ctx().await;
+        ctx.store
+            .lock()
+            .await
+            .push_turn(vec![ChatMessage::tool_result(oversized_content(), "w0")]);
+        let outcome = summarize_and_evict(&ctx).await.unwrap();
+        assert!(matches!(outcome, CompactOutcome::Compacted));
+        let s = ctx.store.lock().await;
+        let remaining = s.turns().iter().filter(|t| !t.is_pinned()).count();
+        assert_eq!(remaining, 0);
     }
 }
