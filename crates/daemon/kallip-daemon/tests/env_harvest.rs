@@ -162,6 +162,7 @@ fn spawn_instance(client: &DaemonClient, workspace: &Path, extra: &[&str]) -> u3
             workspace: workspace.display().to_string(),
             env: boot_env(extra),
             exe: None,
+            user: None,
         },
     )) else {
         panic!("expected spawn payload");

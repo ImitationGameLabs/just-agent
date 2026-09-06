@@ -96,6 +96,7 @@ impl InstanceBackend for UdsBackend {
                 workspace,
                 env,
                 exe: None,
+                user: None,
             })
             .await?;
         unwrap_spawn(wire)

@@ -12,7 +12,7 @@ use kallip_daemon_common::wire::ErrorCode;
 
 use crate::records::{self, InstanceRecord};
 use crate::scan;
-use crate::spawn::{SpawnError, launch, validate_user_env};
+use crate::spawn::{SpawnError, identity_from_record, launch, validate_user_env};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StartError {
@@ -139,6 +139,7 @@ pub fn start(
     exe: Option<&str>,
     timeout: Duration,
     pid_is_alive: &dyn Fn(u32) -> bool,
+    peer_uid: u32,
 ) -> Result<(u32, u16), StartError> {
     if !kallip_daemon_common::wire::valid_slug(slug) {
         return Err(StartError::Invalid(format!(
@@ -160,6 +161,23 @@ pub fn start(
     let Some(record) = records::read_record(record_root, slug) else {
         return Err(StartError::NotFound(slug.to_string()));
     };
+    // Authorization precedes every state change (the stale-runtime
+    // removal and the relaunch both follow). The target is the
+    // recorded instance owner — the same-uid or dedicated user
+    // chosen at spawn — so the access rule travels with the
+    // instance. A foreign peer gets the missing-slug shape, not a
+    // distinct denied delta: the difference would leak that the
+    // slug exists. The true cause stays in the log.
+    if !crate::spawn::authorized(peer_uid, record.target_uid) {
+        tracing::warn!(
+            slug = %slug,
+            peer_uid,
+            target_uid = record.target_uid,
+            "start denied: foreign peer"
+        );
+        return Err(StartError::NotFound(slug.to_string()));
+    }
+    let identity = identity_from_record(record.target_uid, record.target_username.as_deref())?;
     let data_dir = record.data_dir.clone();
     let Some(workspace) = record.workspace.as_ref().filter(|w| !w.is_empty()) else {
         return Err(StartError::Invalid(format!(
@@ -195,6 +213,7 @@ pub fn start(
         &launch_env,
         exe,
         timeout,
+        &identity,
     ) {
         Ok((pid, port)) => {
             tracing::info!(slug = %slug, pid, port, "instance started (relaunch)");
@@ -233,6 +252,65 @@ mod tests {
         records::read_record(root, "instance-1")
             .expect("record persists")
             .env
+    }
+
+    fn write_record_with_target(root: &std::path::Path, target_uid: u32) {
+        let mut value = record(&[], std::path::Path::new("/data/i1"));
+        value.target_uid = target_uid;
+        write_record_at(root, &value);
+    }
+
+    #[test]
+    fn start_refuses_a_peer_that_is_not_the_recorded_owner() {
+        // Same pure-comparison negative as stop's: a foreign peer is
+        // answered before any state change (the stale-runtime cleanup
+        // included), with the missing-slug shape — nothing learned
+        // about the instance.
+        let root = tempfile::tempdir().expect("record root");
+        write_record_with_target(root.path(), unsafe { libc::getuid() } + 1);
+        // A foreign peer, never root: root has the admin exemption.
+        let error = start(
+            root.path(),
+            "instance-1",
+            &[],
+            None,
+            std::time::Duration::from_secs(1),
+            &|_| false,
+            unsafe { libc::getuid() } + 2,
+        )
+        .unwrap_err();
+        assert!(matches!(error, StartError::NotFound(_)), "{error}");
+        // Root passes the same gate (the admin exemption).
+        let error = start(
+            root.path(),
+            "instance-1",
+            &[],
+            None,
+            std::time::Duration::from_secs(1),
+            &|_| false,
+            0,
+        )
+        .unwrap_err();
+        assert!(!matches!(error, StartError::NotFound(_)), "{error}");
+    }
+
+    #[test]
+    fn start_hands_the_recorded_owner_the_relaunch() {
+        // The owner passes authorization (then fails later — no
+        // workspace on disk — proving the denial did not fire).
+        let root = tempfile::tempdir().expect("record root");
+        write_record_with_target(root.path(), unsafe { libc::getuid() });
+        let error = start(
+            root.path(),
+            "instance-1",
+            &[],
+            None,
+            std::time::Duration::from_secs(1),
+            &|_| false,
+            unsafe { libc::getuid() },
+        )
+        .unwrap_err();
+        assert!(!matches!(error, StartError::NotFound(_)), "{error}");
     }
 
     fn write_stored_credentials(data_dir: &std::path::Path) {
@@ -337,6 +415,7 @@ mod tests {
             None,
             Duration::from_secs(1),
             &|_| false,
+            unsafe { libc::getuid() },
         )
         .expect_err("non-allowlisted overlay key");
         assert!(error.to_string().contains("allowlisted"), "{error}");
@@ -351,6 +430,7 @@ mod tests {
             None,
             Duration::from_secs(1),
             &|_| false,
+            unsafe { libc::getuid() },
         )
         .expect_err("reserved overlay key");
         assert!(

@@ -34,7 +34,7 @@ const GRACE: Duration = Duration::from_secs(10);
 /// Blocking stop. Identity is judged by `scan::identity_matches` — the
 /// record's anchored pid/starttime, or the exe/comm name chain when the
 /// claim point could not pin an anchor — so a recycled pid is refused.
-pub fn stop(record_root: &Path, slug: &str) -> Result<(), StopError> {
+pub fn stop(record_root: &Path, slug: &str, peer_uid: u32) -> Result<(), StopError> {
     // Same grammar gate as spawn/start: an invalid slug is not an
     // instance name, so it cannot exist — NotFound without a
     // record-area read (the slug must not become a path probe).
@@ -44,6 +44,21 @@ pub fn stop(record_root: &Path, slug: &str) -> Result<(), StopError> {
     let Some(record) = crate::records::read_record(record_root, slug) else {
         return Err(StopError::NotFound(slug.to_string()));
     };
+    // Authorization precedes every state change. The target is the
+    // recorded instance owner (the platform-hosting access rule):
+    // the owner themselves or root may stop. A foreign peer gets
+    // the same NotFound shape as a missing slug — a distinct
+    // "denied" delta would leak that the slug exists; the true
+    // cause stays in the log.
+    if !crate::spawn::authorized(peer_uid, record.target_uid) {
+        tracing::warn!(
+            slug = %slug,
+            peer_uid,
+            target_uid = record.target_uid,
+            "stop denied: foreign peer"
+        );
+        return Err(StopError::NotFound(slug.to_string()));
+    }
     let data_dir = record.data_dir.clone();
     let pid: u32 = crate::scan::read_runtime(&data_dir)
         .map(|runtime| runtime.pid)
@@ -115,7 +130,75 @@ mod tests {
 
     #[test]
     fn stop_refuses_an_invalid_slug_before_touching_the_record_area() {
-        let error = stop(Path::new("/nonexistent-records"), "../escape").unwrap_err();
+        let error = stop(Path::new("/nonexistent-records"), "../escape", unsafe {
+            libc::getuid()
+        })
+        .unwrap_err();
+        assert!(matches!(error, StopError::NotFound(_)), "{error}");
+    }
+
+    #[test]
+    fn stop_refuses_a_peer_that_is_not_the_recorded_owner() {
+        // The authorization verdict is a pure comparison against the
+        // record, so the negative is exercisable without a second user:
+        // record a foreign target uid, connect as the real one. The
+        // refused peer is answered with the missing-slug shape — it
+        // learns nothing, not even that the instance exists.
+        let root = tempfile::tempdir().expect("record root");
+        crate::records::write_record(
+            root.path(),
+            "mine",
+            &crate::records::InstanceRecord {
+                instance_id: "instance-1".into(),
+                owner_uid: unsafe { libc::getuid() } + 1,
+                target_uid: unsafe { libc::getuid() } + 1,
+                target_username: None,
+                workspace: Some("/ws".into()),
+                env: vec![],
+                identity: None,
+                data_dir: root.path().join("data").join("i1"),
+            },
+        )
+        .expect("write record");
+        // A foreign peer, never root: root has the admin exemption, so
+        // the negative needs a uid that is neither the target nor 0.
+        let error = stop(root.path(), "mine", unsafe { libc::getuid() } + 2).unwrap_err();
+        assert!(matches!(error, StopError::NotFound(_)), "{error}");
+        // Root passes the same gate (the admin exemption), then
+        // fails on the missing runtime.json like any authorized
+        // caller.
+        let error = stop(root.path(), "mine", 0).unwrap_err();
+        assert!(matches!(error, StopError::NotRunning(_)), "{error}");
+    }
+
+    #[test]
+    fn stop_allows_the_recorded_owner_but_only_that_peer() {
+        let root = tempfile::tempdir().expect("record root");
+        let uid = unsafe { libc::getuid() };
+        crate::records::write_record(
+            root.path(),
+            "mine",
+            &crate::records::InstanceRecord {
+                instance_id: "instance-1".into(),
+                owner_uid: uid,
+                target_uid: uid,
+                target_username: None,
+                workspace: Some("/ws".into()),
+                env: vec![],
+                identity: None,
+                data_dir: root.path().join("data").join("i1"),
+            },
+        )
+        .expect("write record");
+        // The owner passes authorization (and then fails on the
+        // missing runtime.json — NotRunning); a foreign peer gets
+        // the missing-slug shape, indistinguishable from a slug
+        // that was never recorded; root's exemption still passes.
+        let error = stop(root.path(), "ghost", uid + 1).unwrap_err();
+        assert!(matches!(error, StopError::NotFound(_)), "{error}");
+        let error = stop(root.path(), "mine", uid).unwrap_err();
+        assert!(matches!(error, StopError::NotRunning(_)), "{error}");
+        let error = stop(root.path(), "mine", uid + 1).unwrap_err();
         assert!(matches!(error, StopError::NotFound(_)), "{error}");
     }
 }

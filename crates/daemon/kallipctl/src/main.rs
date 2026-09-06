@@ -45,6 +45,10 @@ enum Command {
         /// KALLIP_* keys plus RUST_LOG and PATH are accepted by the daemon.
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
+        /// Run the instance as this pre-declared system user (the
+        /// dedicated-user form; requires the daemon to run as root).
+        #[arg(long)]
+        user: Option<String>,
     },
     /// Terminate an instance (TERM, grace, KILL).
     Stop { slug: String },
@@ -106,11 +110,13 @@ async fn main() -> Result<()> {
             slug,
             workspace,
             env,
+            user,
         } => RequestBody::Spawn {
             slug,
             workspace,
             env,
             exe: cli.bin,
+            user,
         },
         Command::Stop { slug } => RequestBody::Stop { slug },
         Command::Start { slug, env } => RequestBody::Start {

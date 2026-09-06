@@ -46,6 +46,15 @@ pub enum RequestBody {
         /// resolved one. Absent on production payloads.
         #[serde(default)]
         exe: Option<String>,
+        /// Dedicated-user form: launch the instance as this pre-declared
+        /// system user (the platform-hosting profile). The daemon resolves
+        /// the name to a uid/gid/home and drops privilege before exec;
+        /// authorization then requires the peer to be the target user
+        /// itself or root. Absent, the
+        /// instance runs as the requesting peer itself (the same-uid form,
+        /// which is the whole single-user story).
+        #[serde(default)]
+        user: Option<String>,
     },
     /// Terminate an instance: SIGTERM, grace period, SIGKILL.
     Stop { slug: String },
@@ -283,6 +292,7 @@ mod tests {
             workspace: "/home/u/work/a".into(),
             env: vec!["KALLIP_TAGMA_ADDR=127.0.0.1:0".into()],
             exe: None,
+            user: None,
         };
         let line = encode_request(&request(body.clone())).expect("encode");
         assert!(!line.contains('\n'), "one line, caller appends the newline");
@@ -332,6 +342,20 @@ mod tests {
             RequestBody::Spawn { slug, exe, .. } => {
                 assert_eq!(slug, "team-a");
                 assert!(exe.is_none());
+            }
+            other => panic!("expected spawn, got {other:?}"),
+        }
+    }
+    #[test]
+    fn spawn_request_without_user_parses() {
+        // Same additive rule as exe/env: a same-uid-form payload (no
+        // user field) decodes with user = None — old clients keep
+        // meaning the single-user path, pinned here.
+        let line = r#"{"v":1,"type":"spawn","slug":"team-a","workspace":"/w","env":[]}"#;
+        let back = decode_request(line).expect("decode");
+        match back.body {
+            RequestBody::Spawn { user, .. } => {
+                assert!(user.is_none());
             }
             other => panic!("expected spawn, got {other:?}"),
         }

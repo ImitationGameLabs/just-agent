@@ -123,6 +123,7 @@ impl Daemon {
                 workspace,
                 env,
                 exe,
+                user,
             } => {
                 let slug_out = slug.clone();
                 // Blocking work on the connection task: spawn waits up to
@@ -140,6 +141,7 @@ impl Daemon {
                             exe.as_deref(),
                             timeout,
                             peer_uid,
+                            user.as_deref(),
                         )
                     }
                 })
@@ -163,7 +165,7 @@ impl Daemon {
                 let slug_out = slug.clone();
                 match tokio::task::spawn_blocking({
                     let record_root = self.record_root.clone();
-                    move || crate::stop::stop(&record_root, &slug)
+                    move || crate::stop::stop(&record_root, &slug, peer_uid)
                 })
                 .await
                 {
@@ -190,6 +192,7 @@ impl Daemon {
                             exe.as_deref(),
                             timeout,
                             &crate::scan::pid_is_alive,
+                            peer_uid,
                         )
                     }
                 })

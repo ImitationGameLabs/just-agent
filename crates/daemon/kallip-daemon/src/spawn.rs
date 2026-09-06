@@ -10,7 +10,7 @@
 //! two sides no longer assume a shared tree root.
 
 use std::collections::BTreeMap;
-use std::ffi::{CStr, OsStr, OsString};
+use std::ffi::{CStr, CString, OsStr, OsString};
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::process::CommandExt as _;
@@ -57,32 +57,263 @@ const RESERVED_KEYS: [&str; 4] = [
     "KALLIP_TAGMA_DATA_DIR",
 ];
 
-/// The launch authorization (platform-hosting access rule, same-uid
-/// form): an instance runs as the daemon's own user, so a request
-/// passes only when the peer IS that user or is root (the admin
-/// exemption the system form formalizes). Called before any state
-/// change — in particular before the slug collision probe — so a
-/// denied peer cannot probe slug existence through error deltas.
-fn authorized(peer_uid: u32, target_uid: u32) -> bool {
+/// The launch authorization (platform-hosting access rule): an
+/// instance may run as the requesting peer itself, or as any declared
+/// user when the peer is root (the admin exemption behind
+/// `sudo kallipctl`). Called before any state change — in particular
+/// before the slug collision probe — so a denied peer cannot probe
+/// slug existence through error deltas.
+pub(crate) fn authorized(peer_uid: u32, target_uid: u32) -> bool {
     peer_uid == target_uid || peer_uid == 0
 }
 
-/// The user instances run as: today always the daemon's own effective
-/// user (the single-user form). The pair is persisted in the record so
-/// the multi-user launch form can fill it differently without a
-/// record format change.
-fn target_identity() -> (u32, Option<String>) {
-    let uid = unsafe { libc::geteuid() };
-    let name = cached_passwd_identity().map(|(name, _)| name.to_string_lossy().into_owned());
-    (uid, name)
+/// The execution identity a launch resolves to. The two forms carry
+/// the platform-hosting model: in place, the instance runs inside the
+/// daemon's own context (the single-user story, byte-identical to the
+/// pre-dedicated behavior); drop-to, it runs as another, externally
+/// declared user through a privilege transition in the helper. Why the
+/// split: the daemon's own user needs no resolution (its environment
+/// IS the context, and XDG overrides keep working), while any other
+/// user must be resolved from the passwd database and reached by
+/// dropping privilege — half measures would leave a record naming one
+/// user while the process runs as another.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum LaunchIdentity {
+    InPlace { uid: u32, username: Option<String> },
+    DropTo(ResolvedUser),
+}
+
+/// A passwd-resolved execution identity for the drop-to form.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResolvedUser {
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
+    pub(crate) username: String,
+    pub(crate) home: PathBuf,
+}
+
+impl LaunchIdentity {
+    fn uid(&self) -> u32 {
+        match self {
+            LaunchIdentity::InPlace { uid, .. } => *uid,
+            LaunchIdentity::DropTo(user) => user.uid,
+        }
+    }
+
+    fn username(&self) -> Option<String> {
+        match self {
+            LaunchIdentity::InPlace { username, .. } => username.clone(),
+            LaunchIdentity::DropTo(user) => Some(user.username.clone()),
+        }
+    }
+}
+
+/// Resolve the launch identity for a spawn request. `request_user`
+/// names a pre-declared user (the dedicated form); absence means "as
+/// myself" — the requesting peer's own uid. A target that collapses to
+/// the daemon's own effective user takes the in-place form, so the
+/// historical single-user path stays unchanged. Authorization (against
+/// the resolved target) is the caller's next step and stays ahead of
+/// every state change.
+fn resolve_launch_identity(
+    request_user: Option<&str>,
+    peer_uid: u32,
+) -> Result<LaunchIdentity, SpawnError> {
+    let daemon_uid = unsafe { libc::geteuid() };
+    match request_user {
+        None => {
+            if peer_uid == daemon_uid {
+                return Ok(LaunchIdentity::InPlace {
+                    uid: peer_uid,
+                    username: cached_passwd_identity()
+                        .map(|(name, _)| name.to_string_lossy().into_owned()),
+                });
+            }
+            // Another user's self-form request: full resolution with
+            // no name to go by — the uid must carry its own passwd
+            // entry.
+            require_root_for_drop()?;
+            passwd_by_uid(peer_uid)
+                .ok_or_else(|| {
+                    SpawnError::Invalid(format!(
+                        "uid {peer_uid} has no passwd entry; cannot resolve a home for it"
+                    ))
+                })
+                .map(LaunchIdentity::DropTo)
+        }
+        Some(name) => {
+            let user = passwd_by_name(name).ok_or_else(|| {
+                SpawnError::Invalid(format!("user {name:?} does not exist on this host"))
+            })?;
+            if user.uid == daemon_uid {
+                Ok(LaunchIdentity::InPlace {
+                    uid: user.uid,
+                    username: Some(user.username),
+                })
+            } else {
+                require_root_for_drop()?;
+                Ok(LaunchIdentity::DropTo(user))
+            }
+        }
+    }
+}
+
+/// Re-resolve a record's target identity for a relaunch. The record's
+/// uid is authoritative; the passwd entry supplies gid/home fresh at
+/// relaunch time — a persisted username is a lookup hint, never the
+/// truth itself.
+pub(crate) fn identity_from_record(
+    target_uid: u32,
+    target_username: Option<&str>,
+) -> Result<LaunchIdentity, SpawnError> {
+    if target_uid == unsafe { libc::geteuid() } {
+        return Ok(LaunchIdentity::InPlace {
+            uid: target_uid,
+            username: target_username.map(str::to_owned),
+        });
+    }
+    require_root_for_drop()?;
+    let user = match target_username {
+        Some(name) => passwd_by_name(name)
+            .filter(|user| user.uid == target_uid)
+            .or_else(|| passwd_by_uid(target_uid)),
+        None => passwd_by_uid(target_uid),
+    };
+    let user = user.ok_or_else(|| {
+        SpawnError::Invalid(format!(
+            "recorded target uid {target_uid} has no resolvable passwd entry"
+        ))
+    })?;
+    Ok(LaunchIdentity::DropTo(user))
+}
+
+/// Dropping privilege to another user is a root-only act: a daemon
+/// that is not root cannot launch for anyone but itself, and saying
+/// so here (a plain request rejection) beats a setuid failure deep in
+/// the launch.
+fn require_root_for_drop() -> Result<(), SpawnError> {
+    if unsafe { libc::geteuid() } != 0 {
+        return Err(SpawnError::Invalid(
+            "launching an instance for another user requires the daemon to run as root".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// NSS scratch-buffer floor for the `_r` lookups: what sysconf
+/// falls back to on platforms that report no hint.
+const NSS_BUF_FLOOR: usize = 1024;
+
+/// passwd lookup by name: uid, primary gid, home. The `_r` family
+/// hands the NSS storage to the caller, so concurrent launches on
+/// the server's blocking pool cannot tear one launch's copy while
+/// another rewrites shared static state — the hazard the non-`_r`
+/// calls carry.
+fn passwd_by_name(name: &str) -> Option<ResolvedUser> {
+    let name_c = CString::new(name).ok()?;
+    let mut buf = vec![0u8; nss_buf_len()];
+    loop {
+        let mut pwd: std::mem::MaybeUninit<libc::passwd> = std::mem::MaybeUninit::uninit();
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: `buf` is the caller-owned scratch the `_r`
+        // contract requires; `pwd` is written by the callee before
+        // `result` is checked, and nothing escapes `buf`'s lifetime.
+        let rc = unsafe {
+            libc::getpwnam_r(
+                name_c.as_ptr(),
+                pwd.as_mut_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 || result.is_null() {
+            return None;
+        }
+        // SAFETY: on success the callee initialized `pwd` and pointed
+        // `result` at it; the strings live in `buf`, alive to the end
+        // of this scope where [`resolved_from_passwd`] copies out.
+        return resolved_from_passwd(Some(unsafe { pwd.assume_init_ref() }));
+    }
+}
+
+/// passwd lookup by uid (the nameless cross-user self form); same
+/// `_r` discipline as [`passwd_by_name`].
+fn passwd_by_uid(uid: u32) -> Option<ResolvedUser> {
+    let mut buf = vec![0u8; nss_buf_len()];
+    loop {
+        let mut pwd: std::mem::MaybeUninit<libc::passwd> = std::mem::MaybeUninit::uninit();
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: as passwd_by_name — caller-owned scratch, callee
+        // writes `pwd` before `result` is checked.
+        let rc = unsafe {
+            libc::getpwuid_r(
+                uid,
+                pwd.as_mut_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 || result.is_null() {
+            return None;
+        }
+        // SAFETY: as passwd_by_name — initialized on success, copied
+        // out within `buf`'s lifetime.
+        return resolved_from_passwd(Some(unsafe { pwd.assume_init_ref() }));
+    }
+}
+
+fn nss_buf_len() -> usize {
+    // SAFETY: a plain sysconf query with no precondition.
+    let hint = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    if hint < 0 {
+        NSS_BUF_FLOOR
+    } else {
+        hint as usize
+    }
+}
+
+fn resolved_from_passwd(pw: Option<&libc::passwd>) -> Option<ResolvedUser> {
+    let pw = pw?;
+    if pw.pw_dir.is_null() {
+        return None;
+    }
+    // SAFETY: passwd fields are NUL-terminated C strings.
+    let home = unsafe { CStr::from_ptr(pw.pw_dir) }.to_bytes();
+    let username = if pw.pw_name.is_null() {
+        &[]
+    } else {
+        unsafe { CStr::from_ptr(pw.pw_name) }.to_bytes()
+    };
+    Some(ResolvedUser {
+        uid: pw.pw_uid,
+        gid: pw.pw_gid,
+        username: OsStr::from_bytes(username).to_string_lossy().into_owned(),
+        home: PathBuf::from(OsStr::from_bytes(home)),
+    })
 }
 
 /// The instance's data directory: `<data home>/kallipai/tagmata/<slug>`.
-/// The daemon derives it from its own XDG data home and hands the exact
-/// path to the tagma at launch (`KALLIP_TAGMA_DATA_DIR`), replacing the
-/// old shared-root assumption with an explicit contract.
-fn instance_data_dir(slug: &str) -> Result<PathBuf, SpawnError> {
-    let home = dirs::data_dir().context("could not determine platform data directory")?;
+/// In-place launches derive it from the daemon's XDG data home; drop-to
+/// launches from the target user's passwd home. The exact path is
+/// handed to the tagma at launch (`KALLIP_TAGMA_DATA_DIR`), replacing
+/// the old shared-root assumption with an explicit contract.
+fn instance_data_dir(identity: &LaunchIdentity, slug: &str) -> Result<PathBuf, SpawnError> {
+    let home = match identity {
+        LaunchIdentity::InPlace { .. } => {
+            dirs::data_dir().context("could not determine platform data directory")?
+        }
+        LaunchIdentity::DropTo(user) => user.home.join(".local").join("share"),
+    };
     Ok(home.join("kallipai").join("tagmata").join(slug))
 }
 
@@ -90,7 +321,20 @@ fn instance_data_dir(slug: &str) -> Result<PathBuf, SpawnError> {
 
 /// Bash used for the login harvest: an explicit path, never `$SHELL`, so
 /// the user's shell preference cannot swap the interpreter under us.
-const HARVEST_BASH: &str = "/bin/bash";
+/// `KALLIP_HARVEST_BASH` lets a deployment name the path (NixOS has no
+/// `/bin/bash`); it stays an administrative constant — nothing a
+/// request or a user environment supplies can move it.
+fn harvest_bash() -> PathBuf {
+    harvest_bash_from(std::env::var_os("KALLIP_HARVEST_BASH").as_deref())
+}
+
+/// Pure core of [`harvest_bash`] so the resolution stays testable
+/// without mutating process-global environment state in tests.
+fn harvest_bash_from(explicit: Option<&std::ffi::OsStr>) -> PathBuf {
+    explicit
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/bin/bash"))
+}
 
 /// Wall-clock budget one launch may spend harvesting; past it the shell is
 /// killed and the launch degrades to the fallback PATH.
@@ -149,32 +393,29 @@ impl HarvestSeed {
         let user = std::env::var_os("USER").or_else(|| passwd.map(|(name, _)| name));
         Self { home, user }
     }
+    /// Identity of a drop-to target: everything comes from the passwd
+    /// resolution, never from the daemon's environment — the daemon's
+    /// HOME/USER describe the wrong user, and the requesting peer's
+    /// environment is not trusted at all.
+    fn for_target(target: &ResolvedUser) -> Self {
+        Self {
+            home: Some(target.home.clone().into_os_string()),
+            user: Some(OsString::from(target.username.as_str())),
+        }
+    }
 }
 
-/// Cached passwd identity of the effective user: getpwuid is not
-/// thread-safe (shared NSS buffers) while launches run concurrently on
-/// the server's blocking pool, and the daemon's euid never changes
-/// during its lifetime — so read it once and share the snapshot.
+/// Cached passwd identity of the effective user: NSS storage is not
+/// safe to touch from concurrent threads, and the daemon's euid
+/// never changes during its lifetime — so read it once (through the
+/// `_r` lookup, same as every launch-time resolution) and share the
+/// snapshot.
 fn cached_passwd_identity() -> Option<(OsString, OsString)> {
     static PASSWD: std::sync::OnceLock<Option<(OsString, OsString)>> = std::sync::OnceLock::new();
     PASSWD
         .get_or_init(|| {
-            // SAFETY: getpwuid returns a libc-owned struct or null; both
-            // strings are copied out before any other libc call can
-            // touch the buffer, and the OnceLock runs this exactly once
-            // so concurrent launches cannot interleave the call.
-            let pw = unsafe { libc::getpwuid(libc::geteuid()) };
-            let pw = unsafe { pw.as_ref() }?;
-            if pw.pw_name.is_null() || pw.pw_dir.is_null() {
-                return None;
-            }
-            // SAFETY: passwd fields are NUL-terminated C strings.
-            let name = unsafe { CStr::from_ptr(pw.pw_name) }.to_bytes();
-            let dir = unsafe { CStr::from_ptr(pw.pw_dir) }.to_bytes();
-            Some((
-                OsStr::from_bytes(name).to_owned(),
-                OsStr::from_bytes(dir).to_owned(),
-            ))
+            let user = passwd_by_uid(unsafe { libc::geteuid() })?;
+            Some((OsString::from(user.username), user.home.into()))
         })
         .clone()
 }
@@ -187,6 +428,7 @@ fn harvest_login_env(
     bash: &Path,
     seed: &HarvestSeed,
     timeout: Duration,
+    run_as: Option<(u32, u32)>,
 ) -> Result<Vec<(String, String)>, HarvestError> {
     let mut command = std::process::Command::new(bash);
     command
@@ -204,6 +446,37 @@ fn harvest_login_env(
     }
     if let Some(user) = &seed.user {
         command.env("USER", user).env("LOGNAME", user);
+    }
+    if let Some((uid, gid)) = run_as {
+        // The drop must include the supplementary-group wipe: a
+        // profile chain is the target user's editable territory, and
+        // std's own uid/gid application never calls setgroups — the
+        // child would carry the daemon's groups into someone else's
+        // profile. std also applies uid/gid BEFORE the pre_exec
+        // closures (setgid, setuid, then closures), so a
+        // closure-time setgroups would already be EPERM. The whole
+        // drop therefore lives in one closure on an un-set Command:
+        // wipe supplements, then gid, then uid — pure syscalls, this
+        // runs post-fork. The exec'd grandchild (the real launch)
+        // gets the full initgroups treatment inside the helper; the
+        // harvest shell deliberately runs with the primary group
+        // alone. A failed drop surfaces as a spawn error below.
+        unsafe {
+            command.pre_exec(move || {
+                // SAFETY: direct syscalls on the forked child, nothing
+                // allocated; a failed step must not reach exec.
+                if libc::setgroups(0, std::ptr::null()) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setgid(gid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setuid(uid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
     }
     let mut child = command
         .spawn()
@@ -347,9 +620,15 @@ fn fallback_path(bin_dir: Option<&Path>) -> String {
 /// The launch env base: the harvested login environment, or — on any
 /// harvest failure — the fallback PATH. Always a usable base: harvesting
 /// is a best-effort upgrade, never a launch gate.
-fn harvest_base_env(fallback_bin_dir: Option<&Path>) -> Vec<(String, String)> {
-    let seed = HarvestSeed::for_current_process();
-    match harvest_login_env(Path::new(HARVEST_BASH), &seed, HARVEST_TIMEOUT) {
+fn harvest_base_env(
+    fallback_bin_dir: Option<&Path>,
+    identity: &LaunchIdentity,
+) -> Vec<(String, String)> {
+    let (seed, run_as) = match identity {
+        LaunchIdentity::InPlace { .. } => (HarvestSeed::for_current_process(), None),
+        LaunchIdentity::DropTo(user) => (HarvestSeed::for_target(user), Some((user.uid, user.gid))),
+    };
+    match harvest_login_env(&harvest_bash(), &seed, HARVEST_TIMEOUT, run_as) {
         Ok(pairs) => pairs,
         Err(error) => {
             tracing::warn!(%error, "login environment harvest failed; using fallback PATH");
@@ -375,8 +654,11 @@ fn degrade_to_fallback(fallback_bin_dir: Option<&Path>) -> Vec<(String, String)>
 ///   supplied one (map composition ends duplicate-key shadowing);
 /// * the data-dir handoff and the state anchor land last — daemon-owned
 ///   like the slug, they pin where the instance's data root and logs
-///   resolve. No `XDG_DATA_HOME` anchor: the explicit handoff replaces
-///   the shared-root assumption it used to express.
+///   resolve. The dedicated form additionally pins the whole XDG tree
+///   (HOME, XDG_CONFIG_HOME/XDG_DATA_HOME/XDG_STATE_HOME, the runtime
+///   dir when it exists) to the target user's home — daemon-owned like
+///   the rest, so neither a polluted profile nor a request pair can
+///   describe a foreign home into the instance.
 fn compose_launch_env(
     base: &[(String, String)],
     user_env: &[String],
@@ -384,6 +666,7 @@ fn compose_launch_env(
     workspace_canon: &Path,
     data_dir: &Path,
     state_home: Option<&Path>,
+    target: Option<&ResolvedUser>,
 ) -> Vec<String> {
     let mut env: BTreeMap<&str, String> = BTreeMap::new();
     for (key, value) in base {
@@ -407,6 +690,30 @@ fn compose_launch_env(
     if let Some(state) = state_home {
         env.insert("XDG_STATE_HOME", state.display().to_string());
     }
+    if let Some(user) = target {
+        env.insert("HOME", user.home.display().to_string());
+        env.insert("USER", user.username.clone());
+        env.insert("LOGNAME", user.username.clone());
+        env.insert(
+            "XDG_CONFIG_HOME",
+            user.home.join(".config").display().to_string(),
+        );
+        env.insert(
+            "XDG_DATA_HOME",
+            user.home.join(".local/share").display().to_string(),
+        );
+        env.insert(
+            "XDG_STATE_HOME",
+            user.home.join(".local/state").display().to_string(),
+        );
+        // linger (declared in the system deployment) is what guarantees
+        // this directory; a dev host without it just omits the key —
+        // the instance binds TCP and never reads XDG_RUNTIME_DIR.
+        let runtime = Path::new("/run/user").join(user.uid.to_string());
+        if runtime.is_dir() {
+            env.insert("XDG_RUNTIME_DIR", runtime.display().to_string());
+        }
+    }
     env.entry("RUST_LOG").or_insert_with(|| "info".to_owned());
     env.into_iter().map(|(k, v)| format!("{k}={v}")).collect()
 }
@@ -414,6 +721,10 @@ fn compose_launch_env(
 /// Register and launch one instance. Blocking — the server runs it on
 /// the connection task. The record area is `record_root`; the requesting
 /// peer is `owner_uid`.
+/// The parameter count is the launch contract laid flat: every field is
+/// an independent request dimension, and a params struct would only
+/// move the names around.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     record_root: &Path,
     slug: &str,
@@ -422,6 +733,7 @@ pub fn spawn(
     exe: Option<&str>,
     timeout: Duration,
     owner_uid: u32,
+    request_user: Option<&str>,
 ) -> Result<(u32, u16), SpawnError> {
     // --- validate ---------------------------------------------------------
     if !valid_slug(slug) {
@@ -438,17 +750,19 @@ pub fn spawn(
             "exe {exe:?} is not an existing executable file"
         )));
     }
-    // Authorization precedes every state change, the collision probe
-    // included: a denied peer must not read the registry's occupancy
-    // through error differences.
-    let (target_uid, target_username) = target_identity();
+    // Resolution precedes authorization (the target must be known to
+    // authorize against it), and both precede every state change, the
+    // collision probe included: a denied peer must not read the
+    // registry's occupancy through error differences.
+    let identity = resolve_launch_identity(request_user, owner_uid)?;
+    let target_uid = identity.uid();
     if !authorized(owner_uid, target_uid) {
         return Err(SpawnError::Denied {
             peer_uid: owner_uid,
             target_uid,
         });
     }
-    let data_dir = instance_data_dir(slug)?;
+    let data_dir = instance_data_dir(&identity, slug)?;
     // Early occupancy probe: the common sequential-reuse case fails
     // here, before input validation, preserving the reviewed error
     // precedence. Advisory only — the exclusive publication in
@@ -503,7 +817,7 @@ pub fn spawn(
         instance_id: uuid::Uuid::new_v4().to_string(),
         owner_uid,
         target_uid,
-        target_username,
+        target_username: identity.username(),
         workspace: Some(workspace_canon.display().to_string()),
         env: user_env.to_vec(),
         identity: None,
@@ -527,6 +841,7 @@ pub fn spawn(
         user_env,
         exe,
         timeout,
+        &identity,
     )
     .inspect_err(|_| {
         // Rollback: the fresh registration goes away on any failure —
@@ -612,6 +927,9 @@ pub(crate) fn exe_runnable(exe: &str) -> bool {
 /// record is the caller's policy (spawn deregisters, start keeps) —
 /// but a half-booted leftover is SIGKILLed here either way so no
 /// orphan outlives the timeout.
+/// The shared tail of spawn and start: eight honest inputs, no
+/// bundling — grouping them would rename, not reduce.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn launch(
     record_root: &Path,
     data_dir: &Path,
@@ -620,12 +938,23 @@ pub(crate) fn launch(
     user_env: &[String],
     exe: Option<&str>,
     timeout: Duration,
+    identity: &LaunchIdentity,
 ) -> Result<(u32, u16), SpawnError> {
     // The helper chdirs into the data directory before exec; a missing
-    // directory is a launch failure, so ensure it exists (mkdir only —
-    // everything inside belongs to the tagma).
-    std::fs::create_dir_all(data_dir)
-        .map_err(|e| anyhow::anyhow!("creating data dir {}: {e}", data_dir.display()))?;
+    // directory is a launch failure, so ensure it exists. In place the
+    // daemon's own mkdir is enough (everything inside belongs to the
+    // tagma anyway); a drop-to launch must also hand the created chain
+    // to the target user — a root-owned directory inside the user's
+    // home would be territory the instance cannot fully use.
+    match identity {
+        LaunchIdentity::InPlace { .. } => {
+            std::fs::create_dir_all(data_dir)
+                .map_err(|e| anyhow::anyhow!("creating data dir {}: {e}", data_dir.display()))?;
+        }
+        LaunchIdentity::DropTo(user) => {
+            ensure_target_owned_dir(data_dir, user.uid, user.gid)?;
+        }
+    }
     // The poll below trusts any runtime.json it sees as belonging to
     // this launch. That trust needs a clean slate: drop a previous
     // incarnation's runtime.json before starting the helper. ENOENT is
@@ -649,8 +978,11 @@ pub(crate) fn launch(
         Some(exe) => PathBuf::from(exe),
         None => bins::resolve("kallip-tagma"),
     };
-    let base = harvest_base_env(tagma.parent());
-    let state_home = dirs::state_dir();
+    let base = harvest_base_env(tagma.parent(), identity);
+    let (state_home, target_user) = match identity {
+        LaunchIdentity::InPlace { .. } => (dirs::state_dir(), None),
+        LaunchIdentity::DropTo(user) => (None, Some(user)),
+    };
     let env = compose_launch_env(
         &base,
         user_env,
@@ -658,8 +990,26 @@ pub(crate) fn launch(
         workspace_canon,
         data_dir,
         state_home.as_deref(),
+        target_user,
     );
-    let status = std::process::Command::new(&helper)
+    // The helper drops privilege in the grandchild (initgroups → setgid
+    // → setuid, in that order: initgroups needs privilege, and once
+    // setuid has fired there is no way back). Flags are sent only for a
+    // drop-to launch — the in-place path stays flag-free and identical
+    // to the historical invocation. The daemon runs as root in the
+    // drop-to form (checked at resolution), so the helper needs no
+    // setuid bit.
+    let mut helper_command = std::process::Command::new(&helper);
+    if let Some(user) = target_user {
+        helper_command
+            .arg("--user")
+            .arg(&user.username)
+            .arg("--uid")
+            .arg(user.uid.to_string())
+            .arg("--gid")
+            .arg(user.gid.to_string());
+    }
+    let status = helper_command
         .arg(data_dir)
         .arg(&tagma)
         .args(&env)
@@ -782,6 +1132,60 @@ fn now_unix() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Create `path` (and any missing ancestors) owned by the target user.
+/// Only directories this launch creates are chowned — pre-existing
+/// directories keep their owner, because the tree above the slug
+/// directory is the user's own territory and the daemon merely carves
+/// the slug directory into it. Chowning our own creations is what
+/// makes the explicit data-dir handoff real: a root-owned directory
+/// under the user's home would be territory the instance cannot use.
+fn ensure_target_owned_dir(path: &Path, uid: u32, gid: u32) -> Result<(), SpawnError> {
+    let mut missing = Vec::new();
+    let mut cursor = path;
+    // lstat, never stat: exists() follows symlinks, and a symlink
+    // planted in the target user's own territory would steer root's
+    // create+chown below into a foreign tree — every pre-existing
+    // component must be a real directory, and anything else (a
+    // symlink included) fails the launch closed.
+    loop {
+        match std::fs::symlink_metadata(cursor) {
+            Ok(meta) if meta.is_dir() => break,
+            Ok(_) => {
+                return Err(anyhow::anyhow!(
+                    "data dir {}: an existing component is not a real directory",
+                    cursor.display()
+                )
+                .into());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(cursor);
+                cursor = cursor.parent().context("data directory has no parent")?;
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("data dir {}: {e}", cursor.display()).into());
+            }
+        }
+    }
+    for dir in missing.iter().rev() {
+        std::fs::create_dir(dir).map_err(|e| anyhow::anyhow!("creating {}: {e}", dir.display()))?;
+        // SAFETY: chown(2) on a directory created two lines above;
+        // failure is a real error — the launch must not hand out a
+        // wrongly-owned directory as the tagma's territory.
+        let c_path = CString::new(dir.as_os_str().as_bytes())
+            .map_err(|e| anyhow::anyhow!("data dir path with NUL byte: {e}"))?;
+        let rc = unsafe { libc::chown(c_path.as_ptr(), uid, gid) };
+        if rc != 0 {
+            return Err(anyhow::anyhow!(
+                "chown {}: {}",
+                dir.display(),
+                std::io::Error::last_os_error()
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 /// Drop a leftover `runtime.json` from a previous incarnation. ENOENT is
@@ -953,7 +1357,7 @@ mod tests {
             home: Some(home.path().as_os_str().to_owned()),
             user: Some("probe".into()),
         };
-        let pairs = harvest_login_env(&bash, &seed, HARVEST_TEST_BUDGET).expect("harvest ok");
+        let pairs = harvest_login_env(&bash, &seed, HARVEST_TEST_BUDGET, None).expect("harvest ok");
         let marker = pairs.iter().find(|(k, _)| k == "KALLIP_UNIT_MARKER");
         assert_eq!(marker.map(|(_, v)| v.as_str()), Some("green"));
         let path = pairs.iter().find(|(k, _)| k == "PATH").expect("PATH");
@@ -972,8 +1376,8 @@ mod tests {
         };
         let dir = tempdir();
         let bash = shim(dir.path(), "exit 3");
-        let error =
-            harvest_login_env(&bash, &HarvestSeed::default(), HARVEST_TEST_BUDGET).unwrap_err();
+        let error = harvest_login_env(&bash, &HarvestSeed::default(), HARVEST_TEST_BUDGET, None)
+            .unwrap_err();
         assert!(matches!(error, HarvestError::Exit(_)));
     }
 
@@ -986,8 +1390,13 @@ mod tests {
         let dir = tempdir();
         let bash = shim(dir.path(), "while :; do :; done");
         let start = Instant::now();
-        let error = harvest_login_env(&bash, &HarvestSeed::default(), Duration::from_millis(300))
-            .unwrap_err();
+        let error = harvest_login_env(
+            &bash,
+            &HarvestSeed::default(),
+            Duration::from_millis(300),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(error, HarvestError::Timeout));
         assert!(
             start.elapsed() < Duration::from_secs(5),
@@ -1001,6 +1410,7 @@ mod tests {
             Path::new("/nonexistent/bash"),
             &HarvestSeed::default(),
             HARVEST_TIMEOUT,
+            None,
         )
         .unwrap_err();
         assert!(matches!(error, HarvestError::Spawn(_)));
@@ -1014,6 +1424,189 @@ mod tests {
         assert!(authorized(uid, uid), "the target user itself passes");
         assert!(authorized(0, uid), "root passes (the admin exemption)");
         assert!(!authorized(uid + 1, uid), "a foreign uid is denied");
+    }
+    #[test]
+    fn resolve_defaults_to_the_peer_and_collapses_to_in_place() {
+        let peer = unsafe { libc::geteuid() };
+        let identity = resolve_launch_identity(None, peer).expect("resolves");
+        assert_eq!(
+            identity,
+            LaunchIdentity::InPlace {
+                uid: peer,
+                username: cached_passwd_identity()
+                    .map(|(name, _)| name.to_string_lossy().into_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_a_cross_user_self_form_without_root() {
+        if unsafe { libc::geteuid() } == 0 {
+            // The suite runs as root: the drop is possible, the refusal
+            // does not apply.
+            return;
+        }
+        let identity = resolve_launch_identity(None, unsafe { libc::geteuid() } + 1);
+        assert!(
+            identity.is_err(),
+            "a non-root daemon refuses a foreign self-form instead of failing late"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_an_unknown_user_name() {
+        let error = resolve_launch_identity(Some("no-such-kallip-user-xyz"), 0).unwrap_err();
+        assert!(matches!(error, SpawnError::Invalid(_)));
+    }
+
+    #[test]
+    fn resolve_with_the_daemon_user_collapses_to_in_place() {
+        let name = cached_passwd_identity().map(|(name, _)| name.to_string_lossy().into_owned());
+        let name = name.expect("test host has a passwd entry");
+        let identity =
+            resolve_launch_identity(Some(&name), unsafe { libc::geteuid() }).expect("resolves");
+        assert!(matches!(identity, LaunchIdentity::InPlace { .. }));
+    }
+
+    #[test]
+    fn dedicated_env_pins_the_target_home_daemon_owned() {
+        let target = ResolvedUser {
+            uid: 4242,
+            gid: 4242,
+            username: "kallip-team".into(),
+            home: PathBuf::from("/home/kallip-team"),
+        };
+        let env = compose_launch_env(
+            &base_env(),
+            &[
+                "HOME=/polluted".to_owned(),
+                "XDG_STATE_HOME=/polluted/state".to_owned(),
+            ],
+            "i1",
+            Path::new("/ws"),
+            Path::new("/data/i1"),
+            None,
+            Some(&target),
+        );
+        assert_eq!(
+            get(&env, "HOME"),
+            Some("/home/kallip-team"),
+            "daemon-owned wins"
+        );
+        assert_eq!(get(&env, "USER"), Some("kallip-team"));
+        assert_eq!(get(&env, "LOGNAME"), Some("kallip-team"));
+        assert_eq!(
+            get(&env, "XDG_CONFIG_HOME"),
+            Some("/home/kallip-team/.config")
+        );
+        assert_eq!(
+            get(&env, "XDG_DATA_HOME"),
+            Some("/home/kallip-team/.local/share")
+        );
+        assert_eq!(
+            get(&env, "XDG_STATE_HOME"),
+            Some("/home/kallip-team/.local/state")
+        );
+        // The runtime dir appears only when the host actually has it
+        // (linger supplies it in the system form); either way the
+        // instance never sees a polluted value.
+        if let Some(runtime) = get(&env, "XDG_RUNTIME_DIR") {
+            assert_eq!(runtime, "/run/user/4242");
+        }
+    }
+
+    #[test]
+    fn in_place_env_gains_no_identity_keys() {
+        // The same-uid form is pinned: the pre-dedicated env shape —
+        // no HOME/XDG/USER injection — stays byte-identical.
+        let env = compose_launch_env(
+            &base_env(),
+            &[],
+            "i1",
+            Path::new("/ws"),
+            Path::new("/data/i1"),
+            Some(Path::new("/state")),
+            None,
+        );
+        // HOME may ride through from the harvest base (a profile export,
+        // not a daemon injection); the identity keys must not appear.
+        assert_eq!(get(&env, "USER"), None);
+        assert_eq!(get(&env, "LOGNAME"), None);
+        assert_eq!(get(&env, "XDG_CONFIG_HOME"), None);
+    }
+    #[test]
+    fn harvest_bash_override_wins_and_default_survives() {
+        // The deployment constant: an explicit KALLIP_HARVEST_BASH path
+        // (NixOS store bash) replaces /bin/bash; with no override the
+        // historical default must stay.
+        assert_eq!(
+            harvest_bash_from(Some(std::ffi::OsStr::new("/nix/store/x/bash"))),
+            PathBuf::from("/nix/store/x/bash")
+        );
+        assert_eq!(harvest_bash_from(None), PathBuf::from("/bin/bash"));
+    }
+    #[test]
+    fn harvest_privilege_drop_runs_end_to_end_and_wipes_supplements() {
+        // Root-only (the drop needs real setuid; the suite's host
+        // convention). `nobody` is a real passwd entry, so the
+        // target resolution is genuine. Two properties: the prod
+        // drop closure executes inside a real harvest, and the
+        // dropped child carries the primary group alone — no
+        // supplementary groups survive the wipe.
+        if unsafe { libc::getuid() } != 0 {
+            return;
+        }
+        let Some(user) = passwd_by_uid(65534) else {
+            return; // no `nobody` on this host
+        };
+        let seed = HarvestSeed::for_target(&user);
+        // Capability probe first: a sandboxed suite host may lack
+        // setgid/setuid reach over its user namespace (a documented
+        // limitation — the reviewer probes hit the same wall). A
+        // host that cannot drop proves nothing here; skip.
+        let mut probe = std::process::Command::new(harvest_bash());
+        probe
+            .args(["-c", "id -Gn"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped());
+        let (uid, gid) = (user.uid, user.gid);
+        // SAFETY: same drop sequence as harvest_login_env's run_as
+        // arm, applied to a throwaway probe; the child only runs
+        // `id -Gn`.
+        unsafe {
+            probe.pre_exec(move || {
+                if libc::setgroups(0, std::ptr::null()) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setgid(gid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setuid(uid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let Ok(output) = probe.output() else {
+            return; // the sandbox cannot drop; a real host can
+        };
+        let groups = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            groups.trim(),
+            "nogroup",
+            "supplementary groups must be wiped: {groups}"
+        );
+        let pairs = harvest_login_env(
+            &harvest_bash(),
+            &seed,
+            HARVEST_TIMEOUT,
+            Some((user.uid, user.gid)),
+        )
+        .expect("harvest through the privilege drop");
+        assert!(
+            pairs.iter().any(|(k, v)| k == "PATH" && !v.is_empty()),
+            "dropped harvest must still produce a usable PATH"
+        );
     }
 
     #[test]
@@ -1041,6 +1634,7 @@ mod tests {
             None,
             Duration::from_secs(1),
             unsafe { libc::getuid() },
+            None,
         )
         .unwrap_err();
         assert!(matches!(error, SpawnError::SlugTaken(_)), "{error}");
@@ -1059,6 +1653,7 @@ mod tests {
             Some("/nonexistent/kallip-tagma"),
             Duration::from_secs(1),
             unsafe { libc::getuid() },
+            None,
         )
         .unwrap_err();
         assert!(
@@ -1097,6 +1692,7 @@ mod tests {
             Path::new("/ws"),
             Path::new("/data/i1"),
             Some(Path::new("/state")),
+            None,
         );
         assert_eq!(get(&env, "PATH"), Some("/explicit"));
         assert_eq!(get(&env, "KALLIP_X"), Some("1"));
@@ -1113,6 +1709,7 @@ mod tests {
             Path::new("/ws"),
             Path::new("/data/i1"),
             Some(Path::new("/state")),
+            None,
         );
         assert_eq!(get(&env, "KALLIP_TAGMA_SLUG"), Some("i1"));
         assert_eq!(get(&env, "KALLIP_WORKSPACE_ROOT"), Some("/ws"));
@@ -1129,6 +1726,7 @@ mod tests {
             Path::new("/w"),
             Path::new("/data/d"),
             None,
+            None,
         );
         assert!(explicit.contains(&"RUST_LOG=debug".to_owned()));
         let harvested = compose_launch_env(
@@ -1138,11 +1736,19 @@ mod tests {
             Path::new("/w"),
             Path::new("/data/d"),
             None,
+            None,
         );
         assert!(harvested.contains(&"RUST_LOG=harvest-level".to_owned()));
         let base: Vec<(String, String)> = vec![("PATH".into(), "/p".into())];
-        let neither =
-            compose_launch_env(&base, &[], "d", Path::new("/w"), Path::new("/data/d"), None);
+        let neither = compose_launch_env(
+            &base,
+            &[],
+            "d",
+            Path::new("/w"),
+            Path::new("/data/d"),
+            None,
+            None,
+        );
         assert!(neither.contains(&"RUST_LOG=info".to_owned()));
     }
 
@@ -1155,6 +1761,7 @@ mod tests {
             Path::new("/w"),
             Path::new("/data/d"),
             Some(Path::new("/state")),
+            None,
         );
         let mut keys: Vec<&str> = env
             .iter()
@@ -1187,6 +1794,7 @@ mod tests {
             Path::new("/ws"),
             Path::new("/daemon/data/i1"),
             Some(Path::new("/daemon/state")),
+            None,
         );
         assert_eq!(get(&env, "KALLIP_TAGMA_DATA_DIR"), Some("/daemon/data/i1"));
         assert_eq!(get(&env, "XDG_STATE_HOME"), Some("/daemon/state"));
@@ -1206,6 +1814,7 @@ mod tests {
             "i1",
             Path::new("/ws"),
             Path::new("/data/i1"),
+            None,
             None,
         );
         assert_eq!(get(&env, "XDG_STATE_HOME"), None);
@@ -1238,6 +1847,7 @@ mod tests {
             "i1",
             Path::new("/ws"),
             Path::new("/data/i1"),
+            None,
             None,
         );
         assert!(
@@ -1323,8 +1933,13 @@ mod tests {
         let dir = tempdir();
         let wedge = shim(dir.path(), "read -t 10 x < /dev/zero & exit 0");
         let start = Instant::now();
-        let error = harvest_login_env(&wedge, &HarvestSeed::default(), Duration::from_millis(300))
-            .unwrap_err();
+        let error = harvest_login_env(
+            &wedge,
+            &HarvestSeed::default(),
+            Duration::from_millis(300),
+            None,
+        )
+        .unwrap_err();
         assert!(matches!(error, HarvestError::Timeout), "got {error:?}");
         assert!(start.elapsed() < Duration::from_secs(5), "bounded wait");
     }
@@ -1344,8 +1959,13 @@ mod tests {
             "while :; do printf 'A%.0s' {1..4096}; done & exit 0",
         );
         let start = Instant::now();
-        let error = harvest_login_env(&spammer, &HarvestSeed::default(), Duration::from_secs(2))
-            .unwrap_err();
+        let error = harvest_login_env(
+            &spammer,
+            &HarvestSeed::default(),
+            Duration::from_secs(2),
+            None,
+        )
+        .unwrap_err();
         assert!(
             matches!(error, HarvestError::TooLarge | HarvestError::Timeout),
             "got {error:?}"

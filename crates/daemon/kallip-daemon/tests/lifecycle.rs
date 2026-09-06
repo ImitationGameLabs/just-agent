@@ -135,6 +135,7 @@ fn spawn_health_stop_round_trip() {
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
         exe: None,
+        user: None,
     }));
     let OkPayload::Spawn { slug, pid, port } = expect_ok(spawn) else {
         panic!("expected spawn payload");
@@ -339,6 +340,7 @@ fn start_filters_consumed_enrollment_code() {
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
         exe: None,
+        user: None,
     }));
     let OkPayload::Spawn { pid, .. } = expect_ok(spawn) else {
         panic!("expected spawn payload");
@@ -447,6 +449,7 @@ fn spawn_rejects_slug_reuse_and_workspace_overlap() {
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
         exe: None,
+        user: None,
     }));
     assert!(matches!(
         first.expect("first spawn").body,
@@ -462,6 +465,7 @@ fn spawn_rejects_slug_reuse_and_workspace_overlap() {
         workspace: workspace.path().display().to_string(),
         env: vec![],
         exe: None,
+        user: None,
     }));
     match reuse.expect("reuse exchange").body {
         ResponseBody::Err { code, .. } => assert_eq!(code, ErrorCode::SlugTaken),
@@ -474,6 +478,7 @@ fn spawn_rejects_slug_reuse_and_workspace_overlap() {
         workspace: workspace.path().display().to_string(),
         env: vec![],
         exe: None,
+        user: None,
     }));
     match overlap.expect("overlap exchange").body {
         ResponseBody::Err { code, .. } => assert_eq!(code, ErrorCode::WorkspaceOverlap),
@@ -503,6 +508,7 @@ fn start_recovers_from_stale_runtime_json() {
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
         exe: None,
+        user: None,
     }));
     let OkPayload::Spawn { pid, .. } = expect_ok(spawn) else {
         panic!("expected spawn payload");
@@ -584,6 +590,7 @@ fn start_rejects_when_stale_runtime_names_a_live_pid() {
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
         exe: None,
+        user: None,
     }));
     let OkPayload::Spawn { pid, .. } = expect_ok(spawn) else {
         panic!("expected spawn payload");
@@ -695,6 +702,7 @@ fn stop_refuses_tampered_runtime_pid_then_allows_restored() {
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
         exe: None,
+        user: None,
     }));
     let OkPayload::Spawn { pid, port, .. } = expect_ok(spawn) else {
         panic!("expected spawn payload");
