@@ -214,6 +214,7 @@ impl AgenticContext for ContextStore {
         let mut pinned_items = Vec::new();
         let mut turn_count = 0usize;
         let mut turn_tokens = 0usize;
+        let mut largest: Vec<(u64, usize)> = Vec::new();
         for turn in &self.turns {
             if turn.is_pinned() {
                 if let Some(label) = turn.label() {
@@ -222,6 +223,7 @@ impl AgenticContext for ContextStore {
             } else {
                 turn_count += 1;
                 turn_tokens += turn.estimated_tokens;
+                largest.push((turn.id.0, turn.estimated_tokens));
             }
         }
         ContextUsage {
@@ -230,6 +232,11 @@ impl AgenticContext for ContextStore {
             turn_tokens,
             last_prompt_tokens: self.last_prompt_tokens,
             cumulative_usage: self.cumulative_usage,
+            largest_turns: {
+                largest.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                largest.truncate(5);
+                largest
+            },
         }
     }
 

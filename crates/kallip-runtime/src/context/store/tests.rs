@@ -445,3 +445,48 @@ fn record_retries_evicts_stale_then_bounds() {
     assert_eq!(store.retry_log.first().unwrap().timestamp, 1001);
     assert_eq!(store.retry_log.last().unwrap().timestamp, 1020);
 }
+
+#[test]
+fn usage_snapshot_reports_largest_turns_largest_first() {
+    let mut store = new_store();
+    // Three conversation turns with clearly separated estimates; push order
+    // differs from size order so the sort has work to do.
+    store.push_turn(vec![ChatMessage::user("m".repeat(400))]);
+    store.push_turn(vec![ChatMessage::user("x".repeat(4_000))]);
+    store.push_turn(vec![ChatMessage::user("s")]);
+    let usage = store.usage_snapshot();
+    assert_eq!(usage.largest_turns.len(), 3);
+    let ests: Vec<usize> = usage.largest_turns.iter().map(|(_, t)| *t).collect();
+    let mut sorted = ests.clone();
+    sorted.sort_unstable();
+    sorted.reverse();
+    assert_eq!(ests, sorted, "largest first");
+    // The top entry pairs the largest turn with its own id.
+    let (top_id, top_est) = usage.largest_turns[0];
+    assert_eq!(
+        store
+            .turns()
+            .iter()
+            .find(|t| t.id.0 == top_id)
+            .map(|t| t.estimated_tokens),
+        Some(top_est)
+    );
+    // A pinned turn never enters the ranking: pin one and re-check.
+    store.pin("note", ChatMessage::user("pinned")).unwrap();
+    let usage = store.usage_snapshot();
+    assert_eq!(usage.largest_turns.len(), 3, "pinned turns are not ranked");
+}
+
+#[test]
+fn usage_snapshot_caps_largest_turns_at_five() {
+    let mut store = new_store();
+    for i in 0..8 {
+        store.push_turn(vec![ChatMessage::user(format!(
+            "turn {i} {}",
+            "m".repeat(i * 100)
+        ))]);
+    }
+    let usage = store.usage_snapshot();
+    assert_eq!(usage.largest_turns.len(), 5);
+    assert_eq!(usage.turn_count, 8);
+}

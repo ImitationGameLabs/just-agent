@@ -43,6 +43,12 @@ pub struct ContextUsage {
     /// Cumulative token usage across all LLM calls for this agent.
     #[serde(default)]
     pub cumulative_usage: CumulativeUsage,
+    /// Largest conversation turns: up to five `(turn_id, estimated_tokens)`
+    /// pairs, largest first. This is how an agent sees a queue-head wedge
+    /// (one turn whose estimate alone exceeds the summarizer input budget)
+    /// through `context_status` before compaction stalls on it.
+    #[serde(default)]
+    pub largest_turns: Vec<(u64, usize)>,
 }
 
 impl ContextUsage {
