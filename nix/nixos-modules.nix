@@ -24,6 +24,7 @@
 let
   cfg = config.services.kallipai.daemon;
   polisCfg = config.services.kallipai.polis;
+  webCfg = config.services.kallipai.web;
 
   # Inject an environment key only when the option carries a value: null
   # means "let the service's own default govern", keeping the code default
@@ -44,111 +45,310 @@ let
   };
 in
 {
-  options.services.kallipai.daemon = {
-    enable = lib.mkEnableOption "the kallipai daemon as a system service";
+  options.services.kallipai = {
+    daemon = {
+      enable = lib.mkEnableOption "the kallipai daemon as a system service";
 
-    package = lib.mkOption {
-      type = lib.types.package;
-      description = ''
-        The kallipai daemon package. It must ship `kallip-daemon`
-        together with `kallip-daemon-spawn`: the daemon resolves the
-        helper as a sibling of its own binary first.
-      '';
+      package = lib.mkOption {
+        type = lib.types.package;
+        description = ''
+          The kallipai daemon package. It must ship `kallip-daemon`
+          together with `kallip-daemon-spawn`: the daemon resolves the
+          helper as a sibling of its own binary first.
+        '';
+      };
+
+      group = lib.mkOption {
+        type = lib.types.str;
+        default = "kallip";
+        description = ''
+          The group gating access to the control socket (0660
+          root:<group>) and, as @<group>, to the nix daemon: one
+          declaration primitive shared by both access paths. Deliberately
+          not the generic `users` group — that would hand the control
+          socket and nix to every human account on the host.
+        '';
+      };
+
+      tagmaUsers = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = ''
+          Pre-declared system users that tagma instances may run as (the
+          dedicated-user form of `kallipctl spawn --user`). Each gets a
+          home directory and linger, so a spawned instance finds the
+          standard XDG runtime directory and can drive flake + direnv
+          natively.
+        '';
+      };
+    };
+    polis = {
+      enable = lib.mkEnableOption "the polis platform services (archeion, lesche, files) as system services";
+
+      archeionPackage = lib.mkOption {
+        type = lib.types.package;
+        description = "The kallip-archeion package. No default: pinning stays with the consumer flake.";
+      };
+      leschePackage = lib.mkOption {
+        type = lib.types.package;
+        description = "The kallip-lesche package.";
+      };
+      filesPackage = lib.mkOption {
+        type = lib.types.package;
+        description = "The kallip-files package.";
+      };
+
+      internalTokenFile = lib.mkOption {
+        type = lib.types.path;
+        description = ''
+          Root-only (0600) EnvironmentFile carrying the shared archeion-internal
+          secret -- the /internal/* ControlPlane trust boundary, so the
+          deployment cannot come up without it. The file must define three keys
+          with the same value: KALLIP_ARCHEION_INTERNAL_TOKEN (the archeion
+          mounts the /internal nest only when set), KALLIP_LESCHE_ARCHEION_TOKEN
+          and KALLIP_FILES_ARCHEION_TOKEN (what the lesche and the files service
+          present to that nest). Format is systemd's line-based KEY=value; a
+          token containing #, quotes, or leading whitespace breaks the parse.
+        '';
+      };
+      adminTokenFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = ''
+          Path to a root-only EnvironmentFile defining
+          KALLIP_ARCHEION_ADMIN_TOKEN (the provisioning authority and the
+          admin-login exchange). Default null: the archeion generates a fresh
+          sk-admin-... at every boot and prints it once to the journal -- read
+          it with journalctl -u kallip-archeion. That printed token is the
+          bootstrap credential and rotates on restart, which is why a permanent
+          deployment should pin the file.
+          This file may also carry archeion-only extra keys -- notably the
+          OAuth client secrets (KALLIP_ARCHEION_OAUTH_GITHUB_CLIENT_SECRET,
+          KALLIP_ARCHEION_OAUTH_GOOGLE_CLIENT_SECRET; a provider enables only
+          when its id option and secret are both set). Keep secrets out of
+          internalTokenFile: all three services read that one.
+        '';
+      };
+      notifyTokenFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = ''
+          Path to a root-only EnvironmentFile carrying the files-to-lesche
+          event-push secret; the file must define two keys with the same value:
+          KALLIP_LESCHE_INTERNAL_TOKEN and KALLIP_FILES_NOTIFY_TOKEN. Default
+          null: the lesche leaves its internal surface unmounted and the push
+          stays disabled (the safe standalone posture).
+        '';
+      };
+
+      proxy = {
+        enable = lib.mkEnableOption "caddy virtual hosts exposing the polis services on their subdomains";
+
+        domain = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = ''
+            The deployment domain the subdomains hang off: the virtual hosts
+            archeion.<domain>, lesche.<domain> and files.<domain> route to
+            the localhost listeners. Required when the proxy is enabled.
+          '';
+        };
+
+        acmeEmail = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = ''
+            ACME account email, forwarded to services.caddy.email. Default
+            null: Caddy then registers with Let's Encrypt without a
+            recovery address, which small deployments accept.
+          '';
+        };
+      };
+
+      archeion = {
+        webauthnRpId = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "WebAuthn relying-party id (the registrable domain passkeys bind to); changing it invalidates every bound passkey.";
+        };
+        webauthnRpOrigin = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "WebAuthn relying-party origin; must have the rp id as its effective domain.";
+        };
+        webauthnRpName = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Human-readable WebAuthn relying-party name shown in the browser prompt.";
+        };
+        webauthnAllowAnyPort = lib.mkOption {
+          type = lib.types.nullOr lib.types.bool;
+          default = null;
+          description = "Allow non-standard ports on the WebAuthn origin (local HTTP dev only).";
+        };
+        sessionTtlSecs = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Session cookie lifetime in seconds.";
+        };
+        cookieSecure = lib.mkOption {
+          type = lib.types.nullOr lib.types.bool;
+          default = null;
+          description = "Mark the session cookie Secure (disable only for plain-HTTP dev).";
+        };
+        cookieDomain = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Cookie Domain attribute; set to the parent domain when the lesche shares a subdomain of it.";
+        };
+        authRateCapacity = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Per-IP token-bucket capacity guarding /v1/auth/*.";
+        };
+        authRateRefillPerSec = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Per-IP auth bucket refill rate, requests per second.";
+        };
+        pairRateCapacity = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Shared pairing-bucket capacity: the real brute-force bound on the pairing code (per-IP limiting is bypassable by source-IP diversity).";
+        };
+        pairRateRefillPerSec = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Shared pairing-bucket refill rate, requests per second.";
+        };
+        trustedProxies = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Comma-separated CIDRs trusted to set X-Forwarded-For; the code default already trusts loopback for the same-box proxy.";
+        };
+        maxBodySizeKb = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Max HTTP request body size in kilobytes (0 = axum default).";
+        };
+        corsOrigins = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Comma-separated CORS allow-list origins; never a wildcard on a public deploy.";
+        };
+        enrollmentCodeTtlSecs = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Single-use enrollment-code lifetime in seconds.";
+        };
+        signupEnabled = lib.mkOption {
+          type = lib.types.nullOr lib.types.bool;
+          default = null;
+          description = "Whether open signup is allowed (the incident-time kill switch).";
+        };
+        oauthRedirectBase = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Web origin the OAuth flow redirects into; required only when an OAuth provider is configured.";
+        };
+        oauthGithubClientId = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "GitHub OAuth client id; the provider enables only when id and secret are both present. Client secrets go in the token files, never here.";
+        };
+        oauthGoogleClientId = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Google OAuth client id; same enable rule and secret rule as GitHub.";
+        };
+        adminUserLogin = lib.mkOption {
+          type = lib.types.nullOr lib.types.bool;
+          default = null;
+          description = "Mount POST /v1/auth/admin-login (admin token exchanged for a local session). When on, a hand-set admin token shorter than 32 chars fails at boot.";
+        };
+      };
+
+      lesche = {
+        proofSkewSecs = lib.mkOption {
+          type = lib.types.nullOr lib.types.int;
+          default = null;
+          description = "Acceptable clock skew (both directions) on a tunnel reconnect proof, in seconds.";
+        };
+        keyExchangeTimeoutSecs = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "How long a synchronous key exchange waits for the tagma before failing with 504.";
+        };
+        maxBodySizeKb = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Max HTTP request body size in kilobytes (0 = axum default).";
+        };
+        corsOrigins = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Comma-separated CORS allow-list origins.";
+        };
+      };
+
+      files = {
+        maxBodySizeMb = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Maximum accepted upload body in megabytes; larger streams get 413.";
+        };
+        corsOrigins = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Comma-separated CORS allow-list origins.";
+        };
+        degrade = lib.mkOption {
+          type = lib.types.nullOr (
+            lib.types.enum [
+              "closed"
+              "soft"
+            ]
+          );
+          default = null;
+          description = "Archeion degrade posture: closed fails authorization with 503 when the registry is unreachable, soft denies with 403 from an empty fact set.";
+        };
+        gcIntervalSecs = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Delay between GC passes, in seconds.";
+        };
+        gcGraceSecs = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "How long a freed zero-refcount row must age before the GC reclaims it.";
+        };
+        gcBatch = lib.mkOption {
+          type = lib.types.nullOr lib.types.ints.unsigned;
+          default = null;
+          description = "Maximum catalog rows reclaimed per GC pass.";
+        };
+      };
     };
 
-    group = lib.mkOption {
-      type = lib.types.str;
-      default = "kallip";
-      description = ''
-        The group gating access to the control socket (0660
-        root:<group>) and, as @<group>, to the nix daemon: one
-        declaration primitive shared by both access paths. Deliberately
-        not the generic `users` group — that would hand the control
-        socket and nix to every human account on the host.
-      '';
-    };
+    web = {
+      enable = lib.mkEnableOption "the kallip-web static site behind caddy";
 
-    tagmaUsers = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = ''
-        Pre-declared system users that tagma instances may run as (the
-        dedicated-user form of `kallipctl spawn --user`). Each gets a
-        home directory and linger, so a spawned instance finds the
-        standard XDG runtime directory and can drive flake + direnv
-        natively.
-      '';
-    };
-  };
-  options.services.kallipai.polis = {
-    enable = lib.mkEnableOption "the polis platform services (archeion, lesche, files) as system services";
-
-    archeionPackage = lib.mkOption {
-      type = lib.types.package;
-      description = "The kallip-archeion package. No default: pinning stays with the consumer flake.";
-    };
-    leschePackage = lib.mkOption {
-      type = lib.types.package;
-      description = "The kallip-lesche package.";
-    };
-    filesPackage = lib.mkOption {
-      type = lib.types.package;
-      description = "The kallip-files package.";
-    };
-
-    internalTokenFile = lib.mkOption {
-      type = lib.types.path;
-      description = ''
-        Root-only (0600) EnvironmentFile carrying the shared archeion-internal
-        secret -- the /internal/* ControlPlane trust boundary, so the
-        deployment cannot come up without it. The file must define three keys
-        with the same value: KALLIP_ARCHEION_INTERNAL_TOKEN (the archeion
-        mounts the /internal nest only when set), KALLIP_LESCHE_ARCHEION_TOKEN
-        and KALLIP_FILES_ARCHEION_TOKEN (what the lesche and the files service
-        present to that nest). Format is systemd's line-based KEY=value; a
-        token containing #, quotes, or leading whitespace breaks the parse.
-      '';
-    };
-    adminTokenFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = ''
-        Path to a root-only EnvironmentFile defining
-        KALLIP_ARCHEION_ADMIN_TOKEN (the provisioning authority and the
-        admin-login exchange). Default null: the archeion generates a fresh
-        sk-admin-... at every boot and prints it once to the journal -- read
-        it with journalctl -u kallip-archeion. That printed token is the
-        bootstrap credential and rotates on restart, which is why a permanent
-        deployment should pin the file.
-        This file may also carry archeion-only extra keys -- notably the
-        OAuth client secrets (KALLIP_ARCHEION_OAUTH_GITHUB_CLIENT_SECRET,
-        KALLIP_ARCHEION_OAUTH_GOOGLE_CLIENT_SECRET; a provider enables only
-        when its id option and secret are both set). Keep secrets out of
-        internalTokenFile: all three services read that one.
-      '';
-    };
-    notifyTokenFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = ''
-        Path to a root-only EnvironmentFile carrying the files-to-lesche
-        event-push secret; the file must define two keys with the same value:
-        KALLIP_LESCHE_INTERNAL_TOKEN and KALLIP_FILES_NOTIFY_TOKEN. Default
-        null: the lesche leaves its internal surface unmounted and the push
-        stays disabled (the safe standalone posture).
-      '';
-    };
-
-    proxy = {
-      enable = lib.mkEnableOption "caddy virtual hosts exposing the polis services on their subdomains";
+      package = lib.mkOption {
+        type = lib.types.package;
+        description = ''
+          The kallip-web bundle (the flake's packages.kallip-web-dist). No
+          default: pinning stays with the consumer flake, as with the
+          polis packages.
+        '';
+      };
 
       domain = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
         description = ''
-          The deployment domain the subdomains hang off: the virtual hosts
-          archeion.<domain>, lesche.<domain> and files.<domain> route to
-          the localhost listeners. Required when the proxy is enabled.
+          The deployment domain: the virtual host web.<domain> serves the
+          SPA with a fallback to its index.html so client-side routes
+          resolve. Required when the module is enabled.
         '';
       };
 
@@ -162,178 +362,17 @@ in
         '';
       };
     };
-
-    archeion = {
-      webauthnRpId = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "WebAuthn relying-party id (the registrable domain passkeys bind to); changing it invalidates every bound passkey.";
-      };
-      webauthnRpOrigin = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "WebAuthn relying-party origin; must have the rp id as its effective domain.";
-      };
-      webauthnRpName = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Human-readable WebAuthn relying-party name shown in the browser prompt.";
-      };
-      webauthnAllowAnyPort = lib.mkOption {
-        type = lib.types.nullOr lib.types.bool;
-        default = null;
-        description = "Allow non-standard ports on the WebAuthn origin (local HTTP dev only).";
-      };
-      sessionTtlSecs = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Session cookie lifetime in seconds.";
-      };
-      cookieSecure = lib.mkOption {
-        type = lib.types.nullOr lib.types.bool;
-        default = null;
-        description = "Mark the session cookie Secure (disable only for plain-HTTP dev).";
-      };
-      cookieDomain = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Cookie Domain attribute; set to the parent domain when the lesche shares a subdomain of it.";
-      };
-      authRateCapacity = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Per-IP token-bucket capacity guarding /v1/auth/*.";
-      };
-      authRateRefillPerSec = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Per-IP auth bucket refill rate, requests per second.";
-      };
-      pairRateCapacity = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Shared pairing-bucket capacity: the real brute-force bound on the pairing code (per-IP limiting is bypassable by source-IP diversity).";
-      };
-      pairRateRefillPerSec = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Shared pairing-bucket refill rate, requests per second.";
-      };
-      trustedProxies = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Comma-separated CIDRs trusted to set X-Forwarded-For; the code default already trusts loopback for the same-box proxy.";
-      };
-      maxBodySizeKb = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Max HTTP request body size in kilobytes (0 = axum default).";
-      };
-      corsOrigins = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Comma-separated CORS allow-list origins; never a wildcard on a public deploy.";
-      };
-      enrollmentCodeTtlSecs = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Single-use enrollment-code lifetime in seconds.";
-      };
-      signupEnabled = lib.mkOption {
-        type = lib.types.nullOr lib.types.bool;
-        default = null;
-        description = "Whether open signup is allowed (the incident-time kill switch).";
-      };
-      oauthRedirectBase = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Web origin the OAuth flow redirects into; required only when an OAuth provider is configured.";
-      };
-      oauthGithubClientId = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "GitHub OAuth client id; the provider enables only when id and secret are both present. Client secrets go in the token files, never here.";
-      };
-      oauthGoogleClientId = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Google OAuth client id; same enable rule and secret rule as GitHub.";
-      };
-      adminUserLogin = lib.mkOption {
-        type = lib.types.nullOr lib.types.bool;
-        default = null;
-        description = "Mount POST /v1/auth/admin-login (admin token exchanged for a local session). When on, a hand-set admin token shorter than 32 chars fails at boot.";
-      };
-    };
-
-    lesche = {
-      proofSkewSecs = lib.mkOption {
-        type = lib.types.nullOr lib.types.int;
-        default = null;
-        description = "Acceptable clock skew (both directions) on a tunnel reconnect proof, in seconds.";
-      };
-      keyExchangeTimeoutSecs = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "How long a synchronous key exchange waits for the tagma before failing with 504.";
-      };
-      maxBodySizeKb = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Max HTTP request body size in kilobytes (0 = axum default).";
-      };
-      corsOrigins = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Comma-separated CORS allow-list origins.";
-      };
-    };
-
-    files = {
-      maxBodySizeMb = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Maximum accepted upload body in megabytes; larger streams get 413.";
-      };
-      corsOrigins = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "Comma-separated CORS allow-list origins.";
-      };
-      degrade = lib.mkOption {
-        type = lib.types.nullOr (
-          lib.types.enum [
-            "closed"
-            "soft"
-          ]
-        );
-        default = null;
-        description = "Archeion degrade posture: closed fails authorization with 503 when the registry is unreachable, soft denies with 403 from an empty fact set.";
-      };
-      gcIntervalSecs = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Delay between GC passes, in seconds.";
-      };
-      gcGraceSecs = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "How long a freed zero-refcount row must age before the GC reclaims it.";
-      };
-      gcBatch = lib.mkOption {
-        type = lib.types.nullOr lib.types.ints.unsigned;
-        default = null;
-        description = "Maximum catalog rows reclaimed per GC pass.";
-      };
-    };
   };
-
   config = lib.mkMerge [
     {
       assertions = [
         {
           assertion = polisCfg.proxy.enable -> polisCfg.proxy.domain != null;
           message = "services.kallipai.polis.proxy.domain must be set when the proxy is enabled.";
+        }
+        {
+          assertion = webCfg.enable -> webCfg.domain != null;
+          message = "services.kallipai.web.domain must be set when services.kallipai.web is enabled.";
         }
       ];
     }
@@ -610,6 +649,19 @@ in
             reverse_proxy 127.0.0.1:${toString polisPorts.files}
           '';
         };
+      };
+    })
+    (lib.mkIf (webCfg.enable && webCfg.domain != null) {
+      # The SPA's virtual host: serve the bundle's files, falling back
+      # to index.html so client-side routes resolve on hard reload.
+      services.caddy = {
+        enable = true;
+        email = lib.mkIf (webCfg.acmeEmail != null) webCfg.acmeEmail;
+        virtualHosts."web.${webCfg.domain}".extraConfig = ''
+          root * ${webCfg.package}
+          try_files {path} /index.html
+          file_server
+        '';
       };
     })
   ];
