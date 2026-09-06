@@ -23,6 +23,7 @@ struct DaemonProc {
     child: std::process::Child,
     _data: PathBuf,
     data_dir: tempfile::TempDir,
+    records: PathBuf,
     log_path: PathBuf,
 }
 
@@ -55,6 +56,7 @@ fn start_daemon() -> DaemonProc {
     let data_dir = tempfile::tempdir().expect("data tempdir");
     let state_dir = tempfile::tempdir().expect("state tempdir");
     let socket = state_dir.path().join("control.sock");
+    let records = state_dir.path().join("kallipai/daemon/instances");
     let bin = resolve_bin("kallip-daemon");
     // stdout+stderr land in a file (not null) so tests can assert on
     // the daemon's own log — the quiet-Dead guarantee is a log claim.
@@ -62,9 +64,9 @@ fn start_daemon() -> DaemonProc {
     let log = std::fs::File::create(&log_path).expect("create daemon log");
     let mut child = std::process::Command::new(&bin)
         .env("XDG_DATA_HOME", data_dir.path())
-        // Kill the ambient override if the host shell carries one: the
-        // daemon reads it verbatim and would scan the wrong tree.
-        .env_remove("KALLIP_DAEMON_DATA_DIR")
+        // The record root rides the default derivation from the state
+        // home, exercising the production resolution path end to end.
+        .env("XDG_STATE_HOME", state_dir.path())
         .env(
             "KALLIP_DAEMON_SOCKET",
             state_dir.path().join("control.sock"),
@@ -81,6 +83,7 @@ fn start_daemon() -> DaemonProc {
                 child,
                 _data: state_dir.keep(),
                 data_dir,
+                records,
                 log_path,
             };
         }
@@ -150,36 +153,42 @@ fn spawn_health_stop_round_trip() {
     assert!(report.running, "spawned instance is running");
     assert_eq!(report.state, InstanceState::Running);
 
-    // The instance dir carries the metadata the scan adopts.
+    // The record area carries the registration the scan enumerates.
     let instance_dir = daemon.data_dir.path().join("kallipai/tagmata/e2e");
-    assert!(instance_dir.join("meta.json").exists());
+    assert!(daemon.records.join("e2e.json").exists());
     for stray in ["instance.id", "owner", "pid", "port", "workspace"] {
         assert!(
             !instance_dir.join(stray).exists(),
             "stray state file {stray} must not appear"
         );
     }
-    // The spawn recorded the requesting peer (this test process) as owner.
-    let meta: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta.json"),
+    // The spawn recorded the requesting peer (this test process) as owner
+    // in the record, next to the pointer at its instance dir.
+    let record: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(daemon.records.join("e2e.json")).expect("record"),
     )
-    .expect("parse meta.json");
+    .expect("parse record");
     assert_eq!(
-        meta["owner_uid"],
+        record["owner_uid"],
         serde_json::json!(unsafe { libc::getuid() })
     );
     assert_eq!(
-        meta["workspace"],
+        record["workspace"],
         serde_json::json!(workspace.path().display().to_string())
     );
     assert!(
-        meta["instance_id"]
+        record["instance_id"]
             .as_str()
             .is_some_and(|id| !id.is_empty())
     );
+    assert_eq!(
+        record["data_dir"],
+        serde_json::json!(instance_dir.display().to_string()),
+        "the record points at the instance dir"
+    );
     // The launch claim point pinned the kernel incarnation: the anchor
     // names this pid with a real start time and a wall-clock stamp.
-    let identity = &meta["identity"];
+    let identity = &record["identity"];
     assert_eq!(
         identity["pid"],
         serde_json::json!(pid),
@@ -211,8 +220,8 @@ fn spawn_health_stop_round_trip() {
         "tagma exited after stop"
     );
 
-    // Health after stop: not running, but the instance dir persists
-    // (adoption semantics — stop does not deregister).
+    // Health after stop: not running, but the registration persists
+    // (stop does not deregister; the record and the instance dir stay).
     let after = tokio_block_on(client.call(RequestBody::Health {
         slug: Some("e2e".into()),
     }));
@@ -242,25 +251,25 @@ fn spawn_health_stop_round_trip() {
     assert_ne!(started_pid, pid, "a fresh incarnation, not the old one");
     assert!(started_port > 0, "fresh bound port");
 
-    // The survived tree carried the spawn-time env over (relaunch config),
-    // and credentials/ persists so the enrolled identity revives.
-    let meta_after: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta after"),
+    // The survived registration carried the spawn-time env over (relaunch
+    // config), and credentials/ persists so the enrolled identity revives.
+    let record_after: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(daemon.records.join("e2e.json")).expect("record after"),
     )
-    .expect("parse meta.json after start");
+    .expect("parse record after start");
     assert_eq!(
-        meta_after["env"][0],
+        record_after["env"][0],
         serde_json::json!("KALLIP_OPERATOR_TOKEN=test-op-token")
     );
     assert_eq!(
-        meta_after["env"].as_array().expect("env array").len(),
+        record_after["env"].as_array().expect("env array").len(),
         4,
-        "one-shot overlay is not persisted to meta.json"
+        "one-shot overlay is not persisted to the record"
     );
     // The relaunch re-anchored: the previous incarnation's anchor was
     // overwritten with the fresh pid at the claim point.
     assert_eq!(
-        meta_after["identity"]["pid"],
+        record_after["identity"]["pid"],
         serde_json::json!(started_pid),
         "relaunch re-anchored to the fresh incarnation"
     );
@@ -349,24 +358,25 @@ fn start_filters_consumed_enrollment_code() {
     }
 
     // Fabricate the bug's exact state: a spawn-time enrollment code still
-    // persisted in meta.json plus credentials stored by a completed
-    // enrollment. The archeion points at a port nothing listens on — after the
-    // fix the real tagma boots through the Stored branch and the entry
-    // merely degrades to local-only; replaying the code instead makes tagma
-    // fail fast on stored-credentials-plus-code and Start times out.
+    // persisted in the daemon's registration record plus credentials
+    // stored by a completed enrollment. The archeion points at a port
+    // nothing listens on — the real tagma boots through the Stored branch
+    // and the entry merely degrades to local-only; replaying the code
+    // instead makes tagma fail fast on stored-credentials-plus-code and
+    // Start times out.
     let instance_dir = daemon.data_dir.path().join("kallipai/tagmata/stale-code");
-    let mut meta: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta.json"),
-    )
-    .expect("parse meta.json");
-    let env = meta["env"].as_array_mut().expect("env array");
+    let record_path = daemon.records.join("stale-code.json");
+    let mut record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record_path).expect("record"))
+            .expect("parse record");
+    let env = record["env"].as_array_mut().expect("env array");
     env.push("KALLIP_TAGMA_RELAY_ARCHEION_URL=http://127.0.0.1:9".into());
     env.push("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-spent".into());
     std::fs::write(
-        instance_dir.join("meta.json"),
-        serde_json::to_string(&meta).expect("serialize meta"),
+        &record_path,
+        serde_json::to_string(&record).expect("serialize record"),
     )
-    .expect("rewrite meta.json");
+    .expect("rewrite record");
     let entry = instance_dir.join("credentials").join("default");
     std::fs::create_dir_all(&entry).expect("create credentials entry");
     std::fs::write(entry.join("tagma.id"), "tagma-1").expect("write tagma.id");
@@ -388,13 +398,12 @@ fn start_filters_consumed_enrollment_code() {
     assert!(started_port > 0, "fresh bound port");
     assert_ne!(started_pid, pid, "a fresh incarnation");
 
-    // The scrub removed the spent code from the persisted copy while the
-    // rest of the env survived (the archeion url is not secret material and
-    // stays — the Stored branch needs it).
-    let after: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta after"),
-    )
-    .expect("parse meta.json after");
+    // The scrub removed the spent code from the persisted record while
+    // the rest of the env survived (the archeion url is not secret
+    // material and stays — the Stored branch needs it).
+    let after: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record_path).expect("record after"))
+            .expect("parse record after");
     let env = after["env"].as_array().expect("env array after");
     assert!(env.contains(&serde_json::json!("KALLIP_OPERATOR_TOKEN=test-op-token")));
     assert!(env.contains(&serde_json::json!(
@@ -477,7 +486,7 @@ fn start_recovers_from_stale_runtime_json() {
     // The regression this locks: a leftover runtime.json from a previous
     // incarnation used to poison the launch poll, and its recorded pid
     // (required to look like a tagma before it was trusted) decided
-    // between a bogus adoption and a 30s kill. The launch now clears the
+    // between a bogus match and a 30s kill. The launch now clears the
     // leftover before starting the helper, so the poll only ever sees
     // this launch's self-report.
     let daemon = start_daemon();
@@ -511,7 +520,7 @@ fn start_recovers_from_stale_runtime_json() {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    let stale = serde_json::json!({ "pid": pid, "port": 1 });
+    let stale = serde_json::json!({ "pid": pid, "port": 1, "starttime": 1 });
     let instance_dir = daemon
         .data_dir
         .path()
@@ -558,7 +567,7 @@ fn start_recovers_from_stale_runtime_json() {
 #[test]
 fn start_rejects_when_stale_runtime_names_a_live_pid() {
     // Liveness alone decides AlreadyRunning: a leftover naming a live pid
-    // (here: this test process) is refused, not adopted and not killed.
+    // (here: this test process) is refused, not taken over and not killed.
     // Under the old comm re-check this same shape wedged the poll into a
     // 30s timeout whose kill branch SIGKILLed this very pid.
     let daemon = start_daemon();
@@ -592,9 +601,9 @@ fn start_rejects_when_stale_runtime_names_a_live_pid() {
     }
 
     // A live pid that is not a tagma: the conservative refusal is the
-    // point. Refusing costs one retry; adopting or killing an unrelated
+    // point. Refusing costs one retry; matching or killing an unrelated
     // process costs the process.
-    let stale = serde_json::json!({ "pid": std::process::id(), "port": 1 });
+    let stale = serde_json::json!({ "pid": std::process::id(), "port": 1, "starttime": 1 });
     let instance_dir = daemon.data_dir.path().join("kallipai/tagmata/live-stale");
     std::fs::write(
         instance_dir.join("runtime.json"),
@@ -666,82 +675,6 @@ fn manual_boot_with_slug_publishes_runtime_json() {
     );
 }
 
-/// A manually launched tagma whose instance dir carries a hand-written
-/// minimal meta.json is adopted: list reports state `adopted` (the
-/// self-report triple verified), the port surfaces, and stop lands
-/// like on any managed instance.
-#[test]
-fn manually_launched_tagma_is_adopted_then_stoppable() {
-    let daemon = start_daemon();
-    let client = DaemonClient::new(&daemon.socket);
-    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe bind");
-    let port = probe.local_addr().expect("probe addr").port();
-    drop(probe);
-    let instance_dir = daemon
-        .data_dir
-        .path()
-        .join("kallipai")
-        .join("tagmata")
-        .join("adopted");
-    std::fs::create_dir_all(&instance_dir).expect("instance dir");
-    // The hand-written marker: the manual-launch half of the contract
-    // (the tagma itself publishes runtime.json on bind).
-    std::fs::write(
-        instance_dir.join("meta.json"),
-        r#"{"instance_id":"manual-1","owner_uid":1000}"#,
-    )
-    .expect("write meta.json");
-    let mut tagma = std::process::Command::new(resolve_bin("kallip-tagma"))
-        .env("KALLIP_TAGMA_SLUG", "adopted")
-        .env("XDG_DATA_HOME", daemon.data_dir.path())
-        .env("KALLIP_TAGMA_ADDR", format!("127.0.0.1:{port}"))
-        .env("KALLIP_OPERATOR_TOKEN", "test-op-token")
-        .env("KALLIP_LLM_PROVIDER", "deepseek")
-        .env("KALLIP_LLM_MODEL", "test-model")
-        .env("KALLIP_LLM_DEEPSEEK_API_KEY", "test-key")
-        // Test-env isolation: ambient relay vars trip the tagma relay
-        // fail-fast and this local-only boot never listens.
-        .env_remove("KALLIP_TAGMA_RELAY_ARCHEION_URL")
-        .env_remove("KALLIP_TAGMA_RELAY_LESCHE_URL")
-        .env_remove("KALLIP_TAGMA_RELAY_ENROLLMENT_CODE")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("manual tagma boot");
-    let mut connected = false;
-    for _ in 0..200 {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            connected = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert!(connected, "manual tagma never listened on {port}");
-    let list = tokio_block_on(client.call(RequestBody::List));
-    let OkPayload::List { instances } = expect_ok(list) else {
-        panic!("expected list payload")
-    };
-    let mine = instances
-        .iter()
-        .find(|i| i.slug == "adopted")
-        .expect("adopted instance listed");
-    assert_eq!(mine.state, InstanceState::Adopted);
-    assert!(mine.running);
-    assert_eq!(mine.port, Some(port));
-    // Stop lands on the adopted instance like on a spawned one.
-    let stopped = tokio_block_on(client.call(RequestBody::Stop {
-        slug: "adopted".into(),
-    }));
-    expect_ok(stopped);
-    let _ = tagma.wait();
-    let after = tokio_block_on(client.call(RequestBody::Health {
-        slug: Some("adopted".into()),
-    }));
-    let OkPayload::Health { report } = expect_ok(after) else {
-        panic!("expected health payload")
-    };
-    assert_eq!(report.state, InstanceState::Dead);
-}
 /// The stop guard's two legs: a runtime.json retargeted at a foreign
 /// live pid is refused even though the pid is alive (the anchor names
 /// a different incarnation), and once the tree is restored the same
@@ -772,7 +705,7 @@ fn stop_refuses_tampered_runtime_pid_then_allows_restored() {
 
     // Tamper: point runtime.json at this test process — alive, but
     // provably not the anchored incarnation.
-    let tampered = serde_json::json!({ "pid": std::process::id(), "port": port });
+    let tampered = serde_json::json!({ "pid": std::process::id(), "port": port, "starttime": 1 });
     std::fs::write(
         &runtime_path,
         serde_json::to_vec(&tampered).expect("serialize tampered runtime"),

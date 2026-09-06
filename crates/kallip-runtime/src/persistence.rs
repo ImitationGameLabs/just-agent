@@ -35,7 +35,14 @@ use kallip_common::AgentId;
 /// `archive_agent_dir`'s `rename` is atomic; if the root is symlinked across a
 /// filesystem boundary the `rename` raises `EXDEV` and the archive falls back to
 /// a recursive copy + delete (see `archive_agent_dir`).
+/// An explicit `KALLIP_TAGMA_DATA_DIR` wins first: the daemon hands the
+/// instance its data directory at spawn, so the two sides no longer need
+/// to assume a shared tree layout underneath. Without it the root is
+/// slug-derived (`<platform_data_dir>/kallipai/tagmata/<KALLIP_TAGMA_SLUG>`).
 pub fn data_dir_root() -> Result<PathBuf> {
+    if let Some(dir) = std::env::var_os("KALLIP_TAGMA_DATA_DIR").filter(|d| !d.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
     Ok(dirs::data_dir()
         .context("could not determine platform data directory")?
         .join("kallipai")

@@ -1,10 +1,10 @@
-//! kallip-daemon: stateless, directory-driven manager for local kallip
+//! kallip-daemon: stateless, registry-driven manager for local kallip
 //! instances.
 //!
 //! Configuration is exactly two environment variables — no config file:
-//! - `KALLIP_DAEMON_DATA_DIR`: the instance tree root (default
-//!   `~/.local/share/kallipai/tagmata`); each child directory with a
-//!   `meta.json` is a managed instance.
+//! - `KALLIP_DAEMON_RECORD_DIR`: the record area root (default
+//!   `~/.local/state/kallipai/daemon/instances`); each `<slug>.json`
+//!   file is a managed instance, and the directory is the inventory.
 //! - `KALLIP_DAEMON_SOCKET`: an explicit control-socket path; without it
 //!   the socket binds the first resolvable leg of the shared chain (see
 //!   `kallip_daemon_common::socket`): the runtime dir, then the state
@@ -14,14 +14,12 @@
 
 mod bins;
 mod reconcile;
+mod records;
 mod scan;
 mod server;
 mod spawn;
 mod start;
 mod stop;
-
-use std::ffi::OsString;
-use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 
@@ -46,12 +44,10 @@ fn main() -> Result<()> {
         tracing::warn!("kallip-tagma unresolved beside the daemon; launches rely on PATH lookup");
     }
 
-    let data_root = data_root()?;
-    // Own the tree's existence: the slug-era root sits two segments
-    // deeper than the data home, and no deploy step creates it — spawn
-    // allocates only the instance leaf, so the trunk must predate it.
-    std::fs::create_dir_all(&data_root)
-        .with_context(|| format!("create data root {}", data_root.display()))?;
+    let record_root = records::record_root()?;
+    // The record area is the only tree this daemon owns. It is created
+    // lazily by the first registration; the socket parent below is the
+    // only boot-time creation.
     let socket_path = kallip_daemon_common::socket::daemon_bind_path().context(
         "no control-socket candidate: set KALLIP_DAEMON_SOCKET, or make the platform state home determinable",
     )?;
@@ -82,7 +78,7 @@ fn main() -> Result<()> {
         .build()
         .context("build tokio runtime")?;
     let socket_path_for_bind = socket_path.clone();
-    let data_root_for_serve = data_root.clone();
+    let record_root_for_serve = record_root.clone();
     runtime.block_on(async move {
         use std::os::unix::fs::PermissionsExt as _;
         let listener = tokio::net::UnixListener::bind(&socket_path_for_bind)
@@ -93,47 +89,16 @@ fn main() -> Result<()> {
         )
         .context("chmod socket 0600")?;
         tracing::info!(
-            data_root = %data_root_for_serve.display(),
+            record_root = %record_root_for_serve.display(),
             socket = %socket_path_for_bind.display(),
             "kallip-daemon listening"
         );
         // The reconcile sweep keeps its snapshot inside its own task; see
         // the module doc for why the daemon proper stays stateless.
-        tokio::spawn(reconcile::run(data_root_for_serve.clone()));
-        let daemon = server::Daemon::new(data_root_for_serve);
+        tokio::spawn(reconcile::run(record_root_for_serve.clone()));
+        let daemon = server::Daemon::new(record_root_for_serve);
         daemon.serve(listener).await
     })
-}
-
-/// Instance tree root: `KALLIP_DAEMON_DATA_DIR` verbatim, else the XDG data
-/// home's `kallipai/tagmata` directory (matching
-/// `kallip_runtime::persistence`'s default, so daemon and instances agree
-/// on where the tree lives without sharing code). Every boot names itself
-/// with `KALLIP_TAGMA_SLUG` and owns that slug's leaf; the state side
-/// lives under `kallipai/daemon` beside the control socket.
-fn data_root() -> Result<PathBuf> {
-    // The base lookup stays lazy: an explicit override must keep working
-    // where the platform data home cannot be determined (a unit with
-    // the env set but no HOME), so only the None branch ever looks it up.
-    match std::env::var_os("KALLIP_DAEMON_DATA_DIR") {
-        Some(dir) => Ok(resolve_data_root(Some(dir), PathBuf::new())),
-        None => Ok(resolve_data_root(
-            None,
-            dirs::data_dir().context("could not determine platform data directory")?,
-        )),
-    }
-}
-
-/// Pure resolution of the instance-tree root: an explicit override wins
-/// verbatim (a set-but-empty value included - it is still a set value),
-/// else the platform data home gains exactly the `kallipai/tagmata`
-/// segments - the same tree every slug-named boot derives. Pure so the
-/// default shape is testable without touching process-environment state.
-fn resolve_data_root(override_dir: Option<OsString>, data_home: PathBuf) -> PathBuf {
-    match override_dir {
-        Some(dir) => PathBuf::from(dir),
-        None => data_home.join("kallipai").join("tagmata"),
-    }
 }
 
 /// Refuse to take over a live daemon's socket (root 16:31Z mandate): a
@@ -156,35 +121,5 @@ fn refuse_if_live(path: &std::path::Path) -> Result<()> {
             let _ = std::fs::remove_file(path);
             Ok(())
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    /// Both branches of the pure resolution: an override wins verbatim
-    /// (set-but-empty included - it is still a set value), and the default
-    /// gains exactly the kallipai/tagmata segments.
-    #[test]
-    fn resolve_data_root_overrides_win_verbatim() {
-        assert_eq!(
-            resolve_data_root(Some("/custom/root".into()), PathBuf::from("/xdg/data")),
-            PathBuf::from("/custom/root")
-        );
-        assert_eq!(
-            resolve_data_root(Some(String::new().into()), PathBuf::from("/xdg/data")),
-            PathBuf::from("")
-        );
-    }
-
-    /// The default carries exactly the kallipai/tagmata segments - the
-    /// same tree every slug-named boot derives - pinning the shape
-    /// against a doubled-namespace regression.
-    #[test]
-    fn resolve_data_root_default_joins_kallipai_tagmata_segments() {
-        assert_eq!(
-            resolve_data_root(None, PathBuf::from("/xdg/data")),
-            PathBuf::from("/xdg/data/kallipai/tagmata")
-        );
     }
 }

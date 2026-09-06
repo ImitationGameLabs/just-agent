@@ -21,7 +21,8 @@ use tower::ServiceExt;
 
 struct DaemonProc {
     socket: PathBuf,
-    data_root: PathBuf,
+    _data_root: PathBuf,
+    records: PathBuf,
     child: std::process::Child,
     _state: PathBuf,
 }
@@ -57,9 +58,10 @@ fn start_daemon() -> DaemonProc {
     let socket = state_dir.path().join("control.sock");
     let bin = resolve_bin("kallip-daemon");
     let mut child = std::process::Command::new(&bin)
-        // Slug-era alignment: XDG anchors both the daemon's default tree and
-        // the instance's own derivation; the verbatim override cannot.
-        .env_remove("KALLIP_DAEMON_DATA_DIR")
+        // Pin the record area in the state tempdir (the default
+        // derivation would follow the host HOME); the XDG data anchor
+        // isolates the instance trees.
+        .env("KALLIP_DAEMON_RECORD_DIR", state_dir.path().join("records"))
         .env("XDG_DATA_HOME", data_dir.path())
         .env(
             "KALLIP_DAEMON_SOCKET",
@@ -71,14 +73,16 @@ fn start_daemon() -> DaemonProc {
         .expect("spawn daemon");
     for _ in 0..100 {
         if socket.exists() {
-            // The daemon adopts the data dir; keep both tempdirs alive by
+            // The daemon owns the data dir; keep both tempdirs alive by
             // leaking them (test-scoped, under /tmp).
             let data_root = data_dir.path().join("kallipai").join("tagmata");
+            let records = state_dir.path().join("records");
             std::mem::forget(data_dir);
             std::mem::forget(state_dir);
             return DaemonProc {
                 socket,
-                data_root,
+                _data_root: data_root,
+                records,
                 child,
                 _state: PathBuf::new(),
             };
@@ -295,7 +299,7 @@ async fn full_management_round_trip_with_guards() {
 // states as the backend unit tests, but end to end -- the fill call
 // on the spawn path cannot silently regress, the daemon's env
 // validation (which rejects empty values) sees exactly what ships,
-// and the persisted meta.json carries the filled URLs into the
+// and the persisted record carries the filled URLs into the
 // start path.
 #[tokio::test]
 async fn relay_intent_spawn_persists_filled_urls() {
@@ -332,11 +336,11 @@ async fn relay_intent_spawn_persists_filled_urls() {
         .expect("relay-intent spawn");
     assert_eq!(spawned.slug, "relay-e2e");
 
-    let meta_path = daemon.data_root.join("relay-e2e").join("meta.json");
-    let meta: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&meta_path).expect("meta.json"))
-            .expect("parse meta.json");
-    let env = meta["env"].as_array().expect("env array");
+    let record_path = daemon.records.join("relay-e2e.json");
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record_path).expect("record"))
+            .expect("parse record");
+    let env = record["env"].as_array().expect("env array");
     assert!(env.contains(&serde_json::json!(
         "KALLIP_TAGMA_RELAY_ARCHEION_URL=http://localhost:7100"
     )));
@@ -389,11 +393,11 @@ async fn local_spawn_meta_stays_free_of_relay_keys() {
         .expect("local spawn");
     assert_eq!(spawned.slug, "local-e2e");
 
-    let meta_path = daemon.data_root.join("local-e2e").join("meta.json");
-    let meta: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&meta_path).expect("meta.json"))
-            .expect("parse meta.json");
-    let env = meta["env"].as_array().expect("env array");
+    let record_path = daemon.records.join("local-e2e.json");
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record_path).expect("record"))
+            .expect("parse record");
+    let env = record["env"].as_array().expect("env array");
     assert!(
         env.iter().all(|e| !e
             .as_str()

@@ -1,21 +1,23 @@
-//! Directory scan: the instance tree IS the registry.
+//! The record area is the registry: instance discovery reads the daemon's
+//! per-slug records, never the data tree.
 //!
-//! The daemon holds no state of its own — `list`/`health` read the tree under
-//! the data root fresh on every call, so a daemon restart (or a crash)
-//! rebuilds the full view from disk, and manually created directories
-//! are managed as long as they carry a daemon-written `meta.json`.
+//! Every record points at the instance's tagma-owned data directory; the
+//! volatile runtime facts (`runtime.json`: pid, port, starttime) are read
+//! through that pointer. `list`/`health` re-read everything fresh on every
+//! call, so a daemon restart rebuilds the full view from the record area.
 //!
-//! Liveness verification has two roots: the launch anchor the daemon's
-//! own spawn wrote into `meta.json` (state `running`), and the
-//! self-report the live tagma writes into `runtime.json` (pid, kernel
-//! starttime, exe family — state `adopted`), which is how a manually
-//! launched instance is recognized without a daemon spawn.
+//! Liveness verification has one root: the launch anchor the daemon's
+//! own spawn wrote into the record (state `running`). An instance the
+//! daemon has no record for is not the daemon's business.
 
 use std::path::Path;
 
 use kallip_daemon_common::wire::{HealthReport, InstanceInfo, InstanceState};
 
-/// One scanned instance directory: what the tree says, without judging it.
+use crate::records::InstanceRecord;
+
+/// One scanned instance: what the record area and the pointed-to data
+/// directory say, without judging it.
 #[derive(Debug, Clone)]
 pub struct ScannedInstance {
     pub slug: String,
@@ -27,16 +29,12 @@ pub struct ScannedInstance {
     /// process actions (open) survive a page reload — the session-held
     /// spawn memory is the fallback, not the source.
     pub port: Option<u16>,
-    /// The kernel start time the live tagma self-reported in
-    /// `runtime.json` (`0`/absent → `None`): the adoption credential
-    /// checked when no launch anchor verifies the pid.
-    pub reported_starttime: Option<u64>,
-    /// The spawn-time uid of the requesting peer, from `meta.json`.
+    /// The spawn-time uid of the requesting peer, from the record.
     pub owner: Option<u32>,
-    /// The enrolled tagma identity (archeion-issued id) if the instance's own
-    /// credentials tree carries one; see `read_tagma_id`.
+    /// The enrolled tagma identity (archeion-issued id) if the instance's
+    /// own credentials tree carries one; see `read_tagma_id`.
     pub tagma_id: Option<String>,
-    /// The launch-time identity anchor from `meta.json` (the
+    /// The launch-time identity anchor from the record (the
     /// `identity` key): the kernel incarnation this instance was
     /// claimed as. `None` when the claim point could not pin one —
     /// classification then falls back to the exe/comm name chain.
@@ -45,42 +43,32 @@ pub struct ScannedInstance {
 
 impl ScannedInstance {
     /// The daemon's classification: a pid verifiably this instance's
-    /// live tagma is Running (launch-anchor verified) or Adopted
-    /// (runtime.json self-report verified), a missing pid file is a
-    /// clean Stopped, and anything else (dead pid, reused pid,
-    /// unidentifiable process) is Dead. Single classification source —
-    /// info() and health() derive from it.
+    /// live tagma is Running (launch-anchor verified), a missing pid
+    /// file is a clean Stopped, and anything else (dead pid, reused
+    /// pid, unidentifiable process) is Dead. Single classification
+    /// source — info() and health() derive from it.
     pub fn state(&self) -> InstanceState {
         match self.pid {
             None => InstanceState::Stopped,
-            Some(pid) => {
-                match classify_with_facts(
-                    self.anchored.as_ref(),
-                    self.reported_starttime,
-                    pid,
-                    &self.slug,
-                ) {
-                    (Verdict::Match, Some(Verify::Adopted)) => InstanceState::Adopted,
-                    (Verdict::Match, _) => InstanceState::Running,
-                    _ => InstanceState::Dead,
-                }
-            }
+            Some(pid) => match classify_with_facts(self.anchored.as_ref(), pid, &self.slug).0 {
+                Verdict::Match => InstanceState::Running,
+                _ => InstanceState::Dead,
+            },
         }
     }
     pub fn info(&self) -> InstanceInfo {
         let state = self.state();
+        let live = state == InstanceState::Running;
         InstanceInfo {
             slug: self.slug.clone(),
             instance_id: self.instance_id.clone(),
             workspace: self.workspace.clone().unwrap_or_default(),
-            running: matches!(state, InstanceState::Running | InstanceState::Adopted),
+            running: live,
             state,
             // The runtime file survives a stop, so its port is only a
-            // live listen port while the instance is live (Running or
-            // Adopted); anything else would leak a stale, dead endpoint.
-            port: matches!(state, InstanceState::Running | InstanceState::Adopted)
-                .then_some(self.port)
-                .flatten(),
+            // live listen port while the instance is live; anything
+            // else would leak a stale, dead endpoint.
+            port: live.then_some(self.port).flatten(),
             owner: self.owner,
             tagma_id: self.tagma_id.clone(),
         }
@@ -88,23 +76,11 @@ impl ScannedInstance {
 
     pub fn health(&self) -> HealthReport {
         let state = self.state();
-        let live = matches!(state, InstanceState::Running | InstanceState::Adopted);
+        let live = state == InstanceState::Running;
         let detail = if live {
             None
-        } else if let Some(pid) = self.pid {
-            let (verdict, _) = classify_with_facts(
-                self.anchored.as_ref(),
-                self.reported_starttime,
-                pid,
-                &self.slug,
-            );
-            match verdict {
-                Verdict::Unknown if self.reported_starttime.is_some() => Some(
-                    "live pid, but its exe is unreadable from the daemon (cross-uid?); adoption refused — relaunch it as the daemon's user or spawn it via the daemon"
-                        .to_string(),
-                ),
-                _ => Some("pid does not match a live instance (stale or reused)".to_string()),
-            }
+        } else if self.pid.is_some() {
+            Some("pid does not match a live instance (stale or reused)".to_string())
         } else {
             Some("no runtime.json".to_string())
         };
@@ -137,8 +113,8 @@ pub fn pid_comm(pid: u32) -> Option<String> {
         .ok()
         .map(|c| c.trim().to_owned())
 }
-/// The launch-time identity anchor persisted in `meta.json`: the pid
-/// plus the kernel start time of the exact process incarnation a
+/// The launch-time identity anchor persisted in the instance record: the
+/// pid plus the kernel start time of the exact process incarnation a
 /// launch claimed. `starttime` is the reuse discriminator (a recycled
 /// pid gets a fresh start time); `anchored_at` is a wall-clock
 /// diagnostic of when the claim happened, never compared.
@@ -190,30 +166,26 @@ fn tagma_comm_matches(comm: &str) -> bool {
     comm.trim_start_matches("kallip-").starts_with("tagma") || comm == ".kallip-tagma-w"
 }
 /// The identity verdict for a recorded pid: is this live process
-/// this instance's tagma — the anchored incarnation, or a process
-/// the runtime.json self-report vouches for?
+/// this instance's tagma — the anchored incarnation?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     /// Live and positively identified as this instance's tagma.
     Match,
     /// Live, but provably not a verifiable incarnation of this
-    /// instance: the anchor denies it, the pid was reused, a foreign
-    /// process occupies it, or the self-report describes someone else.
+    /// instance: the anchor denies it, the pid was reused, or a
+    /// foreign process occupies it.
     Mismatch,
     /// Live, but every identity probe failed — unverifiable.
     Unknown,
     /// No live process (dead or zombie).
     Gone,
 }
-/// How a `Verdict::Match` verified. The wire word hangs off this: an
-/// anchor verify is the daemon's own launch claim (`running`), a
-/// self-report verify is adoption of a live process the daemon did
-/// not launch (`adopted`), and a name verify is the degraded chain
+/// How a `Verdict::Match` verified. An anchor verify is the daemon's
+/// own launch claim (`running`); a name verify is the degraded chain
 /// worth a warn (still `running`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verify {
     Anchored,
-    Adopted,
     ByName,
 }
 /// What /proc says about a pid, gathered once for classification.
@@ -231,20 +203,16 @@ pub fn observe_identity(pid: u32) -> ProcFacts {
         comm: pid_comm(pid),
     }
 }
-/// Pure classification over the anchored identity, the runtime.json
-/// self-report, and the observed facts. The `Verify` is `Some` only
-/// on a Match: which root verified — the launch anchor (exact
-/// incarnation), the self-report (adoption), or the exe/comm name
-/// chain (degraded). Level order: existence (a dead pid is quietly
+/// Pure classification over the anchored identity and the observed
+/// facts. The `Verify` is `Some` only on a Match: which root verified —
+/// the launch anchor (exact incarnation) or the exe/comm name chain
+/// (degraded). Level order: existence (a dead pid is quietly
 /// `Gone`), a positive anchor verify, the anti split-brain anchor
-/// denial, the adoption triple (the self-reported starttime matches
-/// the live process AND the exe is family — a readable exe is also
-/// the same-uid proof, so a cross-uid tagma is refused as `Unknown`
-/// rather than adopted), then the legacy name chain for runtimes
-/// without a starttime credential.
+/// denial (a live second claimant must not pass while the anchored
+/// incarnation is still up), then the name chain for a launch whose
+/// claim point could not pin an anchor.
 fn classify_identity(
     anchored: Option<&Identity>,
-    reported_starttime: Option<u64>,
     pid: u32,
     facts: &ProcFacts,
 ) -> (Verdict, Option<Verify>) {
@@ -257,31 +225,16 @@ fn classify_identity(
         }
         // The anchor names a different live incarnation: the instance
         // already has its daemon-launched tagma, so a second live
-        // claimant must not be adopted over it (split brain, or a
-        // runtime.json retargeted at someone else's process).
+        // claimant must not pass (split brain, or a runtime.json
+        // retargeted at someone else's process).
         if anchor.pid != pid && anchor_incarnation_live(anchor) {
             return (Verdict::Mismatch, None);
         }
     }
-    if let Some(reported) = reported_starttime {
-        if facts.starttime == Some(reported)
-            && let Some(exe) = &facts.exe
-            && tagma_exe_family(exe)
-        {
-            return (Verdict::Match, Some(Verify::Adopted));
-        }
-        if facts.exe.is_none() {
-            // Live and self-reported, but the exe link is unreadable —
-            // the same-uid proof adoption requires is missing.
-            return (Verdict::Unknown, None);
-        }
-        // The self-report describes an incarnation other than the one
-        // now on this pid: stale, reused, or rewritten.
-        return (Verdict::Mismatch, None);
-    }
-    // No self-report credential on file (a pre-starttime runtime.json)
-    // — the legacy chain: an anchor that pins this pid and can compare
-    // starttimes decides, else the exe/comm name chain.
+    // No anchor vouched for this pid (the claim point could not pin
+    // one) — the degraded chain: the anchor must at least not name a
+    // different or differently-timed incarnation, then the exe/comm
+    // name chain decides.
     if let Some(anchor) = anchored {
         if anchor.pid != pid {
             return (Verdict::Mismatch, None);
@@ -308,8 +261,8 @@ fn classify_identity(
 /// Whether the anchor's own claimed incarnation is still live. A live
 /// pid whose starttime matches the anchor is the claiming process; an
 /// alive-but-unverifiable pid (a legacy anchor without a starttime, or
-/// an unreadable /proc) counts as claiming — adoption is refused
-/// rather than risk a second live tagma on one directory.
+/// an unreadable /proc) counts as claiming — a second claimant is
+/// refused rather than risk two live tagmas on one instance.
 fn anchor_incarnation_live(anchor: &Identity) -> bool {
     if !pid_is_alive(anchor.pid) {
         return false;
@@ -319,18 +272,16 @@ fn anchor_incarnation_live(anchor: &Identity) -> bool {
         None => true,
     }
 }
-/// Classify a recorded pid against `anchored` and the runtime.json
-/// self-report, warning exactly when the verdict is a degraded
-/// by-name Match: the one "live, but only by name" case worth
-/// investigating.
+/// Classify a recorded pid against `anchored`, warning exactly when the
+/// verdict is a degraded by-name Match: the one "live, but only by
+/// name" case worth investigating.
 fn classify_with_facts(
     anchored: Option<&Identity>,
-    reported_starttime: Option<u64>,
     pid: u32,
     slug: &str,
 ) -> (Verdict, Option<Verify>) {
     let facts = observe_identity(pid);
-    let (verdict, verify) = classify_identity(anchored, reported_starttime, pid, &facts);
+    let (verdict, verify) = classify_identity(anchored, pid, &facts);
     if verify == Some(Verify::ByName) {
         tracing::warn!(
             slug = %slug,
@@ -341,125 +292,92 @@ fn classify_with_facts(
     }
     (verdict, verify)
 }
-/// Classification for callers holding an instance dir rather than a
-/// scanned struct: reads the anchor and the runtime self-report fresh
-/// (the tree is the registry) and classifies the recorded pid.
-pub fn identity_matches(instance_dir: &Path, pid: u32) -> Verdict {
-    let anchored = read_meta(instance_dir).and_then(|meta| meta.identity);
-    let reported = read_runtime(instance_dir)
-        .and_then(|runtime| (runtime.starttime > 0).then_some(runtime.starttime));
-    let slug = instance_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("?")
-        .to_owned();
-    classify_with_facts(anchored.as_ref(), reported, pid, &slug).0
-}
-
-/// `meta.json`: the managed-instance marker for an instance directory.
-/// The daemon's spawn pipeline is the normal writer; a hand-written
-/// minimal marker (instance_id + owner_uid) is the manual-launch
-/// path. A directory without a parseable one is not managed. It
-/// carries the static identity
-/// (instance id, owning uid, canonical workspace, spawn-time user env); the volatile
-/// runtime facts live in `runtime.json`.
-/// `workspace` is the one optional key: a minimal hand-written marker
-/// is enough — it just stops participating in overlap checks.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct InstanceMeta {
-    pub instance_id: String,
-    pub owner_uid: u32,
-    #[serde(default)]
-    pub workspace: Option<String>,
-    /// The KEY=VALUE user env pairs the instance was spawned with,
-    /// persisted so a stopped instance relaunches (via wire Start) with
-    /// its original configuration. Daemon-owned keys are never stored
-    /// here (they are re-derived per launch); #[serde(default)] keeps
-    /// pre-field meta.json files parseable.
-    #[serde(default)]
-    pub env: Vec<String>,
-    /// The launch claim anchor: the pid and kernel starttime of the
-    /// exact process incarnation a launch verified as its own (see
-    /// `Identity`). #[serde(default)] is generic tolerance for meta
-    /// whose claim point could not pin one — tolerance, not a second
-    /// accepted shape.
-    #[serde(default)]
-    pub identity: Option<Identity>,
+/// Classification for callers holding a record rather than a scanned
+/// struct: classifies the recorded pid against the record's anchor.
+pub fn identity_matches(record: &InstanceRecord, slug: &str, pid: u32) -> Verdict {
+    classify_with_facts(record.identity.as_ref(), pid, slug).0
 }
 
 /// `runtime.json`: the instance's runtime identity, written by the
 /// tagma itself. The key set (`pid`, `port`, `starttime`) is a
 /// cross-crate contract — kallip-tagma serializes its own mirror of
 /// these keys and does not depend on the daemon crates, so the two
-/// definitions stay in lockstep by hand. `starttime` is the writing
-/// process's kernel start time: the adoption credential checked when
-/// no launch anchor verifies the pid.
+/// definitions stay in lockstep by hand. The self-report half of the
+/// contract stays: the tagma keeps self-reporting its incarnation
+/// start time even though the daemon verifies liveness against its
+/// own `/proc` read.
 #[derive(Debug, serde::Deserialize)]
 pub struct RuntimeFile {
     pub pid: u32,
     pub port: u16,
-    /// `#[serde(default)]` keeps pre-field files parseable; `0` (or
-    /// absent) means the file carries no adoption credential.
+    /// Mirrored for the key-set contract; not read by the daemon.
+    /// `default` keeps pre-key contract files (older tagmas) parsing.
+    #[allow(dead_code)]
     #[serde(default)]
     pub starttime: u64,
 }
-/// Scan `<data_root>/*/meta.json`. Directories without the marker are
-/// not managed — only marker-carrying directories are instances.
-pub fn scan_instances(data_root: &Path) -> Vec<ScannedInstance> {
-    let Ok(entries) = std::fs::read_dir(data_root) else {
-        return Vec::new();
+/// Enumerate the record area: every `<slug>.json` is one managed
+/// instance. The runtime facts and the enrolled identity are read
+/// through the record's data-directory pointer.
+pub fn scan_instances(record_root: &Path) -> Vec<ScannedInstance> {
+    let entries = match std::fs::read_dir(record_root) {
+        // A missing record area is an empty registry; any other read
+        // failure is an environment fault that must not pass silently
+        // as an empty registry.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => {
+            tracing::warn!(
+                root = %record_root.display(),
+                error = %e,
+                "record area unreadable; reporting an empty registry"
+            );
+            return Vec::new();
+        }
+        Ok(entries) => entries,
     };
     let mut out = Vec::new();
     for entry in entries.flatten() {
-        let dir = entry.path();
-        let Some(slug) = entry.file_name().into_string().ok() else {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(slug) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        let Some(meta) = read_meta(&dir) else {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            tracing::warn!(path = %path.display(), "instance record unreadable; skipped");
             continue;
         };
-        let runtime = read_runtime(&dir);
-        let reported_starttime = runtime
-            .as_ref()
-            .and_then(|r| (r.starttime > 0).then_some(r.starttime));
+        let Ok(record) = serde_json::from_str::<InstanceRecord>(&text) else {
+            tracing::warn!(path = %path.display(), "instance record unparseable; skipped");
+            continue;
+        };
+        let runtime = read_runtime(&record.data_dir);
         out.push(ScannedInstance {
-            slug,
-            instance_id: meta.instance_id,
-            workspace: meta.workspace.filter(|w| !w.is_empty()),
+            slug: slug.to_owned(),
+            instance_id: record.instance_id,
+            // An empty-string workspace (a hand-written or half-written
+            // record) must read back as absent, not as a zero-component
+            // path that would compare oddly against real workspaces.
+            workspace: record.workspace.filter(|w| !w.is_empty()),
             pid: runtime.as_ref().map(|r| r.pid),
             port: runtime.as_ref().map(|r| r.port),
-            reported_starttime,
-            owner: Some(meta.owner_uid),
-            tagma_id: read_tagma_id(&dir),
-            anchored: meta.identity,
+            owner: Some(record.owner_uid),
+            tagma_id: read_tagma_id(&record.data_dir),
+            anchored: record.identity,
         });
     }
     out.sort_by(|a, b| a.slug.cmp(&b.slug));
     out
 }
-
-pub(crate) fn read_meta(dir: &Path) -> Option<InstanceMeta> {
-    let text = std::fs::read_to_string(dir.join("meta.json")).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-pub fn read_runtime(dir: &Path) -> Option<RuntimeFile> {
+pub(crate) fn read_runtime(dir: &Path) -> Option<RuntimeFile> {
     let text = std::fs::read_to_string(dir.join("runtime.json")).ok()?;
     serde_json::from_str(&text).ok()
 }
-
-/// The enrolled tagma identity under `<instance>/credentials/`, read from
-/// the tagma's own persisted `tagma.id`. Mirrors the tagma's primary-identity
-/// rule as a conservative approximation: the first credentials entry
-/// (alphabetical) carrying a non-empty `tagma.id` — single-archeion deployments
-/// have exactly one entry, so this IS the tagma's primary. Discipline lock:
-/// this reads `tagma.id` ONLY; `tagma.token` (0o600 secret) is never opened,
-/// and the scan test asserts the token never reaches the wire.
-/// The tagma's config order (relays.toml) is deliberately NOT read: that
-/// file is the tagma process's own domain, while the instance tree is the
-/// daemon's — the approximation stays within daemon-owned ground.
-fn read_tagma_id(dir: &Path) -> Option<String> {
-    let creds = dir.join("credentials");
+/// The enrolled tagma identity: the first (sorted) credential entry
+/// under the data directory's `credentials/` carrying a non-empty `tagma.id`.
+fn read_tagma_id(data_dir: &Path) -> Option<String> {
+    let creds = data_dir.join("credentials");
     let Ok(entries) = std::fs::read_dir(&creds) else {
         return None;
     };
@@ -472,11 +390,13 @@ fn read_tagma_id(dir: &Path) -> Option<String> {
         .collect();
     names.sort();
     for name in names {
-        if let Ok(text) = std::fs::read_to_string(creds.join(name).join("tagma.id")) {
-            let id = text.trim();
-            if !id.is_empty() {
-                return Some(id.to_string());
-            }
+        let path = creds.join(name).join("tagma.id");
+        // An empty tagma.id (an enroll interrupted mid-write) is not an
+        // identity: skip it and keep looking at the remaining entries.
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && !text.trim().is_empty()
+        {
+            return Some(text.trim().to_owned());
         }
     }
     None
@@ -494,20 +414,39 @@ mod tests {
         std::fs::write(path, text).expect("write fixture");
     }
 
+    /// One record-area file plus the data tree it points at. Tests add
+    /// runtime.json / credentials inside the data tree as needed.
+    fn instance(root: &Path, slug: &str, instance_id: &str, owner_uid: u32) {
+        let data_dir = root.join("data").join(slug);
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let record = format!(
+            r#"{{"instance_id":"{instance_id}","owner_uid":{owner_uid},"target_uid":{owner_uid},"data_dir":{}}}"#,
+            serde_json::to_string(&data_dir).expect("json path"),
+        );
+        write(&root.join(format!("{slug}.json")), &record);
+    }
+
+    fn instance_with_workspace(root: &Path, slug: &str, instance_id: &str, workspace: &str) {
+        let data_dir = root.join("data").join(slug);
+        std::fs::create_dir_all(&data_dir).expect("data dir");
+        let record = format!(
+            r#"{{"instance_id":"{instance_id}","owner_uid":1000,"target_uid":1000,"workspace":{},"data_dir":{}}}"#,
+            serde_json::to_string(workspace).expect("json ws"),
+            serde_json::to_string(&data_dir).expect("json path"),
+        );
+        write(&root.join(format!("{slug}.json")), &record);
+    }
+
     #[test]
-    fn scan_skips_dirs_without_meta_and_sorts_by_slug() {
+    fn scan_skips_non_record_files_and_sorts_by_slug() {
         let root = tempfile_dir("skips");
-        write(
-            &root.join("beta/meta.json"),
-            r#"{"instance_id":"id-2","owner_uid":1001}"#,
-        );
-        write(
-            &root.join("alpha/meta.json"),
-            r#"{"instance_id":"id-1","owner_uid":1000,"workspace":"/tmp/w"}"#,
-        );
-        write(&root.join("broken/meta.json"), "{ not json");
-        write(&root.join("noise-file"), "x"); // flat file: not a dir
-        std::fs::create_dir(root.join("noise")).expect("noise dir");
+        instance(&root, "beta", "id-2", 1001);
+        instance_with_workspace(&root, "alpha", "id-1", "/tmp/w");
+        // An unparseable record file is skipped (with a warn), not a
+        // hard error: one corrupt file cannot hide the registry.
+        write(&root.join("broken.json"), "{ not json");
+        write(&root.join("noise.txt"), "x"); // not a `*.json` record
+        std::fs::create_dir(root.join("noise.json")).expect("noise dir");
 
         let scanned = scan_instances(&root);
         let slugs: Vec<_> = scanned.iter().map(|s| s.slug.as_str()).collect();
@@ -516,10 +455,7 @@ mod tests {
         assert_eq!(scanned[0].workspace.as_deref(), Some("/tmp/w"));
         assert_eq!(scanned[1].owner, Some(1001));
         assert_eq!(scanned[1].workspace, None);
-        write(
-            &root.join("empty/meta.json"),
-            r#"{"instance_id":"id-3","owner_uid":1002,"workspace":""}"#,
-        );
+        instance_with_workspace(&root, "gamma", "id-3", "");
         // An empty-string workspace must read back as absent, not as a
         // zero-component path that overlaps everything.
         assert_eq!(scan_instances(&root)[2].workspace, None);
@@ -528,11 +464,11 @@ mod tests {
     #[test]
     fn dead_pid_reports_not_running_with_detail() {
         let root = tempfile_dir("dead-pid");
+        instance(&root, "a", "id", 1000);
         write(
-            &root.join("a/meta.json"),
-            r#"{"instance_id":"id","owner_uid":1000}"#,
+            &root.join("data/a/runtime.json"),
+            r#"{"pid":99999999,"port":1}"#,
         );
-        write(&root.join("a/runtime.json"), r#"{"pid":99999999,"port":1}"#);
         let scanned = scan_instances(&root);
         assert_eq!(scanned[0].state(), InstanceState::Dead);
         let health = scanned[0].health();
@@ -547,10 +483,7 @@ mod tests {
     #[test]
     fn no_runtime_file_means_not_running() {
         let root = tempfile_dir("no-pid");
-        write(
-            &root.join("a/meta.json"),
-            r#"{"instance_id":"id","owner_uid":1000}"#,
-        );
+        instance(&root, "a", "id", 1000);
         let scanned = scan_instances(&root);
         let health = scanned[0].health();
         assert!(!health.running);
@@ -564,7 +497,7 @@ mod tests {
         // count even though it is alive: the exe/comm fallback checks
         // are load-bearing, not decoration.
         let pid = std::process::id();
-        let (verdict, verify) = classify_identity(None, None, pid, &observe_identity(pid));
+        let (verdict, verify) = classify_identity(None, pid, &observe_identity(pid));
         assert_eq!(verdict, Verdict::Mismatch);
         assert!(verify.is_none());
     }
@@ -586,7 +519,6 @@ mod tests {
         // Anchor level: same pid, same starttime — the exact incarnation.
         let (v, how) = classify_identity(
             Some(&anchor),
-            None,
             42,
             &facts(Some(1000), tagma_exe.clone(), Some("kallip-tagma")),
         );
@@ -594,7 +526,6 @@ mod tests {
         // Same pid, different starttime: the pid was recycled.
         let (v, _) = classify_identity(
             Some(&anchor),
-            None,
             42,
             &facts(Some(2000), tagma_exe.clone(), Some("kallip-tagma")),
         );
@@ -602,19 +533,13 @@ mod tests {
         // The runtime pid is not the anchored pid at all.
         let (v, _) = classify_identity(
             Some(&anchor),
-            None,
             43,
             &facts(Some(1000), tagma_exe.clone(), Some("kallip-tagma")),
         );
         assert_eq!(v, Verdict::Mismatch);
         // Anchor present but starttime unreadable: falls below the
         // anchor; a family exe still matches, but by name.
-        let (v, how) = classify_identity(
-            Some(&anchor),
-            None,
-            42,
-            &facts(None, tagma_exe.clone(), None),
-        );
+        let (v, how) = classify_identity(Some(&anchor), 42, &facts(None, tagma_exe.clone(), None));
         assert_eq!((v, how), (Verdict::Match, Some(Verify::ByName)));
         // A hand-crafted zero starttime in the anchor cannot anchor
         // anything (the launch path never writes one): the anchor
@@ -626,7 +551,6 @@ mod tests {
         };
         let (v, how) = classify_identity(
             Some(&zero_anchor),
-            None,
             42,
             &facts(Some(1000), tagma_exe.clone(), Some("kallip-tagma")),
         );
@@ -634,162 +558,36 @@ mod tests {
         // No anchor at all: name-chain matches are by-name matches.
         let (v, how) = classify_identity(
             None,
-            None,
             42,
             &facts(Some(1000), tagma_exe.clone(), Some("kallip-tagma")),
         );
         assert_eq!((v, how), (Verdict::Match, Some(Verify::ByName)));
         // Wrapped binary: comm falls back to the truncated shim name.
-        let (v, how) =
-            classify_identity(None, None, 42, &facts(None, None, Some(".kallip-tagma-w")));
+        let (v, how) = classify_identity(None, 42, &facts(None, None, Some(".kallip-tagma-w")));
         assert_eq!((v, how), (Verdict::Match, Some(Verify::ByName)));
         // A readable exe that is not family decides against comm.
-        let (v, _) = classify_identity(
-            None,
-            None,
-            42,
-            &facts(None, foreign_exe, Some("kallip-tagma")),
-        );
+        let (v, _) = classify_identity(None, 42, &facts(None, foreign_exe, Some("kallip-tagma")));
         assert_eq!(v, Verdict::Mismatch);
         // Nothing readable on a live process: unverifiable.
-        let (v, _) = classify_identity(None, None, 42, &facts(None, None, None));
+        let (v, _) = classify_identity(None, 42, &facts(None, None, None));
         assert_eq!(v, Verdict::Unknown);
         // A dead pid is Gone — quiet, never verified (u32::MAX names no
         // process; kernel pids cap far below it).
-        let (v, how) = classify_identity(None, None, u32::MAX, &ProcFacts::default());
+        let (v, how) = classify_identity(None, u32::MAX, &ProcFacts::default());
         assert_eq!((v, how), (Verdict::Gone, None));
     }
 
     #[test]
-    fn adoption_triple_verifies_a_self_reported_process() {
-        // No anchor: the runtime.json self-report (starttime + family
-        // exe) is enough to adopt the live process.
-        let pid = std::process::id();
-        let facts = ProcFacts {
-            starttime: Some(4242),
-            exe: Some("/nix/store/xyz-kallip-tagma-0.1.0/bin/kallip-tagma".to_string()),
-            comm: None,
-        };
-        let (v, how) = classify_identity(None, Some(4242), pid, &facts);
-        assert_eq!((v, how), (Verdict::Match, Some(Verify::Adopted)));
-    }
-
-    #[test]
-    fn adoption_refused_when_the_report_describes_another_incarnation() {
-        // The self-report names a starttime unlike the live pid's (pid
-        // reuse, or a report rewritten at a stale incarnation): refused.
-        let pid = std::process::id();
-        let facts = ProcFacts {
-            starttime: Some(9999),
-            exe: Some("/nix/store/xyz-kallip-tagma-0.1.0/bin/kallip-tagma".to_string()),
-            comm: Some("kallip-tagma".to_string()),
-        };
-        let (v, how) = classify_identity(None, Some(4242), pid, &facts);
-        assert_eq!((v, how), (Verdict::Mismatch, None));
-    }
-
-    #[test]
-    fn adoption_refused_without_a_readable_exe() {
-        // starttime matches but the exe is unreadable (the cross-uid
-        // shape): the same-uid proof is missing — Unknown, never Match.
-        let pid = std::process::id();
-        let facts = ProcFacts {
-            starttime: Some(4242),
-            exe: None,
-            comm: Some("kallip-tagma".to_string()),
-        };
-        let (v, how) = classify_identity(None, Some(4242), pid, &facts);
-        assert_eq!((v, how), (Verdict::Unknown, None));
-    }
-
-    #[test]
-    fn adoption_proceeds_when_the_anchored_incarnation_is_gone() {
-        // The anchored pid names no live process: a self-report on a
-        // different live pid is adoption, not a conflict.
-        let pid = std::process::id();
-        let dead_anchor = Identity {
-            pid: 99999999,
-            starttime: 1000,
-            anchored_at: 7,
-        };
-        let facts = ProcFacts {
-            starttime: Some(4242),
-            exe: Some("/nix/store/xyz-kallip-tagma-0.1.0/bin/kallip-tagma".to_string()),
-            comm: None,
-        };
-        let (v, how) = classify_identity(Some(&dead_anchor), Some(4242), pid, &facts);
-        assert_eq!((v, how), (Verdict::Match, Some(Verify::Adopted)));
-    }
-
-    #[test]
-    fn adoption_denied_while_the_anchored_incarnation_is_live() {
-        // The anchor's own incarnation is still live on its pid: a
-        // second live claimant on the same directory is denied even
-        // with a perfect self-report (split brain / retarget guard).
-        let pid = std::process::id();
-        let anchor = Identity {
-            pid,
-            starttime: proc_starttime(pid).expect("own /proc stat readable"),
-            anchored_at: 7,
-        };
-        // A real live process stands in as the second claimant: the
-        // guard fires for any live pid the anchor does not name.
-        let mut sleeper = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .expect("sleeper process");
-        let claimant = sleeper.id();
-        let facts = ProcFacts {
-            starttime: Some(777),
-            exe: Some("/nix/store/xyz-kallip-tagma-0.1.0/bin/kallip-tagma".to_string()),
-            comm: None,
-        };
-        let (v, how) = classify_identity(Some(&anchor), Some(777), claimant, &facts);
-        let _ = sleeper.kill();
-        let _ = sleeper.wait();
-        assert_eq!((v, how), (Verdict::Mismatch, None));
-    }
-
-    #[test]
-    fn adoption_denied_over_a_live_legacy_anchor_without_a_starttime() {
-        // A pre-starttime daemon's anchor (starttime 0) on a live pid
-        // still counts as claiming: /proc readable or not, adoption
-        // is refused rather than risk a second live tagma on the
-        // directory.
-        let pid = std::process::id();
-        let anchor = Identity {
-            pid,
-            starttime: 0,
-            anchored_at: 7,
-        };
-        let mut sleeper = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .expect("sleeper process");
-        let claimant = sleeper.id();
-        let facts = ProcFacts {
-            starttime: Some(777),
-            exe: Some("/nix/store/xyz-kallip-tagma-0.1.0/bin/kallip-tagma".to_string()),
-            comm: None,
-        };
-        let (v, how) = classify_identity(Some(&anchor), Some(777), claimant, &facts);
-        let _ = sleeper.kill();
-        let _ = sleeper.wait();
-        assert_eq!((v, how), (Verdict::Mismatch, None));
-    }
-    #[test]
-    fn scan_of_a_non_tagma_self_report_stays_dead() {
-        // This test binary publishes a perfect self-report — but its
-        // exe is not a kallip-tagma, so adoption must refuse it.
-        let root = tempfile_dir("adopt-refused");
-        write(
-            &root.join("a/meta.json"),
-            r#"{"instance_id":"id","owner_uid":1000}"#,
-        );
+    fn scan_of_a_non_tagma_runtime_process_stays_dead() {
+        // The runtime.json names this very process — live, with a real
+        // starttime — but no anchor vouches for it and its exe is not a
+        // kallip-tagma, so the name chain refuses: Dead, never Running.
+        let root = tempfile_dir("foreign-live");
+        instance(&root, "a", "id", 1000);
         let pid = std::process::id();
         let starttime = proc_starttime(pid).expect("own /proc stat readable");
         write(
-            &root.join("a/runtime.json"),
+            &root.join("data/a/runtime.json"),
             &format!(r#"{{"pid":{pid},"port":7000,"starttime":{starttime}}}"#),
         );
         let scanned = scan_instances(&root);
@@ -806,16 +604,13 @@ mod tests {
     #[test]
     fn tagma_id_reads_first_entry_and_never_the_token() {
         let root = tempfile_dir("tagma-id");
-        write(
-            &root.join("team/meta.json"),
-            r#"{"instance_id":"id-1","owner_uid":1000}"#,
-        );
+        instance(&root, "team", "id-1", 1000);
         // Two entries: alphabetical-first wins as the conservative primary.
-        write(&root.join("team/credentials/b/tagma.id"), "tid-b\n");
-        write(&root.join("team/credentials/a/tagma.id"), "tid-a\n");
+        write(&root.join("data/team/credentials/b/tagma.id"), "tid-b\n");
+        write(&root.join("data/team/credentials/a/tagma.id"), "tid-a\n");
         // The 0o600 secret sits next to the id; it must never surface.
         write(
-            &root.join("team/credentials/a/tagma.token"),
+            &root.join("data/team/credentials/a/tagma.token"),
             "sk-secret-token",
         );
         let info = scan_instances(&root)[0].info();
@@ -827,15 +622,12 @@ mod tests {
     #[test]
     fn tagma_id_none_when_unenrolled_or_blank() {
         let root = tempfile_dir("tagma-id-none");
+        instance(&root, "local", "id-2", 1000); // never enrolled: no credentials tree
+        instance(&root, "blank", "id-3", 1000);
         write(
-            &root.join("local/meta.json"),
-            r#"{"instance_id":"id-2","owner_uid":1000}"#,
-        ); // never enrolled: no credentials tree at all
-        write(
-            &root.join("blank/meta.json"),
-            r#"{"instance_id":"id-3","owner_uid":1000}"#,
+            &root.join("data/blank/credentials/default/tagma.id"),
+            "  \n",
         );
-        write(&root.join("blank/credentials/default/tagma.id"), "  \n");
         for scanned in scan_instances(&root) {
             assert_eq!(scanned.tagma_id, None);
         }
@@ -844,19 +636,13 @@ mod tests {
     #[test]
     fn tagma_id_degrades_to_none_on_unreadable_credentials() {
         let root = tempfile_dir("tagma-id-unreadable");
-        write(
-            &root.join("u1/meta.json"),
-            r#"{"instance_id":"id-4","owner_uid":1000}"#,
-        );
+        instance(&root, "u1", "id-4", 1000);
         // `tagma.id` as a directory: the read fails and the entry is skipped.
-        std::fs::create_dir_all(root.join("u1/credentials/default/tagma.id"))
+        std::fs::create_dir_all(root.join("data/u1/credentials/default/tagma.id"))
             .expect("fixture dir-as-file");
-        write(
-            &root.join("u2/meta.json"),
-            r#"{"instance_id":"id-5","owner_uid":1000}"#,
-        );
+        instance(&root, "u2", "id-5", 1000);
         // `credentials` itself not a directory: the listing fails outright.
-        write(&root.join("u2/credentials"), "not a dir");
+        write(&root.join("data/u2/credentials"), "not a dir");
         for scanned in scan_instances(&root) {
             assert_eq!(scanned.tagma_id, None);
         }
@@ -865,15 +651,12 @@ mod tests {
     #[test]
     fn scan_surfaces_runtime_port() {
         let root = tempfile_dir("runtime-port");
+        instance(&root, "a", "id-1", 1000);
         write(
-            &root.join("a/meta.json"),
-            r#"{"instance_id":"id-1","owner_uid":1000}"#,
+            &root.join("data/a/runtime.json"),
+            r#"{"pid":1,"port":7301}"#,
         );
-        write(&root.join("a/runtime.json"), r#"{"pid":1,"port":7301}"#);
-        write(
-            &root.join("b/meta.json"),
-            r#"{"instance_id":"id-2","owner_uid":1000}"#,
-        );
+        instance(&root, "b", "id-2", 1000);
         let scanned = scan_instances(&root);
         // The raw scan keeps the runtime file's port (pid 1 is not a
         // live tagma, so this instance is NOT Running)...

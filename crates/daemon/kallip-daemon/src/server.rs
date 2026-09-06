@@ -16,12 +16,12 @@ use crate::scan;
 /// Shared handler context for one daemon process.
 #[derive(Debug, Clone)]
 pub struct Daemon {
-    pub data_root: PathBuf,
+    pub record_root: PathBuf,
 }
 
 impl Daemon {
-    pub fn new(data_root: PathBuf) -> Self {
-        Self { data_root }
+    pub fn new(record_root: PathBuf) -> Self {
+        Self { record_root }
     }
 
     /// Serve requests on `listener` until the process is stopped.
@@ -97,7 +97,7 @@ impl Daemon {
     }
 
     async fn dispatch(&self, body: RequestBody, peer_uid: u32) -> Response {
-        let instances = scan::scan_instances(&self.data_root);
+        let instances = scan::scan_instances(&self.record_root);
         match body {
             RequestBody::List => ok(OkPayload::List {
                 instances: instances.iter().map(|i| i.info()).collect(),
@@ -129,11 +129,11 @@ impl Daemon {
                 // 30s for the pidfile; spawn_blocking keeps the runtime free.
                 let timeout = std::time::Duration::from_secs(30);
                 match tokio::task::spawn_blocking({
-                    let data_root = self.data_root.clone();
+                    let record_root = self.record_root.clone();
                     move || {
                         let slug = slug.clone();
                         crate::spawn::spawn(
-                            &data_root,
+                            &record_root,
                             &slug,
                             &workspace,
                             &env,
@@ -162,8 +162,8 @@ impl Daemon {
             RequestBody::Stop { slug } => {
                 let slug_out = slug.clone();
                 match tokio::task::spawn_blocking({
-                    let data_root = self.data_root.clone();
-                    move || crate::stop::stop(&data_root, &slug)
+                    let record_root = self.record_root.clone();
+                    move || crate::stop::stop(&record_root, &slug)
                 })
                 .await
                 {
@@ -181,10 +181,10 @@ impl Daemon {
                 // the relaunched tagma's runtime.json.
                 let timeout = std::time::Duration::from_secs(30);
                 match tokio::task::spawn_blocking({
-                    let data_root = self.data_root.clone();
+                    let record_root = self.record_root.clone();
                     move || {
                         crate::start::start(
-                            &data_root,
+                            &record_root,
                             &slug,
                             &env,
                             exe.as_deref(),
@@ -218,6 +218,7 @@ fn spawn_error_response(error: &crate::spawn::SpawnError) -> Response {
     use crate::spawn::SpawnError;
     let code = match error {
         SpawnError::SlugTaken(_) => ErrorCode::SlugTaken,
+        SpawnError::Denied { .. } => ErrorCode::Denied,
         SpawnError::Overlap { .. } => ErrorCode::WorkspaceOverlap,
         SpawnError::Invalid(_) => ErrorCode::InvalidSpawnInput,
         SpawnError::Timeout { .. } => ErrorCode::SpawnTimeout,
@@ -237,6 +238,9 @@ fn log_spawn_outcome(slug: &str, error: &crate::spawn::SpawnError) {
     match error {
         SpawnError::Invalid(_) => {
             tracing::info!(slug = %slug, %error, "spawn refused: invalid request")
+        }
+        SpawnError::Denied { .. } => {
+            tracing::info!(slug = %slug, %error, "spawn refused: denied")
         }
         SpawnError::SlugTaken(_) => {
             tracing::warn!(slug = %slug, %error, "spawn refused: slug already exists")
@@ -277,12 +281,22 @@ mod tests {
     #[tokio::test]
     async fn uds_round_trip_list_and_health() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir(dir.path().join("alpha")).expect("instance dir");
-        std::fs::write(
-            dir.path().join("alpha/meta.json"),
-            r#"{"instance_id":"id-1","owner_uid":1000,"workspace":"/tmp/w"}"#,
+        let data = tempfile::tempdir().expect("data tempdir");
+        crate::records::write_record(
+            dir.path(),
+            "alpha",
+            &crate::records::InstanceRecord {
+                instance_id: "id-1".into(),
+                owner_uid: 1000,
+                target_uid: 1000,
+                target_username: None,
+                workspace: Some("/tmp/w".into()),
+                env: Vec::new(),
+                identity: None,
+                data_dir: data.path().to_path_buf(),
+            },
         )
-        .expect("meta");
+        .expect("write record");
         let socket = dir.path().join("control.sock");
         let listener = UnixListener::bind(&socket).expect("bind");
 

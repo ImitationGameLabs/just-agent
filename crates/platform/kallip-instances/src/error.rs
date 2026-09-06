@@ -36,6 +36,7 @@ pub fn fault(status: StatusCode, code: &'static str, message: impl Into<String>)
 pub fn daemon_code_status(code: ErrorCode) -> StatusCode {
     match code {
         ErrorCode::SlugTaken | ErrorCode::NotRunning => StatusCode::CONFLICT,
+        ErrorCode::Denied => StatusCode::FORBIDDEN,
         ErrorCode::WorkspaceOverlap | ErrorCode::InvalidSpawnInput => {
             StatusCode::UNPROCESSABLE_ENTITY
         }
@@ -43,6 +44,8 @@ pub fn daemon_code_status(code: ErrorCode) -> StatusCode {
         ErrorCode::NotFound => StatusCode::NOT_FOUND,
         ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
         ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+        // The daemon spoke a code this build never wrote (version skew).
+        ErrorCode::Unknown => StatusCode::BAD_GATEWAY,
     }
 }
 
@@ -51,6 +54,7 @@ pub fn daemon_code_status(code: ErrorCode) -> StatusCode {
 pub fn daemon_code_key(code: ErrorCode) -> &'static str {
     match code {
         ErrorCode::SlugTaken => "slug_taken",
+        ErrorCode::Denied => "denied",
         ErrorCode::WorkspaceOverlap => "workspace_overlap",
         ErrorCode::InvalidSpawnInput => "invalid_spawn_input",
         ErrorCode::SpawnTimeout => "spawn_timeout",
@@ -58,6 +62,7 @@ pub fn daemon_code_key(code: ErrorCode) -> &'static str {
         ErrorCode::NotRunning => "not_running",
         ErrorCode::BadRequest => "bad_request",
         ErrorCode::Internal => "internal",
+        ErrorCode::Unknown => "unknown",
     }
 }
 
@@ -92,6 +97,7 @@ mod tests {
     fn every_code_maps_to_the_planned_status() {
         let cases = [
             (ErrorCode::SlugTaken, StatusCode::CONFLICT),
+            (ErrorCode::Denied, StatusCode::FORBIDDEN),
             (ErrorCode::NotRunning, StatusCode::CONFLICT),
             (
                 ErrorCode::WorkspaceOverlap,
@@ -105,6 +111,7 @@ mod tests {
             (ErrorCode::NotFound, StatusCode::NOT_FOUND),
             (ErrorCode::BadRequest, StatusCode::BAD_REQUEST),
             (ErrorCode::Internal, StatusCode::INTERNAL_SERVER_ERROR),
+            (ErrorCode::Unknown, StatusCode::BAD_GATEWAY),
         ];
         for (code, status) in cases {
             assert_eq!(daemon_code_status(code), status, "{code:?}");
@@ -117,6 +124,7 @@ mod tests {
         // TS client and the Rust wire agree without a translation table.
         for code in [
             ErrorCode::SlugTaken,
+            ErrorCode::Denied,
             ErrorCode::WorkspaceOverlap,
             ErrorCode::InvalidSpawnInput,
             ErrorCode::SpawnTimeout,
@@ -124,6 +132,7 @@ mod tests {
             ErrorCode::NotRunning,
             ErrorCode::BadRequest,
             ErrorCode::Internal,
+            ErrorCode::Unknown,
         ] {
             let wire = serde_json::to_value(code).expect("serialize code");
             assert_eq!(wire.as_str().expect("string code"), daemon_code_key(code));

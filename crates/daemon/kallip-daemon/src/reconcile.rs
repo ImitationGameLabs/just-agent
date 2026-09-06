@@ -1,11 +1,12 @@
 //! Liveness reconciliation: a slow background sweep that announces the moment
 //! a running instance dies.
 //!
-//! The wire answers (`list`/`health`) already re-scan the tree on every call,
-//! so the panel's view is always fresh; what the tree cannot do is *speak* —
-//! nothing notices a Running→Dead transition unless someone happens to poll.
-//! This loop is that watcher: it keeps its own previous-tick snapshot (the
-//! daemon proper stays stateless — the tree remains the only truth), and on
+//! The wire answers (`list`/`health`) already re-scan the record area on
+//! every call, so the panel's view is always fresh; what the record area
+//! cannot do is *speak* — nothing notices a Running→Dead transition
+//! unless someone happens to poll. This loop is that watcher: it keeps
+//! its own previous-tick snapshot (the daemon proper stays stateless —
+//! the record area remains the only truth), and on
 //! one scan cycle's Running→Dead edge it emits a warn line carrying slug and
 //! pid. Restarting the daemon resets the snapshot: the first tick after boot
 //! observes without alerting, so pre-existing corpses don't fire.
@@ -26,13 +27,13 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(30);
 /// Run the reconciliation sweep until the process exits: scan, diff against
 /// the previous tick, log the dead edges, sleep, repeat. The snapshot lives
 /// in this task alone; nothing else in the daemon reads or writes it.
-pub async fn run(data_root: PathBuf) {
+pub async fn run(record_root: PathBuf) {
     let mut seen: HashMap<String, InstanceState> = HashMap::new();
     loop {
         // Derive states here (the live /proc checks) so `edge_reports` stays a
         // pure diff over (slug, state, pid) tuples -- unit-testable without
         // depending on the host's pid space.
-        let now: Vec<(String, InstanceState, Option<u32>)> = scan::scan_instances(&data_root)
+        let now: Vec<(String, InstanceState, Option<u32>)> = scan::scan_instances(&record_root)
             .into_iter()
             .map(|i| (i.slug.clone(), i.state(), i.pid))
             .collect();
@@ -81,9 +82,7 @@ fn edge_reports(
     for (slug, state, pid) in now {
         live_slugs.insert(slug.clone());
         let was = seen.insert(slug.clone(), state);
-        if matches!(was, Some(InstanceState::Running | InstanceState::Adopted))
-            && state == InstanceState::Dead
-        {
+        if matches!(was, Some(InstanceState::Running)) && state == InstanceState::Dead {
             reports.push((slug, pid));
         }
     }
@@ -161,7 +160,7 @@ mod tests {
         let _ = edge_reports(&mut seen, down);
         // Dir deleted: absent from this tick's list.
         let _ = edge_reports(&mut seen, vec![]);
-        // Re-created already Dead (an adopted corpse): first sight -- silent.
+        // Re-created already Dead (a corpse re-encountered): first sight -- silent.
         let reborn = vec![tick("a", Dead, Some(7))];
         assert!(edge_reports(&mut seen, reborn).is_empty());
     }

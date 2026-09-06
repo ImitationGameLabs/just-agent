@@ -46,7 +46,8 @@ fn resolve_bin(name: &str) -> PathBuf {
 struct DaemonProc {
     socket: PathBuf,
     child: std::process::Child,
-    data_dir: tempfile::TempDir,
+    _data_dir: tempfile::TempDir,
+    records: PathBuf,
     _state: tempfile::TempDir,
 }
 
@@ -56,12 +57,14 @@ fn start_daemon_with_home(home: &Path) -> DaemonProc {
     let data_dir = tempfile::tempdir().expect("data tempdir");
     let state_dir = tempfile::tempdir().expect("state tempdir");
     let socket = state_dir.path().join("control.sock");
+    let records = state_dir.path().join("records");
     let bin = resolve_bin("kallip-daemon");
     let mut child = std::process::Command::new(&bin)
         .env("XDG_DATA_HOME", data_dir.path())
-        // Kill the ambient override if the host shell carries one: the
-        // daemon reads it verbatim and would scan the wrong tree.
-        .env_remove("KALLIP_DAEMON_DATA_DIR")
+        // Pin the record area in the state tempdir: the default
+        // derivation would follow the fixture HOME (isolated, but the
+        // explicit override keeps where records land obvious).
+        .env("KALLIP_DAEMON_RECORD_DIR", state_dir.path().join("records"))
         .env(
             "KALLIP_DAEMON_SOCKET",
             state_dir.path().join("control.sock"),
@@ -76,7 +79,8 @@ fn start_daemon_with_home(home: &Path) -> DaemonProc {
             return DaemonProc {
                 socket,
                 child,
-                data_dir,
+                _data_dir: data_dir,
+                records,
                 _state: state_dir,
             };
         }
@@ -194,9 +198,9 @@ fn get<'a>(env: &'a [String], key: &str) -> Option<&'a str> {
         .find_map(|pair| pair.strip_prefix(&format!("{key}=")))
 }
 
-fn meta_env(instance_dir: &Path) -> serde_json::Value {
-    let text = std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta.json");
-    serde_json::from_str::<serde_json::Value>(&text).expect("parse meta.json")["env"].clone()
+fn record_env(records: &Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(records.join("harvest.json")).expect("record");
+    serde_json::from_str::<serde_json::Value>(&text).expect("parse record")["env"].clone()
 }
 
 #[test]
@@ -359,12 +363,11 @@ fn harvested_env_is_not_persisted() {
     let workspace = tempfile::tempdir().expect("workspace tempdir");
 
     let pid = spawn_instance(&client, workspace.path(), &["PATH=/explicit-only-bin"]);
-    let instance_dir = daemon.data_dir.path().join("kallipai/tagmata/harvest");
     let expected: serde_json::Value = boot_env(&["PATH=/explicit-only-bin"]).into();
     assert_eq!(
-        meta_env(&instance_dir),
+        record_env(&daemon.records),
         expected,
-        "meta.json carries only the explicit request pairs"
+        "the record carries only the explicit request pairs"
     );
     stop_and_wait(&client, pid);
 
@@ -382,7 +385,7 @@ fn harvested_env_is_not_persisted() {
         panic!("expected start payload");
     };
     assert_eq!(
-        meta_env(&instance_dir),
+        record_env(&daemon.records),
         expected,
         "a restart still persists nothing harvest-shaped"
     );

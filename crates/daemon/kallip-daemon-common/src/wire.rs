@@ -49,11 +49,11 @@ pub enum RequestBody {
     },
     /// Terminate an instance: SIGTERM, grace period, SIGKILL.
     Stop { slug: String },
-    /// Relaunch an existing stopped or dead instance from its persisted
-    /// tree: workspace and user env reload from meta.json; the surviving
-    /// credentials are adopted by the fresh process. `env` is a one-shot
+    /// Relaunch a registered instance that is stopped or dead: the
+    /// record's workspace and user env reload; the surviving
+    /// credentials are picked up by the fresh process. `env` is a one-shot
     /// overlay for this launch only — validated like spawn's env and
-    /// not written back to meta.json. `#[serde(default)]` keeps
+    /// not written back to the record. `#[serde(default)]` keeps
     /// pre-field payloads (the instances backend) parsing.
     Start {
         slug: String,
@@ -101,20 +101,20 @@ pub enum OkPayload {
     Health { report: HealthReport },
 }
 
-/// One managed instance as seen by a directory scan.
-/// The daemon's four-way liveness word. Clients match on this, never
+/// The daemon's liveness word. Clients match on this, never
 /// on the prose in `detail`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstanceState {
     Running,
-    /// Live and verified through the runtime.json self-report rather
-    /// than a launch anchor: a manually launched instance the daemon
-    /// recognized (pid alive, self-reported kernel start time matches
-    /// /proc, and the process exe names a kallip-tagma binary).
-    Adopted,
     Stopped,
     Dead,
+    /// A state token this build does not know (an older or newer peer
+    /// on the same wire). `serde(other)` lands here instead of failing
+    /// the whole message decode: one mixed-version field degrades one
+    /// instance, not the entire panel.
+    #[serde(other)]
+    Unknown,
 }
 
 impl InstanceState {
@@ -122,9 +122,9 @@ impl InstanceState {
     pub fn as_str(&self) -> &'static str {
         match self {
             InstanceState::Running => "running",
-            InstanceState::Adopted => "adopted",
             InstanceState::Stopped => "stopped",
             InstanceState::Dead => "dead",
+            InstanceState::Unknown => "unknown",
         }
     }
 }
@@ -136,12 +136,11 @@ pub struct InstanceInfo {
     pub instance_id: String,
     pub workspace: String,
     pub running: bool,
-    /// True while the instance is live (`state` Running or Adopted),
-    /// kept for one-field boolean checks (the web render keys on it).
-    /// Mirrors the liveness half of `state`, not the state itself.
+    /// True while the instance is live (`state` Running), kept for
+    /// one-field boolean checks (the web render keys on it). Mirrors
+    /// the liveness half of `state`, not the state itself.
     pub state: InstanceState,
-    /// Owning uid recorded at spawn (SO_PEERCRED of the requesting
-    /// peer); None when an adopted directory predates the field.
+    /// Owning uid recorded at spawn (SO_PEERCRED of the requesting peer).
     pub owner: Option<u32>,
     /// The enrolled tagma identity, read by the scan from the instance's own
     /// `credentials/<entry>/tagma.id`. None when the instance never enrolled
@@ -152,10 +151,9 @@ pub struct InstanceInfo {
     #[serde(default)]
     pub tagma_id: Option<String>,
     /// The instance's live listen port; None unless the instance is
-    /// currently live, Running or Adopted (a surviving runtime.json
-    /// from a stopped or dead instance never surfaces its stale
-    /// port). Surfaced so clients no longer rely on session-only
-    /// spawn memory.
+    /// currently live, Running (a surviving runtime.json from a stopped
+    /// or dead instance never surfaces its stale port). Surfaced so
+    /// clients no longer rely on session-only spawn memory.
     #[serde(default)]
     pub port: Option<u16>,
 }
@@ -165,8 +163,8 @@ pub struct InstanceInfo {
 pub struct HealthReport {
     pub slug: Option<String>,
     pub running: bool,
-    /// True while the instance is live (`state` Running or Adopted),
-    /// kept for one-field boolean checks (the web render keys on it).
+    /// True while the instance is live (`state` Running), kept for
+    /// one-field boolean checks (the web render keys on it).
     /// Mirrors the liveness half of `state`, not the state itself.
     pub state: InstanceState,
     /// Human-readable supplement when `running` is false; consumers must
@@ -178,8 +176,12 @@ pub struct HealthReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
-    /// The requested slug already exists in the instance tree.
+    /// The slug already exists in the record area.
     SlugTaken,
+    /// The requester may not launch an instance as the target user.
+    /// Fired before any state change, so it leaks nothing about slug
+    /// existence.
+    Denied,
     /// The workspace overlaps an existing instance's workspace or the
     /// instance tree itself.
     WorkspaceOverlap,
@@ -196,6 +198,11 @@ pub enum ErrorCode {
     BadRequest,
     /// An internal error (I/O, signal failure); the message carries context.
     Internal,
+    /// A code token this build does not know (an older or newer peer
+    /// on the same wire). `serde(other)` lands here instead of failing
+    /// the whole message decode.
+    #[serde(other)]
+    Unknown,
 }
 
 /// An instance slug must be a DNS-label-like lowercase slug
@@ -340,6 +347,25 @@ mod tests {
             }
             other => panic!("expected err, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn instance_state_tolerates_unknown_tokens() {
+        // An older daemon still emits a token this build never wrote
+        // (the retired adoption state); one unknown token must degrade
+        // to one Unknown instance, not fail the whole list decode.
+        let parsed: InstanceState = serde_json::from_str("\"adopted\"").expect("legacy token");
+        assert_eq!(parsed, InstanceState::Unknown);
+        let parsed: InstanceState = serde_json::from_str("\"running\"").expect("known token");
+        assert_eq!(parsed, InstanceState::Running);
+    }
+
+    #[test]
+    fn error_code_tolerates_unknown_tokens() {
+        let parsed: ErrorCode = serde_json::from_str("\"retired_code\"").expect("unknown token");
+        assert_eq!(parsed, ErrorCode::Unknown);
+        let parsed: ErrorCode = serde_json::from_str("\"slug_taken\"").expect("known token");
+        assert_eq!(parsed, ErrorCode::SlugTaken);
     }
 
     #[test]

@@ -377,10 +377,9 @@ in
       service.environment = {
         PATH = "${workspace}/bin";
         KALLIP_INSTANCES_ADDR = "0.0.0.0:7300";
-        # The mounted host dirs carry the daemon's socket + instance tree;
-        # both point INTO the container mounts, never at host paths.
+        # The mounted host dir carries the daemon's socket; it points
+        # INTO the container mount, never at a host path.
         KALLIP_DAEMON_SOCKET = "/state/control.sock";
-        KALLIP_DAEMON_DATA_DIR = "/data";
         # Platform mode: the archeion's internal face verifies the SPA's
         # sk-admin- bearer; the token must equal the archeion's
         # KALLIP_ARCHEION_INTERNAL_TOKEN (dev fixture, same discipline).

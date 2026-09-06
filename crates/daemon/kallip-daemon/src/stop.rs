@@ -1,13 +1,13 @@
-//! Stop semantics: read the pid from runtime.json → verify it is this
-//! instance's own live tagma (launch anchor, self-report adoption, or
-//! name chain; the pid reuse guard) → SIGTERM → poll for exit within
-//! the grace period → SIGKILL. runtime.json stays (a daemon restart
-//! rebuilds its view from the tree).
-
+//! Stop semantics: read the pid from the data directory's runtime.json
+//! (found through the record) → verify it is this instance's own live
+//! tagma (the record's launch anchor or the name chain; the pid reuse
+//! guard) → SIGTERM → poll for exit within the grace period → SIGKILL.
+//! runtime.json stays (a daemon restart rebuilds its view from the
+//! record area).
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use kallip_daemon_common::wire::ErrorCode;
+use kallip_daemon_common::wire::{ErrorCode, valid_slug};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StopError {
@@ -31,16 +31,24 @@ impl From<&StopError> for ErrorCode {
 
 const GRACE: Duration = Duration::from_secs(10);
 
-/// Blocking stop. Identity is judged by `scan::identity_matches` —
-/// the anchored pid/starttime when meta.json carries one, the
-/// runtime.json self-report (adoption) or the exe/comm name chain
-/// otherwise — so a recycled pid is refused.
-pub fn stop(data_root: &Path, slug: &str) -> Result<(), StopError> {
-    let instance_dir = data_root.join(slug);
-    let pid: u32 = crate::scan::read_runtime(&instance_dir)
+/// Blocking stop. Identity is judged by `scan::identity_matches` — the
+/// record's anchored pid/starttime, or the exe/comm name chain when the
+/// claim point could not pin an anchor — so a recycled pid is refused.
+pub fn stop(record_root: &Path, slug: &str) -> Result<(), StopError> {
+    // Same grammar gate as spawn/start: an invalid slug is not an
+    // instance name, so it cannot exist — NotFound without a
+    // record-area read (the slug must not become a path probe).
+    if !valid_slug(slug) {
+        return Err(StopError::NotFound(slug.to_string()));
+    }
+    let Some(record) = crate::records::read_record(record_root, slug) else {
+        return Err(StopError::NotFound(slug.to_string()));
+    };
+    let data_dir = record.data_dir.clone();
+    let pid: u32 = crate::scan::read_runtime(&data_dir)
         .map(|runtime| runtime.pid)
         .ok_or_else(|| StopError::NotRunning(slug.to_string()))?;
-    if crate::scan::identity_matches(&instance_dir, pid) != crate::scan::Verdict::Match {
+    if crate::scan::identity_matches(&record, slug, pid) != crate::scan::Verdict::Match {
         tracing::warn!(
             slug = %slug,
             pid,
@@ -95,9 +103,19 @@ fn send(pid: u32, signal: i32) -> Result<(), String> {
         ))
     }
 }
-
 /// A zombie counts as exited for our purposes: its /proc entry lingers
 /// until reaped, so existence alone would over-report liveness.
 fn alive(pid: u32) -> bool {
     crate::scan::pid_is_alive(pid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_refuses_an_invalid_slug_before_touching_the_record_area() {
+        let error = stop(Path::new("/nonexistent-records"), "../escape").unwrap_err();
+        assert!(matches!(error, StopError::NotFound(_)), "{error}");
+    }
 }

@@ -56,3 +56,40 @@ Deno.test(
     assertEquals(headers(calls[1])["x-requested-with"], "kallip");
   },
 );
+
+// A mixed-version pair (a daemon newer or older than this UI) may carry a
+// state token this build never wrote; upstream lands it as "unknown". The
+// client passes it through — one degraded instance, not a failed page.
+Deno.test(
+  "list tolerates an unknown state token from a mixed-version daemon",
+  async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_input: unknown, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            instances: [
+              {
+                slug: "team",
+                instance_id: "id",
+                workspace: "/ws",
+                running: true,
+                state: "unknown",
+                owner: 1000,
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      )) as typeof fetch;
+    try {
+      const client = new InstancesClient("http://instances.test/api/instances");
+      const instances = await client.list();
+      assertEquals(instances[0].state, "unknown");
+      // Liveness decisions key on `running`, which stays truthful.
+      assertEquals(instances[0].running, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  },
+);

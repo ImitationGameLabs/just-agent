@@ -147,7 +147,7 @@ identity vars `KALLIP_ID` / `KALLIP_SUPERVISOR_AGENT_ID` /
 | `KALLIP_MAX_TRANSIENT_RETRIES`                 | `3`                                   | > 0                                                    | Max consecutive transient (failover-chain-exhausted) parks that earn a timed retry before the agent hard-parks and surfaces to the operator. Bounded additionally by the retry policy's `retry_timeout` wall clock (300s default, `KALLIP_RETRY_TIMEOUT_SECS`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `KALLIP_TAGMA_RELAY_ARCHEION_URL`                 | _(unset)_                             | HTTPS URL                                              | The public URL of the archeion the tagma's in-process relay connector reaches for enrollment (first run only; the stored tagma token is reused thereafter). Setting this activates the relay. If enrollment fails (missing code, unreachable archeion), the tagma degrades to local-only: it logs an error, keeps serving local agents, and the lesche message route returns 503. Unset = pure-local, no relay.                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `KALLIP_TAGMA_RELAY_LESCHE_URL`                | `KALLIP_TAGMA_RELAY_ARCHEION_URL` origin | HTTPS URL                                              | The public URL of the lesche data-plane relay the tagma holds its tunnel against and posts envelopes / key-exchange responses to. Defaults to the `KALLIP_TAGMA_RELAY_ARCHEION_URL` origin when unset (same-origin topologies only); set explicitly for the per-service subdomain topology (e.g. `https://lesche.kallipai.com`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE`           | _(unset)_                             | `sk-enroll-...`                                        | A single-use enrollment code minted via the archeion dashboard (after a user signs up). Required on the tagma's first boot when `KALLIP_TAGMA_RELAY_ARCHEION_URL` is set; the enrollment origin is recorded under the instance data root's `credentials/` alongside the tagma token, so the code can be removed once the token is stored. A code left set with stored credentials is tolerated at the same archeion (ignored with a loud warning) but fails the boot at a different archeion with both addresses named. The kallip-daemon start path filters a spent code from the replayed env and scrubs it from `meta.json`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE`           | _(unset)_                             | `sk-enroll-...`                                        | A single-use enrollment code minted via the archeion dashboard (after a user signs up). Required on the tagma's first boot when `KALLIP_TAGMA_RELAY_ARCHEION_URL` is set; the enrollment origin is recorded under the instance data root's `credentials/` alongside the tagma token, so the code can be removed once the token is stored. A code left set with stored credentials is tolerated at the same archeion (ignored with a loud warning) but fails the boot at a different archeion with both addresses named. The kallip-daemon start path filters a spent code from the replayed env and scrubs it from the daemon's registration record. |
 | `KALLIP_TAGMA_RELAY_MESSAGE_BURST_MAX`         | `20`                                  | > 0                                                    | Max `kallip lesche send` deliveries per burst window. Bounds a runaway agent message loop. Process-global today (one root agent = one conversation, so per-process == per-conversation); a future multi-root relay would scope this per agent/turn.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `KALLIP_TAGMA_RELAY_MESSAGE_BURST_WINDOW_SECS` | `10`                                  | > 0                                                    | Length in seconds of the message burst window paired with `KALLIP_TAGMA_RELAY_MESSAGE_BURST_MAX`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `KALLIP_TAGMA_RELAY_HISTORY_TTL_DAYS`          | `30`                                  | > 0                                                    | Chat-history retention in days. Rows older than this are GC'd. This is the _normal_ retention boundary — what a reconnecting device can re-pull. A device offline past the window only sees what remains.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -333,7 +333,7 @@ and socket resolution.
 
 | Variable                  | Required | Default                         | Description                                                                                                                                                                                             |
 | ------------------------- | -------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `KALLIP_DAEMON_DATA_DIR`  | no       | `~/.local/share/kallipai/tagmata/` | The daemon's instance-tree root (one `<slug>/` child per instance), used verbatim. Override mode does not bridge the XDG anchors to spawned instances (a verbatim root is not expressible as a slug-derived path), so the daemon adopts and scans instances but refuses every launch; drop the override to launch instances.                                |
+| `KALLIP_DAEMON_RECORD_DIR` | no | `~/.local/state/kallipai/daemon/instances/` | The daemon's registration-record root: one `<slug>.json` record per managed instance (instance id, owning uid, target uid, workspace, user env, launch anchor, and the pointer at the instance data directory). Set verbatim; overrides the XDG state-home derivation. |
 | `KALLIP_TAGMA_SLUG`             | yes (tagma) | —                             | Names the instance; the tagma derives its data root (`<data home>/kallipai/tagmata/<slug>`), config root, and logs from it, and refuses to boot without it. Slug grammar: `[a-z0-9][a-z0-9-]*`, at most 64 characters. Injected by the daemon for managed instances; set it for direct runs (compose sets `main`).                                |
 
 ### Control-socket resolution order
@@ -354,39 +354,34 @@ daemon and its clients converged across session types. The socket
 file is chmod 0600: filesystem permission is the only auth.
 `kallipctl start <slug> -e KEY=VALUE` relaunches a stopped instance with a
 one-shot env overlay (same allowlist as spawn: KALLIP_*, RUST_LOG, PATH);
-the overlay is never written to the instance's meta.json, so the next
+the overlay is never written to the record, so the next
 start returns to the recorded env.
 
-### Instance identity and adoption
+### Instance identity and the record area
 
-An instance directory carries two files: `meta.json`, written by the
-daemon's spawn pipeline (the managed-instance marker: instance id,
-owning uid, workspace, user env, and the launch anchor), and
-`runtime.json`, written by the tagma itself (the self-report: `pid`,
-`port`, and `starttime` — the kernel start time of the writing
+The daemon keeps one registration record per managed instance:
+`<state root>/kallipai/daemon/instances/<slug>.json` (override with
+`KALLIP_DAEMON_RECORD_DIR`). The record carries the instance id, the
+owning uid, the target uid, the workspace, the user env, the launch
+anchor, and the pointer at the instance's data directory
+(`~/.local/share/kallipai/tagmata/<slug>`). The data directory itself
+carries `runtime.json`, written by the tagma itself (the self-report:
+`pid`, `port`, and `starttime` — the kernel start time of the writing
 process).
 
 `kallipctl list` classifies each recorded pid:
 
 - `running` — the pid is the launch anchor's exact incarnation
   (anchor starttime verified against `/proc`)
-- `adopted` — no anchor claim holds, but the live process matches the
-  runtime.json self-report (pid alive, starttime equal, and its
-  `/proc/<pid>/exe` names a kallip-tagma binary): a manually launched
-  instance, recognized without a daemon spawn
 - `stopped` — no runtime.json pid on file
-- `dead` — anything else (dead pid, reused pid, self-report mismatch)
+- `dead` — anything else (dead pid, reused pid, unverifiable or mismatched process)
 
-To launch an instance by hand: create
-`<data root>/<slug>/meta.json` with at least `instance_id` and
-`owner_uid`, then boot the tagma with `KALLIP_TAGMA_SLUG=<slug>` —
-it publishes `runtime.json` on bind and is adopted on the next list.
-Adoption requires same-uid: the daemon must read `/proc/<pid>/exe`
-and signal the process, so a cross-uid tagma is refused (`dead`, with
-the reason in the health detail). A live process is never adopted
-over a still-running anchored incarnation. `stop` works on adopted
-instances exactly like on spawned ones; `start` refuses a live one
-(slug taken) — stop first, then start re-spawns and re-anchors.
+The daemon manages only what it spawned: a manually launched tagma
+(booted with `KALLIP_TAGMA_SLUG=<slug>` outside the daemon) publishes
+its own `runtime.json` but holds no record, so it stays invisible to
+`list`. `stop` verifies the anchor before signaling; `start` refuses a
+live instance (slug taken) — stop first, then start re-spawns and
+re-anchors.
 
 Source:
 [`crates/daemon/kallip-daemon/src/main.rs`](../../crates/daemon/kallip-daemon/src/main.rs).

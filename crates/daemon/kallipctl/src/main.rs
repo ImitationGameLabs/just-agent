@@ -54,7 +54,7 @@ enum Command {
         /// Instance slug.
         slug: String,
         /// One-shot env overlay, KEY=VALUE (repeatable); applied to this
-        /// launch only, never written to the instance's meta.json.
+        /// launch only, never persisted to the instance's record.
         /// Same allowlist as spawn's env.
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
@@ -179,6 +179,7 @@ fn print(response: Response, started: bool) -> Result<()> {
             // machine interface for scripting.
             let prefix = match code {
                 ErrorCode::SlugTaken => "instance conflict",
+                ErrorCode::Denied => "not authorized",
                 ErrorCode::WorkspaceOverlap => "workspace overlaps an existing instance",
                 ErrorCode::InvalidSpawnInput => "invalid spawn input",
                 ErrorCode::SpawnTimeout => "spawn timed out (rolled back)",
@@ -186,6 +187,7 @@ fn print(response: Response, started: bool) -> Result<()> {
                 ErrorCode::NotRunning => "not running",
                 ErrorCode::BadRequest => "bad request",
                 ErrorCode::Internal => "internal error",
+                ErrorCode::Unknown => "unknown error code from daemon",
             };
             anyhow::bail!("{prefix}: {message}");
         }

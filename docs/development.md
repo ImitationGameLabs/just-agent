@@ -318,36 +318,37 @@ Both sides must list the new rows: `human` for the user's message,
 ### Local daemon management (kallipctl)
 
 The daemon family (`crates/daemon/`) manages multiple local tagma
-instances. The daemon is stateless — the instance tree under
-`KALLIP_TAGMA_SLUG`-derived data root (default `~/.local/share/kallipai/tagmata/<slug>`) is the only truth;
-`kallipctl` talks to it over a 0600 control socket:
+instances. The daemon keeps one registration record per instance in
+its record area (default `~/.local/state/kallipai/daemon/instances/`,
+one `<slug>.json` per instance); the record and the instance's own
+`runtime.json` are the only truth. `kallipctl` talks to it over a
+0600 control socket:
 
 ```sh
 kallipctl spawn <slug> <workspace> -e KALLIP_LLM_PROVIDER=... \
     -e KALLIP_LLM_MODEL=... -e KALLIP_LLM_DEEPSEEK_API_KEY=...
-kallipctl list           # every <slug>/ with a meta.json
+kallipctl list           # every record in the record area
 kallipctl health <slug>  # pid liveness via /proc/<pid>/comm
 kallipctl stop <slug>    # TERM, 10s grace, KILL
 ```
 
-Each instance directory carries exactly two metadata files: `meta.json`
-(instance_id + owner_uid + workspace, written by the daemon at spawn)
-and `runtime.json` (pid + port, written by the tagma itself when it
-boots inside a daemon-marked instance dir — an unmarked data root
-writes nothing). Env
+The record carries the instance id, owning uid, workspace, user env,
+launch anchor, and the pointer at the data directory
+(`~/.local/share/kallipai/tagmata/<slug>`); the tagma publishes
+`runtime.json` (pid + port + starttime) into the data directory on
+every boot. Env
 pairs must start with `KALLIP_` or be `RUST_LOG`; the reserved
 keys (`KALLIP_TAGMA_SLUG`,
-`KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`) are daemon-owned.
+`KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`, `KALLIP_TAGMA_DATA_DIR`) are daemon-owned.
 A `start` relaunch drops `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` from the
 replayed env once the instance holds stored relay credentials
-(`credentials/default/`) and scrubs it from `meta.json` in the same stroke:
+(`credentials/default/`) and scrubs it from the record in the same stroke:
 the code is single-use, and replaying it after a completed enrollment trips
 tagma's conflicting-relay-configuration fail-fast. An instance whose
 enrollment never completed still replays the code, so a restart can retry.
 A daemon-managed tagma instance logs into the state tree —
 `~/.local/state/kallipai/tagmata/<slug>/logs/` (created 0700): daily-rolling
-files, the last 7 kept. A standalone run (no daemon marker) keeps its
-`logs/` inside the data root instead. Set `KALLIP_TAGMA_LOG_TO_STDERR=1`
+files, the last 7 kept. Set `KALLIP_TAGMA_LOG_TO_STDERR=1`
 (or `true`) to log to the terminal's stderr instead -- handy when manually
 debugging a managed data dir; any other value keeps the file default, and
 a log directory that cannot be resolved or created falls back to stderr.

@@ -537,13 +537,14 @@ fn forward_panic_to_tracing(info: &std::panic::PanicHookInfo) {
     tracing::error!(%loc, %msg, "panic");
 }
 
-/// `runtime.json` payload — the tagma-written half of the instance-dir
-/// contract (the daemon writes `meta.json`; the tagma instance writes
-/// `runtime.json`). kallip-daemon deserializes its own mirror of these
-/// keys, so the two definitions must stay in lockstep. `starttime` is
-/// the kernel start time of this process: the daemon's adoption
-/// credential, proving the live pid is the incarnation that wrote
-/// this file. `0` means not captured (no credential for the daemon).
+/// `runtime.json` payload — the tagma-written half of the data-dir
+/// contract (the tagma instance writes `runtime.json`; the daemon reads
+/// it through the record's data-directory pointer). kallip-daemon
+/// deserializes its own mirror of these keys, so the two definitions
+/// must stay in lockstep. `starttime` is the kernel start time of this
+/// process: the self-reported incarnation, kept verbatim in the
+/// contract while the daemon verifies liveness against its own `/proc`
+/// read. `0` means not captured.
 #[derive(serde::Serialize)]
 struct InstanceRuntime {
     pid: u32,

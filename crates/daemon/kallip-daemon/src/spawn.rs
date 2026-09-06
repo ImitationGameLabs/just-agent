@@ -1,7 +1,13 @@
-//! The spawn pipeline: validate → allocate → (uid provisioning is a
-//! no-op in the same-uid profile) → harvest the login environment →
-//! detach-exec via the helper → wait for the instance's self-written
-//! runtime.json, rolling back on timeout.
+//! The spawn pipeline: authorize → validate → register the record →
+//! harvest the login environment → detach-exec via the helper → wait for
+//! the instance's self-written runtime.json, rolling back the record on
+//! timeout.
+//!
+//! The record area is the registry: a spawn registers `<slug>.json`
+//! before launching and deregisters it on failure, so collision checks
+//! and discovery read the same authority. The instance's data directory
+//! is handed to the tagma explicitly (`KALLIP_TAGMA_DATA_DIR`) — the
+//! two sides no longer assume a shared tree root.
 
 use std::collections::BTreeMap;
 use std::ffi::{CStr, OsStr, OsString};
@@ -11,10 +17,10 @@ use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use anyhow::Context as _;
 use kallip_daemon_common::wire::valid_slug;
 
-use crate::bins;
-use crate::scan;
+use crate::{bins, records, scan};
 
 /// How the request can fail, mapped 1:1 onto wire error codes by the server.
 #[derive(Debug, thiserror::Error)]
@@ -29,9 +35,14 @@ pub enum SpawnError {
     },
     #[error("{0}")]
     Invalid(String),
+    /// The requester may not launch an instance as the target user.
+    /// Fired before any state change — a denied requester learns
+    /// nothing about slug existence from the error.
+    #[error("uid {peer_uid} may not launch an instance as uid {target_uid}")]
+    Denied { peer_uid: u32, target_uid: u32 },
     #[error(
         "instance did not publish pid/port within {timeout_secs}s; see the \
-         instance log files under <instance-dir>/logs/ and system OOM records"
+         instance log files under <state-home>/kallipai/tagmata/<slug>/logs/ and system OOM records"
     )]
     Timeout { timeout_secs: u64 },
     #[error(transparent)]
@@ -39,11 +50,41 @@ pub enum SpawnError {
 }
 
 /// Env keys the daemon owns; a request may not override them.
-const RESERVED_KEYS: [&str; 3] = [
+const RESERVED_KEYS: [&str; 4] = [
     "KALLIP_TAGMA_SLUG",
     "KALLIP_WORKSPACE_ROOT",
     "KALLIP_TAGMA_ADDR",
+    "KALLIP_TAGMA_DATA_DIR",
 ];
+
+/// The launch authorization (platform-hosting access rule, same-uid
+/// form): an instance runs as the daemon's own user, so a request
+/// passes only when the peer IS that user or is root (the admin
+/// exemption the system form formalizes). Called before any state
+/// change — in particular before the slug collision probe — so a
+/// denied peer cannot probe slug existence through error deltas.
+fn authorized(peer_uid: u32, target_uid: u32) -> bool {
+    peer_uid == target_uid || peer_uid == 0
+}
+
+/// The user instances run as: today always the daemon's own effective
+/// user (the single-user form). The pair is persisted in the record so
+/// the multi-user launch form can fill it differently without a
+/// record format change.
+fn target_identity() -> (u32, Option<String>) {
+    let uid = unsafe { libc::geteuid() };
+    let name = cached_passwd_identity().map(|(name, _)| name.to_string_lossy().into_owned());
+    (uid, name)
+}
+
+/// The instance's data directory: `<data home>/kallipai/tagmata/<slug>`.
+/// The daemon derives it from its own XDG data home and hands the exact
+/// path to the tagma at launch (`KALLIP_TAGMA_DATA_DIR`), replacing the
+/// old shared-root assumption with an explicit contract.
+fn instance_data_dir(slug: &str) -> Result<PathBuf, SpawnError> {
+    let home = dirs::data_dir().context("could not determine platform data directory")?;
+    Ok(home.join("kallipai").join("tagmata").join(slug))
+}
 
 // --- login-environment harvest -------------------------------------------
 
@@ -324,48 +365,6 @@ fn degrade_to_fallback(fallback_bin_dir: Option<&Path>) -> Vec<(String, String)>
     vec![("PATH".to_owned(), fallback_path(fallback_bin_dir))]
 }
 
-/// The XDG anchors a launch must carry so the instance's slug-derived
-/// roots resolve inside the tree the daemon scans. The spawn helper
-/// execs the instance with a blank environment, so the anchors travel
-/// only in the composed pairs: the daemon pins the same data/state
-/// homes it resolved its own roots from, and the anchor is daemon-owned
-/// — a polluted profile or an explicit request pair must not move an
-/// instance's tree outside the scan.
-struct XdgAnchors {
-    data_home: PathBuf,
-    state_home: Option<PathBuf>,
-}
-
-/// `None` under the `KALLIP_DAEMON_DATA_DIR` override: an override root
-/// is a verbatim path the slug derivation cannot express, and bridging
-/// it with the XDG default would publish the instance's runtime.json
-/// outside the scanned tree. The launch gate refuses first, naming the
-/// constraint — the unlock is dropping the override, not setting
-/// `XDG_DATA_HOME` (the override branch never reads it).
-fn xdg_anchors() -> Option<XdgAnchors> {
-    if std::env::var_os("KALLIP_DAEMON_DATA_DIR").is_some() {
-        return None;
-    }
-    Some(XdgAnchors {
-        data_home: dirs::data_dir()?,
-        state_home: dirs::state_dir(),
-    })
-}
-
-/// The launch-time guard for the override/anchor interaction: an
-/// override daemon ships no anchors (see [`xdg_anchors`]), and a
-/// launch without them would root the instance in a fallback HOME
-/// tree the daemon never scans and end in a bare 30s timeout. Pure so
-/// tests pin the refusal without mutating process-global env.
-fn anchor_gate(override_set: bool, xdg: Option<&XdgAnchors>) -> Result<(), SpawnError> {
-    if override_set && xdg.is_none() {
-        return Err(SpawnError::Invalid(
-            "KALLIP_DAEMON_DATA_DIR override mode cannot launch instances: a verbatim root gives the child no slug-derived anchors - remove the override to launch"
-                .to_owned(),
-        ));
-    }
-    Ok(())
-}
 /// Compose the instance env from a map, one value per key:
 ///
 /// * the base (harvest, or fallback PATH) supplies every key it has;
@@ -373,18 +372,18 @@ fn anchor_gate(override_set: bool, xdg: Option<&XdgAnchors>) -> Result<(), Spawn
 /// * the daemon-owned keys win over everything — a polluted profile
 ///   cannot smuggle them in;
 /// * `RUST_LOG=info` appears only when neither base nor explicit pair
-///   supplied one (the old build-then-extend order let the default shadow
-///   an explicit value through a duplicate key; map composition ends
-///   that);
-/// * PATH passes through verbatim, wherever it came from.
-/// * the XDG anchors, when supplied, land last — daemon-owned like the
-///   slug, they pin where the instance's slug-derived roots resolve.
+///   supplied one (map composition ends duplicate-key shadowing);
+/// * the data-dir handoff and the state anchor land last — daemon-owned
+///   like the slug, they pin where the instance's data root and logs
+///   resolve. No `XDG_DATA_HOME` anchor: the explicit handoff replaces
+///   the shared-root assumption it used to express.
 fn compose_launch_env(
     base: &[(String, String)],
     user_env: &[String],
     slug: &str,
     workspace_canon: &Path,
-    xdg: Option<&XdgAnchors>,
+    data_dir: &Path,
+    state_home: Option<&Path>,
 ) -> Vec<String> {
     let mut env: BTreeMap<&str, String> = BTreeMap::new();
     for (key, value) in base {
@@ -404,22 +403,19 @@ fn compose_launch_env(
         workspace_canon.display().to_string(),
     );
     env.insert("KALLIP_TAGMA_ADDR", "127.0.0.1:0".to_owned());
-    if let Some(anchors) = xdg {
-        env.insert("XDG_DATA_HOME", anchors.data_home.display().to_string());
-        if let Some(state) = &anchors.state_home {
-            env.insert("XDG_STATE_HOME", state.display().to_string());
-        }
+    env.insert("KALLIP_TAGMA_DATA_DIR", data_dir.display().to_string());
+    if let Some(state) = state_home {
+        env.insert("XDG_STATE_HOME", state.display().to_string());
     }
     env.entry("RUST_LOG").or_insert_with(|| "info".to_owned());
     env.into_iter().map(|(k, v)| format!("{k}={v}")).collect()
 }
 
-/// Spawn one instance under `data_root`. Blocking — the server runs it on
-/// the connection task.
-/// The instance is owned by `owner_uid` (the requesting peer).
-#[allow(clippy::too_many_arguments)]
+/// Register and launch one instance. Blocking — the server runs it on
+/// the connection task. The record area is `record_root`; the requesting
+/// peer is `owner_uid`.
 pub fn spawn(
-    data_root: &Path,
+    record_root: &Path,
     slug: &str,
     workspace: &str,
     user_env: &[String],
@@ -442,8 +438,23 @@ pub fn spawn(
             "exe {exe:?} is not an existing executable file"
         )));
     }
-    let instance_dir = data_root.join(slug);
-    if instance_dir.exists() {
+    // Authorization precedes every state change, the collision probe
+    // included: a denied peer must not read the registry's occupancy
+    // through error differences.
+    let (target_uid, target_username) = target_identity();
+    if !authorized(owner_uid, target_uid) {
+        return Err(SpawnError::Denied {
+            peer_uid: owner_uid,
+            target_uid,
+        });
+    }
+    let data_dir = instance_data_dir(slug)?;
+    // Early occupancy probe: the common sequential-reuse case fails
+    // here, before input validation, preserving the reviewed error
+    // precedence. Advisory only — the exclusive publication in
+    // create_record below is the authority: a racer that slips past
+    // this probe still loses there, with the same code.
+    if records::read_record(record_root, slug).is_some() {
         return Err(SpawnError::SlugTaken(slug.to_string()));
     }
     let workspace_path = PathBuf::from(workspace);
@@ -456,12 +467,15 @@ pub fn spawn(
         .canonicalize()
         .map_err(|e| SpawnError::Invalid(format!("canonicalizing workspace: {e}")))?;
 
-    // Workspace disjointness: against every existing instance's workspace
-    // and against the instance tree itself (an agent whose workspace is the
-    // tree could write another instance's metadata).
+    // Workspace disjointness: against every registered instance's
+    // workspace and against the data tree itself (an agent whose
+    // workspace is the tree could write another instance's data).
+    let data_root = data_dir.parent().context("data directory has no parent")?;
+    // Canonical where the tree exists; a fresh host has no tree yet, and
+    // the verbatim path is then the honest comparison input.
     let data_root_canon = data_root
         .canonicalize()
-        .map_err(|e| anyhow::anyhow!("canonicalizing data root: {e}"))?;
+        .unwrap_or_else(|_| data_root.to_path_buf());
     if overlaps(&workspace_canon, &data_root_canon) {
         return Err(SpawnError::Overlap {
             requested: workspace.to_string(),
@@ -469,7 +483,7 @@ pub fn spawn(
             existing_workspace: data_root.display().to_string(),
         });
     }
-    for instance in scan::scan_instances(data_root) {
+    for instance in scan::scan_instances(record_root) {
         if let Some(existing) = instance.workspace {
             let existing_path = PathBuf::from(&existing);
             if overlaps(&workspace_canon, &existing_path) {
@@ -484,29 +498,30 @@ pub fn spawn(
 
     validate_user_env(user_env)?;
 
-    // --- allocate ---------------------------------------------------------
-    std::fs::create_dir(&instance_dir)
-        .map_err(|e| anyhow::anyhow!("creating instance dir: {e}"))?;
-    let instance_id = uuid::Uuid::new_v4().to_string();
-    let rolled_back = |e| {
-        // Best-effort rollback: the allocation this call created goes away.
-        let _ = std::fs::remove_dir_all(&instance_dir);
-        SpawnError::Internal(e)
-    };
-    let meta_bytes = serde_json::to_vec(&scan::InstanceMeta {
-        instance_id,
+    // --- register ---------------------------------------------------------
+    let record = records::InstanceRecord {
+        instance_id: uuid::Uuid::new_v4().to_string(),
         owner_uid,
+        target_uid,
+        target_username,
         workspace: Some(workspace_canon.display().to_string()),
         env: user_env.to_vec(),
         identity: None,
-    })
-    .map_err(|e| rolled_back(anyhow::anyhow!("serializing meta.json: {e}")))?;
-    std::fs::write(instance_dir.join("meta.json"), &meta_bytes)
-        .map_err(|e| rolled_back(anyhow::anyhow!("writing meta.json: {e}")))?;
+        data_dir: data_dir.clone(),
+    };
+    // Authoritative collision gate: create_record publishes
+    // exclusively, so a spawn racing a same-slug peer loses here with
+    // SlugTaken — after authz, so the loser learns nothing about the
+    // winner beyond occupancy itself.
+    records::create_record(record_root, slug, &record).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => SpawnError::SlugTaken(slug.to_string()),
+        _ => anyhow::anyhow!("registering instance record: {e}").into(),
+    })?;
 
-    // --- detach-exec + adopt ---------------------------------------------
+    // --- detach-exec + anchor ----------------------------------------------
     let started = launch(
-        &instance_dir,
+        record_root,
+        &data_dir,
         slug,
         &workspace_canon,
         user_env,
@@ -514,21 +529,23 @@ pub fn spawn(
         timeout,
     )
     .inspect_err(|_| {
-        // Rollback: this fresh allocation goes away on any failure — kill
-        // whatever the helper left first (a failed exec leaves nothing;
-        // a half-boot leaves a running tagma). start() shares launch but
-        // keeps an existing tree, so identity and credentials survive a
-        // failed relaunch.
-        if let Some(pid) = scan::read_runtime(&instance_dir).map(|r| r.pid) {
+        // Rollback: the fresh registration goes away on any failure —
+        // kill whatever the helper left first (a failed exec leaves
+        // nothing; a half-boot leaves a running tagma). The data
+        // directory is the tagma's; only the record is ours to remove,
+        // and its absence is what unblocks a same-slug retry. start()
+        // shares launch but keeps its existing record, so identity and
+        // credentials survive a failed relaunch.
+        if let Some(pid) = scan::read_runtime(&data_dir).map(|r| r.pid) {
             tracing::warn!(pid, "spawn rollback: killing half-booted instance");
             unsafe { libc::kill(pid as i32, libc::SIGKILL) };
         }
-        if let Err(error) = std::fs::remove_dir_all(&instance_dir) {
-            tracing::warn!(%error, "spawn rollback: removing instance dir failed");
+        if let Err(error) = records::delete_record(record_root, slug) {
+            tracing::warn!(%error, "spawn rollback: removing instance record failed");
         }
     });
     if let Ok((pid, port)) = started {
-        tracing::info!(slug = %slug, pid, port, "instance spawned and adopted");
+        tracing::info!(slug = %slug, pid, port, "instance spawned and anchored");
         return Ok((pid, port));
     }
     started
@@ -546,7 +563,7 @@ fn overlaps(a: &Path, b: &Path) -> bool {
 /// both normally arrive via the login harvest; an explicit pair wins),
 /// none of the daemon-owned keys. Shared by spawn (fresh request
 /// env) and start (re-validating the persisted copy against hand-edited
-/// meta files).
+/// records).
 pub(crate) fn validate_user_env(user_env: &[String]) -> Result<(), SpawnError> {
     for pair in user_env {
         let Some((key, value)) = pair.split_once('=') else {
@@ -587,43 +604,43 @@ pub(crate) fn exe_runnable(exe: &str) -> bool {
     #[cfg(not(unix))]
     path.is_file()
 }
-/// Detach-exec one instance's tagma via the spawn helper and wait until the
-/// process publishes its own runtime.json. Shared tail of spawn (fresh
-/// tree) and start (adoption of an existing tree); callers re-validate
-/// user env before reaching here. On failure the tree is left standing —
-/// cleanup policy belongs to the caller (spawn removes its own fresh
-/// allocation, start keeps an existing one) — but a half-booted leftover
-/// is SIGKILLed here either way so no orphan outlives the timeout.
+
+/// Detach-exec one instance's tagma via the spawn helper and wait until
+/// the process publishes its own runtime.json. Shared tail of spawn
+/// (fresh registration) and start (relaunch of a registered one);
+/// callers re-validate user env before reaching here. On failure the
+/// record is the caller's policy (spawn deregisters, start keeps) —
+/// but a half-booted leftover is SIGKILLed here either way so no
+/// orphan outlives the timeout.
 pub(crate) fn launch(
-    instance_dir: &Path,
+    record_root: &Path,
+    data_dir: &Path,
     slug: &str,
     workspace_canon: &Path,
     user_env: &[String],
     exe: Option<&str>,
     timeout: Duration,
 ) -> Result<(u32, u16), SpawnError> {
-    let xdg = xdg_anchors();
-    anchor_gate(
-        std::env::var_os("KALLIP_DAEMON_DATA_DIR").is_some(),
-        xdg.as_ref(),
-    )?;
-    // The poll below trusts any runtime.json it sees as belonging to this
-    // launch. That trust needs a clean slate: drop a previous
+    // The helper chdirs into the data directory before exec; a missing
+    // directory is a launch failure, so ensure it exists (mkdir only —
+    // everything inside belongs to the tagma).
+    std::fs::create_dir_all(data_dir)
+        .map_err(|e| anyhow::anyhow!("creating data dir {}: {e}", data_dir.display()))?;
+    // The poll below trusts any runtime.json it sees as belonging to
+    // this launch. That trust needs a clean slate: drop a previous
     // incarnation's runtime.json before starting the helper. ENOENT is
-    // the common path (fresh spawn); any other failure aborts the launch
-    // — an unremovable leftover would leave a foreign pid inside the
-    // poll's trust window, and the timeout branch would kill it.
-    if let Err(e) = clear_stale_runtime(instance_dir) {
+    // the common path (fresh spawn); any other failure aborts the
+    // launch — an unremovable leftover would leave a foreign pid inside
+    // the poll's trust window, and the timeout branch would kill it.
+    if let Err(e) = clear_stale_runtime(data_dir) {
         tracing::error!(
-            instance_dir = %instance_dir.display(),
+            data_dir = %data_dir.display(),
             error = %e,
             "cannot clear stale runtime.json; refusing to launch"
         );
-        return Err(anyhow::anyhow!(
-            "clearing stale runtime.json in {}: {e}",
-            instance_dir.display()
-        )
-        .into());
+        return Err(
+            anyhow::anyhow!("clearing stale runtime.json in {}: {e}", data_dir.display()).into(),
+        );
     }
     let helper = bins::resolve("kallip-daemon-spawn");
     // Explicit dev exe wins over the resolved one; the resolver stays
@@ -633,9 +650,17 @@ pub(crate) fn launch(
         None => bins::resolve("kallip-tagma"),
     };
     let base = harvest_base_env(tagma.parent());
-    let env = compose_launch_env(&base, user_env, slug, workspace_canon, xdg.as_ref());
+    let state_home = dirs::state_dir();
+    let env = compose_launch_env(
+        &base,
+        user_env,
+        slug,
+        workspace_canon,
+        data_dir,
+        state_home.as_deref(),
+    );
     let status = std::process::Command::new(&helper)
-        .arg(instance_dir)
+        .arg(data_dir)
         .arg(&tagma)
         .args(&env)
         .status()
@@ -646,27 +671,28 @@ pub(crate) fn launch(
     }
 
     // --- wait for the self-written runtime.json --------------------------
-    // Invariant: reaching this poll ⇔ the instance dir held no leftover
+    // Invariant: reaching this poll ⇔ the data dir held no leftover
     // runtime.json at launch time (cleared before the helper ran). Any
     // file that appears during the poll belongs to this launch, so the
     // pid it carries is trusted directly. Trust is then made durable:
-    // the claim point pins pid+starttime into meta.json (or clears a
-    // stale anchor a previous incarnation left), and a failed
+    // the claim point pins pid+starttime into the instance record (or
+    // clears a stale anchor a previous incarnation left), and a failed
     // revalidation keeps polling — a pid that died between its
     // starttime read and the check must not be reported as launched.
     let deadline = Instant::now() + timeout;
     loop {
-        if let Some(runtime) = scan::read_runtime(instance_dir)
+        if let Some(runtime) = scan::read_runtime(data_dir)
             && scan::pid_is_alive(runtime.pid)
-            && anchor_identity(instance_dir, runtime.pid)
+            && anchor_identity(record_root, slug, runtime.pid)
         {
             return Ok((runtime.pid, runtime.port));
         }
         if Instant::now() >= deadline {
-            // Kill whatever the helper left; keep the tree itself.
-            if let Some(pid) = scan::read_runtime(instance_dir).map(|r| r.pid) {
-                // Diagnosability before the kill: the recorded comm is what
-                // a naming-mismatch investigation needs.
+            // Kill whatever the helper left; the record is the caller's
+            // policy (spawn deregisters, start keeps).
+            if let Some(pid) = scan::read_runtime(data_dir).map(|r| r.pid) {
+                // Diagnosability before the kill: the recorded comm is
+                // what a naming-mismatch investigation needs.
                 tracing::warn!(
                     pid,
                     comm = ?scan::pid_comm(pid),
@@ -682,32 +708,35 @@ pub(crate) fn launch(
     }
 }
 
-/// The launch claim point: pin `pid` into meta.json together with its
-/// kernel start time, so later classification can tell this exact
-/// incarnation from a reused pid. Post-condition the poll relies on:
-/// the anchor names this pid or there is no anchor at all — a stale
-/// anchor from a previous incarnation is cleared, never left lying
-/// against a pid it does not name. If the anchor write itself fails
-/// that is beyond reach: a stale anchor may survive and steer the
-/// live pid's classification to the adoption leg (a perfect
-/// self-report is adopted) rather than a hard Mismatch — the
-/// instance runs and is stoppable either way; the warn names it.
-/// Returns
-/// false only when the revalidation race says the pid died under us;
-/// the caller keeps polling rather than reporting a launch it cannot
-/// vouch for.
-fn anchor_identity(instance_dir: &Path, pid: u32) -> bool {
+/// The launch claim point: pin `pid` into the instance record together
+/// with the kernel start time read from `/proc` right now. A pid value
+/// alone is not an identity — the kernel recycles pids, so a pid that
+/// died and was reused would otherwise inherit the anchor; the pairing
+/// with the start time binds the record to the one process that wrote
+/// this launch's runtime.json, and a later mismatch makes stop refuse
+/// instead of signalling a stranger. Post-condition the poll relies
+/// on: the anchor names this pid or there is no anchor at all — a
+/// stale anchor from a previous incarnation is cleared, never left
+/// lying against a pid it does not name. If the record write itself
+/// fails that is beyond reach: a stale anchor may survive and
+/// classification falls to the name chain — the instance runs, and stop
+/// then verifies by name alone: a mismatch is refused (fail-closed, the
+/// daemon never signals a process it cannot vouch for); the warn names
+/// the gap. Returns false only when
+/// the revalidation race says the pid died under us; the caller keeps
+/// polling rather than reporting a launch it cannot vouch for.
+fn anchor_identity(record_root: &Path, slug: &str, pid: u32) -> bool {
     let starttime = scan::proc_starttime(pid).filter(|t| *t > 0);
-    let mut meta = match scan::read_meta(instance_dir) {
-        Some(meta) => meta,
-        None => {
-            tracing::warn!(pid, "meta.json unreadable at claim; launching unanchored");
-            return true;
-        }
+    let Some(mut record) = records::read_record(record_root, slug) else {
+        tracing::warn!(
+            pid,
+            "instance record unreadable at claim; launching unanchored"
+        );
+        return true;
     };
     match starttime {
         Some(starttime) => {
-            meta.identity = Some(scan::Identity {
+            record.identity = Some(scan::Identity {
                 pid,
                 starttime,
                 anchored_at: now_unix(),
@@ -717,27 +746,27 @@ fn anchor_identity(instance_dir: &Path, pid: u32) -> bool {
             // Without a starttime there is nothing to pin; make that
             // explicit by clearing any anchor a previous incarnation
             // left, so classification falls to the name chain.
-            if meta.identity.is_some() {
+            if record.identity.is_some() {
                 tracing::warn!(pid, "cannot read start time; clearing stale anchor");
             }
-            meta.identity = None;
+            record.identity = None;
         }
     }
-    let bytes = match serde_json::to_vec(&meta) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::warn!(pid, error = %e, "cannot serialize anchor; stale anchor may remain");
-            return true;
-        }
-    };
-    if let Err(e) = std::fs::write(instance_dir.join("meta.json"), bytes) {
+    if let Err(e) = records::write_record(record_root, slug, &record) {
         tracing::warn!(pid, error = %e, "cannot write identity anchor; stale anchor may remain");
         return true;
     }
-    // Revalidate against what the tree now says: if the pid died
+    // Revalidate against what the registry now says: if the pid died
     // between the starttime read and this check, its incarnation is
     // gone and the launch must not claim it.
-    match scan::identity_matches(instance_dir, pid) {
+    let Some(record) = records::read_record(record_root, slug) else {
+        tracing::warn!(
+            pid,
+            "instance record unreadable after claim; not claiming the pid"
+        );
+        return false;
+    };
+    match scan::identity_matches(&record, slug, pid) {
         scan::Verdict::Match => true,
         other => {
             tracing::warn!(pid, verdict = ?other, "anchor failed revalidation; not claiming the pid");
@@ -745,6 +774,7 @@ fn anchor_identity(instance_dir: &Path, pid: u32) -> bool {
         }
     }
 }
+
 /// Seconds since the Unix epoch, saturating at 0 on clock skew;
 /// diagnostic stamp only.
 fn now_unix() -> u64 {
@@ -757,8 +787,8 @@ fn now_unix() -> u64 {
 /// Drop a leftover `runtime.json` from a previous incarnation. ENOENT is
 /// success (the target state — no leftover — already holds); any other
 /// error surfaces to the caller, which aborts the launch.
-fn clear_stale_runtime(instance_dir: &Path) -> std::io::Result<()> {
-    match std::fs::remove_file(instance_dir.join("runtime.json")) {
+fn clear_stale_runtime(data_dir: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(data_dir.join("runtime.json")) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e),
@@ -770,23 +800,6 @@ mod tests {
     use super::*;
 
     // --- clear_stale_runtime ----------------------------------------------
-
-    #[test]
-    fn anchor_gate_refuses_an_override_daemon_without_anchors() {
-        let err = anchor_gate(true, None).expect_err("override without anchors must refuse");
-        let SpawnError::Invalid(message) = err else {
-            panic!("expected the pointed Invalid refusal, got another variant");
-        };
-        assert!(
-            message.contains("remove the override"),
-            "the refusal must name the unlock: {message}"
-        );
-    }
-
-    #[test]
-    fn anchor_gate_passes_a_default_mode_launch() {
-        anchor_gate(false, None).expect("default mode is not the gate's business");
-    }
 
     #[test]
     fn clear_stale_runtime_is_ok_when_no_file_exists() {
@@ -993,7 +1006,47 @@ mod tests {
         assert!(matches!(error, HarvestError::Spawn(_)));
     }
 
-    // --- compose_launch_env + fallback --------------------------------
+    // --- authorization + record collision -------------------------------
+
+    #[test]
+    fn authorization_passes_the_target_user_and_root_only() {
+        let uid = unsafe { libc::getuid() };
+        assert!(authorized(uid, uid), "the target user itself passes");
+        assert!(authorized(0, uid), "root passes (the admin exemption)");
+        assert!(!authorized(uid + 1, uid), "a foreign uid is denied");
+    }
+
+    #[test]
+    fn spawn_refuses_a_slug_already_in_the_record_area() {
+        // Collision is a registry verdict: an existing record refuses
+        // the spawn even though no data directory exists.
+        let root = tempdir();
+        let data = tempdir();
+        let record = records::InstanceRecord {
+            instance_id: "instance-1".into(),
+            owner_uid: unsafe { libc::getuid() },
+            target_uid: unsafe { libc::getuid() },
+            target_username: None,
+            workspace: None,
+            env: Vec::new(),
+            identity: None,
+            data_dir: data.path().to_path_buf(),
+        };
+        records::write_record(root.path(), "taken", &record).expect("write record");
+        let error = spawn(
+            root.path(),
+            "taken",
+            ".",
+            &[],
+            None,
+            Duration::from_secs(1),
+            unsafe { libc::getuid() },
+        )
+        .unwrap_err();
+        assert!(matches!(error, SpawnError::SlugTaken(_)), "{error}");
+    }
+
+    // --- spawn request validation -------------------------------------
     #[test]
     fn a_missing_dev_exe_is_rejected_at_request_time() {
         // The exe gate fires before any filesystem work: no tree, no
@@ -1005,7 +1058,7 @@ mod tests {
             &[],
             Some("/nonexistent/kallip-tagma"),
             Duration::from_secs(1),
-            0,
+            unsafe { libc::getuid() },
         )
         .unwrap_err();
         assert!(
@@ -1042,7 +1095,8 @@ mod tests {
             &["PATH=/explicit".into(), "KALLIP_X=1".into()],
             "i1",
             Path::new("/ws"),
-            None,
+            Path::new("/data/i1"),
+            Some(Path::new("/state")),
         );
         assert_eq!(get(&env, "PATH"), Some("/explicit"));
         assert_eq!(get(&env, "KALLIP_X"), Some("1"));
@@ -1052,10 +1106,18 @@ mod tests {
 
     #[test]
     fn compose_daemon_keys_win_over_a_polluted_base() {
-        let env = compose_launch_env(&base_env(), &[], "i1", Path::new("/ws"), None);
+        let env = compose_launch_env(
+            &base_env(),
+            &[],
+            "i1",
+            Path::new("/ws"),
+            Path::new("/data/i1"),
+            Some(Path::new("/state")),
+        );
         assert_eq!(get(&env, "KALLIP_TAGMA_SLUG"), Some("i1"));
         assert_eq!(get(&env, "KALLIP_WORKSPACE_ROOT"), Some("/ws"));
         assert_eq!(get(&env, "KALLIP_TAGMA_ADDR"), Some("127.0.0.1:0"));
+        assert_eq!(get(&env, "KALLIP_TAGMA_DATA_DIR"), Some("/data/i1"));
     }
 
     #[test]
@@ -1065,13 +1127,22 @@ mod tests {
             &["RUST_LOG=debug".into()],
             "d",
             Path::new("/w"),
+            Path::new("/data/d"),
             None,
         );
         assert!(explicit.contains(&"RUST_LOG=debug".to_owned()));
-        let harvested = compose_launch_env(&base_env(), &[], "d", Path::new("/w"), None);
+        let harvested = compose_launch_env(
+            &base_env(),
+            &[],
+            "d",
+            Path::new("/w"),
+            Path::new("/data/d"),
+            None,
+        );
         assert!(harvested.contains(&"RUST_LOG=harvest-level".to_owned()));
         let base: Vec<(String, String)> = vec![("PATH".into(), "/p".into())];
-        let neither = compose_launch_env(&base, &[], "d", Path::new("/w"), None);
+        let neither =
+            compose_launch_env(&base, &[], "d", Path::new("/w"), Path::new("/data/d"), None);
         assert!(neither.contains(&"RUST_LOG=info".to_owned()));
     }
 
@@ -1082,7 +1153,8 @@ mod tests {
             &["PATH=/explicit".into(), "RUST_LOG=debug".into()],
             "d",
             Path::new("/w"),
-            None,
+            Path::new("/data/d"),
+            Some(Path::new("/state")),
         );
         let mut keys: Vec<&str> = env
             .iter()
@@ -1095,32 +1167,49 @@ mod tests {
     }
 
     #[test]
-    fn compose_pins_the_xdg_anchors_daemon_owned() {
-        let anchors = XdgAnchors {
-            data_home: PathBuf::from("/daemon/data"),
-            state_home: Some(PathBuf::from("/daemon/state")),
-        };
+    fn compose_hands_the_data_dir_and_state_anchor_daemon_owned() {
+        // The handoff pair is daemon-owned: neither a polluted profile
+        // nor an explicit request pair may move the instance's data root
+        // or its logs. No XDG_DATA_HOME anchor exists at all — the
+        // explicit handoff replaced the shared-root assumption.
         let base = vec![
             ("PATH".to_owned(), "/p".to_owned()),
-            ("XDG_DATA_HOME".to_owned(), "/polluted/data".to_owned()),
+            (
+                "KALLIP_TAGMA_DATA_DIR".to_owned(),
+                "/polluted/data".to_owned(),
+            ),
+            ("XDG_DATA_HOME".to_owned(), "/polluted/data-home".to_owned()),
         ];
         let env = compose_launch_env(
             &base,
             &["XDG_STATE_HOME=/polluted/state".to_owned()],
             "i1",
             Path::new("/ws"),
-            Some(&anchors),
+            Path::new("/daemon/data/i1"),
+            Some(Path::new("/daemon/state")),
         );
-        assert_eq!(get(&env, "XDG_DATA_HOME"), Some("/daemon/data"));
+        assert_eq!(get(&env, "KALLIP_TAGMA_DATA_DIR"), Some("/daemon/data/i1"));
         assert_eq!(get(&env, "XDG_STATE_HOME"), Some("/daemon/state"));
+        assert_eq!(
+            get(&env, "XDG_DATA_HOME"),
+            Some("/polluted/data-home"),
+            "not daemon-owned, rides through"
+        );
     }
 
     #[test]
-    fn compose_without_anchors_carries_no_xdg_keys() {
+    fn compose_without_a_state_home_carries_no_state_anchor() {
         let base = vec![("PATH".to_owned(), "/p".to_owned())];
-        let env = compose_launch_env(&base, &[], "i1", Path::new("/ws"), None);
-        assert_eq!(get(&env, "XDG_DATA_HOME"), None);
+        let env = compose_launch_env(
+            &base,
+            &[],
+            "i1",
+            Path::new("/ws"),
+            Path::new("/data/i1"),
+            None,
+        );
         assert_eq!(get(&env, "XDG_STATE_HOME"), None);
+        assert_eq!(get(&env, "KALLIP_TAGMA_DATA_DIR"), Some("/data/i1"));
     }
 
     #[test]
@@ -1143,7 +1232,14 @@ mod tests {
         // if the Err branch ever returned an empty base, nothing else
         // would catch it (the shell-out wrapper cannot be unit-tested).
         let base = degrade_to_fallback(Some(Path::new("/opt/kallip/bin")));
-        let env = compose_launch_env(&base, &[], "i1", Path::new("/ws"), None);
+        let env = compose_launch_env(
+            &base,
+            &[],
+            "i1",
+            Path::new("/ws"),
+            Path::new("/data/i1"),
+            None,
+        );
         assert!(
             env.contains(&"PATH=/opt/kallip/bin:/usr/local/bin:/usr/bin:/bin".to_owned()),
             "fallback PATH rides through composition: {env:?}"
@@ -1182,6 +1278,10 @@ mod tests {
         assert!(
             validate_user_env(&["KALLIP_TAGMA_SLUG=/x".into()]).is_err(),
             "reserved rejected"
+        );
+        assert!(
+            validate_user_env(&["KALLIP_TAGMA_DATA_DIR=/x".into()]).is_err(),
+            "the data-dir handoff is daemon-owned"
         );
     }
 
