@@ -40,27 +40,29 @@ pub async fn run(data_root: PathBuf) {
             tracing::warn!(
                 slug = %slug,
                 pid = ?pid,
-                log = %instance_logs_dir(&data_root, dirs::state_dir().as_deref(), &slug).display(),
+                log = %logs_pointer(dirs::state_dir().as_deref(), &slug).display(),
                 "instance died: recorded pid is no longer a live kallip-tagma"
             );
         }
         tokio::time::sleep(RECONCILE_INTERVAL).await;
     }
 }
-/// Where an instance's log files live: the state tree mirrors the data
-/// tree (`<state_home>/kallipai/tagmata/<slug>/logs`) because logs are
-/// pure output residue kept outside the portable instance tree. The
-/// no-state-home arm is defensive only — the daemon's own startup
-/// already requires the platform state dir, so in practice it never
-/// fires; it keeps the pure function total for tests.
-fn instance_logs_dir(data_root: &Path, state_home: Option<&Path>, slug: &str) -> PathBuf {
+
+/// Where an instance's log files live: always the state tree
+/// (`<state_home>/kallipai/tagmata/<slug>/logs`) — mirroring the tagma's
+/// own placement, since logs are pure output residue kept outside the
+/// instance data tree and the slug names the tree on both sides. The
+/// `None` arm is defensive only — the daemon's own startup already
+/// requires the platform state dir, so it never fires in practice; the
+/// pointer stays total so the warn line always renders.
+fn logs_pointer(state_home: Option<&Path>, slug: &str) -> PathBuf {
     match state_home {
         Some(home) => home
             .join("kallipai")
             .join("tagmata")
             .join(slug)
             .join("logs"),
-        None => data_root.join(slug).join("logs"),
+        None => PathBuf::from("<state home unresolved>"),
     }
 }
 
@@ -94,18 +96,14 @@ mod tests {
 
     #[test]
     fn dead_instance_logs_point_at_the_state_tree() {
-        let dir = instance_logs_dir(
-            Path::new("/data/kallipai/tagmata"),
-            Some(Path::new("/state/home")),
-            "e2e",
-        );
+        let dir = logs_pointer(Some(Path::new("/state/home")), "e2e");
         assert_eq!(dir, PathBuf::from("/state/home/kallipai/tagmata/e2e/logs"));
     }
 
     #[test]
-    fn without_a_state_home_the_logs_pointer_falls_back_in_tree() {
-        let dir = instance_logs_dir(Path::new("/data/tagmata"), None, "e2e");
-        assert_eq!(dir, PathBuf::from("/data/tagmata/e2e/logs"));
+    fn without_a_state_home_the_pointer_names_the_gap() {
+        let dir = logs_pointer(None, "e2e");
+        assert_eq!(dir, PathBuf::from("<state home unresolved>"));
     }
 
     /// One observed instance at one tick.

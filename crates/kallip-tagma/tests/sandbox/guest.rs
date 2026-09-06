@@ -14,13 +14,13 @@ async fn scenario1_guest() {
     }
     let world = World::setup();
     let ws = world.workspace.path().to_path_buf();
-    let agent_data = "$KALLIP_DATA_DIR/agents/$KALLIP_ID";
+    let agent_data = format!("{}/agents/$KALLIP_ID", world.data_root().display());
     let script = vec![
         Reply::Tool("ls -A $HOME/.ssh".into()), // 0: hide-hole => empty
         Reply::Tool(format!("echo x > {}/probe.txt", ws.display())), // 1: workspace RO
         Reply::Tool(format!("echo x >> {agent_data}/meta.json")), // 2: data tree RO
         Reply::Tool("mkdir -p $HOME/elsewhere && echo x > $HOME/elsewhere/x".into()), // 3: home RO
-        Reply::Tool("cat $KALLIP_DATA_DIR/profiles/profiles.toml".into()), // 4: profiles hide-hole
+        Reply::Tool("cat \"$XDG_CONFIG_HOME/kallipai/tagmata/main/profiles/profiles.toml\"".into()), // 4: profiles hide-hole
         Reply::End("done"),
     ];
 

@@ -122,6 +122,7 @@ impl Daemon {
                 slug,
                 workspace,
                 env,
+                exe,
             } => {
                 let slug_out = slug.clone();
                 // Blocking work on the connection task: spawn waits up to
@@ -131,7 +132,15 @@ impl Daemon {
                     let data_root = self.data_root.clone();
                     move || {
                         let slug = slug.clone();
-                        crate::spawn::spawn(&data_root, &slug, &workspace, &env, timeout, peer_uid)
+                        crate::spawn::spawn(
+                            &data_root,
+                            &slug,
+                            &workspace,
+                            &env,
+                            exe.as_deref(),
+                            timeout,
+                            peer_uid,
+                        )
                     }
                 })
                 .await
@@ -166,7 +175,7 @@ impl Daemon {
                     Err(join_error) => err(ErrorCode::Internal, format!("stop task: {join_error}")),
                 }
             }
-            RequestBody::Start { slug, env } => {
+            RequestBody::Start { slug, env, exe } => {
                 let slug_out = slug.clone();
                 // Same blocking profile as spawn: start waits up to 30s for
                 // the relaunched tagma's runtime.json.
@@ -178,6 +187,7 @@ impl Daemon {
                             &data_root,
                             &slug,
                             &env,
+                            exe.as_deref(),
                             timeout,
                             &crate::scan::pid_is_alive,
                         )

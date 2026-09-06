@@ -4,4 +4,5 @@
 //! crate holds no runtime code, only the protocol shape and its round-trip
 //! guarantees.
 
+pub mod socket;
 pub mod wire;

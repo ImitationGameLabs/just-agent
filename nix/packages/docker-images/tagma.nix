@@ -18,7 +18,7 @@ in
 # the `kallip` CLI (whose `reply` subcommand the agent invokes to address the
 # user), and the tagma's shell toolset (the agent landlock sandbox shells out to
 # bash/coreutils/ripgrep/git/pgrep/kill), the CA trust store, and aifed. It
-# carries NO tagma-specific baked env (no KALLIP_TAGMA_ADDR/KALLIP_DATA_DIR/...)
+# carries NO tagma-specific baked env (no KALLIP_TAGMA_ADDR/KALLIP_TAGMA_SLUG/...)
 # and NO default Cmd: the compose `tagma` service sets its own `command` +
 # `environment`. Only PATH and KALLIP_SKILLS_SEED are baked: both are store
 # paths intrinsic to the build (identical across deploys), and the tagma + its

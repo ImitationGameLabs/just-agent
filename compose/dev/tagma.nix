@@ -20,11 +20,7 @@
 # landlock/seccomp shell sandbox still needs SYS_ADMIN + seccomp=unconfined.
 #
 # Separate compose project (`kallipai-dev-tagma`) so its containers/volumes are
-# distinct from the archeion-side `kallipai-dev` project. NOTE: if you previously
-# ran tagma via the old `kallipai-dev` profile, its named volumes
-# (`kallipai-dev_tagma_data` / `_workspace`) are orphaned by this split -- use
-# the KALLIP_ARION_*_PATH bind overrides (or `docker volume` migration) if you
-# need to keep that state.
+# distinct from the archeion-side `kallipai-dev` project.
 { pkgs, lib, ... }:
 let
   flake = builtins.getFlake "git+file://${toString ../..}";
@@ -116,8 +112,14 @@ in
         # flakes/nix-command are off. Enable them client-side; the daemon still
         # owns build/substitution policy.
         NIX_CONFIG = "extra-experimental-features = nix-command flakes";
-        HOME = "/var/lib/kallipai/tagmata/main";
-        KALLIP_DATA_DIR = "/var/lib/kallipai/tagmata/main";
+        HOME = "/var/lib";
+        # Slug boot: the instance data root derives from KALLIP_TAGMA_SLUG under
+        # the XDG data home - /var/lib/kallipai/tagmata/main, which is
+        # exactly the mounted data volume. Logs land inside the volume too
+        # (XDG_STATE_HOME points at the same parent).
+        KALLIP_TAGMA_SLUG = "main";
+        XDG_DATA_HOME = "/var/lib";
+        XDG_STATE_HOME = "/var/lib";
         # The tagma eagerly creates the singleton root agent at startup; its
         # workspace is resolved by AgentConfig::load from KALLIP_WORKSPACE_ROOT.
         # Pin the mounted workspace volume, which is disjoint from

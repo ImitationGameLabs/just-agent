@@ -39,10 +39,25 @@ use kallip_shell::tools::names;
 /// note would emit nothing. Distinct raw keys that canonicalize to the same
 /// prefix warn; the byte-order-last wins. Read once at tagma startup; edits
 /// take effect on the next tagma start.
+/// A missing or unprobeable overrides file degrades to the builtin preset:
+/// under a foreign or absent config home the file simply does not exist,
+/// and that is a normal boot, not operator intent. A file that exists but
+/// cannot be read still fails closed (the panic below).
 pub fn load_exec_hook_rules(path: &std::path::Path) -> Vec<HookRule> {
+    match std::fs::metadata(path) {
+        // Present but not a regular file (a directory, a broken symlink
+        // target): the operator named this path, so broken means loud.
+        Ok(meta) if !meta.is_file() => panic!(
+            "{}: exec hook rules path is not a regular file",
+            path.display()
+        ),
+        // Unprobeable: the file is absent or its parent chain is not
+        // reachable from this boot — builtin preset only, no failure.
+        Err(_) => return merge_exec_hook_rules(builtin_exec_hook_rules(), Default::default()),
+        Ok(_) => {}
+    }
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => panic!("{}: cannot read exec hook rules: {e}", path.display()),
     };
     let overrides = parse_exec_hook_overrides(&raw)
@@ -55,7 +70,7 @@ pub fn load_exec_hook_rules(path: &std::path::Path) -> Vec<HookRule> {
 /// self-conditionally, naming no specific skill (paths shift; the note only
 /// asks whether the relevant ones were applied). aifed is the one exception:
 /// a fixed, special tool stable enough to name outright.
-fn builtin_exec_hook_rules() -> Vec<HookRule> {
+pub fn builtin_exec_hook_rules() -> Vec<HookRule> {
     vec![
         HookRule {
             tool: names::BASH_EXEC.into(),

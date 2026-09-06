@@ -36,6 +36,7 @@ from harbor.models.agent.context import AgentContext
 
 from kallip_harbor.tagma import (
     PACKAGES,
+    agents_dir as agents_dir_fn,
     RUN_BIN,
     RUN_LOG,
     TagmaManager,
@@ -184,9 +185,16 @@ class KallipAdapter(BaseInstalledAgent):
             env.setdefault("KALLIP_LLM_PROVIDER", provider)
             env.setdefault("KALLIP_LLM_MODEL", model)
 
-        # Persist tagma data under Harbor's bind-mounted /logs/agent/ so it
-        # survives on the host at <trial_dir>/agent/ for post-run inspection.
-        env.setdefault("KALLIP_DATA_DIR", "/logs/agent")
+        # Slug boot: name this trial's instance (install-time generated),
+        # and anchor the XDG homes at Harbor's bind-mounted /logs/agent so
+        # the derived data root (/logs/agent/kallipai/tagmata/<slug>) and
+        # the logs land on the host at <trial_dir>/agent/ for post-run
+        # inspection. The env reaches the tagma child only - Harbor's own
+        # process is untouched.
+        self._slug = f"bench-{uuid.uuid4().hex[:8]}"
+        env["KALLIP_TAGMA_SLUG"] = self._slug
+        env["XDG_DATA_HOME"] = str(self.logs_dir)
+        env["XDG_STATE_HOME"] = str(self.logs_dir)
 
         # Harbor runs inside ephemeral containers; policy gates are not needed.
         env.setdefault("KALLIP_POLICY_PRESET", "allow-all")
@@ -251,15 +259,13 @@ class KallipAdapter(BaseInstalledAgent):
         """Parse context.json files for token usage metrics.
 
         Each agent (root + subagents) persists its own ``context.json``
-        under ``KALLIP_DATA_DIR/kallip/agents/{uuid}/``.
-        Since ``cumulative_usage`` is per-agent (not aggregated), we
-        must sum across all agent directories.
-
-        With ``KALLIP_DATA_DIR=/logs/agent`` (bind-mounted to
-        ``self.logs_dir`` on the host), the data directory is at:
-            self.logs_dir / "kallip" / "agents"
+        under ``<data root>/agents/{uuid}/``; the data root is the
+        slug-derived tree this adapter named at install time
+        (``tagma.agents_dir`` mirrors the Rust resolver). Since
+        ``cumulative_usage`` is per-agent (not aggregated), we must sum
+        across all agent directories.
         """
-        agents_dir = self.logs_dir / "kallip" / "agents"
+        agents_dir = agents_dir_fn(self.logs_dir, self._slug)
         if not agents_dir.is_dir():
             return
 

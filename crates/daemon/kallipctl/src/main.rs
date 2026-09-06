@@ -17,11 +17,17 @@ use kallip_daemon_common::wire::{ErrorCode, OkPayload, RequestBody, Response, Re
     version
 )]
 struct Cli {
-    /// Daemon control socket (default: $KALLIP_DAEMON_SOCKET, else
-    /// $KALLIP_STATE_DIR/control.sock, else the daemon default).
+    /// Daemon control socket. When omitted the shared resolution chain
+    /// is probed in order: $KALLIP_DAEMON_SOCKET, the runtime dir, the
+    /// state home default - the first socket that answers wins.
     #[arg(long, global = true)]
     socket: Option<String>,
 
+    /// Dev-only: run this explicit tagma binary in the launched instance
+    /// instead of the daemon's resolved one (dev loops testing a fresh
+    /// build against a running daemon).
+    #[arg(long, global = true)]
+    bin: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -62,31 +68,39 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let socket = cli
-        .socket
-        .clone()
-        .or_else(|| std::env::var("KALLIP_DAEMON_SOCKET").ok())
-        .unwrap_or_else(|| {
-            // Mirror the daemon's default resolution without importing it.
-            std::env::var_os("KALLIP_STATE_DIR")
-                .map(|d| format!("{}/control.sock", d.to_string_lossy()))
-                .unwrap_or_else(|| {
-                    format!(
-                        "{}/kallipai/daemon/control.sock",
-                        std::env::var_os("XDG_STATE_HOME")
-                            .map(|h| h.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| format!(
-                                "{}/.local/state",
-                                std::env::var_os("HOME")
-                                    .map(|h| h.to_string_lossy().into_owned())
-                                    .unwrap_or_default()
-                            ))
-                    )
-                })
-        });
+    // The shared chain, probed in order - the first socket that answers
+    // is wherever the daemon actually bound (identical ordering on both
+    // sides is what keeps client and daemon converged).
+    let candidates = kallip_daemon_common::socket::candidates_from_env(
+        cli.socket.as_deref().map(std::path::Path::new),
+    );
+    let socket = kallip_daemon_common::socket::probe(&candidates).with_context(|| {
+        format!(
+            "no reachable daemon socket; tried: {}",
+            candidates
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })?;
     let client = DaemonClient::new(socket);
 
     let started = matches!(cli.command, Command::Start { .. });
+    // Cheap client-side slug check: the same grammar the daemon
+    // enforces (shape and the 64-char cap), caught before a
+    // round-trip.
+    let slug = match &cli.command {
+        Command::Spawn { slug, .. } | Command::Start { slug, .. } | Command::Stop { slug } => {
+            Some(slug)
+        }
+        _ => None,
+    };
+    if let Some(slug) = slug
+        && !kallip_daemon_common::wire::valid_slug(slug)
+    {
+        anyhow::bail!("slug {slug:?} does not match [a-z0-9][a-z0-9-]* (max 64 chars)");
+    }
     let body = match cli.command {
         Command::Spawn {
             slug,
@@ -96,9 +110,14 @@ async fn main() -> Result<()> {
             slug,
             workspace,
             env,
+            exe: cli.bin,
         },
         Command::Stop { slug } => RequestBody::Stop { slug },
-        Command::Start { slug, env } => RequestBody::Start { slug, env },
+        Command::Start { slug, env } => RequestBody::Start {
+            slug,
+            env,
+            exe: cli.bin,
+        },
         Command::List => RequestBody::List,
         Command::Health { slug } => RequestBody::Health { slug },
     };

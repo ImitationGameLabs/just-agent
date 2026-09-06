@@ -66,6 +66,10 @@ async fn main() -> Result<()> {
 }
 
 async fn run(args: Args) -> Result<()> {
+    // Identity first: everything below (log placement, profile config, the
+    // data root itself) hangs off the slug-derived tree, so an unnamed or
+    // legacy-addressed boot must fail before it touches the filesystem.
+    boot_identity()?;
     // Mint the operator token: honor KALLIP_OPERATOR_TOKEN if set (back-compat
     // for automation), otherwise generate a fresh 256-bit `sk-operator-…` token.
     // Only the SHA-256 hash is retained by AppState; the plaintext is printed below
@@ -148,12 +152,20 @@ async fn run(args: Args) -> Result<()> {
     // (fail-closed — the operator asked for hooks and would otherwise
     // silently lose them), and every spawned agent clones this same set.
     // Rule edits take effect on the next start.
-    state
-        .hook_rules
-        .set(Arc::new(kallip_runtime::config::load_exec_hook_rules(
-            &exec_hooks_toml_path()?,
-        )))
-        .ok();
+    // A missing config root (no slug / no config home) degrades to the
+    // builtin preset with a warning: hooks are an operator addition, and
+    // their absence must not block a boot that could otherwise run.
+    let hook_rules = match exec_hooks_toml_path() {
+        Ok(path) => kallip_runtime::config::load_exec_hook_rules(&path),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "exec-hook overrides unavailable; builtin preset only"
+            );
+            kallip_runtime::config::builtin_exec_hook_rules()
+        }
+    };
+    state.hook_rules.set(Arc::new(hook_rules)).ok();
 
     // Open the work-schedule store and install it on AppState.
     let ws_store = work_schedule::WorkScheduleStore::open(&work_schedule_path()?)
@@ -342,13 +354,11 @@ async fn run(args: Args) -> Result<()> {
         advertise = %advertise_url,
         "tagma listening"
     );
-    // Local daemon management (opt-in): the daemon points KALLIP_DATA_DIR
-    // at the instance dir and marks it with its meta.json; publish
-    // runtime.json there right after the bind. An unmarked DATA_DIR keeps
-    // the single-instance behavior exactly: no file is written.
-    if let Some(instance_dir) = daemon_managed_dir() {
-        write_instance_state(&instance_dir, &listener)?;
-    }
+    // Publish the runtime identity (pid + bound port) into the instance dir
+    // right after the bind — unconditionally now: every boot carries a slug,
+    // so every boot owns an instance dir the daemon (or an operator) can
+    // discover it by. There is no unmarked mode left to stay silent in.
+    write_instance_state(&data_root()?, &listener)?;
     let shutdown_token = state.shutdown.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(shutdown_token))
@@ -376,47 +386,42 @@ fn ensure_credentials_root() -> Result<std::path::PathBuf> {
     Ok(credentials_dir)
 }
 
-/// Where this tagma's log files live.
-///
-/// Daemon-managed instances (data root marked with the daemon's
-/// `meta.json`) log to the state tree --
-/// `<state_root>/tagmata/<slug>/logs`, the slug being the instance
-/// dir's basename, mirroring how the daemon names the tree. Logs are
-/// pure output residue, so they sit outside the portable instance
-/// data tree. Standalone runs keep logs inside the instance tree
-/// (`<data_root>/logs/`): an unmarked dir has no slug and stays a
-/// self-contained unit -- the same single-instance philosophy as the
-/// runtime.json publish ("no file is written"), and two standalone
-/// trees cannot cross-feed logs, which a basename derivation would
-/// risk. `None` means the directory cannot be placed (state home
-/// undetermined for a daemon-managed instance) and callers degrade
-/// to stderr-only.
-fn resolve_logs_dir(
-    data_root: &std::path::Path,
-    instance_dir: Option<&std::path::Path>,
-    state_root: Option<&std::path::Path>,
-) -> Option<std::path::PathBuf> {
-    match instance_dir {
-        None => Some(data_root.join("logs")),
-        Some(dir) => {
-            let slug = dir.file_name()?;
-            state_root.map(|home| home.join("tagmata").join(slug).join("logs"))
-        }
-    }
+/// This process's instance identity: `KALLIP_TAGMA_SLUG` is mandatory and
+/// grammar-checked (`kallip_daemon_common::wire::valid_slug` — the same
+/// rule that names the daemon's instance tree).
+fn boot_identity() -> Result<std::path::PathBuf> {
+    let slug = std::env::var("KALLIP_TAGMA_SLUG")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .context(
+            "KALLIP_TAGMA_SLUG is not set; name this instance with KALLIP_TAGMA_SLUG \
+             (lowercase letters, digits and '-', <=64 chars, starting with a letter or digit)",
+        )?;
+    anyhow::ensure!(
+        kallip_daemon_common::wire::valid_slug(&slug),
+        "KALLIP_TAGMA_SLUG {slug:?} does not match [a-z0-9][a-z0-9-]* (<= 64 chars)"
+    );
+    let data_root = kallip_runtime::persistence::data_dir_root()?;
+    Ok(data_root)
 }
 
-/// The concrete log directory for this process: the daemon-managed
-/// predicate decides state tree vs in-instance-tree placement.
+/// Where this tagma's log files live: always the state tree —
+/// `<state_root>/tagmata/<slug>/logs`, mirroring how the daemon names the
+/// tree. Logs are pure output residue, so they sit outside the instance
+/// data tree; the slug is the process identity, so there is exactly one
+/// placement. `Err` means the directory cannot be placed (state home
+/// undetermined) and callers degrade to stderr-only.
 fn logs_target() -> Result<std::path::PathBuf> {
-    let root = data_root()?;
-    let instance_dir = daemon_managed_dir();
-    let state_root = match instance_dir {
-        Some(_) => Some(kallip_runtime::persistence::state_dir_root()?),
-        None => None,
-    };
-    resolve_logs_dir(&root, instance_dir.as_deref(), state_root.as_deref())
-        .ok_or_else(|| anyhow::anyhow!("cannot place the log directory"))
+    let slug = std::env::var("KALLIP_TAGMA_SLUG")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .context("cannot place logs: KALLIP_TAGMA_SLUG is not set")?;
+    Ok(kallip_runtime::persistence::state_dir_root()?
+        .join("tagmata")
+        .join(slug)
+        .join("logs"))
 }
+
 /// Logging shape: events land under the resolved log directory
 /// (daily-rolling files, tracing-appender, 7 files kept -- older
 /// days fall off) unless `KALLIP_TAGMA_LOG_TO_STDERR` asks for the
@@ -765,17 +770,9 @@ fn resolve_relay_plan(args: &args::Args) -> Result<Vec<(RelayEntry, EnrollEntry)
     Ok(plan)
 }
 
-/// The instance dir iff the daemon marks the data root with its
-/// `meta.json` -- the single "am I daemon-managed?" predicate, shared by
-/// the runtime.json publish and the log mirror. `data_root()` errors mean
-/// un-managed, not fatal: both callers degrade to plain manual mode.
-fn daemon_managed_dir() -> Option<std::path::PathBuf> {
-    let dir = data_root().ok()?;
-    dir.join("meta.json").is_file().then_some(dir)
-}
+/// The instance data root, slug-derived (see `boot_identity`).
 fn data_root() -> Result<std::path::PathBuf> {
-    use kallip_runtime::persistence::data_dir_root;
-    data_dir_root()
+    kallip_runtime::persistence::data_dir_root()
 }
 
 fn credentials_dir() -> Result<std::path::PathBuf> {
@@ -797,9 +794,11 @@ fn inbox_path() -> Result<std::path::PathBuf> {
     data_root().map(|d| d.join("inboxes.sqlite"))
 }
 
-/// The tagma-wide exec-hook overrides file: `<data_root>/exec_hooks.toml`.
+/// The tagma-wide exec-hook overrides file:
+/// `<config_root>/exec_hooks.toml` (operator-declared config lives in the
+/// config tree; the runtime data tree stays data-only).
 fn exec_hooks_toml_path() -> Result<std::path::PathBuf> {
-    data_root().map(|d| d.join("exec_hooks.toml"))
+    kallip_runtime::persistence::config_dir_root().map(|d| d.join("exec_hooks.toml"))
 }
 
 /// Start the direct status driver. Always runs, independent of whether the
@@ -1057,46 +1056,66 @@ async fn shutdown_signal(token: CancellationToken) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     #[test]
-    fn standalone_logs_stay_inside_the_instance_tree() {
-        let dir = resolve_logs_dir(
-            Path::new("/data/standalone"),
-            None,
-            Some(Path::new("/state/kallipai")),
-        );
-        assert_eq!(dir, Some(PathBuf::from("/data/standalone/logs")));
+    fn boot_refuses_to_start_without_a_slug() {
+        temp_env::with_vars_unset(["KALLIP_TAGMA_SLUG"], || {
+            let err = boot_identity().unwrap_err();
+            assert!(
+                err.to_string().contains("KALLIP_TAGMA_SLUG is not set"),
+                "{err:#}"
+            );
+        });
     }
 
     #[test]
-    fn daemon_managed_logs_land_in_the_state_tree_under_the_slug() {
-        let dir = resolve_logs_dir(
-            Path::new("/data/kallipai/tagmata/e2e"),
-            Some(Path::new("/data/kallipai/tagmata/e2e")),
-            Some(Path::new("/state/kallipai")),
-        );
-        assert_eq!(dir, Some(PathBuf::from("/state/kallipai/tagmata/e2e/logs")));
+    fn boot_refuses_an_invalid_slug() {
+        temp_env::with_vars([("KALLIP_TAGMA_SLUG", Some("Bad_Slug"))], || {
+            let err = boot_identity().unwrap_err();
+            assert!(err.to_string().contains("does not match"), "{err:#}");
+        });
     }
 
     #[test]
-    fn daemon_managed_without_a_state_home_yields_none() {
-        let dir = resolve_logs_dir(
-            Path::new("/data/kallipai/tagmata/e2e"),
-            Some(Path::new("/data/kallipai/tagmata/e2e")),
-            None,
+    fn boot_derives_the_data_root_from_the_slug() {
+        let tmp = tempfile::tempdir().unwrap();
+        temp_env::with_vars(
+            [
+                ("KALLIP_TAGMA_SLUG", Some("e2e")),
+                ("XDG_DATA_HOME", Some(tmp.path().to_str().unwrap())),
+            ],
+            || {
+                let root = boot_identity().unwrap();
+                assert_eq!(
+                    root,
+                    tmp.path().join("kallipai").join("tagmata").join("e2e")
+                );
+            },
         );
-        assert_eq!(dir, None);
     }
 
     #[test]
-    fn a_root_like_instance_dir_yields_none() {
-        let dir = resolve_logs_dir(
-            Path::new("/"),
-            Some(Path::new("/")),
-            Some(Path::new("/state/kallipai")),
+    fn logs_land_in_the_state_tree_under_the_slug() {
+        temp_env::with_vars(
+            [
+                ("KALLIP_TAGMA_SLUG", Some("e2e")),
+                ("XDG_STATE_HOME", Some("/state/home")),
+            ],
+            || {
+                assert_eq!(
+                    logs_target().unwrap(),
+                    PathBuf::from("/state/home/kallipai/tagmata/e2e/logs")
+                );
+            },
         );
-        assert_eq!(dir, None);
+    }
+
+    #[test]
+    fn logs_are_unplaceable_without_a_slug() {
+        temp_env::with_vars_unset(["KALLIP_TAGMA_SLUG"], || {
+            assert!(logs_target().is_err(), "no slug, no log placement");
+        });
     }
 
     fn stored(id: &str, origin: Option<&str>) -> credentials::StoredTagma {

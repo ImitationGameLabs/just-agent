@@ -91,14 +91,14 @@ Skills are a natural consequence of agentic context management:
    frontmatter). The root agent is the sole author of that directory; any other
    agent that wants a skill added proposes it in conversation to root.
 
-   The data directory is determined by `KALLIP_DATA_DIR` env var (used
-   verbatim), or the platform default if unset:
+   The data root is derived from the `KALLIP_TAGMA_SLUG` env var under the
+   platform data dir (the slug is required — an unnamed boot refuses):
 
-   | Platform | Default path                           |
-   | -------- | -------------------------------------- |
-   | Linux    | `~/.local/share/kallipai/tagmata/default` |
-   | macOS    | `~/Library/Application Support/kallipai/tagmata/default` |
-   | Windows  | `%APPDATA%\kallipai\tagmata\default`     |
+   | Platform | Default path                             |
+   | -------- | ---------------------------------------- |
+   | Linux    | `~/.local/share/kallipai/tagmata/<slug>` |
+   | macOS    | `~/Library/Application Support/kallipai/tagmata/<slug>` |
+   | Windows  | `%APPDATA%\kallipai\tagmata\<slug>`      |
 
 3. When it encounters a matching situation later, it reads the file and pins
    the content into context.

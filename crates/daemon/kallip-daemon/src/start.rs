@@ -78,27 +78,34 @@ fn stored_credentials_exist(instance_dir: &Path) -> bool {
         && std::fs::read_to_string(entry.join("tagma.token")).is_ok()
 }
 
-/// Build the replay env for a restart, dropping the enrollment code once it
-/// is provably spent (stored credentials exist) and scrubbing it from
-/// meta.json in the same stroke — single-use secret material must not sit
-/// on disk forever. Conditional on the probe: an instance whose first
-/// enrollment failed (that boot degrades the entry to local-only, it does
-/// not fail) still needs the code on restart to retry, so an unconditional
-/// strip would make such instances unbootable. A failed scrub write never
+/// Build the replay env for a restart. Two filters apply:
+///
+/// * the enrollment code is dropped once it is provably spent (stored
+///   credentials exist) — single-use secret material must not sit on disk
+///   forever. Conditional on the probe: an instance whose first enrollment
+///   failed (that boot degrades the entry to local-only, it does not fail)
+///   still needs the code on restart to retry, so an unconditional strip
+///   would make such instances unbootable.
+///
+/// The scrub writes the filtered list back to meta.json in the same stroke
+/// so the file stops carrying the stale key. A failed scrub write never
 /// blocks the relaunch — the in-memory filter is the functional fix, the
 /// persisted copy is hygiene.
 fn replay_env(meta: &scan::InstanceMeta, instance_dir: &Path) -> Vec<String> {
     let spent = format!("{CONSUMED_ENROLLMENT_CODE}=");
-    let has_code = meta.env.iter().any(|pair| pair.starts_with(&spent));
-    if !has_code || !stored_credentials_exist(instance_dir) {
-        return meta.env.clone();
-    }
+    let code_is_spent = has_spent_code(meta, instance_dir);
     let replay: Vec<String> = meta
         .env
         .iter()
-        .filter(|pair| !pair.starts_with(&spent))
+        .filter(|pair| {
+            let drop_code = code_is_spent && pair.starts_with(&spent);
+            !drop_code
+        })
         .cloned()
         .collect();
+    if replay.len() == meta.env.len() {
+        return meta.env.clone();
+    }
     let scrubbed = scan::InstanceMeta {
         instance_id: meta.instance_id.clone(),
         owner_uid: meta.owner_uid,
@@ -112,6 +119,14 @@ fn replay_env(meta: &scan::InstanceMeta, instance_dir: &Path) -> Vec<String> {
     replay
 }
 
+/// Whether the instance carries an enrollment code that is provably spent:
+/// the code is present in the persisted env and stored relay credentials
+/// already exist (see [`stored_credentials_exist`]).
+fn has_spent_code(meta: &scan::InstanceMeta, instance_dir: &Path) -> bool {
+    let spent = format!("{CONSUMED_ENROLLMENT_CODE}=");
+    meta.env.iter().any(|pair| pair.starts_with(&spent)) && stored_credentials_exist(instance_dir)
+}
+
 /// Blocking relaunch. `pid_is_alive` is injected so tests can fake the
 /// liveness verdict without a real process. Liveness
 /// alone decides the AlreadyRunning check — the former comm re-check
@@ -123,12 +138,22 @@ pub fn start(
     data_root: &Path,
     slug: &str,
     env_overrides: &[String],
+    exe: Option<&str>,
     timeout: Duration,
     pid_is_alive: &dyn Fn(u32) -> bool,
 ) -> Result<(u32, u16), StartError> {
     if !kallip_daemon_common::wire::valid_slug(slug) {
         return Err(StartError::Invalid(format!(
             "slug {slug:?} does not match [a-z0-9][a-z0-9-]*"
+        )));
+    }
+    // Same dev-only gate as spawn: a bad explicit exe is a request
+    // rejection, not a 30s timeout.
+    if let Some(exe) = exe
+        && !crate::spawn::exe_runnable(exe)
+    {
+        return Err(StartError::Invalid(format!(
+            "exe {exe:?} is not an existing executable file"
         )));
     }
     // Same rules as spawn's request env, checked before any filesystem
@@ -164,7 +189,14 @@ pub fn start(
     // persisted snapshot stays the spawn-time truth.
     let mut launch_env = replay;
     launch_env.extend(env_overrides.iter().cloned());
-    match launch(&instance_dir, Path::new(&workspace), &launch_env, timeout) {
+    match launch(
+        &instance_dir,
+        slug,
+        Path::new(&workspace),
+        &launch_env,
+        exe,
+        timeout,
+    ) {
         Ok((pid, port)) => {
             tracing::info!(slug = %slug, pid, port, "instance started (adoption)");
             Ok((pid, port))
@@ -289,6 +321,7 @@ mod tests {
             std::path::Path::new("."),
             "instance-1",
             &["SOME_OTHER_KEY=v".to_string()],
+            None,
             Duration::from_secs(1),
             &|_| false,
         )
@@ -302,6 +335,7 @@ mod tests {
             std::path::Path::new("."),
             "instance-1",
             &["KALLIP_TAGMA_ADDR=127.0.0.1:1".to_string()],
+            None,
             Duration::from_secs(1),
             &|_| false,
         )

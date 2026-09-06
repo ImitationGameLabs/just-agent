@@ -1233,10 +1233,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(value["default"], "default");
-        // Persisted under the guard's data dir.
-        let dir = std::env::var("KALLIP_DATA_DIR").unwrap();
+        // Persisted under the guard's slug-derived config root.
+        let dir = std::env::var("XDG_CONFIG_HOME").unwrap();
         let body = std::fs::read_to_string(
             std::path::Path::new(&dir)
+                .join("kallipai")
+                .join("tagmata")
+                .join("test")
                 .join("profiles")
                 .join("profiles.toml"),
         )

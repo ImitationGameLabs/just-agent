@@ -162,7 +162,7 @@ Applies to both dev and the prod-tagma composition (the only compositions that
 run the tagma with a relay configured). The tagma's relay connector enrolls on
 its **first** boot using `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` (a single-use
 `sk-enroll-...` minted via the archeion dashboard after a user signs up). After
-that it persists the tagma token under `KALLIP_DATA_DIR/credentials/` (i.e. inside the
+that it persists the tagma token under the instance data root's `credentials/` (i.e. inside the
 `data` volume) and reuses it. Leave the code unset on subsequent boots. The
 first-boot `enroll()` is not retried in code: on a missing/unreachable archeion it
 logs an error, leaves the relay unset, and keeps serving local agents (the

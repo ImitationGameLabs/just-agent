@@ -77,9 +77,8 @@ task is fully done. You may do work and `break` without sending anything.
 /// Returns the shared skill directory.
 ///
 /// `KALLIP_SKILLS_ROOT`, if set, is used verbatim. Otherwise the directory
-/// is `<data_dir_root>/skills/` — i.e. `$KALLIP_DATA_DIR/skills/` when the
-/// env var is set, or the XDG fallback tree's `skills/` — the standalone
-/// default instance leaf (see [`crate::persistence::data_dir_root`]).
+/// is `<data_dir_root>/skills/` — the slug-derived instance tree (see
+/// [`crate::persistence::data_dir_root`]).
 pub fn skill_dir() -> Result<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("KALLIP_SKILLS_ROOT")
         && !dir.is_empty()
@@ -267,10 +266,11 @@ mod tests {
     use serial_test::serial;
     use tempfile::TempDir;
 
-    /// Run `f` with the three skill-related env vars pinned: `KALLIP_DATA_DIR`
-    /// to `data_dir`, `KALLIP_SKILLS_SEED` to `seed` (None unsets), and
-    /// `KALLIP_SKILLS_ROOT` to `root` (None unsets). Pinned together so the
-    /// process-global state stays consistent.
+    /// Run `f` with the skill-related env vars pinned: `KALLIP_TAGMA_SLUG` +
+    /// `XDG_DATA_HOME` naming the slug-derived data root (`data_dir`),
+    /// `KALLIP_SKILLS_SEED` to `seed` (None unsets), and `KALLIP_SKILLS_ROOT`
+    /// to `root` (None unsets). Pinned together so the process-global state
+    /// stays consistent.
     fn with_skill_env<R>(
         data_dir: &Path,
         seed: Option<&str>,
@@ -279,12 +279,19 @@ mod tests {
     ) -> R {
         temp_env::with_vars(
             [
-                ("KALLIP_DATA_DIR", Some(data_dir.to_str().unwrap())),
+                ("KALLIP_TAGMA_SLUG", Some("test")),
+                ("XDG_DATA_HOME", Some(data_dir.to_str().unwrap())),
                 ("KALLIP_SKILLS_SEED", seed),
                 ("KALLIP_SKILLS_ROOT", root),
             ],
             f,
         )
+    }
+
+    /// The slug-derived data root for the fixture data home (`with_skill_env`
+    /// pins KALLIP_TAGMA_SLUG=test + XDG_DATA_HOME=data).
+    fn data_root(data: &Path) -> PathBuf {
+        data.join("kallipai").join("tagmata").join("test")
     }
 
     /// Build a minimal seed fixture (mirrors the shipped layout: a category
@@ -328,14 +335,14 @@ mod tests {
         let data = TempDir::new().unwrap();
         let seed = build_seed_fixture();
         // The boot path creates the skills dir before seeding; mirror that.
-        std::fs::create_dir_all(data.path().join("skills")).unwrap();
+        std::fs::create_dir_all(data_root(data.path()).join("skills")).unwrap();
         let seed_path = seed.path().to_str().unwrap().to_owned();
 
         with_skill_env(data.path(), Some(&seed_path), None, || {
             seed_skills_if_empty().unwrap();
         });
 
-        let skills = data.path().join("skills");
+        let skills = data_root(data.path()).join("skills");
         assert!(
             skills.join("code/README.md").exists(),
             "category README seeded"
@@ -356,7 +363,7 @@ mod tests {
     fn seed_is_noop_when_target_nonempty() {
         let data = TempDir::new().unwrap();
         let seed = build_seed_fixture();
-        let skills = data.path().join("skills");
+        let skills = data_root(data.path()).join("skills");
         std::fs::create_dir_all(&skills).unwrap();
         // Pre-existing agent-authored file: seeding must not clobber it.
         std::fs::write(skills.join("mine.md"), "authored\n").unwrap();
@@ -431,7 +438,7 @@ mod tests {
     #[serial]
     fn seed_skips_when_seed_unset() {
         let data = TempDir::new().unwrap();
-        std::fs::create_dir_all(data.path().join("skills")).unwrap();
+        std::fs::create_dir_all(data_root(data.path()).join("skills")).unwrap();
 
         with_skill_env(data.path(), None, None, || {
             seed_skills_if_empty().unwrap();
@@ -468,7 +475,7 @@ mod tests {
     #[serial]
     fn seed_failure_leaves_target_empty_and_no_staging() {
         let data = TempDir::new().unwrap();
-        std::fs::create_dir_all(data.path().join("skills")).unwrap();
+        std::fs::create_dir_all(data_root(data.path()).join("skills")).unwrap();
         // Point at a path that does not exist -> copy fails.
         let bad = data
             .path()
@@ -482,7 +489,7 @@ mod tests {
             assert!(seed_skills_if_empty().is_err());
         });
 
-        let skills = data.path().join("skills");
+        let skills = data_root(data.path()).join("skills");
         // Target stayed empty.
         assert!(std::fs::read_dir(&skills).unwrap().next().is_none());
         // No staging artifact left behind (retryable on the next boot).
@@ -503,7 +510,7 @@ mod tests {
         // and leaving the target empty every boot.
         let data = TempDir::new().unwrap();
         let empty_seed = TempDir::new().unwrap();
-        std::fs::create_dir_all(data.path().join("skills")).unwrap();
+        std::fs::create_dir_all(data_root(data.path()).join("skills")).unwrap();
         let seed_path = empty_seed.path().to_str().unwrap().to_owned();
 
         with_skill_env(data.path(), Some(&seed_path), None, || {
@@ -511,7 +518,7 @@ mod tests {
         });
 
         assert!(
-            std::fs::read_dir(data.path().join("skills"))
+            std::fs::read_dir(data_root(data.path()).join("skills"))
                 .unwrap()
                 .next()
                 .is_none(),
@@ -526,9 +533,9 @@ mod tests {
         // next boot must reclaim it (fixed staging name) and complete cleanly.
         let data = TempDir::new().unwrap();
         let seed = build_seed_fixture();
-        std::fs::create_dir_all(data.path().join("skills")).unwrap();
+        std::fs::create_dir_all(data_root(data.path()).join("skills")).unwrap();
         // Simulate a crashed prior boot: stale staging with garbage inside.
-        let stale = data.path().join(".skills-seed");
+        let stale = data_root(data.path()).join(".skills-seed");
         std::fs::create_dir_all(&stale).unwrap();
         std::fs::write(stale.join("leftover.md"), "garbage\n").unwrap();
         let seed_path = seed.path().to_str().unwrap().to_owned();
@@ -537,7 +544,7 @@ mod tests {
             seed_skills_if_empty().unwrap();
         });
 
-        let skills = data.path().join("skills");
+        let skills = data_root(data.path()).join("skills");
         assert!(
             skills.join("code/README.md").exists(),
             "seed completed despite stale staging"

@@ -95,6 +95,7 @@ impl InstanceBackend for UdsBackend {
                 slug,
                 workspace,
                 env,
+                exe: None,
             })
             .await?;
         unwrap_spawn(wire)
@@ -113,6 +114,7 @@ impl InstanceBackend for UdsBackend {
             .call(RequestBody::Start {
                 slug,
                 env: Vec::new(),
+                exe: None,
             })
             .await?;
         unwrap_spawn(wire)

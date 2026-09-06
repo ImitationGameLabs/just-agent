@@ -10,7 +10,7 @@
 //! fork) so the exec'd instance survives the daemon and holds no controlling
 //! terminal, applies the allowlisted KEY=VALUE tail args as the child env,
 //! then execs the target. The instance writes its own `runtime.json` into
-//! `<instance-dir>` (its `KALLIP_DATA_DIR`) for the daemon to adopt.
+//! `<instance-dir>` (its slug-derived data root) for the daemon to adopt.
 //!
 //! Dependency isolation is the point of a separate crate: this binary is the
 //! setuid-root candidate of the packaged install, so its audit surface

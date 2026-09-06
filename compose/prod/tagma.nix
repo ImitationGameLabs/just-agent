@@ -29,7 +29,7 @@ in
     # Tagma data and the agent workspace live in docker named volumes
     # (persistent; survive `arion down`, removed by `arion down -v`). The tagma
     # credentials (device key + tagma token) live under
-    # KALLIP_DATA_DIR/credentials, so they are carried by the `data` volume with
+    # the instance data root's credentials/, so they are carried by the `data` volume with
     # no separate mount. Host-dir
     # bind overrides are a dev-only convenience; prod pins storage at the docker
     # layer (data-root) or via a compose edit.
@@ -62,8 +62,13 @@ in
       # `restart: unless-stopped`
       # brings it back once the code is supplied / the archeion is reachable.
       service.environment = {
-        HOME = "/var/lib/kallipai/tagmata/main";
-        KALLIP_DATA_DIR = "/var/lib/kallipai/tagmata/main";
+        HOME = "/var/lib";
+        # Slug boot: the data root derives from KALLIP_TAGMA_SLUG under the XDG
+        # data home - /var/lib/kallipai/tagmata/main, exactly the mounted
+        # data volume; logs land inside the volume as well.
+        KALLIP_TAGMA_SLUG = "main";
+        XDG_DATA_HOME = "/var/lib";
+        XDG_STATE_HOME = "/var/lib";
         KALLIP_WORKSPACE_ROOT = "/workspace";
         KALLIP_TAGMA_ADDR = "0.0.0.0:3000";
         RUST_LOG = "info";

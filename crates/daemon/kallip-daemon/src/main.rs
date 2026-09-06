@@ -5,9 +5,10 @@
 //! - `KALLIP_DAEMON_DATA_DIR`: the instance tree root (default
 //!   `~/.local/share/kallipai/tagmata`); each child directory with a
 //!   `meta.json` is a managed instance.
-//! - `KALLIP_STATE_DIR`: daemon-owned state, the control socket's home
-//!   (rootless default `~/.local/state/kallipai/daemon`; a system install
-//!   points it at `/run/kallipai/daemon` via the unit).
+//! - `KALLIP_DAEMON_SOCKET`: an explicit control-socket path; without it
+//!   the socket binds the first resolvable leg of the shared chain (see
+//!   `kallip_daemon_common::socket`): the runtime dir, then the state
+//!   home default (`~/.local/state/kallipai/daemon`).
 //!
 //! The control socket is 0600: filesystem permission is the only auth.
 
@@ -46,8 +47,14 @@ fn main() -> Result<()> {
     }
 
     let data_root = data_root()?;
-    let state_dir = state_dir()?;
-    let socket_path = socket_path(&state_dir);
+    // Own the tree's existence: the slug-era root sits two segments
+    // deeper than the data home, and no deploy step creates it — spawn
+    // allocates only the instance leaf, so the trunk must predate it.
+    std::fs::create_dir_all(&data_root)
+        .with_context(|| format!("create data root {}", data_root.display()))?;
+    let socket_path = kallip_daemon_common::socket::daemon_bind_path().context(
+        "no control-socket candidate: set KALLIP_DAEMON_SOCKET, or make the platform state home determinable",
+    )?;
 
     // Prove-liveness socket takeover: a blind unlink
     // could steal the endpoint of a live daemon — the first daemon keeps
@@ -60,7 +67,12 @@ fn main() -> Result<()> {
     // in between is unacceptable for the system-install layout. Every
     // file this daemon creates is private, so the mask stays for life.
     unsafe { libc::umask(0o077) };
-    std::fs::create_dir_all(&state_dir).context("create state dir")?;
+    std::fs::create_dir_all(
+        socket_path
+            .parent()
+            .context("control socket path has no parent")?,
+    )
+    .context("create control-socket parent dir")?;
     // Prove-liveness check runs on std sockets (blocking is fine for a
     // one-shot probe); the serving listener is bound by tokio directly.
     refuse_if_live(&socket_path)?;
@@ -96,9 +108,9 @@ fn main() -> Result<()> {
 /// Instance tree root: `KALLIP_DAEMON_DATA_DIR` verbatim, else the XDG data
 /// home's `kallipai/tagmata` directory (matching
 /// `kallip_runtime::persistence`'s default, so daemon and instances agree
-/// on where the tree lives without sharing code). The standalone runtime
-/// writes the fixed `default` leaf in the same namespace; the state side
-/// lives under `kallipai/daemon` (see [`state_dir`]).
+/// on where the tree lives without sharing code). Every boot names itself
+/// with `KALLIP_TAGMA_SLUG` and owns that slug's leaf; the state side
+/// lives under `kallipai/daemon` beside the control socket.
 fn data_root() -> Result<PathBuf> {
     // The base lookup stays lazy: an explicit override must keep working
     // where the platform data home cannot be determined (a unit with
@@ -115,27 +127,13 @@ fn data_root() -> Result<PathBuf> {
 /// Pure resolution of the instance-tree root: an explicit override wins
 /// verbatim (a set-but-empty value included - it is still a set value),
 /// else the platform data home gains exactly the `kallipai/tagmata`
-/// segments - the same tree the standalone runtime writes. Pure so the
+/// segments - the same tree every slug-named boot derives. Pure so the
 /// default shape is testable without touching process-environment state.
 fn resolve_data_root(override_dir: Option<OsString>, data_home: PathBuf) -> PathBuf {
     match override_dir {
         Some(dir) => PathBuf::from(dir),
         None => data_home.join("kallipai").join("tagmata"),
     }
-}
-
-/// Daemon-owned state dir: `KALLIP_STATE_DIR` verbatim, else the XDG state
-/// home's `kallipai/daemon` directory.
-/// Private to the daemon (the control socket lives here), unlike the data
-/// root's shared `kallipai/tagmata` namespace (see [`data_root`]).
-fn state_dir() -> Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("KALLIP_STATE_DIR") {
-        return Ok(PathBuf::from(dir));
-    }
-    Ok(dirs::state_dir()
-        .context("could not determine platform state directory")?
-        .join("kallipai")
-        .join("daemon"))
 }
 
 /// Refuse to take over a live daemon's socket (root 16:31Z mandate): a
@@ -161,13 +159,6 @@ fn refuse_if_live(path: &std::path::Path) -> Result<()> {
     }
 }
 
-fn socket_path(state_dir: &std::path::Path) -> PathBuf {
-    match std::env::var_os("KALLIP_DAEMON_SOCKET") {
-        Some(path) => PathBuf::from(path),
-        None => state_dir.join("control.sock"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,7 +178,7 @@ mod tests {
     }
 
     /// The default carries exactly the kallipai/tagmata segments - the
-    /// same tree the standalone runtime writes - pinning the shape
+    /// same tree every slug-named boot derives - pinning the shape
     /// against a doubled-namespace regression.
     #[test]
     fn resolve_data_root_default_joins_kallipai_tagmata_segments() {

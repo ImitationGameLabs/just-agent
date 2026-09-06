@@ -1033,11 +1033,17 @@ async fn update_metadata_enforces_role_uniqueness() {
 #[serial_test::serial]
 fn ensure_root_agent_refuses_to_mint_when_a_disk_root_exists() {
     // /dev/shm keeps the leaked-env window away from /tmp workspaces: this
-    // test mutates KALLIP_DATA_DIR (serial only among serial tests), and a
-    // /tmp-based data dir would overlap the "/tmp" workspaces other
+    // test pins KALLIP_TAGMA_SLUG+XDG_DATA_HOME (serial only among serial tests),
+    // and a /tmp-based data dir would overlap the "/tmp" workspaces other
     // concurrently-running tests use, flipping their disjointness checks.
     let tmp = tempfile::TempDir::new_in("/dev/shm").unwrap();
-    let root = tmp.path().join("agents").join("disk-root-1");
+    let root = tmp
+        .path()
+        .join("kallipai")
+        .join("tagmata")
+        .join("disk-root")
+        .join("agents")
+        .join("disk-root-1");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(
         root.join("meta.json"),
@@ -1054,21 +1060,27 @@ fn ensure_root_agent_refuses_to_mint_when_a_disk_root_exists() {
     )
     .unwrap();
     let path = tmp.path().to_str().unwrap().to_owned();
-    temp_env::with_var("KALLIP_DATA_DIR", Some(path.as_str()), || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            let state = make_state();
-            let err = super::ensure_root_agent(&state).await.unwrap_err();
-            assert!(
-                err.to_string().contains("refusing to mint"),
-                "error points at the disk root: {err}"
-            );
-            assert!(state.registry.read().await.root_agent().is_none());
-        });
-    });
+    temp_env::with_vars(
+        [
+            ("KALLIP_TAGMA_SLUG", Some("disk-root")),
+            ("XDG_DATA_HOME", Some(path.as_str())),
+        ],
+        || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let state = make_state();
+                let err = super::ensure_root_agent(&state).await.unwrap_err();
+                assert!(
+                    err.to_string().contains("refusing to mint"),
+                    "error points at the disk root: {err}"
+                );
+                assert!(state.registry.read().await.root_agent().is_none());
+            });
+        },
+    );
 }
 
 #[test]
@@ -1078,24 +1090,37 @@ fn ensure_root_agent_refuses_to_mint_when_the_agents_dir_is_unreadable() {
     // as a regular file so read_dir fails with ENOTDIR -- the runner cannot
     // reproduce a permission-denied directory as root.
     let tmp = tempfile::TempDir::new_in("/dev/shm").unwrap();
-    std::fs::write(tmp.path().join("agents"), "not a directory").unwrap();
+    let agents_at = tmp
+        .path()
+        .join("kallipai")
+        .join("tagmata")
+        .join("disk-root")
+        .join("agents");
+    std::fs::create_dir_all(agents_at.parent().unwrap()).unwrap();
+    std::fs::write(agents_at, "not a directory").unwrap();
     let path = tmp.path().to_str().unwrap().to_owned();
-    temp_env::with_var("KALLIP_DATA_DIR", Some(path.as_str()), || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            let state = make_state();
-            let err = super::ensure_root_agent(&state).await.unwrap_err();
-            assert!(
-                err.to_string()
-                    .contains("cannot verify whether a disk root exists"),
-                "error names the verification failure: {err}"
-            );
-            assert!(state.registry.read().await.root_agent().is_none());
-        });
-    });
+    temp_env::with_vars(
+        [
+            ("KALLIP_TAGMA_SLUG", Some("disk-root")),
+            ("XDG_DATA_HOME", Some(path.as_str())),
+        ],
+        || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let state = make_state();
+                let err = super::ensure_root_agent(&state).await.unwrap_err();
+                assert!(
+                    err.to_string()
+                        .contains("cannot verify whether a disk root exists"),
+                    "error names the verification failure: {err}"
+                );
+                assert!(state.registry.read().await.root_agent().is_none());
+            });
+        },
+    );
 }
 
 /// The bind endpoint's live path: the record persists (disk first, then

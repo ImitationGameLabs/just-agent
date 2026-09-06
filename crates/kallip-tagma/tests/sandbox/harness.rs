@@ -134,12 +134,30 @@ impl World {
     pub fn home_path(&self) -> &Path {
         self.home.path()
     }
-    /// `$KALLIP_DATA_DIR` verbatim (data_dir_root uses the env var as-is).
+    /// The slug the spawned tagma boots under: it names the derived tree.
+    pub const SLUG: &str = "main";
+    /// The slug-derived data root (`$XDG_DATA_HOME`/kallipai/tagmata/slug),
+    /// matching how data_dir_root resolves it inside the child.
     pub fn data_root(&self) -> PathBuf {
-        self.data.path().to_path_buf()
+        self.instance_dir()
+    }
+    fn instance_dir(&self) -> PathBuf {
+        self.data
+            .path()
+            .join("kallipai")
+            .join("tagmata")
+            .join(Self::SLUG)
     }
     fn profiles_file(&self) -> PathBuf {
-        self.data.path().join("profiles").join("profiles.toml")
+        // Declared config lives in the config tree: the resolver reads
+        // profiles.toml under the slug-derived CONFIG root, so the fixture
+        // must write it there (XDG_CONFIG_HOME is set on the spawned child).
+        self.config_dir
+            .join("kallipai")
+            .join("tagmata")
+            .join(Self::SLUG)
+            .join("profiles")
+            .join("profiles.toml")
     }
 
     /// Pre-create the fixtures the scenarios reference: a real `~/.ssh` key
@@ -451,10 +469,11 @@ async fn spawn_tagma(world: &World, permission_class: Option<&str>) -> TagmaProc
     let url = format!("http://127.0.0.1:{port}");
 
     // profiles.toml (pointing at the wiremock endpoints) is written by the
-    // caller before this; the tagma resolves it under KALLIP_DATA_DIR.
+    // caller before this; the tagma resolves it under the slug-derived root.
     let mut env: Vec<(&str, String)> = vec![
         ("KALLIP_OPERATOR_TOKEN", OPERATOR_TOKEN.into()),
-        ("KALLIP_DATA_DIR", world.data.path().display().to_string()),
+        ("KALLIP_TAGMA_SLUG", World::SLUG.into()),
+        ("XDG_DATA_HOME", world.data.path().display().to_string()),
         // The tagma eagerly creates the singleton root at startup from these
         // env vars (it owns the root; kallip-run only posts to it). The root's
         // workspace is the scenario workspace, and a generous round cap is a

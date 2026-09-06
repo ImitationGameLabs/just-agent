@@ -552,7 +552,7 @@ pub async fn restore_agents(state: &SharedState) -> anyhow::Result<()> {
     if roots.len() > 1 {
         anyhow::bail!(
             "multiple root agents on disk ({count}); the tagma owns exactly one \
-             root. Remove the extras from $KALLIP_DATA_DIR/agents and restart",
+             root. Remove the extras from the instance data root's agents/ and restart",
             count = roots.len()
         );
     }
@@ -898,10 +898,15 @@ mod tests {
     fn restore_agents_registers_cycle_stragglers_faulted() {
         // See the ensure-root test in routes::agent for why the data dir is
         // created under /dev/shm rather than /tmp: this test mutates
-        // KALLIP_DATA_DIR and must not overlap concurrently-running tests'
+        // XDG_DATA_HOME and must not overlap concurrently-running tests'
         // /tmp workspaces.
         let tmp = tempfile::TempDir::new_in("/dev/shm").unwrap();
-        let base = tmp.path().join("agents");
+        let base = tmp
+            .path()
+            .join("kallipai")
+            .join("tagmata")
+            .join("cycle")
+            .join("agents");
         std::fs::create_dir_all(&base).unwrap();
         let a = AgentId::from("cycle-a".to_owned());
         let b = AgentId::from("cycle-b".to_owned());
@@ -925,24 +930,30 @@ mod tests {
         write_meta(&a, Some(&b));
         write_meta(&b, Some(&a));
         let path = tmp.path().to_str().unwrap().to_owned();
-        temp_env::with_var("KALLIP_DATA_DIR", Some(path.as_str()), || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            rt.block_on(async {
-                use crate::state::RegistryEntry;
-                use crate::test_helpers::make_state;
-                let state = make_state();
-                super::restore_agents(&state).await.unwrap();
-                let registry = state.registry.read().await;
-                for id in [&a, &b] {
-                    assert!(
-                        matches!(registry.get(id), Some(RegistryEntry::Faulted(_))),
-                        "cycle agent {id} must be registered faulted, not dropped"
-                    );
-                }
-            });
-        });
+        temp_env::with_vars(
+            [
+                ("KALLIP_TAGMA_SLUG", Some("cycle")),
+                ("XDG_DATA_HOME", Some(path.as_str())),
+            ],
+            || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                rt.block_on(async {
+                    use crate::state::RegistryEntry;
+                    use crate::test_helpers::make_state;
+                    let state = make_state();
+                    super::restore_agents(&state).await.unwrap();
+                    let registry = state.registry.read().await;
+                    for id in [&a, &b] {
+                        assert!(
+                            matches!(registry.get(id), Some(RegistryEntry::Faulted(_))),
+                            "cycle agent {id} must be registered faulted, not dropped"
+                        );
+                    }
+                });
+            },
+        );
     }
 }

@@ -70,7 +70,7 @@ topology and `KALLIP_TAGMA_RELAY_*` in [env.md](reference/env.md) for the
 knobs. Unset = pure-local (the lesche message route returns 503).
 
 The connector persists the **authored transcript** of that conversation to a
-SQLite store (`<KALLIP_DATA_DIR>/relay/chat_history.sqlite`) — authored messages
+SQLite store (the instance data root's `relay/chat_history.sqlite`) — authored messages
 only, in arrival order. Runtime signals (busy/idle, turn terminals, errors) are
 deliberately not persisted: they are ephemeral operator metadata, logged for
 observability but never replayed. This is the source of truth a reconnecting or

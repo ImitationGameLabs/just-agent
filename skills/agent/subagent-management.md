@@ -27,7 +27,7 @@ Key rules:
   spawn a Guest child directly (downgrade only — never upgrade).
 - **Both classes** get `readonly_holes` for peer workspaces (other agents'
   locked directories are bind-mounted read-only).
-- **Data tree** (`$KALLIP_DATA_DIR/agents/<id>/`) is read-only for both
+- **Data tree** (the instance data root's `agents/<id>/`) is read-only for both
   classes. Shared skills live in the shared skill directory, writable only by
   the root agent.
 
@@ -143,7 +143,7 @@ messages you when done, and you resolve disagreements as decision points.
   your agent is restored.
 - **Subagent env** has `KALLIP_ID`, `KALLIP_AUTH_TOKEN`, `KALLIP_TAGMA_URL`,
   `KALLIP_SUPERVISOR_AGENT_ID` (the supervisor), and `KALLIP_ROOT_AGENT_ID`
-  (the root) — but NOT `KALLIP_DATA_DIR`. Use the agent's known path
+  (the root) — but NOT `KALLIP_TAGMA_SLUG`. Use the agent's known path
   (`~/.local/share/kallipai/tagmata/<slug>/agents/<id>/`) instead.
   (`KALLIP_SUPERVISOR_AGENT_ID` is absent, not empty, for the root agent.)
 - **`subagent list` only shows direct children** — use the HTTP API

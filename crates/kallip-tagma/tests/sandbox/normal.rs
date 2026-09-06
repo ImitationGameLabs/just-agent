@@ -23,7 +23,7 @@ async fn scenario2_normal() {
     let have_shm = Path::new("/dev/shm").is_dir();
     let world = World::setup();
     let ws = world.workspace.path().to_path_buf();
-    let agent_data = "$KALLIP_DATA_DIR/agents/$KALLIP_ID";
+    let agent_data = format!("{}/agents/$KALLIP_ID", world.data_root().display());
     let mut script = vec![
         Reply::Tool(format!("echo hello > {}/test.txt", ws.display())), // 0: workspace writable
         Reply::Tool("echo hb > $HOME/scenario2_home.txt".into()),       // 1: home broad-write
@@ -32,7 +32,7 @@ async fn scenario2_normal() {
         Reply::Tool(format!("cat {agent_data}/meta.json")),             // 4: read ok
         Reply::Tool("ls -A $HOME/.ssh".into()),                         // 5: Normal reads .ssh
         Reply::Tool("cat $HOME/.ssh/id_testkey".into()),                // 6: contents readable
-        Reply::Tool("cat $KALLIP_DATA_DIR/profiles/profiles.toml".into()), // 7: Normal reads profiles
+        Reply::Tool("cat \"$XDG_CONFIG_HOME/kallipai/tagmata/main/profiles/profiles.toml\"".into()), // 7: Normal reads profiles
     ];
     if have_shm {
         script.push(Reply::Tool("echo s > /dev/shm/scenario2_shm".into())); // 8: /dev/shm writable

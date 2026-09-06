@@ -41,7 +41,7 @@ pub struct ProfileConfig {
     pub parking: Vec<Profile>,
 }
 
-/// Load profile configuration: from `<data_dir>/profiles/profiles.toml` when
+/// Load profile configuration: from `<config_dir>/profiles/profiles.toml` when
 /// present, else an implicit single profile built from `KALLIP_LLM_*` env.
 pub fn load() -> Result<ProfileConfig> {
     match resolve_config_path()? {
@@ -236,15 +236,24 @@ fn write_back_default(raw: &str, default: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Resolve the config file path: `<$KALLIP_DATA_DIR>/profiles/profiles.toml` --
-/// the same per-instance root `agents/` and `skills/` live under
-/// (`data_dir_root`). The data dir is REQUIRED: a bare run without one is a
-/// configuration error, not a silent fall-back to a HOME-level file (the old
-/// HOME-level config shared one file across daemon-spawned instances). Returns `None`
-/// when the resolved file does not exist.
+/// Resolve the config file path for reading:
+/// `<config root>/profiles/profiles.toml` (`persistence::config_dir_root`,
+/// derived from `KALLIP_TAGMA_SLUG`) — declared configuration is operator
+/// intent, so it lives under the config home, not the runtime data
+/// tree. Returns `None` both when the resolved file does not exist and
+/// when the root cannot be derived (no slug / no config home): either
+/// way there is no config file to read, and `load()` degrades to the
+/// implicit env profile instead of blocking boot.
 fn resolve_config_path() -> Result<Option<PathBuf>> {
-    let Some(path) = data_dir_profile_path() else {
-        bail!("KALLIP_DATA_DIR is not set; cannot resolve profiles config path");
+    let path = match config_dir_profile_path() {
+        Ok(p) => p,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "profiles config unavailable; using the implicit env profile"
+            );
+            return Ok(None);
+        }
     };
     Ok(path.exists().then_some(path))
 }
@@ -252,20 +261,20 @@ fn resolve_config_path() -> Result<Option<PathBuf>> {
 /// Resolve the config file path for writing, same single location as the read
 /// side. Unlike the read side (which returns `None` when the file does not
 /// exist), this always returns a path — `save()` needs a target even on first
-/// write. Errors when `KALLIP_DATA_DIR` is unset.
+/// write. Errors when the config root cannot be derived (`KALLIP_TAGMA_SLUG`
+/// unset, or no platform config home): a write has nowhere to land.
 pub fn config_path() -> Result<PathBuf> {
-    let Some(path) = data_dir_profile_path() else {
-        bail!("KALLIP_DATA_DIR is not set; cannot resolve profiles config path");
-    };
-    Ok(path)
+    config_dir_profile_path()
 }
 /// The single profiles location shared by both resolve fns:
-/// `<data dir>/profiles/profiles.toml` (the same root
-/// `persistence::data_dir_root` names, so profiles stay inside the instance's
-/// own data tree). `None` when `KALLIP_DATA_DIR` is unset.
-fn data_dir_profile_path() -> Option<PathBuf> {
-    std::env::var_os("KALLIP_DATA_DIR")
-        .map(|d| PathBuf::from(d).join("profiles").join("profiles.toml"))
+/// `<config root>/profiles/profiles.toml` (the same slug-derived leaf
+/// `persistence::config_dir_root` names, so the declared config sits in
+/// the config tree while runtime data stays in the data tree). Errors
+/// when the config root cannot be derived.
+fn config_dir_profile_path() -> Result<PathBuf> {
+    Ok(crate::persistence::config_dir_root()?
+        .join("profiles")
+        .join("profiles.toml"))
 }
 
 /// Serialize a [`ProfileConfig`] to TOML and write it to `path` atomically
@@ -298,15 +307,17 @@ pub fn save(config: &ProfileConfig, path: &Path) -> Result<()> {
 /// The directory holding `profiles.toml` (and thus potentially API keys) — the
 /// path a sandbox hide-hole should overlay so a broad-read agent cannot read
 /// credentials. Mirrors the loader's single location: the dedicated
-/// `<data dir>/profiles/` subdir when `KALLIP_DATA_DIR` is set; `None`
-/// otherwise (no data dir means no profiles file to hide).
+/// `<config root>/profiles/` subdir; `None` when the config root cannot be
+/// derived (no derivable root means no profiles file to hide).
 pub fn profiles_config_dir() -> Option<PathBuf> {
-    // Same single source as the loader (`data_dir_profile_path`): the
+    // Same single source as the loader (`config_dir_profile_path`): the
     // hide-hole must follow the resolver, or a relocated profiles.toml leaks
     // past the Guest sandbox. The subdir (a directory, as the tmpfs overlay
     // contract requires) rather than the data root — hiding the root would
     // also hide agents/skills and break Guest agents.
-    data_dir_profile_path().and_then(|p| p.parent().map(Path::to_path_buf))
+    config_dir_profile_path()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
 /// Warn (non-fatal) if the config file is readable by group/other — it holds API keys.
@@ -953,65 +964,81 @@ api_key = "fake"
         let file: ConfigFile = toml::from_str(&toml).unwrap();
         assert!(validate(&file).is_err());
     }
-
-    #[test]
-    fn data_dir_is_the_only_profiles_location() {
-        let tmp = tempfile::tempdir().unwrap();
-        let data_profiles = tmp.path().join("profiles").join("profiles.toml");
-        std::fs::create_dir_all(data_profiles.parent().unwrap()).unwrap();
-        std::fs::write(&data_profiles, "\n").unwrap();
+    /// Fixture: slug identity + an isolated XDG config home. The derived
+    /// config root is `<tmp>/kallipai/tagmata/main`.
+    fn with_slug_config_home<R>(tmp: &tempfile::TempDir, f: impl FnOnce() -> R) -> R {
         temp_env::with_vars(
-            [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
-            || {
-                assert_eq!(
-                    resolve_config_path().unwrap().as_deref(),
-                    Some(data_profiles.as_path())
-                );
-                assert_eq!(config_path().unwrap(), data_profiles);
-            },
-        );
+            [
+                ("KALLIP_TAGMA_SLUG", Some("main")),
+                ("XDG_CONFIG_HOME", Some(tmp.path().to_str().unwrap())),
+            ],
+            f,
+        )
     }
 
     #[test]
-    fn missing_data_dir_is_an_error_not_a_home_fall_back() {
-        temp_env::with_vars_unset(["KALLIP_DATA_DIR"], || {
+    fn slug_derived_config_root_is_the_only_profiles_location() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_profiles = tmp
+            .path()
+            .join("kallipai")
+            .join("tagmata")
+            .join("main")
+            .join("profiles")
+            .join("profiles.toml");
+        std::fs::create_dir_all(config_profiles.parent().unwrap()).unwrap();
+        std::fs::write(&config_profiles, "\n").unwrap();
+        with_slug_config_home(&tmp, || {
+            assert_eq!(
+                resolve_config_path().unwrap().as_deref(),
+                Some(config_profiles.as_path())
+            );
+            assert_eq!(config_path().unwrap(), config_profiles);
+        });
+    }
+
+    #[test]
+    fn missing_slug_degrades_the_read_and_errors_the_write() {
+        temp_env::with_vars_unset(["KALLIP_TAGMA_SLUG"], || {
             // The old HOME-level config silently shared one file across instances;
-            // a bare run without a data dir must fail loud instead.
-            assert!(resolve_config_path().is_err());
+            // a run that cannot derive its config root (no slug) gets no config
+            // file: the read side degrades to the env profile (a warning, not a
+            // boot gate), while the write side fails loud — nowhere to land.
+            assert!(resolve_config_path().unwrap().is_none());
             assert!(config_path().is_err());
             assert!(profiles_config_dir().is_none());
         });
     }
 
     #[test]
-    fn data_dir_reads_only_when_file_exists() {
+    fn slug_derived_root_reads_only_when_file_exists() {
         let tmp = tempfile::tempdir().unwrap();
-        temp_env::with_vars(
-            [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
-            || {
-                // No profiles.toml in the data dir: the read side must yield
-                // None, not fall through to any other location.
-                let resolved = resolve_config_path().unwrap();
-                assert!(resolved.is_none());
-            },
-        );
+        with_slug_config_home(&tmp, || {
+            // No profiles.toml in the derived config root: the read side must
+            // yield None, not fall through to any other location.
+            let resolved = resolve_config_path().unwrap();
+            assert!(resolved.is_none());
+        });
     }
 
     #[test]
-    fn profiles_config_dir_follows_the_data_dir() {
+    fn profiles_config_dir_follows_the_derived_root() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("profiles")).unwrap();
-        temp_env::with_vars(
-            [("KALLIP_DATA_DIR", Some(tmp.path().to_str().unwrap()))],
-            || {
-                // The hide-hole source must track the resolver: it hides
-                // the dedicated profiles/ subdir (a directory), not the data
-                // root (agents/skills stay Guest-visible).
-                assert_eq!(
-                    profiles_config_dir().as_deref(),
-                    Some(tmp.path().join("profiles").as_path())
-                );
-            },
-        );
+        let profiles_dir = tmp
+            .path()
+            .join("kallipai")
+            .join("tagmata")
+            .join("main")
+            .join("profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+        with_slug_config_home(&tmp, || {
+            // The hide-hole source must track the resolver: it hides
+            // the dedicated profiles/ subdir (a directory), not the data
+            // root (agents/skills stay Guest-visible).
+            assert_eq!(
+                profiles_config_dir().as_deref(),
+                Some(profiles_dir.as_path())
+            );
+        });
     }
 }

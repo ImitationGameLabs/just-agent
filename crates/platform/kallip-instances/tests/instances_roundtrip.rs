@@ -57,8 +57,14 @@ fn start_daemon() -> DaemonProc {
     let socket = state_dir.path().join("control.sock");
     let bin = resolve_bin("kallip-daemon");
     let mut child = std::process::Command::new(&bin)
-        .env("KALLIP_DAEMON_DATA_DIR", data_dir.path())
-        .env("KALLIP_STATE_DIR", state_dir.path())
+        // Slug-era alignment: XDG anchors both the daemon's default tree and
+        // the instance's own derivation; the verbatim override cannot.
+        .env_remove("KALLIP_DAEMON_DATA_DIR")
+        .env("XDG_DATA_HOME", data_dir.path())
+        .env(
+            "KALLIP_DAEMON_SOCKET",
+            state_dir.path().join("control.sock"),
+        )
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -67,7 +73,7 @@ fn start_daemon() -> DaemonProc {
         if socket.exists() {
             // The daemon adopts the data dir; keep both tempdirs alive by
             // leaking them (test-scoped, under /tmp).
-            let data_root = data_dir.path().to_path_buf();
+            let data_root = data_dir.path().join("kallipai").join("tagmata");
             std::mem::forget(data_dir);
             std::mem::forget(state_dir);
             return DaemonProc {

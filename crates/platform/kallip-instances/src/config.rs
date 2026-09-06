@@ -68,23 +68,24 @@ pub struct Config {
 }
 
 impl Config {
-    /// Resolve the daemon socket path, mirroring the daemon's own chain:
-    /// the KALLIP_DAEMON_SOCKET flag verbatim, else KALLIP_STATE_DIR +
-    /// control.sock (a system unit points both processes at that env
-    /// pair), else the XDG state home default. Fails hard when the
-    /// platform state root cannot be determined, like the daemon.
+    /// Resolve the daemon socket by probing the shared chain in order
+    /// (see `kallip_daemon_common::socket`): the configured socket verbatim
+    /// first, then the environment legs - the first socket that answers
+    /// is wherever the daemon actually bound.
     pub fn resolve_socket(&self) -> anyhow::Result<PathBuf> {
-        if let Some(path) = &self.daemon_socket {
-            return Ok(path.clone());
-        }
-        if let Some(dir) = std::env::var_os("KALLIP_STATE_DIR") {
-            return Ok(PathBuf::from(dir).join("control.sock"));
-        }
-        Ok(dirs::state_dir()
-            .ok_or_else(|| anyhow::anyhow!("could not determine the platform state directory"))?
-            .join("kallipai")
-            .join("daemon")
-            .join("control.sock"))
+        let candidates = kallip_daemon_common::socket::candidates_from_env(
+            self.daemon_socket.as_deref().map(std::path::Path::new),
+        );
+        kallip_daemon_common::socket::probe(&candidates).ok_or_else(|| {
+            anyhow::anyhow!(
+                "no reachable daemon socket; tried: {}",
+                candidates
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
     }
 
     /// The parsed allowlist from `allowed_hosts_raw` (empty = none).
@@ -102,31 +103,21 @@ impl Config {
 mod tests {
     use super::*;
 
-    #[test]
-    fn flag_socket_wins() {
-        let config = Config {
-            addr: "127.0.0.1:7300".into(),
-            daemon_socket: Some(PathBuf::from("/tmp/flag.sock")),
-            token: None,
-            backend: "daemon".into(),
-            relay_archeion_url: String::new(),
-            relay_lesche_url: String::new(),
-            archeion_internal_url: None,
-            archeion_internal_token: None,
-            allowed_hosts_raw: String::new(),
-            cors_origins: String::new(),
-        };
-        assert_eq!(
-            config.resolve_socket().expect("resolve"),
-            PathBuf::from("/tmp/flag.sock")
-        );
+    /// Bind a listener at `path` (parent dirs created); the sandboxed
+    /// stand-in for a live daemon socket.
+    fn live_socket(path: &std::path::Path) -> std::os::unix::net::UnixListener {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::os::unix::net::UnixListener::bind(path).unwrap()
     }
 
     #[test]
-    fn default_socket_lands_in_the_daemon_state_dir() {
+    fn flag_socket_wins() {
+        let scratch = tempfile::tempdir().unwrap();
+        let flag_path = scratch.path().join("flag.sock");
+        let _listener = live_socket(&flag_path);
         let config = Config {
             addr: "127.0.0.1:7300".into(),
-            daemon_socket: None,
+            daemon_socket: Some(flag_path.clone()),
             token: None,
             backend: "daemon".into(),
             relay_archeion_url: String::new(),
@@ -136,15 +127,11 @@ mod tests {
             allowed_hosts_raw: String::new(),
             cors_origins: String::new(),
         };
-        let socket = config.resolve_socket().expect("resolve");
-        // Only the shape is asserted: the XDG root varies by environment.
-        assert!(
-            socket.ends_with("kallipai/daemon/control.sock"),
-            "{socket:?}"
-        );
+        assert_eq!(config.resolve_socket().expect("resolve"), flag_path);
     }
+
     #[test]
-    fn state_dir_env_honored_between_flag_and_xdg() {
+    fn no_reachable_socket_names_the_tried_candidates() {
         let config = Config {
             addr: "127.0.0.1:7300".into(),
             daemon_socket: None,
@@ -157,14 +144,11 @@ mod tests {
             allowed_hosts_raw: String::new(),
             cors_origins: String::new(),
         };
-        // A system unit points both the daemon and this proxy at the
-        // same state dir; skipping this tier is how the paths fork.
-        temp_env::with_var("KALLIP_STATE_DIR", Some("/run/kallipai/daemon"), || {
-            assert_eq!(
-                config.resolve_socket().expect("resolve"),
-                PathBuf::from("/run/kallipai/daemon/control.sock")
-            );
-        });
+        let err = config.resolve_socket().unwrap_err();
+        assert!(
+            err.to_string().contains("no reachable daemon socket"),
+            "{err}"
+        );
     }
 
     #[test]

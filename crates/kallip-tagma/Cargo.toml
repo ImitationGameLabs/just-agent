@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 kallip-runtime = { workspace = true, features = ["landlock", "seccomp"] }
 kallip-common = { workspace = true, features = ["axum"] }
+kallip-daemon-common = { workspace = true }
 kallip-archeion-common = { workspace = true }
 kallip-lesche-common = { workspace = true }
 kallip-archeion-client = { workspace = true }

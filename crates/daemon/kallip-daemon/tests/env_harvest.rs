@@ -58,8 +58,14 @@ fn start_daemon_with_home(home: &Path) -> DaemonProc {
     let socket = state_dir.path().join("control.sock");
     let bin = resolve_bin("kallip-daemon");
     let mut child = std::process::Command::new(&bin)
-        .env("KALLIP_DAEMON_DATA_DIR", data_dir.path())
-        .env("KALLIP_STATE_DIR", state_dir.path())
+        .env("XDG_DATA_HOME", data_dir.path())
+        // Kill the ambient override if the host shell carries one: the
+        // daemon reads it verbatim and would scan the wrong tree.
+        .env_remove("KALLIP_DAEMON_DATA_DIR")
+        .env(
+            "KALLIP_DAEMON_SOCKET",
+            state_dir.path().join("control.sock"),
+        )
         .env("HOME", home)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -90,15 +96,14 @@ impl Drop for DaemonProc {
 
 /// The fixture home: its .profile replaces PATH wholesale (the marker bin
 /// directory stands in for the kallip installation location), exports a
-/// full-harvest marker, and pollutes one daemon-owned key — the probes
-/// assert the pollution never reaches the instance.
+/// full-harvest marker, and a harvested RUST_LOG — the probes assert
+/// what the instance env carries.
 fn fixture_home() -> tempfile::TempDir {
     let home = tempfile::tempdir().expect("home tempdir");
     std::fs::write(
         home.path().join(".profile"),
         "export PATH=\"/kallip-harvest-fixture/bin:/usr/bin:/bin\"\n\
          export KALLIP_HARVEST_MARKER=stage-one\n\
-         export KALLIP_DATA_DIR=/pwned-by-profile\n\
          export RUST_LOG=harvest-level\n",
     )
     .expect("write fixture profile");
@@ -152,6 +157,7 @@ fn spawn_instance(client: &DaemonClient, workspace: &Path, extra: &[&str]) -> u3
             slug: "harvest".to_owned(),
             workspace: workspace.display().to_string(),
             env: boot_env(extra),
+            exe: None,
         },
     )) else {
         panic!("expected spawn payload");
@@ -205,7 +211,6 @@ fn harvest_supplies_login_env_and_daemon_keys_stay_owned() {
     let workspace = tempfile::tempdir().expect("workspace tempdir");
 
     let pid = spawn_instance(&client, workspace.path(), &[]);
-    let instance_dir = daemon.data_dir.path().join("harvest");
     let env = read_environ(pid);
 
     // The fixture kallip location rides the harvested PATH unmodified —
@@ -222,9 +227,7 @@ fn harvest_supplies_login_env_and_daemon_keys_stay_owned() {
     // The harvested RUST_LOG is used as-is; the daemon default must not
     // shadow it.
     assert_eq!(get(&env, "RUST_LOG"), Some("harvest-level"));
-    // Daemon-owned keys win over the polluted profile.
-    let data_str = instance_dir.display().to_string();
-    assert_eq!(get(&env, "KALLIP_DATA_DIR"), Some(data_str.as_str()));
+    assert_eq!(get(&env, "KALLIP_TAGMA_SLUG"), Some("harvest"));
     let workspace_canon = workspace.path().canonicalize().expect("canonicalize");
     let ws_str = workspace_canon.display().to_string();
     assert_eq!(get(&env, "KALLIP_WORKSPACE_ROOT"), Some(ws_str.as_str()));
@@ -282,7 +285,6 @@ fn restart_reharvests_following_profile_changes() {
         home.path().join(".profile"),
         "export PATH=\"/kallip-harvest-fixture/bin:/usr/bin:/bin\"\n\
          export KALLIP_HARVEST_MARKER=stage-one\n\
-         export KALLIP_DATA_DIR=/pwned-by-profile\n\
          export RUST_LOG=harvest-level\n\
          export KALLIP_HARVEST_MARKER=stage-two\n",
     )
@@ -295,6 +297,7 @@ fn restart_reharvests_following_profile_changes() {
         RequestBody::Start {
             slug: "harvest".to_owned(),
             env: Vec::new(),
+            exe: None,
         },
     ))
     else {
@@ -330,6 +333,7 @@ fn restart_overlay_reaches_the_relaunched_env() {
         RequestBody::Start {
             slug: "harvest".to_owned(),
             env: vec!["PATH=/overlay-bin".to_owned()],
+            exe: None,
         },
     ))
     else {
@@ -355,7 +359,7 @@ fn harvested_env_is_not_persisted() {
     let workspace = tempfile::tempdir().expect("workspace tempdir");
 
     let pid = spawn_instance(&client, workspace.path(), &["PATH=/explicit-only-bin"]);
-    let instance_dir = daemon.data_dir.path().join("harvest");
+    let instance_dir = daemon.data_dir.path().join("kallipai/tagmata/harvest");
     let expected: serde_json::Value = boot_env(&["PATH=/explicit-only-bin"]).into();
     assert_eq!(
         meta_env(&instance_dir),
@@ -371,6 +375,7 @@ fn harvested_env_is_not_persisted() {
         RequestBody::Start {
             slug: "harvest".to_owned(),
             env: Vec::new(),
+            exe: None,
         },
     ))
     else {

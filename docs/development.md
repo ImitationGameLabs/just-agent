@@ -319,7 +319,7 @@ Both sides must list the new rows: `human` for the user's message,
 
 The daemon family (`crates/daemon/`) manages multiple local tagma
 instances. The daemon is stateless — the instance tree under
-`KALLIP_DATA_DIR` (default `~/.local/share/kallipai/tagmata`) is the only truth;
+`KALLIP_TAGMA_SLUG`-derived data root (default `~/.local/share/kallipai/tagmata/<slug>`) is the only truth;
 `kallipctl` talks to it over a 0600 control socket:
 
 ```sh
@@ -335,8 +335,8 @@ Each instance directory carries exactly two metadata files: `meta.json`
 and `runtime.json` (pid + port, written by the tagma itself when it
 boots inside a daemon-marked instance dir — an unmarked data root
 writes nothing). Env
-pairs must start with `KALLIP_` or be `RUST_LOG`; the three reserved
-keys (`KALLIP_DATA_DIR`,
+pairs must start with `KALLIP_` or be `RUST_LOG`; the reserved
+keys (`KALLIP_TAGMA_SLUG`,
 `KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`) are daemon-owned.
 A `start` relaunch drops `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` from the
 replayed env once the instance holds stored relay credentials

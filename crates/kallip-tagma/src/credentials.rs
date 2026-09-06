@@ -3,8 +3,8 @@
 //!
 //! These are the tagma's authentication material — distinct from the
 //! [`crate::relay`] connector, which *consumes* them to hold the live tunnel.
-//! Secrets live under `KALLIP_DATA_DIR/credentials/` (resolved via
-//! `kallip_runtime::persistence::data_dir_root`), written owner-only (`0o600`);
+//! Secrets live under the instance data root's `credentials/` (resolved
+//! via `kallip_runtime::persistence::data_dir_root`), written owner-only (`0o600`);
 //! the leaf dir is `0o700`.
 //! A third file, `archeion.url`, records the enrollment origin (non-secret:
 //! it mirrors the configured env var) so a later enrollment code at a

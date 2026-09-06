@@ -395,13 +395,13 @@ pub async fn install_inbox_store(state: &SharedState) {
         .set(crate::inbox::InboxStore::open_in_memory().await)
         .ok();
 }
-/// Process-wide redirect of `KALLIP_DATA_DIR` to a throwaway tempdir for the
+/// Process-wide pinning of `KALLIP_TAGMA_SLUG` + `XDG_DATA_HOME` to name a throwaway slug-derived data root for the
 /// whole test run. Idempotent: the first call allocates the tempdir and swaps
 /// the env; later calls are no-ops.
 ///
 /// Why: profile-handler tests reach `persist_config` →
 /// `kallip_runtime::profile::config_path`, which resolves against the process
-/// environment. `cargo test` inherits the caller's real `KALLIP_DATA_DIR`, so
+/// environment. `cargo test` inherits the caller's real `KALLIP_TAGMA_SLUG`/`XDG_DATA_HOME`, so
 /// an unguarded persist overwrites the live profiles file (2026-09-02).
 ///
 /// Parallel safety: `OnceLock::get_or_init` runs the initializer exactly once
@@ -423,8 +423,15 @@ pub fn ensure_test_data_dir() {
         // SAFETY: runs exactly once per process under `OnceLock`; concurrent
         // `getenv` from threads that never call this helper is the same
         // theoretical race this crate's existing `temp_env` helper already
-        // accepts (edition 2024 makes `set_var` unsafe globally).
-        unsafe { std::env::set_var("KALLIP_DATA_DIR", &path) };
+        // accepts (edition 2024 makes `set_var` unsafe globally). The trio
+        // below names the instance, points the XDG data home at the leaked
+        // dir, and points the config home at it too: declared config
+        // (profiles.toml) resolves under `<config home>/kallipai/tagmata/test`.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &path);
+            std::env::set_var("KALLIP_TAGMA_SLUG", "test");
+            std::env::set_var("XDG_DATA_HOME", &path);
+        }
         path
     });
 }
@@ -449,16 +456,17 @@ mod guard_tests {
     use super::*;
 
     /// Regression lock for the 2026-09-02 live-profiles pollution: the guard
-    /// must point `KALLIP_DATA_DIR` at a tempdir, and a real handler persist
-    /// must land there — never in the inherited (live) data dir.
+    /// must point the config home (`XDG_CONFIG_HOME`, which the slug-derived
+    /// config root hangs off) at a leaked tempdir, and a real handler persist
+    /// must land there — never in the inherited (live) config dir.
     #[tokio::test]
     #[serial_test::serial]
     async fn data_dir_guard_redirects_handler_persist() {
         ensure_test_data_dir();
-        let dir = std::env::var("KALLIP_DATA_DIR").expect("guard active");
+        let dir = std::env::var("XDG_CONFIG_HOME").expect("guard active");
         assert!(
             std::path::Path::new(&dir).starts_with(std::env::temp_dir()),
-            "KALLIP_DATA_DIR must be a tempdir, got {dir}"
+            "XDG_CONFIG_HOME must be a tempdir, got {dir}"
         );
 
         let state = make_state_two_sets();
@@ -473,6 +481,9 @@ mod guard_tests {
         .expect("default transfer succeeds");
 
         let persisted = std::path::Path::new(&dir)
+            .join("kallipai")
+            .join("tagmata")
+            .join("test")
             .join("profiles")
             .join("profiles.toml");
         let body = std::fs::read_to_string(persisted).expect("written under guard dir");

@@ -31,6 +31,18 @@ TAGMA_LOG = LOGS_DIR / "tagma.log"
 RUN_LOG = LOGS_DIR / "run.log"
 
 
+
+def agents_dir(xdg_data_home: str | Path, slug: str) -> Path:
+    """The instance's ``agents/`` directory for a slug boot.
+
+    Mirrors ``kallip_runtime::persistence::data_dir_root``: the data
+    root is ``<xdg>/kallipai/tagmata/<slug>`` and agents persist under
+    its ``agents/`` subtree. Pure so tests can pin the layout without
+    a running tagma.
+    """
+    return Path(xdg_data_home) / "kallipai" / "tagmata" / slug / "agents"
+
+
 @dataclass(frozen=True)
 class Package:
     """A tarball deployed into the container at install time.

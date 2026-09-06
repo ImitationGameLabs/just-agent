@@ -42,6 +42,10 @@ pub enum RequestBody {
         slug: String,
         workspace: String,
         env: Vec<String>,
+        /// Dev-only: run this explicit tagma binary instead of the
+        /// resolved one. Absent on production payloads.
+        #[serde(default)]
+        exe: Option<String>,
     },
     /// Terminate an instance: SIGTERM, grace period, SIGKILL.
     Stop { slug: String },
@@ -55,6 +59,10 @@ pub enum RequestBody {
         slug: String,
         #[serde(default)]
         env: Vec<String>,
+        /// Dev-only: run this explicit tagma binary instead of the
+        /// resolved one. Absent on production payloads.
+        #[serde(default)]
+        exe: Option<String>,
     },
     /// List all managed instances (directory scan).
     List,
@@ -188,9 +196,14 @@ pub enum ErrorCode {
 /// daemon stays independent of kallip-tagma; unifying the two into one shared
 /// helper is a tracked follow-up, not something this crate reaches for now.
 pub fn valid_slug(slug: &str) -> bool {
-    let mut chars = slug.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit())
-        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    // The 64-char cap is part of the grammar: a slug is a directory
+    // name and a path component end to end, so length is validated
+    // with shape, not left to whichever client remembers to pre-check.
+    slug.len() <= 64 && {
+        let mut chars = slug.chars();
+        matches!(chars.next(), Some(c) if c.is_ascii_lowercase() || c.is_ascii_digit())
+            && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    }
 }
 
 /// Serialize a [`Request`] to its wire line (no trailing newline).
@@ -253,6 +266,7 @@ mod tests {
             slug: "team-a".into(),
             workspace: "/home/u/work/a".into(),
             env: vec!["KALLIP_TAGMA_ADDR=127.0.0.1:0".into()],
+            exe: None,
         };
         let line = encode_request(&request(body.clone())).expect("encode");
         assert!(!line.contains('\n'), "one line, caller appends the newline");
@@ -266,6 +280,7 @@ mod tests {
         let body = RequestBody::Start {
             slug: "team-a".into(),
             env: vec!["KALLIP_TAGMA_LOG_TO_STDERR=1".into()],
+            exe: None,
         };
         let line = encode_request(&request(body.clone())).expect("encode");
         let back = decode_request(&line).expect("decode");
@@ -279,7 +294,11 @@ mod tests {
         let line = r#"{"v":1,"type":"start","slug":"team-a"}"#;
         let back = decode_request(line).expect("decode");
         match back.body {
-            RequestBody::Start { slug, env } => {
+            RequestBody::Start {
+                slug,
+                env,
+                exe: None,
+            } => {
                 assert_eq!(slug, "team-a");
                 assert!(env.is_empty());
             }
@@ -287,6 +306,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn spawn_request_without_exe_parses() {
+        // Same additive rule as Start's env: a dev-loop-free payload
+        // (no exe field) decodes with exe = None.
+        let line = r#"{"v":1,"type":"spawn","slug":"team-a","workspace":"/w","env":[]}"#;
+        let back = decode_request(line).expect("decode");
+        match back.body {
+            RequestBody::Spawn { slug, exe, .. } => {
+                assert_eq!(slug, "team-a");
+                assert!(exe.is_none());
+            }
+            other => panic!("expected spawn, got {other:?}"),
+        }
+    }
     #[test]
     fn response_err_round_trips_with_stable_code() {
         let line = encode_response(&err(ErrorCode::SlugTaken, "slug exists")).expect("encode");
@@ -325,6 +358,9 @@ mod tests {
     fn slug_grammar_matches_the_relay_entry_rule() {
         for good in ["a", "team-a", "t2", "9lives", "a-b-c", "a--b", "trail-"] {
             assert!(valid_slug(good), "{good} should be valid");
+            // The cap boundary itself: 64 chars pass, 65 fail.
+            assert!(valid_slug(&"a".repeat(64)));
+            assert!(!valid_slug(&"a".repeat(65)));
         }
         for bad in [
             "",
@@ -334,6 +370,7 @@ mod tests {
             "sp ace",
             "dot.dot",
             "ümlaut",
+            "a-very-long-slug-that-keeps-going-well-past-the-sixty-four-char-cap",
         ] {
             assert!(!valid_slug(bad), "{bad} should be invalid");
         }

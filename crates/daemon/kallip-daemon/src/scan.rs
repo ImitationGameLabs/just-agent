@@ -274,7 +274,8 @@ pub struct InstanceMeta {
     /// The launch claim anchor: the pid and kernel starttime of the
     /// exact process incarnation a launch verified as its own (see
     /// `Identity`). #[serde(default)] is generic tolerance for meta
-    /// whose claim point could not pin one — not a legacy path.
+    /// whose claim point could not pin one — tolerance, not a second
+    /// accepted shape.
     #[serde(default)]
     pub identity: Option<Identity>,
 }
@@ -290,7 +291,7 @@ pub struct RuntimeFile {
     pub port: u16,
 }
 /// Scan `<data_root>/*/meta.json`. Directories without the marker are
-/// not managed (the legacy flat layout keeps running unmanaged).
+/// not managed — only marker-carrying directories are instances.
 pub fn scan_instances(data_root: &Path) -> Vec<ScannedInstance> {
     let Ok(entries) = std::fs::read_dir(data_root) else {
         return Vec::new();

@@ -40,7 +40,7 @@ pub enum SpawnError {
 
 /// Env keys the daemon owns; a request may not override them.
 const RESERVED_KEYS: [&str; 3] = [
-    "KALLIP_DATA_DIR",
+    "KALLIP_TAGMA_SLUG",
     "KALLIP_WORKSPACE_ROOT",
     "KALLIP_TAGMA_ADDR",
 ];
@@ -324,6 +324,48 @@ fn degrade_to_fallback(fallback_bin_dir: Option<&Path>) -> Vec<(String, String)>
     vec![("PATH".to_owned(), fallback_path(fallback_bin_dir))]
 }
 
+/// The XDG anchors a launch must carry so the instance's slug-derived
+/// roots resolve inside the tree the daemon scans. The spawn helper
+/// execs the instance with a blank environment, so the anchors travel
+/// only in the composed pairs: the daemon pins the same data/state
+/// homes it resolved its own roots from, and the anchor is daemon-owned
+/// — a polluted profile or an explicit request pair must not move an
+/// instance's tree outside the scan.
+struct XdgAnchors {
+    data_home: PathBuf,
+    state_home: Option<PathBuf>,
+}
+
+/// `None` under the `KALLIP_DAEMON_DATA_DIR` override: an override root
+/// is a verbatim path the slug derivation cannot express, and bridging
+/// it with the XDG default would publish the instance's runtime.json
+/// outside the scanned tree. The launch gate refuses first, naming the
+/// constraint — the unlock is dropping the override, not setting
+/// `XDG_DATA_HOME` (the override branch never reads it).
+fn xdg_anchors() -> Option<XdgAnchors> {
+    if std::env::var_os("KALLIP_DAEMON_DATA_DIR").is_some() {
+        return None;
+    }
+    Some(XdgAnchors {
+        data_home: dirs::data_dir()?,
+        state_home: dirs::state_dir(),
+    })
+}
+
+/// The launch-time guard for the override/anchor interaction: an
+/// override daemon ships no anchors (see [`xdg_anchors`]), and a
+/// launch without them would root the instance in a fallback HOME
+/// tree the daemon never scans and end in a bare 30s timeout. Pure so
+/// tests pin the refusal without mutating process-global env.
+fn anchor_gate(override_set: bool, xdg: Option<&XdgAnchors>) -> Result<(), SpawnError> {
+    if override_set && xdg.is_none() {
+        return Err(SpawnError::Invalid(
+            "KALLIP_DAEMON_DATA_DIR override mode cannot launch instances: a verbatim root gives the child no slug-derived anchors - remove the override to launch"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
 /// Compose the instance env from a map, one value per key:
 ///
 /// * the base (harvest, or fallback PATH) supplies every key it has;
@@ -335,11 +377,14 @@ fn degrade_to_fallback(fallback_bin_dir: Option<&Path>) -> Vec<(String, String)>
 ///   an explicit value through a duplicate key; map composition ends
 ///   that);
 /// * PATH passes through verbatim, wherever it came from.
+/// * the XDG anchors, when supplied, land last — daemon-owned like the
+///   slug, they pin where the instance's slug-derived roots resolve.
 fn compose_launch_env(
     base: &[(String, String)],
     user_env: &[String],
-    instance_dir: &Path,
+    slug: &str,
     workspace_canon: &Path,
+    xdg: Option<&XdgAnchors>,
 ) -> Vec<String> {
     let mut env: BTreeMap<&str, String> = BTreeMap::new();
     for (key, value) in base {
@@ -353,12 +398,18 @@ fn compose_launch_env(
             env.insert(key, value.to_owned());
         }
     }
-    env.insert("KALLIP_DATA_DIR", instance_dir.display().to_string());
+    env.insert("KALLIP_TAGMA_SLUG", slug.to_owned());
     env.insert(
         "KALLIP_WORKSPACE_ROOT",
         workspace_canon.display().to_string(),
     );
     env.insert("KALLIP_TAGMA_ADDR", "127.0.0.1:0".to_owned());
+    if let Some(anchors) = xdg {
+        env.insert("XDG_DATA_HOME", anchors.data_home.display().to_string());
+        if let Some(state) = &anchors.state_home {
+            env.insert("XDG_STATE_HOME", state.display().to_string());
+        }
+    }
     env.entry("RUST_LOG").or_insert_with(|| "info".to_owned());
     env.into_iter().map(|(k, v)| format!("{k}={v}")).collect()
 }
@@ -372,6 +423,7 @@ pub fn spawn(
     slug: &str,
     workspace: &str,
     user_env: &[String],
+    exe: Option<&str>,
     timeout: Duration,
     owner_uid: u32,
 ) -> Result<(u32, u16), SpawnError> {
@@ -379,6 +431,15 @@ pub fn spawn(
     if !valid_slug(slug) {
         return Err(SpawnError::Invalid(format!(
             "slug {slug:?} does not match [a-z0-9][a-z0-9-]*"
+        )));
+    }
+    // A dev-only explicit exe must be an existing, runnable file -
+    // refusing at request time beats a 30s timeout discovering it.
+    if let Some(exe) = exe
+        && !exe_runnable(exe)
+    {
+        return Err(SpawnError::Invalid(format!(
+            "exe {exe:?} is not an existing executable file"
         )));
     }
     let instance_dir = data_root.join(slug);
@@ -444,7 +505,15 @@ pub fn spawn(
         .map_err(|e| rolled_back(anyhow::anyhow!("writing meta.json: {e}")))?;
 
     // --- detach-exec + adopt ---------------------------------------------
-    let started = launch(&instance_dir, &workspace_canon, user_env, timeout).inspect_err(|_| {
+    let started = launch(
+        &instance_dir,
+        slug,
+        &workspace_canon,
+        user_env,
+        exe,
+        timeout,
+    )
+    .inspect_err(|_| {
         // Rollback: this fresh allocation goes away on any failure — kill
         // whatever the helper left first (a failed exec leaves nothing;
         // a half-boot leaves a running tagma). start() shares launch but
@@ -504,6 +573,20 @@ pub(crate) fn validate_user_env(user_env: &[String]) -> Result<(), SpawnError> {
     Ok(())
 }
 
+/// A dev-only explicit exe must be an existing file with the exec bit
+/// set; the request handler refuses anything else before any tree work.
+pub(crate) fn exe_runnable(exe: &str) -> bool {
+    let path = Path::new(exe);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    path.is_file()
+}
 /// Detach-exec one instance's tagma via the spawn helper and wait until the
 /// process publishes its own runtime.json. Shared tail of spawn (fresh
 /// tree) and start (adoption of an existing tree); callers re-validate
@@ -513,10 +596,17 @@ pub(crate) fn validate_user_env(user_env: &[String]) -> Result<(), SpawnError> {
 /// is SIGKILLed here either way so no orphan outlives the timeout.
 pub(crate) fn launch(
     instance_dir: &Path,
+    slug: &str,
     workspace_canon: &Path,
     user_env: &[String],
+    exe: Option<&str>,
     timeout: Duration,
 ) -> Result<(u32, u16), SpawnError> {
+    let xdg = xdg_anchors();
+    anchor_gate(
+        std::env::var_os("KALLIP_DAEMON_DATA_DIR").is_some(),
+        xdg.as_ref(),
+    )?;
     // The poll below trusts any runtime.json it sees as belonging to this
     // launch. That trust needs a clean slate: drop a previous
     // incarnation's runtime.json before starting the helper. ENOENT is
@@ -536,9 +626,14 @@ pub(crate) fn launch(
         .into());
     }
     let helper = bins::resolve("kallip-daemon-spawn");
-    let tagma = bins::resolve("kallip-tagma");
+    // Explicit dev exe wins over the resolved one; the resolver stays
+    // the production path (sibling-of-daemon, then PATH).
+    let tagma = match exe {
+        Some(exe) => PathBuf::from(exe),
+        None => bins::resolve("kallip-tagma"),
+    };
     let base = harvest_base_env(tagma.parent());
-    let env = compose_launch_env(&base, user_env, instance_dir, workspace_canon);
+    let env = compose_launch_env(&base, user_env, slug, workspace_canon, xdg.as_ref());
     let status = std::process::Command::new(&helper)
         .arg(instance_dir)
         .arg(&tagma)
@@ -672,6 +767,23 @@ mod tests {
     use super::*;
 
     // --- clear_stale_runtime ----------------------------------------------
+
+    #[test]
+    fn anchor_gate_refuses_an_override_daemon_without_anchors() {
+        let err = anchor_gate(true, None).expect_err("override without anchors must refuse");
+        let SpawnError::Invalid(message) = err else {
+            panic!("expected the pointed Invalid refusal, got another variant");
+        };
+        assert!(
+            message.contains("remove the override"),
+            "the refusal must name the unlock: {message}"
+        );
+    }
+
+    #[test]
+    fn anchor_gate_passes_a_default_mode_launch() {
+        anchor_gate(false, None).expect("default mode is not the gate's business");
+    }
 
     #[test]
     fn clear_stale_runtime_is_ok_when_no_file_exists() {
@@ -879,6 +991,31 @@ mod tests {
     }
 
     // --- compose_launch_env + fallback --------------------------------
+    #[test]
+    fn a_missing_dev_exe_is_rejected_at_request_time() {
+        // The exe gate fires before any filesystem work: no tree, no
+        // helper, no 30s wait - the request just fails.
+        let error = spawn(
+            Path::new("."),
+            "valid-slug",
+            ".",
+            &[],
+            Some("/nonexistent/kallip-tagma"),
+            Duration::from_secs(1),
+            0,
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("not an existing executable"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn exe_runnable_checks_file_and_exec_bit() {
+        assert!(exe_runnable("/bin/sh"), "system shell is runnable");
+        assert!(!exe_runnable("/nonexistent/binary"));
+    }
 
     /// A base with every interesting collision in it.
     fn base_env() -> Vec<(String, String)> {
@@ -886,7 +1023,6 @@ mod tests {
             ("PATH".into(), "/harvested/path".into()),
             ("HOME".into(), "/home/harvest".into()),
             ("RUST_LOG".into(), "harvest-level".into()),
-            ("KALLIP_DATA_DIR".into(), "/pwned".into()),
             ("EDITOR".into(), "vi".into()),
         ]
     }
@@ -901,8 +1037,9 @@ mod tests {
         let env = compose_launch_env(
             &base_env(),
             &["PATH=/explicit".into(), "KALLIP_X=1".into()],
-            Path::new("/data/i1"),
+            "i1",
             Path::new("/ws"),
+            None,
         );
         assert_eq!(get(&env, "PATH"), Some("/explicit"));
         assert_eq!(get(&env, "KALLIP_X"), Some("1"));
@@ -912,8 +1049,8 @@ mod tests {
 
     #[test]
     fn compose_daemon_keys_win_over_a_polluted_base() {
-        let env = compose_launch_env(&base_env(), &[], Path::new("/data/i1"), Path::new("/ws"));
-        assert_eq!(get(&env, "KALLIP_DATA_DIR"), Some("/data/i1"));
+        let env = compose_launch_env(&base_env(), &[], "i1", Path::new("/ws"), None);
+        assert_eq!(get(&env, "KALLIP_TAGMA_SLUG"), Some("i1"));
         assert_eq!(get(&env, "KALLIP_WORKSPACE_ROOT"), Some("/ws"));
         assert_eq!(get(&env, "KALLIP_TAGMA_ADDR"), Some("127.0.0.1:0"));
     }
@@ -923,14 +1060,15 @@ mod tests {
         let explicit = compose_launch_env(
             &base_env(),
             &["RUST_LOG=debug".into()],
-            Path::new("/d"),
+            "d",
             Path::new("/w"),
+            None,
         );
         assert!(explicit.contains(&"RUST_LOG=debug".to_owned()));
-        let harvested = compose_launch_env(&base_env(), &[], Path::new("/d"), Path::new("/w"));
+        let harvested = compose_launch_env(&base_env(), &[], "d", Path::new("/w"), None);
         assert!(harvested.contains(&"RUST_LOG=harvest-level".to_owned()));
         let base: Vec<(String, String)> = vec![("PATH".into(), "/p".into())];
-        let neither = compose_launch_env(&base, &[], Path::new("/d"), Path::new("/w"));
+        let neither = compose_launch_env(&base, &[], "d", Path::new("/w"), None);
         assert!(neither.contains(&"RUST_LOG=info".to_owned()));
     }
 
@@ -939,8 +1077,9 @@ mod tests {
         let env = compose_launch_env(
             &base_env(),
             &["PATH=/explicit".into(), "RUST_LOG=debug".into()],
-            Path::new("/d"),
+            "d",
             Path::new("/w"),
+            None,
         );
         let mut keys: Vec<&str> = env
             .iter()
@@ -950,6 +1089,35 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), total, "duplicate keys in {env:?}");
+    }
+
+    #[test]
+    fn compose_pins_the_xdg_anchors_daemon_owned() {
+        let anchors = XdgAnchors {
+            data_home: PathBuf::from("/daemon/data"),
+            state_home: Some(PathBuf::from("/daemon/state")),
+        };
+        let base = vec![
+            ("PATH".to_owned(), "/p".to_owned()),
+            ("XDG_DATA_HOME".to_owned(), "/polluted/data".to_owned()),
+        ];
+        let env = compose_launch_env(
+            &base,
+            &["XDG_STATE_HOME=/polluted/state".to_owned()],
+            "i1",
+            Path::new("/ws"),
+            Some(&anchors),
+        );
+        assert_eq!(get(&env, "XDG_DATA_HOME"), Some("/daemon/data"));
+        assert_eq!(get(&env, "XDG_STATE_HOME"), Some("/daemon/state"));
+    }
+
+    #[test]
+    fn compose_without_anchors_carries_no_xdg_keys() {
+        let base = vec![("PATH".to_owned(), "/p".to_owned())];
+        let env = compose_launch_env(&base, &[], "i1", Path::new("/ws"), None);
+        assert_eq!(get(&env, "XDG_DATA_HOME"), None);
+        assert_eq!(get(&env, "XDG_STATE_HOME"), None);
     }
 
     #[test]
@@ -972,7 +1140,7 @@ mod tests {
         // if the Err branch ever returned an empty base, nothing else
         // would catch it (the shell-out wrapper cannot be unit-tested).
         let base = degrade_to_fallback(Some(Path::new("/opt/kallip/bin")));
-        let env = compose_launch_env(&base, &[], Path::new("/data/i1"), Path::new("/ws"));
+        let env = compose_launch_env(&base, &[], "i1", Path::new("/ws"), None);
         assert!(
             env.contains(&"PATH=/opt/kallip/bin:/usr/local/bin:/usr/bin:/bin".to_owned()),
             "fallback PATH rides through composition: {env:?}"
@@ -981,7 +1149,7 @@ mod tests {
             env.contains(&"RUST_LOG=info".to_owned()),
             "default fills in"
         );
-        assert!(env.contains(&"KALLIP_DATA_DIR=/data/i1".to_owned()));
+        assert!(env.contains(&"KALLIP_TAGMA_SLUG=i1".to_owned()));
     }
 
     #[test]
@@ -1009,7 +1177,7 @@ mod tests {
             "others rejected"
         );
         assert!(
-            validate_user_env(&["KALLIP_DATA_DIR=/x".into()]).is_err(),
+            validate_user_env(&["KALLIP_TAGMA_SLUG=/x".into()]).is_err(),
             "reserved rejected"
         );
     }

@@ -61,8 +61,14 @@ fn start_daemon() -> DaemonProc {
     let log_path = state_dir.path().join("daemon.log");
     let log = std::fs::File::create(&log_path).expect("create daemon log");
     let mut child = std::process::Command::new(&bin)
-        .env("KALLIP_DAEMON_DATA_DIR", data_dir.path())
-        .env("KALLIP_STATE_DIR", state_dir.path())
+        .env("XDG_DATA_HOME", data_dir.path())
+        // Kill the ambient override if the host shell carries one: the
+        // daemon reads it verbatim and would scan the wrong tree.
+        .env_remove("KALLIP_DAEMON_DATA_DIR")
+        .env(
+            "KALLIP_DAEMON_SOCKET",
+            state_dir.path().join("control.sock"),
+        )
         .stdout(log.try_clone().expect("clone log handle"))
         .stderr(log)
         .spawn()
@@ -125,6 +131,7 @@ fn spawn_health_stop_round_trip() {
             "KALLIP_LLM_MODEL=test-model".into(),
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
+        exe: None,
     }));
     let OkPayload::Spawn { slug, pid, port } = expect_ok(spawn) else {
         panic!("expected spawn payload");
@@ -144,12 +151,12 @@ fn spawn_health_stop_round_trip() {
     assert_eq!(report.state, InstanceState::Running);
 
     // The instance dir carries the metadata the scan adopts.
-    let instance_dir = daemon.data_dir.path().join("e2e");
+    let instance_dir = daemon.data_dir.path().join("kallipai/tagmata/e2e");
     assert!(instance_dir.join("meta.json").exists());
-    for retired in ["instance.id", "owner", "pid", "port", "workspace"] {
+    for stray in ["instance.id", "owner", "pid", "port", "workspace"] {
         assert!(
-            !instance_dir.join(retired).exists(),
-            "retired marker {retired} must not appear"
+            !instance_dir.join(stray).exists(),
+            "stray state file {stray} must not appear"
         );
     }
     // The spawn recorded the requesting peer (this test process) as owner.
@@ -221,6 +228,7 @@ fn spawn_health_stop_round_trip() {
     let started = tokio_block_on(client.call(RequestBody::Start {
         slug: "e2e".into(),
         env: vec!["KALLIP_TAGMA_LOG_TO_STDERR=1".into()],
+        exe: None,
     }));
     let OkPayload::Spawn {
         slug: started_slug,
@@ -265,6 +273,7 @@ fn spawn_health_stop_round_trip() {
     let code = match tokio_block_on(client.call(RequestBody::Start {
         slug: "e2e".into(),
         env: Vec::new(),
+        exe: None,
     }))
     .expect("double start response")
     .body
@@ -320,6 +329,7 @@ fn start_filters_consumed_enrollment_code() {
             "KALLIP_LLM_MODEL=test-model".into(),
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
+        exe: None,
     }));
     let OkPayload::Spawn { pid, .. } = expect_ok(spawn) else {
         panic!("expected spawn payload");
@@ -344,7 +354,7 @@ fn start_filters_consumed_enrollment_code() {
     // fix the real tagma boots through the Stored branch and the entry
     // merely degrades to local-only; replaying the code instead makes tagma
     // fail fast on stored-credentials-plus-code and Start times out.
-    let instance_dir = daemon.data_dir.path().join("stale-code");
+    let instance_dir = daemon.data_dir.path().join("kallipai/tagmata/stale-code");
     let mut meta: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(instance_dir.join("meta.json")).expect("meta.json"),
     )
@@ -365,6 +375,7 @@ fn start_filters_consumed_enrollment_code() {
     let started = tokio_block_on(client.call(RequestBody::Start {
         slug: "stale-code".into(),
         env: Vec::new(),
+        exe: None,
     }));
     let OkPayload::Spawn {
         pid: started_pid,
@@ -426,6 +437,7 @@ fn spawn_rejects_slug_reuse_and_workspace_overlap() {
             "KALLIP_LLM_MODEL=test-model".into(),
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
+        exe: None,
     }));
     assert!(matches!(
         first.expect("first spawn").body,
@@ -440,6 +452,7 @@ fn spawn_rejects_slug_reuse_and_workspace_overlap() {
         slug: "taken".into(),
         workspace: workspace.path().display().to_string(),
         env: vec![],
+        exe: None,
     }));
     match reuse.expect("reuse exchange").body {
         ResponseBody::Err { code, .. } => assert_eq!(code, ErrorCode::SlugTaken),
@@ -451,6 +464,7 @@ fn spawn_rejects_slug_reuse_and_workspace_overlap() {
         slug: "other".into(),
         workspace: workspace.path().display().to_string(),
         env: vec![],
+        exe: None,
     }));
     match overlap.expect("overlap exchange").body {
         ResponseBody::Err { code, .. } => assert_eq!(code, ErrorCode::WorkspaceOverlap),
@@ -479,6 +493,7 @@ fn start_recovers_from_stale_runtime_json() {
             "KALLIP_LLM_MODEL=test-model".into(),
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
+        exe: None,
     }));
     let OkPayload::Spawn { pid, .. } = expect_ok(spawn) else {
         panic!("expected spawn payload");
@@ -497,7 +512,10 @@ fn start_recovers_from_stale_runtime_json() {
         std::thread::sleep(Duration::from_millis(50));
     }
     let stale = serde_json::json!({ "pid": pid, "port": 1 });
-    let instance_dir = daemon.data_dir.path().join("stale-runtime");
+    let instance_dir = daemon
+        .data_dir
+        .path()
+        .join("kallipai/tagmata/stale-runtime");
     std::fs::write(
         instance_dir.join("runtime.json"),
         serde_json::to_vec(&stale).expect("serialize stale runtime"),
@@ -507,6 +525,7 @@ fn start_recovers_from_stale_runtime_json() {
     let started = tokio_block_on(client.call(RequestBody::Start {
         slug: "stale-runtime".into(),
         env: Vec::new(),
+        exe: None,
     }));
     let OkPayload::Spawn {
         pid: started_pid,
@@ -555,6 +574,7 @@ fn start_rejects_when_stale_runtime_names_a_live_pid() {
             "KALLIP_LLM_MODEL=test-model".into(),
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
+        exe: None,
     }));
     let OkPayload::Spawn { pid, .. } = expect_ok(spawn) else {
         panic!("expected spawn payload");
@@ -575,7 +595,7 @@ fn start_rejects_when_stale_runtime_names_a_live_pid() {
     // point. Refusing costs one retry; adopting or killing an unrelated
     // process costs the process.
     let stale = serde_json::json!({ "pid": std::process::id(), "port": 1 });
-    let instance_dir = daemon.data_dir.path().join("live-stale");
+    let instance_dir = daemon.data_dir.path().join("kallipai/tagmata/live-stale");
     std::fs::write(
         instance_dir.join("runtime.json"),
         serde_json::to_vec(&stale).expect("serialize stale runtime"),
@@ -585,6 +605,7 @@ fn start_rejects_when_stale_runtime_names_a_live_pid() {
     let started = tokio_block_on(client.call(RequestBody::Start {
         slug: "live-stale".into(),
         env: Vec::new(),
+        exe: None,
     }));
     let response = started.expect("client exchange");
     match response.body {
@@ -593,18 +614,25 @@ fn start_rejects_when_stale_runtime_names_a_live_pid() {
     }
 }
 
-/// A manually booted tagma on an unmarked data root must stay unwritten:
-/// no meta.json means no daemon management, so no runtime.json. The
-/// gate runs between bind and serve, so a successful TCP connect to the
-/// fixed addr proves the gate already decided — no sleep needed.
+/// A manually booted (daemon-less) tagma is legal — it just has to name
+/// itself. With KALLIP_TAGMA_SLUG set it derives its data root under the fake
+/// XDG data home and publishes runtime.json there unconditionally:
+/// every boot owns an instance dir. A successful
+/// TCP connect proves the boot got past identity resolution.
 #[test]
-fn manual_boot_in_unmarked_dir_writes_nothing() {
-    let data_dir = tempfile::tempdir().expect("data tempdir");
+fn manual_boot_with_slug_publishes_runtime_json() {
+    let data_home = tempfile::tempdir().expect("data home tempdir");
     let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("probe bind");
     let port = probe.local_addr().expect("probe addr").port();
     drop(probe);
+    let instance_dir = data_home
+        .path()
+        .join("kallipai")
+        .join("tagmata")
+        .join("manual");
     let mut tagma = std::process::Command::new(resolve_bin("kallip-tagma"))
-        .env("KALLIP_DATA_DIR", data_dir.path())
+        .env("KALLIP_TAGMA_SLUG", "manual")
+        .env("XDG_DATA_HOME", data_home.path())
         .env("KALLIP_TAGMA_ADDR", format!("127.0.0.1:{port}"))
         .env("KALLIP_OPERATOR_TOKEN", "test-op-token")
         .env("KALLIP_LLM_PROVIDER", "deepseek")
@@ -633,8 +661,8 @@ fn manual_boot_in_unmarked_dir_writes_nothing() {
     let _ = tagma.wait();
     assert!(connected, "manual tagma never listened on {port}");
     assert!(
-        !data_dir.path().join("runtime.json").exists(),
-        "unmarked data root must not get a runtime.json"
+        instance_dir.join("runtime.json").exists(),
+        "a slug-named boot publishes runtime.json into its instance dir"
     );
 }
 
@@ -657,11 +685,12 @@ fn stop_refuses_tampered_runtime_pid_then_allows_restored() {
             "KALLIP_LLM_MODEL=test-model".into(),
             "KALLIP_LLM_DEEPSEEK_API_KEY=test-key".into(),
         ],
+        exe: None,
     }));
     let OkPayload::Spawn { pid, port, .. } = expect_ok(spawn) else {
         panic!("expected spawn payload");
     };
-    let instance_dir = daemon.data_dir.path().join("tamper");
+    let instance_dir = daemon.data_dir.path().join("kallipai/tagmata/tamper");
     let runtime_path = instance_dir.join("runtime.json");
     let original = std::fs::read_to_string(&runtime_path).expect("read runtime.json");
 

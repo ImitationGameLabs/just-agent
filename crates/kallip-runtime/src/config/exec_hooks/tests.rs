@@ -106,8 +106,8 @@ fn exec_hooks_non_string_table_note_names_the_type() {
 }
 
 #[test]
-#[should_panic(expected = "cannot read exec hook rules")]
+#[should_panic(expected = "exec hook rules path is not a regular file")]
 fn exec_hooks_unreadable_path_panics() {
-    // A directory read is a non-NotFound IO error → fail closed at startup.
+    // A directory at the overrides path is present-but-broken operator
     load_exec_hook_rules(std::path::Path::new(env!("CARGO_MANIFEST_DIR")));
 }

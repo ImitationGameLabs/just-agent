@@ -20,17 +20,15 @@ use just_llm_client::types::chat::ChatMessage;
 use kallip_common::AgentId;
 
 /// Resolve the shared data root under which `agents/`, `archived/`, and
-/// `skills/` live.
+/// `skills/` live: `<platform_data_dir>/kallipai/tagmata/<KALLIP_TAGMA_SLUG>`.
 ///
-/// - If `$KALLIP_DATA_DIR` is set, it IS the data root — used verbatim,
-///   no suffix appended. The operator has already named the directory.
-/// - Otherwise fall back to the fixed standalone instance tree
-///   `<platform_data_dir>/kallipai/tagmata/default`: the `kallipai`
-///   namespace is the product-wide data home, `tagmata/` holds one
-///   directory per instance, and `default` is the standalone
-///   instance's fixed leaf (daemon-managed instances get their slug
-///   there instead — the daemon points `KALLIP_DATA_DIR` at
-///   `<platform_data_dir>/kallipai/tagmata/<slug>`).
+/// The instance identity comes solely from `KALLIP_TAGMA_SLUG` — the daemon
+/// injects it for managed instances, and every direct run (container,
+/// benchmark, test) names itself the same way. The `kallipai` namespace
+/// is the product-wide data home and `tagmata/` holds one directory per
+/// instance. An unset `KALLIP_TAGMA_SLUG` is an error: there is no fallback
+/// leaf — a process that cannot name itself must not guess where its
+/// data lives.
 ///
 /// Both `agents_base` and `archived_base` route through this so the live and
 /// archived trees share one root. When that root is on a single filesystem,
@@ -38,15 +36,39 @@ use kallip_common::AgentId;
 /// filesystem boundary the `rename` raises `EXDEV` and the archive falls back to
 /// a recursive copy + delete (see `archive_agent_dir`).
 pub fn data_dir_root() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var("KALLIP_DATA_DIR") {
-        Ok(PathBuf::from(dir))
-    } else {
-        Ok(dirs::data_dir()
-            .context("could not determine platform data directory")?
-            .join("kallipai")
-            .join("tagmata")
-            .join("default"))
-    }
+    Ok(dirs::data_dir()
+        .context("could not determine platform data directory")?
+        .join("kallipai")
+        .join("tagmata")
+        .join(instance_slug()?))
+}
+
+/// The instance name every derived root hangs from: `KALLIP_TAGMA_SLUG`, set
+/// for managed instances by the daemon and by every direct run
+/// (container, benchmark, test) itself. Unset is an error: a process
+/// that cannot name itself must not guess where its data lives.
+fn instance_slug() -> Result<String> {
+    std::env::var("KALLIP_TAGMA_SLUG")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .context(
+            "KALLIP_TAGMA_SLUG is not set; the root is derived from it — name the instance with KALLIP_TAGMA_SLUG",
+        )
+}
+
+/// Resolve the per-instance config root:
+/// `<platform_config_dir>/kallipai/tagmata/<KALLIP_TAGMA_SLUG>`. Declared
+/// configuration (`profiles.toml`, `exec_hooks.toml`) is operator intent
+/// rather than runtime data, so it lives under the config home; the same
+/// slug names the leaf both trees share. Errors when `KALLIP_TAGMA_SLUG` is
+/// unset or the platform config home cannot be determined — callers
+/// choose between degrading one config file and aborting boot.
+pub fn config_dir_root() -> Result<PathBuf> {
+    Ok(dirs::config_dir()
+        .context("could not determine platform config directory")?
+        .join("kallipai")
+        .join("tagmata")
+        .join(instance_slug()?))
 }
 /// Resolve the state home's `kallipai` namespace — where pure output
 /// residue lives (instance logs), symmetric to [`data_dir_root`]'s data
@@ -64,24 +86,44 @@ pub fn state_dir_root() -> Result<PathBuf> {
 ///
 /// The data root may not exist yet on a fresh install (no agent ever created), in
 /// which case [`std::fs::canonicalize`] would fail. Fall back to canonicalizing the
-/// parent (which must exist — the platform data dir for the XDG fallback, or the
-/// parent of `$KALLIP_DATA_DIR` when it is set) and re-appending the leaf,
+/// parent (which must exist — the platform data dir the slug-derived root hangs
+/// under) and re-appending the leaf,
 /// yielding the canonical path the data root *would* have. This keeps the overlap
 /// check sound without forcing the data dir to exist.
 fn canonical_data_root() -> Result<PathBuf> {
     let root = data_dir_root()?;
     match root.canonicalize() {
         Ok(c) => Ok(c),
+        // The root may not exist yet on a fresh install — and neither may the
+        // `kallipai/tagmata` namespace above it. Walk up to the nearest
+        // existing ancestor (the platform data dir always exists) and
+        // re-append the components that exist only notionally, yielding the
+        // canonical path the root *would* have.
         Err(_) => {
-            let parent = root
-                .parent()
-                .with_context(|| format!("data root {root:?} has no parent"))?
-                .canonicalize()
-                .with_context(|| format!("canonicalize parent of data root {root:?}"))?;
-            let leaf = root
-                .file_name()
-                .with_context(|| format!("data root {root:?} has no file name"))?;
-            Ok(parent.join(leaf))
+            let mut tail: Vec<std::ffi::OsString> = Vec::new();
+            let mut cur: &Path = root.as_path();
+            loop {
+                let Some(name) = cur.file_name() else {
+                    anyhow::bail!("data root {root:?} has no existing ancestor");
+                };
+                let parent = cur
+                    .parent()
+                    .with_context(|| format!("data root {root:?} has no parent"))?;
+                match parent.canonicalize() {
+                    Ok(base) => {
+                        let mut canon = base;
+                        canon.push(name);
+                        for part in tail.into_iter().rev() {
+                            canon.push(part);
+                        }
+                        return Ok(canon);
+                    }
+                    Err(_) => {
+                        tail.push(name.to_os_string());
+                        cur = parent;
+                    }
+                }
+            }
         }
     }
 }
@@ -226,7 +268,7 @@ pub fn archive_agent_dir(agent_id: &AgentId) -> Result<()> {
     // Ensure the archived base exists (parent of `dst`), co-located with `agents_base`.
     std::fs::create_dir_all(dst.parent().context("archived path has no parent")?)?;
     // Atomic when `agents/` and `archived/` share one filesystem. Across a
-    // filesystem boundary (a symlinked `$KALLIP_DATA_DIR`) `rename` returns
+    // filesystem boundary (a symlinked data-root segment) `rename` returns
     // `EXDEV`; fall back to copy + delete so archival still completes.
     if let Err(e) = std::fs::rename(&src, &dst) {
         if e.kind() != std::io::ErrorKind::CrossesDevices {
@@ -1931,12 +1973,20 @@ mod tests {
     }
 
     // ----- archive-on-remove tests -----
-    // These mutate the process-global KALLIP_DATA_DIR, so they are serialized
-    // (serial_test) and each scopes a tempfile::TempDir via temp_env.
+    // These mutate the process-global KALLIP_TAGMA_SLUG/XDG_DATA_HOME pair, so they are
+    // serialized (serial_test) and each scopes a tempfile::TempDir via temp_env;
+    // the data root is `<tmp>/kallipai/tagmata/test-instance` — use
+    // `data_dir_root()` inside the closure instead of `tmp.path()` directly.
     fn with_data_dir<R>(f: impl FnOnce(&TempDir) -> R) -> R {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().to_str().unwrap().to_owned();
-        temp_env::with_var("KALLIP_DATA_DIR", Some(path.as_str()), || f(&tmp))
+        temp_env::with_vars(
+            [
+                ("KALLIP_TAGMA_SLUG", Some("test-instance")),
+                ("XDG_DATA_HOME", Some(path.as_str())),
+            ],
+            || f(&tmp),
+        )
     }
 
     // ----- workspace/data-dir overlap guard tests -----
@@ -1946,10 +1996,10 @@ mod tests {
     #[test]
     #[serial]
     fn overlap_detects_workspace_inside_data_root() {
-        with_data_dir(|tmp| {
-            // data root == tmp (env var used verbatim); workspace nested under it
-            // → overlap. Exercises the `ws.starts_with(&data)` direction.
-            let ws = tmp.path().join("agents/x");
+        with_data_dir(|_| {
+            // Workspace nested under the slug-derived root → overlap.
+            // Exercises the `ws.starts_with(&data)` direction.
+            let ws = data_dir_root().unwrap().join("agents/x");
             std::fs::create_dir_all(&ws).unwrap();
             assert!(
                 workspace_overlaps_data_root(&ws).unwrap(),
@@ -1961,10 +2011,14 @@ mod tests {
     #[test]
     #[serial]
     fn overlap_detects_workspace_equal_to_data_root() {
-        with_data_dir(|tmp| {
-            // workspace == data root (== tmp) → overlap (degenerate case); equal
+        with_data_dir(|_| {
+            // workspace == data root → overlap (degenerate case); equal
             // paths satisfy both `starts_with` directions.
-            let ws = tmp.path().to_path_buf();
+            let ws = data_dir_root().unwrap();
+            // The workspace must exist (AgentConfig canonicalizes it); the
+            // fresh data root does not exist yet, which is exactly the
+            // notional-ancestor case canonical_data_root handles.
+            std::fs::create_dir_all(&ws).unwrap();
             assert!(
                 workspace_overlaps_data_root(&ws).unwrap(),
                 "workspace equal to data root must be detected as overlap"
@@ -1979,8 +2033,9 @@ mod tests {
             // workspace is a strict ancestor of the data root (the workspace ==
             // $HOME case, the most dangerous: the broad write grant covers the
             // whole data tree). Exercises the `data.starts_with(&ws)` direction.
-            // tmp's parent is the smallest such ancestor that exists on disk.
-            let ws = tmp.path().parent().unwrap().to_path_buf();
+            // The tmp root itself is the smallest existing on-disk ancestor
+            // (the slug-derived root hangs three levels beneath it).
+            let ws = tmp.path().to_path_buf();
             assert!(
                 workspace_overlaps_data_root(&ws).unwrap(),
                 "workspace containing data root must be detected as overlap"
@@ -2004,15 +2059,16 @@ mod tests {
     #[test]
     #[serial]
     fn overlap_rejects_sibling_prefix() {
-        with_data_dir(|tmp| {
-            // A sibling whose leaf name is a string prefix of the data root's leaf
-            // (the data root is `tmp`, whose leaf is a random tempfile name) must
-            // NOT be flagged: `Path::starts_with` is component-wise, not byte-wise.
-            // Guards against a future regression to a byte-prefix comparison. The
+        with_data_dir(|_| {
+            // A sibling whose leaf name is a string prefix of the data root's
+            // leaf (`test-instance` → `test-instanc`) must NOT be flagged:
+            // `Path::starts_with` is component-wise, not byte-wise. Guards
+            // against a future regression to a byte-prefix comparison. The
             // candidate must exist on disk so `canonicalize` succeeds (the guard
             // fails closed — returning Err — on a non-existent workspace).
-            let parent = tmp.path().parent().unwrap();
-            let leaf = tmp.path().file_name().unwrap().to_str().unwrap();
+            let root = data_dir_root().unwrap();
+            let parent = root.parent().unwrap();
+            let leaf = root.file_name().unwrap().to_str().unwrap();
             let ws = parent.join(&leaf[..leaf.len() - 1]);
             std::fs::create_dir_all(&ws).unwrap();
             assert!(
@@ -2039,7 +2095,7 @@ mod tests {
     #[test]
     #[serial]
     fn archive_moves_dir_and_preserves_contents() {
-        with_data_dir(|tmp| {
+        with_data_dir(|_| {
             let id = AgentId::from("archive-rt-1".to_owned());
             let dir = create_agent_dir(
                 &id,
@@ -2085,11 +2141,12 @@ mod tests {
             )
             .unwrap();
             assert_eq!(ctx["cumulative_usage"]["prompt_tokens"], 100);
-            // Live and archived trees share one root (the data dir, used
-            // verbatim from $KALLIP_DATA_DIR == tmp; so `rename` is atomic
-            // on one filesystem, a cross-fs EXDEV falls back to copy + delete).
-            assert!(tmp.path().join("agents").exists());
-            assert!(tmp.path().join("archived").exists());
+            // Live and archived trees share one root (the slug-derived data
+            // root; single filesystem here, so `rename` is atomic — a cross-fs
+            // EXDEV falls back to copy + delete).
+            let root = data_dir_root().unwrap();
+            assert!(root.join("agents").exists());
+            assert!(root.join("archived").exists());
         })
     }
 
@@ -2203,11 +2260,12 @@ mod tests {
     #[test]
     #[serial]
     fn scan_and_find_error_when_the_agents_dir_is_unreadable() {
-        with_data_dir(|tmp| {
+        with_data_dir(|_| {
             // agents/ exists but as a regular file: read_dir fails with
             // ENOTDIR, standing in for permission-denied states the runner
             // cannot reproduce (root ignores file modes).
-            std::fs::write(tmp.path().join("agents"), "not a directory").unwrap();
+            std::fs::create_dir_all(data_dir_root().unwrap()).unwrap();
+            std::fs::write(agents_base().unwrap(), "not a directory").unwrap();
             let err = match scan_agents() {
                 Ok(_) => panic!("scan must not swallow an unreadable dir"),
                 Err(e) => e,
