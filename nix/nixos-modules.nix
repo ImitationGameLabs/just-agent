@@ -34,6 +34,14 @@ let
     lib.optionalAttrs (value != null) {
       ${name} = if lib.isBool value then lib.boolToString value else toString value;
     };
+  # The polis listeners' fixed localhost ports, shared by the systemd
+  # environment and the caddy routes; one table so a port change is a
+  # one-line edit.
+  polisPorts = {
+    archeion = 7100;
+    lesche = 7200;
+    files = 7400;
+  };
 in
 {
   options.services.kallipai.daemon = {
@@ -129,6 +137,30 @@ in
         null: the lesche leaves its internal surface unmounted and the push
         stays disabled (the safe standalone posture).
       '';
+    };
+
+    proxy = {
+      enable = lib.mkEnableOption "caddy virtual hosts exposing the polis services on their subdomains";
+
+      domain = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          The deployment domain the subdomains hang off: the virtual hosts
+          archeion.<domain>, lesche.<domain> and files.<domain> route to
+          the localhost listeners. Required when the proxy is enabled.
+        '';
+      };
+
+      acmeEmail = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          ACME account email, forwarded to services.caddy.email. Default
+          null: Caddy then registers with Let's Encrypt without a
+          recovery address, which small deployments accept.
+        '';
+      };
     };
 
     archeion = {
@@ -297,6 +329,14 @@ in
   };
 
   config = lib.mkMerge [
+    {
+      assertions = [
+        {
+          assertion = polisCfg.proxy.enable -> polisCfg.proxy.domain != null;
+          message = "services.kallipai.polis.proxy.domain must be set when the proxy is enabled.";
+        }
+      ];
+    }
     (lib.mkIf cfg.enable {
       # One group per declared user plus the shared access gate group
       # (socket 0660 + nix @group below). Primary groups are per user:
@@ -433,7 +473,7 @@ in
           ];
           wants = [ "postgresql.service" ];
           environment = {
-            KALLIP_ARCHEION_ADDR = "127.0.0.1:7100";
+            KALLIP_ARCHEION_ADDR = "127.0.0.1:${toString polisPorts.archeion}";
             KALLIP_ARCHEION_DATABASE_URL = "postgresql:///kallip-archeion?host=/run/postgresql";
             KALLIP_ARCHEION_LOG_DIR = "/var/log/kallipai/archeion";
           }
@@ -484,8 +524,8 @@ in
           ];
           wants = [ "kallip-archeion.service" ];
           environment = {
-            KALLIP_LESCHE_ADDR = "127.0.0.1:7200";
-            KALLIP_LESCHE_ARCHEION_INTERNAL_URL = "http://127.0.0.1:7100";
+            KALLIP_LESCHE_ADDR = "127.0.0.1:${toString polisPorts.lesche}";
+            KALLIP_LESCHE_ARCHEION_INTERNAL_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
             KALLIP_LESCHE_DATABASE_URL = "postgresql:///kallip-lesche?host=/run/postgresql";
             KALLIP_LESCHE_LOG_DIR = "/var/log/kallipai/lesche";
           }
@@ -518,8 +558,8 @@ in
           ];
           wants = [ "kallip-archeion.service" ];
           environment = {
-            KALLIP_FILES_ADDR = "127.0.0.1:7400";
-            KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://127.0.0.1:7100";
+            KALLIP_FILES_ADDR = "127.0.0.1:${toString polisPorts.files}";
+            KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
             KALLIP_FILES_DATABASE_URL = "postgresql:///kallip-files?host=/run/postgresql";
             KALLIP_FILES_LOG_DIR = "/var/log/kallipai/files";
             KALLIP_FILES_BLOB_ROOT = "/var/lib/kallipai/files/blobs";
@@ -545,6 +585,30 @@ in
             ]
             ++ lib.optional (polisCfg.notifyTokenFile != null) (toString polisCfg.notifyTokenFile);
           };
+        };
+      };
+    })
+    (lib.mkIf (polisCfg.proxy.enable && polisCfg.proxy.domain != null) {
+      # The public edge: bring up caddy and route the three polis
+      # subdomains to their localhost listeners, the NixOS form of the
+      # dev Caddyfile's host routing. The lesche route flushes
+      # immediately (the event stream must not buffer); the other two
+      # are plain request/response.
+      services.caddy = {
+        enable = true;
+        email = lib.mkIf (polisCfg.proxy.acmeEmail != null) polisCfg.proxy.acmeEmail;
+        virtualHosts = {
+          "archeion.${polisCfg.proxy.domain}".extraConfig = ''
+            reverse_proxy 127.0.0.1:${toString polisPorts.archeion}
+          '';
+          "lesche.${polisCfg.proxy.domain}".extraConfig = ''
+            reverse_proxy 127.0.0.1:${toString polisPorts.lesche} {
+              flush_interval -1
+            }
+          '';
+          "files.${polisCfg.proxy.domain}".extraConfig = ''
+            reverse_proxy 127.0.0.1:${toString polisPorts.files}
+          '';
         };
       };
     })
