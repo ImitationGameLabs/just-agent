@@ -112,6 +112,11 @@ in
         it with journalctl -u kallip-archeion. That printed token is the
         bootstrap credential and rotates on restart, which is why a permanent
         deployment should pin the file.
+        This file may also carry archeion-only extra keys -- notably the
+        OAuth client secrets (KALLIP_ARCHEION_OAUTH_GITHUB_CLIENT_SECRET,
+        KALLIP_ARCHEION_OAUTH_GOOGLE_CLIENT_SECRET; a provider enables only
+        when its id option and secret are both set). Keep secrets out of
+        internalTokenFile: all three services read that one.
       '';
     };
     notifyTokenFile = lib.mkOption {
@@ -387,13 +392,18 @@ in
 
       # One shared PostgreSQL over the unix socket: each service connects as
       # its own system user (peer auth), so no password exists to leak and
-      # no TCP surface exists. ensureDBOwnership gives each role its db.
+      # no TCP surface exists. Database name = role name = OS user name (one
+      # name, hyphenated: peer maps the OS user to the role, and
+      # ensureDBOwnership runs ALTER DATABASE on the role name). Peer
+      # authentication is pinned explicitly so it does not depend on the
+      # channel's implicit default.
       services.postgresql = {
         enable = lib.mkDefault true;
+        authentication = lib.mkDefault "local all all peer";
         ensureDatabases = lib.mkDefault [
-          "kallip_archeion"
-          "kallip_lesche"
-          "kallip_files"
+          "kallip-archeion"
+          "kallip-lesche"
+          "kallip-files"
         ];
         ensureUsers = lib.mkDefault [
           {
@@ -424,7 +434,7 @@ in
           wants = [ "postgresql.service" ];
           environment = {
             KALLIP_ARCHEION_ADDR = "127.0.0.1:7100";
-            KALLIP_ARCHEION_DATABASE_URL = "postgresql:///kallip_archeion?host=/run/postgresql";
+            KALLIP_ARCHEION_DATABASE_URL = "postgresql:///kallip-archeion?host=/run/postgresql";
             KALLIP_ARCHEION_LOG_DIR = "/var/log/kallipai/archeion";
           }
           // envOpt "KALLIP_ARCHEION_WEBAUTHN_RP_ID" polisCfg.archeion.webauthnRpId
@@ -453,6 +463,8 @@ in
             Group = "kallip-archeion";
             StateDirectory = "kallipai/archeion";
             LogsDirectory = "kallipai/archeion";
+            StateDirectoryMode = "0700";
+            LogsDirectoryMode = "0750";
             Restart = "on-failure";
             EnvironmentFile = [
               (toString polisCfg.internalTokenFile)
@@ -474,7 +486,7 @@ in
           environment = {
             KALLIP_LESCHE_ADDR = "127.0.0.1:7200";
             KALLIP_LESCHE_ARCHEION_INTERNAL_URL = "http://127.0.0.1:7100";
-            KALLIP_LESCHE_DATABASE_URL = "postgresql:///kallip_lesche?host=/run/postgresql";
+            KALLIP_LESCHE_DATABASE_URL = "postgresql:///kallip-lesche?host=/run/postgresql";
             KALLIP_LESCHE_LOG_DIR = "/var/log/kallipai/lesche";
           }
           // envOpt "KALLIP_LESCHE_PROOF_SKEW_SECS" polisCfg.lesche.proofSkewSecs
@@ -487,6 +499,8 @@ in
             Group = "kallip-lesche";
             StateDirectory = "kallipai/lesche";
             LogsDirectory = "kallipai/lesche";
+            StateDirectoryMode = "0700";
+            LogsDirectoryMode = "0750";
             Restart = "on-failure";
             EnvironmentFile = [
               (toString polisCfg.internalTokenFile)
@@ -506,7 +520,7 @@ in
           environment = {
             KALLIP_FILES_ADDR = "127.0.0.1:7400";
             KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://127.0.0.1:7100";
-            KALLIP_FILES_DATABASE_URL = "postgresql:///kallip_files?host=/run/postgresql";
+            KALLIP_FILES_DATABASE_URL = "postgresql:///kallip-files?host=/run/postgresql";
             KALLIP_FILES_LOG_DIR = "/var/log/kallipai/files";
             KALLIP_FILES_BLOB_ROOT = "/var/lib/kallipai/files/blobs";
             KALLIP_FILES_NOTIFY_URL = "http://127.0.0.1:7200";
@@ -523,6 +537,8 @@ in
             Group = "kallip-files";
             StateDirectory = "kallipai/files";
             LogsDirectory = "kallipai/files";
+            StateDirectoryMode = "0700";
+            LogsDirectoryMode = "0750";
             Restart = "on-failure";
             EnvironmentFile = [
               (toString polisCfg.internalTokenFile)
