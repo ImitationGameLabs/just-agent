@@ -40,6 +40,12 @@
         "aarch64-darwin"
       ];
 
+      # NixOS module exposing the daemon as a system service (platform
+      # hosting phase). Flake-level output, not perSystem: NixOS modules
+      # are system-agnostic. 'default' follows the flake convention.
+      flake.nixosModules.kallipai = import ./nix/nixos-modules.nix;
+      flake.nixosModules.default = self.nixosModules.kallipai;
+
       perSystem =
         { system, lib, ... }:
         let

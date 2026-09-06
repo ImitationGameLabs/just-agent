@@ -22,6 +22,7 @@ mod start;
 mod stop;
 
 use anyhow::{Context as _, Result};
+use std::ffi::CString;
 
 fn main() -> Result<()> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -88,6 +89,14 @@ fn main() -> Result<()> {
             std::fs::Permissions::from_mode(0o600),
         )
         .context("chmod socket 0600")?;
+        // Optional widening for the system install: the module sets the
+        // group name, the daemon applies it — the ownership change lives
+        // on the same side as the umask/chmod above, so no external
+        // ExecStartPost can race the mode into a wrong final state.
+        if let Some(group) = std::env::var_os("KALLIP_DAEMON_SOCKET_GROUP") {
+            apply_socket_group(&socket_path_for_bind, &group.to_string_lossy())
+                .context("apply socket group")?;
+        }
         tracing::info!(
             record_root = %record_root_for_serve.display(),
             socket = %socket_path_for_bind.display(),
@@ -122,4 +131,37 @@ fn refuse_if_live(path: &std::path::Path) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Hand the socket to `group` (name resolved through the group
+/// database) and widen the mode to 0660. Why the daemon does this
+/// rather than a unit-side ExecStartPost: the mode is the access
+/// policy of the platform-hosting form (the declared group reaches
+/// the daemon for self-uid spawns), and only the process that owns
+/// the umask-and-chmod sequence above can set the final state
+/// without racing itself.
+fn apply_socket_group(path: &std::path::Path, group: &str) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let group_c = CString::new(group).context("socket group name with NUL byte")?;
+    // SAFETY: getgrnam returns a libc-owned struct or null; the gid
+    // is copied out immediately.
+    let gid = unsafe { libc::getgrnam(group_c.as_ptr()) };
+    let gid = unsafe { gid.as_ref() }
+        .map(|gr| gr.gr_gid)
+        .with_context(|| format!("socket group {group:?} does not exist"))?;
+    let path_c = CString::new(path.as_os_str().as_bytes()).context("socket path with NUL byte")?;
+    // SAFETY: chown(2) on our own freshly bound socket; failure is
+    // fatal — a socket the declared group cannot reach breaks the
+    // deployment's access model silently otherwise.
+    let rc = unsafe { libc::chown(path_c.as_ptr(), u32::MAX, gid) };
+    if rc != 0 {
+        anyhow::bail!(
+            "chown socket to group {group}: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))
+        .context("chmod socket 0660")?;
+    Ok(())
 }
