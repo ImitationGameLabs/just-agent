@@ -335,6 +335,8 @@ and socket resolution.
 | ------------------------- | -------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `KALLIP_DAEMON_RECORD_DIR` | no | `~/.local/state/kallipai/daemon/instances/` | The daemon's registration-record root: one `<slug>.json` record per managed instance (instance id, owning uid, target uid, workspace, user env, launch anchor, and the pointer at the instance data directory). Set verbatim; overrides the XDG state-home derivation. |
 | `KALLIP_TAGMA_SLUG`             | yes (tagma) | —                             | Names the instance; the tagma derives its data root (`<data home>/kallipai/tagmata/<slug>`), config root, and logs from it, and refuses to boot without it. Slug grammar: `[a-z0-9][a-z0-9-]*`, at most 64 characters. Injected by the daemon for managed instances; set it for direct runs (compose sets `main`).                                |
+| `KALLIP_HARVEST_BASH` | no | `/bin/bash` | Bash used for the login-environment harvest (both launch forms; on drop-to launches it runs as the target user). An administrative constant: deployments without `/bin/bash` (NixOS) point it at a managed bash; nothing a request or a user environment supplies can move it. |
+| `KALLIP_DAEMON_SOCKET_GROUP` | no | — | Control-socket access group: when set, the daemon hands the socket to this group (resolved through the group database at bind time) and widens the mode to 0660, so group members can drive the daemon. |
 
 ### Control-socket resolution order
 
@@ -351,7 +353,12 @@ The daemon binds the first candidate and never falls through on bind
 failure. Clients probe the candidates in order and connect to the first
 that answers — identical ordering plus sequential probing keeps the
 daemon and its clients converged across session types. The socket
-file is chmod 0600: filesystem permission is the only auth.
+file is chmod 0600 by default: filesystem permission is the only
+auth. When `KALLIP_DAEMON_SOCKET_GROUP` is set, the daemon hands the
+socket to that group and widens the mode to 0660 at bind time, so a
+declared group becomes the access boundary (the system form runs the
+daemon as root and gates the socket and the nix daemon through one
+group — see the NixOS module in `nix/nixos-modules.nix`).
 `kallipctl start <slug> -e KEY=VALUE` relaunches a stopped instance with a
 one-shot env overlay (same allowlist as spawn: KALLIP_*, RUST_LOG, PATH);
 the overlay is never written to the record, so the next
@@ -368,6 +375,13 @@ anchor, and the pointer at the instance's data directory
 carries `runtime.json`, written by the tagma itself (the self-report:
 `pid`, `port`, and `starttime` — the kernel start time of the writing
 process).
+
+The launch identity is chosen per spawn, never per daemon: without a
+`user` on the spawn request the instance runs as the daemon's own user
+(the single-user form); with `user` (`kallipctl spawn --user`) the
+daemon drops the instance to that pre-declared account and pins its
+HOME/XDG environment to the account's home. There is no environment
+override for the target — only the request field and the record.
 
 `kallipctl list` classifies each recorded pid:
 

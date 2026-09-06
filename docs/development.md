@@ -322,11 +322,13 @@ instances. The daemon keeps one registration record per instance in
 its record area (default `~/.local/state/kallipai/daemon/instances/`,
 one `<slug>.json` per instance); the record and the instance's own
 `runtime.json` are the only truth. `kallipctl` talks to it over a
-0600 control socket:
+0600 control socket (0660 group-widened when
+`KALLIP_DAEMON_SOCKET_GROUP` is set — the system form):
 
 ```sh
 kallipctl spawn <slug> <workspace> -e KALLIP_LLM_PROVIDER=... \
     -e KALLIP_LLM_MODEL=... -e KALLIP_LLM_DEEPSEEK_API_KEY=...
+kallipctl spawn <slug> <workspace> --user <account>  # drop to a pre-declared user
 kallipctl list           # every record in the record area
 kallipctl health <slug>  # pid liveness via /proc/<pid>/comm
 kallipctl stop <slug>    # TERM, 10s grace, KILL
