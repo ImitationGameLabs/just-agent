@@ -4,6 +4,8 @@
     "npm:@fontsource/fira-mono@^5.2.7": "5.2.7",
     "npm:@humanspeak/svelte-markdown@^1.8.5": "1.8.5_shiki@4.3.1_svelte@5.56.4",
     "npm:@inlang/paraglide-js@2.20.0": "2.20.0_typescript@6.0.3",
+    "npm:@inlang/plugin-m-function-matcher@2.2.6": "2.2.6",
+    "npm:@inlang/plugin-message-format@4.4.0": "4.4.0",
     "npm:@jsr/std__assert@^1.0.19": "1.0.19",
     "npm:@lucide/svelte@^1.24.0": "1.24.0_svelte@5.56.4",
     "npm:@neoconfetti/svelte@^2.2.2": "2.2.2_svelte@5.56.4",
@@ -95,7 +97,7 @@
       "integrity": "sha512-vI8PdPVZSnpYnpagjvm+nWSa3nMDRJKVM/2eLAtUHFrNcZZadxVdmP79r4W95+dkMLDFGEyzSSY9sFxvjdkkyQ==",
       "dependencies": [
         "@inlang/recommend-sherlock",
-        "@inlang/sdk",
+        "@inlang/sdk@2.10.2",
         "commander",
         "consola",
         "json5",
@@ -108,6 +110,18 @@
       ],
       "bin": true
     },
+    "@inlang/plugin-m-function-matcher@2.2.6": {
+      "integrity": "sha512-sEDVWjY8WgDq0mkEy117IZwYuzZHUZsnCV0IiRfheAW03mbnWAK/eOlECjxncKxWdQOpT0QI7rebvZRZFu4t8w==",
+      "dependencies": [
+        "@inlang/sdk@2.9.3"
+      ]
+    },
+    "@inlang/plugin-message-format@4.4.0": {
+      "integrity": "sha512-n4aXt6XVg5kxhKoLAhi9nMgZtCA9iS0QOaXte56VqxWHcfj9O4c4gOkyVQZH7H9D8h7OZufCrO1sZGYOypPwEA==",
+      "dependencies": [
+        "flat"
+      ]
+    },
     "@inlang/recommend-sherlock@0.2.1": {
       "integrity": "sha512-ckv8HvHy/iTqaVAEKrr+gnl+p3XFNwe5D2+6w6wJk2ORV2XkcRkKOJ/XsTUJbPSiyi4PI+p+T3bqbmNx/rDUlg==",
       "dependencies": [
@@ -116,6 +130,16 @@
     },
     "@inlang/sdk@2.10.2": {
       "integrity": "sha512-O1ki72SNK6LPagaGrvlioBb1mWKvump7cO7P85hfGZjdFTmDdn3icI0A6MvaBsB3P9KQHAjzyubnN1OslGufTw==",
+      "dependencies": [
+        "@lix-js/sdk",
+        "@sinclair/typebox",
+        "kysely",
+        "sqlite-wasm-kysely",
+        "uuid"
+      ]
+    },
+    "@inlang/sdk@2.9.3": {
+      "integrity": "sha512-E/SxcSji8WIt4DqQG9APlOs6tVtJxrrOUS3dE4ho3pWRCLLIY0PIVzgNwSukuFT+m8LuJDFwpRY5VY3ryzyGWQ==",
       "dependencies": [
         "@lix-js/sdk",
         "@sinclair/typebox",
@@ -1351,6 +1375,10 @@
         "path-exists"
       ]
     },
+    "flat@6.0.1": {
+      "integrity": "sha512-/3FfIa8mbrg3xE7+wAhWeV+bd7L2Mof+xtZb5dRDKZ+wDvYJK4WDYeIOuOhre5Yv5aQObZrlbRmk3RTSiuQBtw==",
+      "bin": true
+    },
     "fsevents@2.3.3": {
       "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
       "os": ["darwin"],
@@ -2122,6 +2150,8 @@
           "dependencies": [
             "npm:@fontsource/fira-mono@^5.2.7",
             "npm:@inlang/paraglide-js@2.20.0",
+            "npm:@inlang/plugin-m-function-matcher@2.2.6",
+            "npm:@inlang/plugin-message-format@4.4.0",
             "npm:@lucide/svelte@^1.24.0",
             "npm:@neoconfetti/svelte@^2.2.2",
             "npm:@skeletonlabs/skeleton-svelte@5",

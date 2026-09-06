@@ -178,6 +178,14 @@
                   workspace
                   ;
               };
+              # The kallip-web static site (SPA bundle for caddy to serve;
+              # see the services.kallipai.web NixOS module). Linux-only: the
+              # node_modules dependency tree carries platform binaries.
+              kallip-web-dist = import ./nix/packages/kallip-web.nix {
+                inherit pkgs;
+                src = self;
+                inherit (pkgs) deno;
+              };
             })
             # Re-export aifed's FHS tarball so the benchmark pins both in one lock.
             # Gate on aifed's actual availability: the pinned rev ships aifed-tarball
