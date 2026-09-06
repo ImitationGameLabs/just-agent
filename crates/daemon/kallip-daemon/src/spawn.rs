@@ -688,8 +688,11 @@ pub(crate) fn launch(
 /// the anchor names this pid or there is no anchor at all — a stale
 /// anchor from a previous incarnation is cleared, never left lying
 /// against a pid it does not name. If the anchor write itself fails
-/// that is beyond reach: a stale anchor may survive and classify the
-/// live pid conservatively (Mismatch); the warn names it. Returns
+/// that is beyond reach: a stale anchor may survive and steer the
+/// live pid's classification to the adoption leg (a perfect
+/// self-report is adopted) rather than a hard Mismatch — the
+/// instance runs and is stoppable either way; the warn names it.
+/// Returns
 /// false only when the revalidation race says the pid died under us;
 /// the caller keeps polling rather than reporting a launch it cannot
 /// vouch for.

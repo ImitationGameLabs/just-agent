@@ -100,8 +100,7 @@ impl ScannedInstance {
             );
             match verdict {
                 Verdict::Unknown if self.reported_starttime.is_some() => Some(
-                    "live pid, but its exe is unreadable from the daemon \
-                     (cross-uid?); adoption refused"
+                    "live pid, but its exe is unreadable from the daemon (cross-uid?); adoption refused — relaunch it as the daemon's user or spawn it via the daemon"
                         .to_string(),
                 ),
                 _ => Some("pid does not match a live instance (stale or reused)".to_string()),
@@ -316,7 +315,7 @@ fn anchor_incarnation_live(anchor: &Identity) -> bool {
         return false;
     }
     match proc_starttime(anchor.pid) {
-        Some(starttime) => anchor.starttime != 0 && starttime == anchor.starttime,
+        Some(starttime) => anchor.starttime == 0 || starttime == anchor.starttime,
         None => true,
     }
 }
@@ -751,6 +750,33 @@ mod tests {
         assert_eq!((v, how), (Verdict::Mismatch, None));
     }
 
+    #[test]
+    fn adoption_denied_over_a_live_legacy_anchor_without_a_starttime() {
+        // A pre-starttime daemon's anchor (starttime 0) on a live pid
+        // still counts as claiming: /proc readable or not, adoption
+        // is refused rather than risk a second live tagma on the
+        // directory.
+        let pid = std::process::id();
+        let anchor = Identity {
+            pid,
+            starttime: 0,
+            anchored_at: 7,
+        };
+        let mut sleeper = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("sleeper process");
+        let claimant = sleeper.id();
+        let facts = ProcFacts {
+            starttime: Some(777),
+            exe: Some("/nix/store/xyz-kallip-tagma-0.1.0/bin/kallip-tagma".to_string()),
+            comm: None,
+        };
+        let (v, how) = classify_identity(Some(&anchor), Some(777), claimant, &facts);
+        let _ = sleeper.kill();
+        let _ = sleeper.wait();
+        assert_eq!((v, how), (Verdict::Mismatch, None));
+    }
     #[test]
     fn scan_of_a_non_tagma_self_report_stays_dead() {
         // This test binary publishes a perfect self-report — but its

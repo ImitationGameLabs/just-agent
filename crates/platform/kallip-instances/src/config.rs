@@ -135,22 +135,36 @@ mod tests {
 
     #[test]
     fn flag_socket_wins() {
+        // Pin the env legs so this env-reading test cannot race the
+        // lock-holding writer in the sibling test; the explicit flag
+        // must win over the pinned (empty) legs.
         let scratch = tempfile::tempdir().unwrap();
+        let env_runtime = tempfile::tempdir().unwrap();
+        let env_state = tempfile::tempdir().unwrap();
         let flag_path = scratch.path().join("flag.sock");
         let _listener = live_socket(&flag_path);
-        let config = Config {
-            addr: "127.0.0.1:7300".into(),
-            daemon_socket: Some(flag_path.clone()),
-            token: None,
-            backend: "daemon".into(),
-            relay_archeion_url: String::new(),
-            relay_lesche_url: String::new(),
-            archeion_internal_url: None,
-            archeion_internal_token: None,
-            allowed_hosts_raw: String::new(),
-            cors_origins: String::new(),
-        };
-        assert_eq!(config.resolve_socket().expect("resolve"), flag_path);
+        with_env(
+            &[
+                ("XDG_RUNTIME_DIR", Some(env_runtime.path().as_os_str())),
+                ("XDG_STATE_HOME", Some(env_state.path().as_os_str())),
+                ("KALLIP_DAEMON_SOCKET", None),
+            ],
+            || {
+                let config = Config {
+                    addr: "127.0.0.1:7300".into(),
+                    daemon_socket: Some(flag_path.clone()),
+                    token: None,
+                    backend: "daemon".into(),
+                    relay_archeion_url: String::new(),
+                    relay_lesche_url: String::new(),
+                    archeion_internal_url: None,
+                    archeion_internal_token: None,
+                    allowed_hosts_raw: String::new(),
+                    cors_origins: String::new(),
+                };
+                assert_eq!(config.resolve_socket().expect("resolve"), flag_path);
+            },
+        );
     }
 
     #[test]
