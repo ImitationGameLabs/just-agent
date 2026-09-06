@@ -13,6 +13,8 @@ pub mod toolresult;
 
 #[cfg(feature = "axum")]
 pub mod auth_header;
+#[cfg(feature = "logging")]
+pub mod logging;
 #[cfg(feature = "axum")]
 pub mod sse;
 
