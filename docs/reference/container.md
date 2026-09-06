@@ -341,7 +341,7 @@ in `.env` via `.env.example`; the code default is the prod `kallipai.com`):
 | `KALLIP_LESCHE_ARCHEION_TOKEN`       | **yes** (prod-archeion)          | Shared secret the lesche presents to the archeion's `/internal/*` surface; must equal the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.          |
 | `KALLIP_LESCHE_CORS_ORIGINS`      | **yes** (prod-archeion)          | The app origin(s) for the lesche; never a wildcard on a public deploy.                                                                 |
 
-The archeion, lesche, and files services can also be configured through the `services.kallipai.polis` NixOS module and its token files instead of `.env` (see the polis section below).
+The archeion, lesche, and files services can also be configured through the `services.kallipai.polis` NixOS module and its token files instead of `.env` (see the polis section above).
 
 Note: unset WebAuthn RP values fall back to the kallipai.com prod pair
 (passkeys simply stay unusable until configured) instead of failing boot.
