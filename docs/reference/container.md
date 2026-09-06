@@ -43,6 +43,7 @@ server) and carry distinct compose project names (`kallipai-tagma` /
 `kallipai-archeion`) so their containers/volumes are unambiguous in
 `docker ps` / `docker volume ls`. The tagma's in-process relay connector reaches
 the archeion over its public HTTPS URL.
+The polis services can alternatively deploy on the NixOS host through `services.kallipai.polis` (see the polis section below).
 
 `dev` is a **two-phase** flow (the tagma's relay connector cannot enroll until a
 user signs up and mints a code); see [development.md](../development.md) for the
@@ -155,6 +156,32 @@ pinned inline in `service.environment`, which overrides `env_file`.
 arion -f compose/prod/polis.nix up -d
 arion -f compose/prod/polis.nix logs -f
 ```
+
+### polis services — the NixOS module
+
+The archeion, lesche, and files services run as systemd units on the NixOS
+host, enabled with one switch:
+
+```nix
+services.kallipai.polis = {
+  enable = true;
+  archeionPackage = inputs.self.packages.x86_64-linux.kallip-archeion;
+  leschePackage = inputs.self.packages.x86_64-linux.kallip-lesche;
+  filesPackage = inputs.self.packages.x86_64-linux.kallip-files;
+  internalTokenFile = "/etc/kallipai/polis-internal-tokens";  # 0600, three same-value keys
+};
+```
+
+The module binds all three services to localhost (the host's reverse proxy
+is the only ingress), stands up a shared PostgreSQL with per-service
+databases over unix-socket peer auth, orders the units postgresql →
+archeion → lesche/files, and wires each service's `KALLIP_*_LOG_DIR` to its
+systemd `LogsDirectory`. Secrets enter only as 0600 EnvironmentFile paths
+(`internalTokenFile` required; `adminTokenFile` unset means the archeion
+prints a fresh admin token to the journal at every boot; `notifyTokenFile`
+unset disables the files→lesche event push). All service tuning options are
+nullable and default to the binaries' own defaults — see the option
+descriptions in `nix/nixos-modules.nix`.
 
 ## Relay bootstrap
 
@@ -313,6 +340,8 @@ in `.env` via `.env.example`; the code default is the prod `kallipai.com`):
 | `KALLIP_ARCHEION_ADMIN_TOKEN`        | no                            | Stable admin token; else generated per boot and printed to `arion logs archeion`.                                                         |
 | `KALLIP_LESCHE_ARCHEION_TOKEN`       | **yes** (prod-archeion)          | Shared secret the lesche presents to the archeion's `/internal/*` surface; must equal the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.          |
 | `KALLIP_LESCHE_CORS_ORIGINS`      | **yes** (prod-archeion)          | The app origin(s) for the lesche; never a wildcard on a public deploy.                                                                 |
+
+The archeion, lesche, and files services can also be configured through the `services.kallipai.polis` NixOS module and its token files instead of `.env` (see the polis section below).
 
 Note: unset WebAuthn RP values fall back to the kallipai.com prod pair
 (passkeys simply stay unusable until configured) instead of failing boot.

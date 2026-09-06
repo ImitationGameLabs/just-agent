@@ -8,6 +8,13 @@
 # (config under /etc, runtime under /run, record area under /var/lib),
 # and linger gives every declared user the standard logind runtime
 # directory (/run/user/<uid>), the same semantics a human user gets.
+#
+# The polis section (services.kallipai.polis) brings up the three platform
+# services -- archeion, lesche, files -- on one switch: localhost-only
+# listeners behind the host's reverse proxy, one shared PostgreSQL reached
+# over unix-socket peer auth, and secrets injected from operator-owned
+# 0600 EnvironmentFile paths. The module only accepts token paths, never
+# token values, so no secret is ever evaluated into the store.
 {
   config,
   lib,
@@ -16,6 +23,17 @@
 }:
 let
   cfg = config.services.kallipai.daemon;
+  polisCfg = config.services.kallipai.polis;
+
+  # Inject an environment key only when the option carries a value: null
+  # means "let the service's own default govern", keeping the code default
+  # the single source of truth -- a mirrored default here would drift from
+  # it. Bools render via boolToString because Nix's toString gives "1".
+  envOpt =
+    name: value:
+    lib.optionalAttrs (value != null) {
+      ${name} = if lib.isBool value then lib.boolToString value else toString value;
+    };
 in
 {
   options.services.kallipai.daemon = {
@@ -54,71 +72,465 @@ in
       '';
     };
   };
+  options.services.kallipai.polis = {
+    enable = lib.mkEnableOption "the polis platform services (archeion, lesche, files) as system services";
 
-  config = lib.mkIf cfg.enable {
-    # One group per declared user plus the shared access gate group
-    # (socket 0660 + nix @group below). Primary groups are per user:
-    # a shared primary group would let the tagma users read each
-    # other's homes, undoing the uid isolation the dedicated-user
-    # form exists for. The gate group rides as an extra group —
-    # kernel group checks accept supplementary membership, so the
-    # socket and nix gates work unchanged.
-    users.groups = lib.listToAttrs (
-      map (name: lib.nameValuePair name { }) (cfg.tagmaUsers ++ [ cfg.group ])
-    );
+    archeionPackage = lib.mkOption {
+      type = lib.types.package;
+      description = "The kallip-archeion package. No default: pinning stays with the consumer flake.";
+    };
+    leschePackage = lib.mkOption {
+      type = lib.types.package;
+      description = "The kallip-lesche package.";
+    };
+    filesPackage = lib.mkOption {
+      type = lib.types.package;
+      description = "The kallip-files package.";
+    };
 
-    users.users = lib.listToAttrs (
-      map (
-        name:
-        lib.nameValuePair name {
-          isSystemUser = true;
-          group = name;
-          extraGroups = [ cfg.group ];
-          home = "/home/${name}";
-          createHome = true;
-          # logind pre-creates /run/user/<uid> at boot: the spawned
-          # instance's XDG_RUNTIME_DIR, no per-instance setup.
-          linger = true;
-          shell = pkgs.bashInteractive;
-        }
-      ) cfg.tagmaUsers
-    );
+    internalTokenFile = lib.mkOption {
+      type = lib.types.path;
+      description = ''
+        Root-only (0600) EnvironmentFile carrying the shared archeion-internal
+        secret -- the /internal/* ControlPlane trust boundary, so the
+        deployment cannot come up without it. The file must define three keys
+        with the same value: KALLIP_ARCHEION_INTERNAL_TOKEN (the archeion
+        mounts the /internal nest only when set), KALLIP_LESCHE_ARCHEION_TOKEN
+        and KALLIP_FILES_ARCHEION_TOKEN (what the lesche and the files service
+        present to that nest). Format is systemd's line-based KEY=value; a
+        token containing #, quotes, or leading whitespace breaks the parse.
+      '';
+    };
+    adminTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Path to a root-only EnvironmentFile defining
+        KALLIP_ARCHEION_ADMIN_TOKEN (the provisioning authority and the
+        admin-login exchange). Default null: the archeion generates a fresh
+        sk-admin-... at every boot and prints it once to the journal -- read
+        it with journalctl -u kallip-archeion. That printed token is the
+        bootstrap credential and rotates on restart, which is why a permanent
+        deployment should pin the file.
+      '';
+    };
+    notifyTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Path to a root-only EnvironmentFile carrying the files-to-lesche
+        event-push secret; the file must define two keys with the same value:
+        KALLIP_LESCHE_INTERNAL_TOKEN and KALLIP_FILES_NOTIFY_TOKEN. Default
+        null: the lesche leaves its internal surface unmounted and the push
+        stays disabled (the safe standalone posture).
+      '';
+    };
 
-    # The upstream default is [ "*" ] — everyone. Concatenating with a
-    # default would defeat the wiring, so this module owns the list:
-    # the declared users (by name) and the tagma group. This replaces
-    # anything an operator configured elsewhere — extra entries belong
-    # in tagmaUsers, not in a competing declaration.
-    nix.settings.allowed-users = lib.mkForce (lib.unique (cfg.tagmaUsers ++ [ "@${cfg.group}" ]));
-
-    systemd.services.kallip-daemon = {
-      description = "kallipai instance daemon";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
-
-      environment = {
-        KALLIP_DAEMON_SOCKET = "/run/kallipai/daemon.sock";
-        KALLIP_DAEMON_RECORD_DIR = "/var/lib/kallipai/daemon/instances";
-        KALLIP_DAEMON_SOCKET_GROUP = cfg.group;
-        # NixOS has no /bin/bash; the login-environment harvest needs a
-        # fixed administrative bash, never the caller's shell.
-        KALLIP_HARVEST_BASH = "${pkgs.bash}/bin/bash";
+    archeion = {
+      webauthnRpId = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "WebAuthn relying-party id (the registrable domain passkeys bind to); changing it invalidates every bound passkey.";
       };
+      webauthnRpOrigin = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "WebAuthn relying-party origin; must have the rp id as its effective domain.";
+      };
+      webauthnRpName = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Human-readable WebAuthn relying-party name shown in the browser prompt.";
+      };
+      webauthnAllowAnyPort = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        description = "Allow non-standard ports on the WebAuthn origin (local HTTP dev only).";
+      };
+      sessionTtlSecs = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Session cookie lifetime in seconds.";
+      };
+      cookieSecure = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        description = "Mark the session cookie Secure (disable only for plain-HTTP dev).";
+      };
+      cookieDomain = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Cookie Domain attribute; set to the parent domain when the lesche shares a subdomain of it.";
+      };
+      authRateCapacity = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Per-IP token-bucket capacity guarding /v1/auth/*.";
+      };
+      authRateRefillPerSec = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Per-IP auth bucket refill rate, requests per second.";
+      };
+      pairRateCapacity = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Shared pairing-bucket capacity: the real brute-force bound on the pairing code (per-IP limiting is bypassable by source-IP diversity).";
+      };
+      pairRateRefillPerSec = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Shared pairing-bucket refill rate, requests per second.";
+      };
+      trustedProxies = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Comma-separated CIDRs trusted to set X-Forwarded-For; the code default already trusts loopback for the same-box proxy.";
+      };
+      maxBodySizeKb = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Max HTTP request body size in kilobytes (0 = axum default).";
+      };
+      corsOrigins = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Comma-separated CORS allow-list origins; never a wildcard on a public deploy.";
+      };
+      enrollmentCodeTtlSecs = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Single-use enrollment-code lifetime in seconds.";
+      };
+      signupEnabled = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        description = "Whether open signup is allowed (the incident-time kill switch).";
+      };
+      oauthRedirectBase = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Web origin the OAuth flow redirects into; required only when an OAuth provider is configured.";
+      };
+      oauthGithubClientId = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "GitHub OAuth client id; the provider enables only when id and secret are both present. Client secrets go in the token files, never here.";
+      };
+      oauthGoogleClientId = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Google OAuth client id; same enable rule and secret rule as GitHub.";
+      };
+      adminUserLogin = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        description = "Mount POST /v1/auth/admin-login (admin token exchanged for a local session). When on, a hand-set admin token shorter than 32 chars fails at boot.";
+      };
+    };
 
-      serviceConfig = {
-        ExecStart = "${cfg.package}/bin/kallip-daemon";
-        # Dedicated-user launches fork+setuid to arbitrary declared
-        # users: that needs real root, not a capability subset.
-        User = "root";
-        StateDirectory = "kallipai/daemon";
-        # Records enumerate the slugs, uids, and workspaces on the
-        # host; 0700 keeps that a root-and-daemon-only view (clients
-        # read through the socket, not the files).
-        StateDirectoryMode = "0700";
-        RuntimeDirectory = "kallipai";
-        ConfigurationDirectory = "kallipai";
-        Restart = "on-failure";
+    lesche = {
+      proofSkewSecs = lib.mkOption {
+        type = lib.types.nullOr lib.types.int;
+        default = null;
+        description = "Acceptable clock skew (both directions) on a tunnel reconnect proof, in seconds.";
+      };
+      keyExchangeTimeoutSecs = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "How long a synchronous key exchange waits for the tagma before failing with 504.";
+      };
+      maxBodySizeKb = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Max HTTP request body size in kilobytes (0 = axum default).";
+      };
+      corsOrigins = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Comma-separated CORS allow-list origins.";
+      };
+    };
+
+    files = {
+      maxBodySizeMb = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Maximum accepted upload body in megabytes; larger streams get 413.";
+      };
+      corsOrigins = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Comma-separated CORS allow-list origins.";
+      };
+      degrade = lib.mkOption {
+        type = lib.types.nullOr (
+          lib.types.enum [
+            "closed"
+            "soft"
+          ]
+        );
+        default = null;
+        description = "Archeion degrade posture: closed fails authorization with 503 when the registry is unreachable, soft denies with 403 from an empty fact set.";
+      };
+      gcIntervalSecs = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Delay between GC passes, in seconds.";
+      };
+      gcGraceSecs = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "How long a freed zero-refcount row must age before the GC reclaims it.";
+      };
+      gcBatch = lib.mkOption {
+        type = lib.types.nullOr lib.types.ints.unsigned;
+        default = null;
+        description = "Maximum catalog rows reclaimed per GC pass.";
       };
     };
   };
+
+  config = lib.mkMerge [
+    (lib.mkIf cfg.enable {
+      # One group per declared user plus the shared access gate group
+      # (socket 0660 + nix @group below). Primary groups are per user:
+      # a shared primary group would let the tagma users read each
+      # other's homes, undoing the uid isolation the dedicated-user
+      # form exists for. The gate group rides as an extra group —
+      # kernel group checks accept supplementary membership, so the
+      # socket and nix gates work unchanged.
+      users.groups = lib.listToAttrs (
+        map (name: lib.nameValuePair name { }) (cfg.tagmaUsers ++ [ cfg.group ])
+      );
+
+      users.users = lib.listToAttrs (
+        map (
+          name:
+          lib.nameValuePair name {
+            isSystemUser = true;
+            group = name;
+            extraGroups = [ cfg.group ];
+            home = "/home/${name}";
+            createHome = true;
+            # logind pre-creates /run/user/<uid> at boot: the spawned
+            # instance's XDG_RUNTIME_DIR, no per-instance setup.
+            linger = true;
+            shell = pkgs.bashInteractive;
+          }
+        ) cfg.tagmaUsers
+      );
+
+      # The upstream default is [ "*" ] — everyone. Concatenating with a
+      # default would defeat the wiring, so this module owns the list:
+      # the declared users (by name) and the tagma group. This replaces
+      # anything an operator configured elsewhere — extra entries belong
+      # in tagmaUsers, not in a competing declaration.
+      nix.settings.allowed-users = lib.mkForce (lib.unique (cfg.tagmaUsers ++ [ "@${cfg.group}" ]));
+
+      systemd.services.kallip-daemon = {
+        description = "kallipai instance daemon";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "network.target" ];
+
+        environment = {
+          KALLIP_DAEMON_SOCKET = "/run/kallipai/daemon.sock";
+          KALLIP_DAEMON_RECORD_DIR = "/var/lib/kallipai/daemon/instances";
+          KALLIP_DAEMON_SOCKET_GROUP = cfg.group;
+          # NixOS has no /bin/bash; the login-environment harvest needs a
+          # fixed administrative bash, never the caller's shell.
+          KALLIP_HARVEST_BASH = "${pkgs.bash}/bin/bash";
+        };
+
+        serviceConfig = {
+          ExecStart = "${cfg.package}/bin/kallip-daemon";
+          # Dedicated-user launches fork+setuid to arbitrary declared
+          # users: that needs real root, not a capability subset.
+          User = "root";
+          StateDirectory = "kallipai/daemon";
+          # Records enumerate the slugs, uids, and workspaces on the
+          # host; 0700 keeps that a root-and-daemon-only view (clients
+          # read through the socket, not the files).
+          StateDirectoryMode = "0700";
+          RuntimeDirectory = "kallipai";
+          ConfigurationDirectory = "kallipai";
+          Restart = "on-failure";
+        };
+      };
+    })
+    (lib.mkIf polisCfg.enable {
+      # Dedicated users, per-user primary groups. Deliberately NOT added to
+      # the daemon's kallip gate group: that group admits the daemon socket,
+      # which none of these services consumes.
+      users.groups = builtins.listToAttrs (
+        map (name: lib.nameValuePair name { }) [
+          "kallip-archeion"
+          "kallip-lesche"
+          "kallip-files"
+        ]
+      );
+      users.users = builtins.listToAttrs (
+        map
+          (
+            name:
+            lib.nameValuePair name {
+              isSystemUser = true;
+              group = name;
+            }
+          )
+          [
+            "kallip-archeion"
+            "kallip-lesche"
+            "kallip-files"
+          ]
+      );
+
+      # One shared PostgreSQL over the unix socket: each service connects as
+      # its own system user (peer auth), so no password exists to leak and
+      # no TCP surface exists. ensureDBOwnership gives each role its db.
+      services.postgresql = {
+        enable = lib.mkDefault true;
+        ensureDatabases = lib.mkDefault [
+          "kallip_archeion"
+          "kallip_lesche"
+          "kallip_files"
+        ];
+        ensureUsers = lib.mkDefault [
+          {
+            name = "kallip-archeion";
+            ensureDBOwnership = true;
+          }
+          {
+            name = "kallip-lesche";
+            ensureDBOwnership = true;
+          }
+          {
+            name = "kallip-files";
+            ensureDBOwnership = true;
+          }
+        ];
+      };
+
+      systemd.services = {
+        kallip-archeion = {
+          description = "kallipai archeion control plane";
+          wantedBy = [ "multi-user.target" ];
+          # The archeion retries its DB connect with a capped backoff, so
+          # wants (not requires): a slow postgres must not tear it down.
+          after = [
+            "network.target"
+            "postgresql.service"
+          ];
+          wants = [ "postgresql.service" ];
+          environment = {
+            KALLIP_ARCHEION_ADDR = "127.0.0.1:7100";
+            KALLIP_ARCHEION_DATABASE_URL = "postgresql:///kallip_archeion?host=/run/postgresql";
+            KALLIP_ARCHEION_LOG_DIR = "/var/log/kallipai/archeion";
+          }
+          // envOpt "KALLIP_ARCHEION_WEBAUTHN_RP_ID" polisCfg.archeion.webauthnRpId
+          // envOpt "KALLIP_ARCHEION_WEBAUTHN_RP_ORIGIN" polisCfg.archeion.webauthnRpOrigin
+          // envOpt "KALLIP_ARCHEION_WEBAUTHN_RP_NAME" polisCfg.archeion.webauthnRpName
+          // envOpt "KALLIP_ARCHEION_WEBAUTHN_ALLOW_ANY_PORT" polisCfg.archeion.webauthnAllowAnyPort
+          // envOpt "KALLIP_ARCHEION_SESSION_TTL_SECS" polisCfg.archeion.sessionTtlSecs
+          // envOpt "KALLIP_ARCHEION_COOKIE_SECURE" polisCfg.archeion.cookieSecure
+          // envOpt "KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN" polisCfg.archeion.cookieDomain
+          // envOpt "KALLIP_ARCHEION_AUTH_RATE_CAPACITY" polisCfg.archeion.authRateCapacity
+          // envOpt "KALLIP_ARCHEION_AUTH_RATE_REFILL_PER_SEC" polisCfg.archeion.authRateRefillPerSec
+          // envOpt "KALLIP_ARCHEION_PAIR_RATE_CAPACITY" polisCfg.archeion.pairRateCapacity
+          // envOpt "KALLIP_ARCHEION_PAIR_RATE_REFILL_PER_SEC" polisCfg.archeion.pairRateRefillPerSec
+          // envOpt "KALLIP_ARCHEION_TRUSTED_PROXIES" polisCfg.archeion.trustedProxies
+          // envOpt "KALLIP_ARCHEION_MAX_BODY_SIZE_KB" polisCfg.archeion.maxBodySizeKb
+          // envOpt "KALLIP_ARCHEION_CORS_ORIGINS" polisCfg.archeion.corsOrigins
+          // envOpt "KALLIP_ARCHEION_ENROLLMENT_CODE_TTL_SECS" polisCfg.archeion.enrollmentCodeTtlSecs
+          // envOpt "KALLIP_ARCHEION_SIGNUP_ENABLED" polisCfg.archeion.signupEnabled
+          // envOpt "KALLIP_ARCHEION_OAUTH_REDIRECT_BASE" polisCfg.archeion.oauthRedirectBase
+          // envOpt "KALLIP_ARCHEION_OAUTH_GITHUB_CLIENT_ID" polisCfg.archeion.oauthGithubClientId
+          // envOpt "KALLIP_ARCHEION_OAUTH_GOOGLE_CLIENT_ID" polisCfg.archeion.oauthGoogleClientId
+          // envOpt "KALLIP_ARCHEION_ADMIN_USER_LOGIN" polisCfg.archeion.adminUserLogin;
+          serviceConfig = {
+            ExecStart = "${polisCfg.archeionPackage}/bin/kallip-archeion";
+            User = "kallip-archeion";
+            Group = "kallip-archeion";
+            StateDirectory = "kallipai/archeion";
+            LogsDirectory = "kallipai/archeion";
+            Restart = "on-failure";
+            EnvironmentFile = [
+              (toString polisCfg.internalTokenFile)
+            ]
+            ++ lib.optional (polisCfg.adminTokenFile != null) (toString polisCfg.adminTokenFile);
+          };
+        };
+
+        kallip-lesche = {
+          description = "kallipai lesche data-plane relay";
+          wantedBy = [ "multi-user.target" ];
+          # Soft dependency: the lesche keeps serving local surfaces while the
+          # archeion restarts; only the ControlPlane calls fail meanwhile.
+          after = [
+            "network.target"
+            "kallip-archeion.service"
+          ];
+          wants = [ "kallip-archeion.service" ];
+          environment = {
+            KALLIP_LESCHE_ADDR = "127.0.0.1:7200";
+            KALLIP_LESCHE_ARCHEION_INTERNAL_URL = "http://127.0.0.1:7100";
+            KALLIP_LESCHE_DATABASE_URL = "postgresql:///kallip_lesche?host=/run/postgresql";
+            KALLIP_LESCHE_LOG_DIR = "/var/log/kallipai/lesche";
+          }
+          // envOpt "KALLIP_LESCHE_PROOF_SKEW_SECS" polisCfg.lesche.proofSkewSecs
+          // envOpt "KALLIP_LESCHE_KEY_EXCHANGE_TIMEOUT_SECS" polisCfg.lesche.keyExchangeTimeoutSecs
+          // envOpt "KALLIP_LESCHE_MAX_BODY_SIZE_KB" polisCfg.lesche.maxBodySizeKb
+          // envOpt "KALLIP_LESCHE_CORS_ORIGINS" polisCfg.lesche.corsOrigins;
+          serviceConfig = {
+            ExecStart = "${polisCfg.leschePackage}/bin/kallip-lesche";
+            User = "kallip-lesche";
+            Group = "kallip-lesche";
+            StateDirectory = "kallipai/lesche";
+            LogsDirectory = "kallipai/lesche";
+            Restart = "on-failure";
+            EnvironmentFile = [
+              (toString polisCfg.internalTokenFile)
+            ]
+            ++ lib.optional (polisCfg.notifyTokenFile != null) (toString polisCfg.notifyTokenFile);
+          };
+        };
+
+        kallip-files = {
+          description = "kallipai files content-transfer service";
+          wantedBy = [ "multi-user.target" ];
+          after = [
+            "network.target"
+            "kallip-archeion.service"
+          ];
+          wants = [ "kallip-archeion.service" ];
+          environment = {
+            KALLIP_FILES_ADDR = "127.0.0.1:7400";
+            KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://127.0.0.1:7100";
+            KALLIP_FILES_DATABASE_URL = "postgresql:///kallip_files?host=/run/postgresql";
+            KALLIP_FILES_LOG_DIR = "/var/log/kallipai/files";
+            KALLIP_FILES_BLOB_ROOT = "/var/lib/kallipai/files/blobs";
+            KALLIP_FILES_NOTIFY_URL = "http://127.0.0.1:7200";
+          }
+          // envOpt "KALLIP_FILES_MAX_BODY_SIZE_MB" polisCfg.files.maxBodySizeMb
+          // envOpt "KALLIP_FILES_CORS_ORIGINS" polisCfg.files.corsOrigins
+          // envOpt "KALLIP_FILES_DEGRADE" polisCfg.files.degrade
+          // envOpt "KALLIP_FILES_GC_INTERVAL_SECS" polisCfg.files.gcIntervalSecs
+          // envOpt "KALLIP_FILES_GC_GRACE_SECS" polisCfg.files.gcGraceSecs
+          // envOpt "KALLIP_FILES_GC_BATCH" polisCfg.files.gcBatch;
+          serviceConfig = {
+            ExecStart = "${polisCfg.filesPackage}/bin/kallip-files";
+            User = "kallip-files";
+            Group = "kallip-files";
+            StateDirectory = "kallipai/files";
+            LogsDirectory = "kallipai/files";
+            Restart = "on-failure";
+            EnvironmentFile = [
+              (toString polisCfg.internalTokenFile)
+            ]
+            ++ lib.optional (polisCfg.notifyTokenFile != null) (toString polisCfg.notifyTokenFile);
+          };
+        };
+      };
+    })
+  ];
 }
