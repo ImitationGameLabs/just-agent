@@ -94,9 +94,9 @@ let
 
   # Bind helper (mirrors compose/dev/tagma.nix): an absolute, colon-free
   # host path -> "<path>:<target>" bind-mount. The named env var wins; unset
-  # falls back to the daemon-standard host dir. Both paths go through the
-  # same shape check, so a malformed HOME or override fails fast at eval
-  # time instead of half-working at up time.
+  # falls back to the daemon's own default for that mount. Both paths go
+  # through the same shape check, so a malformed fallback or override
+  # fails fast at eval time instead of half-working at up time.
   bindOverride =
     name: target: fallback:
     let
@@ -107,22 +107,26 @@ let
       throw "arion: ${name} must resolve to an absolute, colon-free host path other than '/' (got '${src}')"
     else
       "${src}:${target}";
-  # Unset defaults: the HOST daemon's standard dirs, so a plain arion up
-  # has the service manage the SAME real daemon + instance tree a
-  # host-side kallipctl sees (the daemon's own code defaults -- see
-  # crates/daemon/kallip-daemon/src/main.rs; the instance-tree default is
-  # ~/.local/share/kallipai/tagmata).
+  # Unset defaults: the HOST daemon's own code defaults, so a plain arion
+  # up manages the SAME real daemon + instance tree a host-side kallipctl
+  # sees. The socket bind carries the daemon's runtime-leg socket dir
+  # ($XDG_RUNTIME_DIR/kallipai/daemon -- where a desktop daemon binds by
+  # default; resolution chain in
+  # crates/daemon/kallip-daemon-common/src/socket.rs), the data bind the
+  # instance-tree root (~/.local/share/kallipai/tagmata).
+  runtimeDir = builtins.getEnv "XDG_RUNTIME_DIR";
   homeDir = builtins.getEnv "HOME";
-  daemonDir =
-    if homeDir == "" then
-      throw "arion: HOME unset; defaulting the instances binds needs it (or set KALLIP_ARION_INSTANCES_STATE/DATA_PATH)"
-    else
-      sub: "${homeDir}/.local/${sub}";
   instancesStateBind = bindOverride "KALLIP_ARION_INSTANCES_STATE_PATH" "/state" (
-    daemonDir "state/kallipai/daemon"
+    if runtimeDir == "" then
+      throw "arion: XDG_RUNTIME_DIR unset; defaulting the instances socket bind needs it (or set KALLIP_ARION_INSTANCES_STATE_PATH)"
+    else
+      "${runtimeDir}/kallipai/daemon"
   );
   instancesDataBind = bindOverride "KALLIP_ARION_INSTANCES_DATA_PATH" "/data" (
-    daemonDir "share/kallipai/tagmata"
+    if homeDir == "" then
+      throw "arion: HOME unset; defaulting the instances data bind needs it (or set KALLIP_ARION_INSTANCES_DATA_PATH)"
+    else
+      "${homeDir}/.local/share/kallipai/tagmata"
   );
 
   # Parallel-stack overrides (the same env pattern as bindOverride above):
