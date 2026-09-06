@@ -11,6 +11,7 @@ test worth writing and keeping. It provides the criteria for the testability
 dimension of `code/design-thinking`. Common sense says "write tests"; this
 skill adds the signals for tests that provide real regression protection
 versus tests that add maintenance burden without value. It is also the safety net that `code/refactoring` relies on to verify behavior preservation.
+The empirical procedure that verifies a test actually discriminates — re-breaking the code and requiring a red — is `code/test-discrimination`.
 
 ## Test behavior, not implementation
 
