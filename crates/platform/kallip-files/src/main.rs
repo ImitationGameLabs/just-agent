@@ -23,7 +23,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    // File logging is opt-in via KALLIP_FILES_LOG_DIR: set, events are
+    // double-written to a rolling file and stdout; unset keeps the historical
+    // stdout-only behavior, so container and dev forms are untouched.
+    let log_dir = kallip_common::logging::parse_log_dir(std::env::var("KALLIP_FILES_LOG_DIR").ok());
+    kallip_common::logging::init_service_logging(&filter, "files", log_dir.as_deref());
 
     let config = FilesConfig {
         max_body_bytes: args.max_body_size_mb * 1024 * 1024,

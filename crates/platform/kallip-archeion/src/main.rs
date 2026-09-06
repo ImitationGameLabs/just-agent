@@ -46,7 +46,12 @@ async fn main() -> Result<()> {
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    // File logging is opt-in via KALLIP_ARCHEION_LOG_DIR: set, events are
+    // double-written to a rolling file and stdout; unset keeps the historical
+    // stdout-only behavior, so container and dev forms are untouched.
+    let log_dir =
+        kallip_common::logging::parse_log_dir(std::env::var("KALLIP_ARCHEION_LOG_DIR").ok());
+    kallip_common::logging::init_service_logging(&filter, "archeion", log_dir.as_deref());
 
     // Mint the admin token: honor KALLIP_ARCHEION_ADMIN_TOKEN if set, otherwise
     // generate a fresh `sk-admin-...`. Only the hash is retained; the plaintext

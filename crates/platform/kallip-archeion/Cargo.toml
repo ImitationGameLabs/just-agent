@@ -6,7 +6,7 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
-kallip-common = { workspace = true, features = ["axum"] }
+kallip-common = { workspace = true, features = ["axum", "logging"] }
 kallip-archeion-common = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }

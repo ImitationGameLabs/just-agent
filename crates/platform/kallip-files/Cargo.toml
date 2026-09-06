@@ -23,7 +23,7 @@ time = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 kallip-archeion-common = { workspace = true }
-kallip-common = { workspace = true, features = ["axum"] }
+kallip-common = { workspace = true, features = ["axum", "logging"] }
 axum = { workspace = true }
 tokio-util = { workspace = true, features = ["io"] }
 futures-util = { workspace = true }
