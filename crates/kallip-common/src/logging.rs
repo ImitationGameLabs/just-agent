@@ -90,6 +90,9 @@ where
 /// file is an added channel, not a replacement -- so the panic hook keeps
 /// its default behavior and panics keep reaching stderr, and with it
 /// journald.
+/// Installing over an existing global subscriber silently does nothing (the
+/// set_global_default error is swallowed); the services install exactly once
+/// at startup, so this only matters for embedders.
 pub fn init_service_logging(
     filter: &tracing_subscriber::EnvFilter,
     service: &str,
