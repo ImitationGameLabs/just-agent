@@ -33,7 +33,7 @@ impl LlmTool for ContextStatusTool {
          consumed by pinned items and conversation turns, and which turns are \
          the largest. Use this to decide whether to evict turns with context_evict \
          (providing a summary to preserve key facts) before the automatic \
-         compaction triggers; a turn far above the rest is worth evicting first."
+         compaction triggers, and to see which single turn dominates the window."
     }
 
     fn parameters_schema(&self) -> Value {

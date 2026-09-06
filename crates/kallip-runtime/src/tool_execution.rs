@@ -519,15 +519,16 @@ mod cap_tests {
     #[test]
     fn oversized_tool_result_is_cut_with_banner() {
         // CJK at tokenx's ~1 token/char keeps the premise deterministic.
-        let big = "错".repeat(50_000);
+        // Unique sentinels at both ends: with a uniformly repeated fixture the
+        // head and tail assertions below would pass even if the cut kept only
+        // one side of the output.
+        let big = format!("HEAD{}TAIL", "错".repeat(50_000));
         assert!(estimate_text(&big) > DEFAULT_TOOL_RESULT_FULL_TOKENS);
 
         let capped = cap_tool_result(big.clone());
         assert!(capped.contains("truncated"), "banner must be present");
-        let head: String = big.chars().take(32).collect();
-        assert!(capped.starts_with(&head), "head must be kept");
-        let tail: String = big.chars().rev().take(32).collect();
-        assert!(capped.contains(&tail), "tail must be kept");
+        assert!(capped.starts_with("HEAD"), "head sentinel must be kept");
+        assert!(capped.contains("TAIL"), "tail sentinel must be kept");
         // The cap covers the banner too: everything over it is the marker text.
         assert!(
             estimate_text(&capped) <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS + 200,

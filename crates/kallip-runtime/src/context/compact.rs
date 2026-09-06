@@ -25,9 +25,12 @@ pub(crate) enum CompactOutcome {
 /// Character cap for the head+tail slice taken from an oversized queue-head
 /// turn: `min(100_000, 90% of the summarizer input budget)`. 100K chars
 /// estimates to at most ~100K tokens even at CJK 1:1 density, and the 90%
-/// guard keeps the slice inside the budget for small windows, where a fixed
-/// cap would re-create the wedge one level down (the summarizer would skip
-/// the slice and the pass would make no progress). At the default 500K
+/// headroom pairs with the startup validation in `config::check_context_budget`
+/// (a truncated cap within 2× of the budget is rejected there), so the slice
+/// fits unless an existing summary already consumes nearly the whole budget —
+/// that corner declines with a warning instead of looping. A fixed cap would
+/// re-create the wedge one level down on small windows (the summarizer would
+/// skip the slice and the pass would make no progress). At the default 500K
 /// window this resolves to the full 100K chars.
 const WEDGE_SLICE_MAX_CHARS: usize = 100_000;
 
@@ -113,7 +116,7 @@ pub(crate) async fn summarize_and_evict(ctx: &AgentContext) -> Result<CompactOut
             if window.is_empty() {
                 // The oldest non-pinned turn alone exceeds the summarizer input
                 // budget: the queue-head wedge that stalled compaction silently
-                // (2026-09-06 incident: a 502K-token tool result blocked 60
+                // (2026-09-06 incident: a ~503K-token tool result blocked 60
                 // passes over 2.5h). Summarize a head+tail slice of it instead —
                 // the slice fits the budget by construction, and the write
                 // phase's evict clears the wedge so later passes proceed.
@@ -355,6 +358,12 @@ mod tests {
             !wedged,
             "no turn above the summarizer input budget may survive compaction"
         );
+        let survivor = s
+            .turns()
+            .iter()
+            .filter(|t| !t.is_pinned())
+            .any(|t| t.estimated_tokens > 0);
+        assert!(survivor, "the in-budget turn must legitimately survive");
         assert!(
             s.pinned_labels().iter().any(|l| l == "context_summary"),
             "the slice summary must be pinned"

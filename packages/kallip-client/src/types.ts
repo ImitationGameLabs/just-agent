@@ -153,6 +153,7 @@ export interface ContextUsage {
   readonly turn_tokens: number;
   readonly last_prompt_tokens: number | null;
   readonly cumulative_usage: CumulativeUsage;
+  readonly largest_turns: readonly [number, number][];
 }
 
 /** Retry record (`AgentStatusResponse.recent_retries`). */
