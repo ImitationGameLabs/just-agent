@@ -30,29 +30,40 @@
   // $app/* or import.meta.env from inside the library package). Idempotent
   // setters; the root layout has a single instance so this runs once at boot.
   initShell(goto);
-  // The https shape is fronted by Caddy: the browser reaches archeion/lesche at
-  // their *.<devDomain> subdomains. KALLIP_TLS=off (injected alongside the
-  // domain by vite.config.ts) selects the plain-http shape: direct ports on
-  // the host. Explicit VITE_*_URL values still win in either shape.
-  const tlsOff = import.meta.env.KALLIP_TLS === "off";
-  const devDomain = import.meta.env.KALLIP_DOMAIN ?? "kallipai.com";
+  // Service URLs resolve at runtime, in three layers: the deployment
+  // config from /config.js (window.KALLIP_CONFIG, rewritten per
+  // deployment by the NixOS module; empty shell by default), then the
+  // build-time VITE_*_URL overrides, then derivation from the browser
+  // location — the origin it is on names the deployment domain, so a
+  // same-origin deployment (web.<domain> sibling subdomains, or the
+  // plain-http direct-port shape) needs zero configuration.
+  // The https shape is fronted by Caddy: the browser reaches
+  // archeion/lesche at their *.<domain> subdomains. Any other protocol
+  // means the plain-http shape: direct ports on the host.
+  const config = window.KALLIP_CONFIG ?? {};
+  const tlsOff = config.tlsOff ?? location.protocol !== "https:";
+  const domain = (config.domain ?? location.hostname).replace(/^web\./, "");
   initArcheion(
-    import.meta.env.VITE_ARCHEION_URL ??
-      (tlsOff ? `http://${devDomain}:7100` : `https://archeion.${devDomain}`),
+    config.services?.archeion ??
+      import.meta.env.VITE_ARCHEION_URL ??
+      (tlsOff ? `http://${domain}:7100` : `https://archeion.${domain}`),
   );
   initLesche(
-    import.meta.env.VITE_LESCHE_URL ??
-      (tlsOff ? `http://${devDomain}:7200` : `https://lesche.${devDomain}`),
+    config.services?.lesche ??
+      import.meta.env.VITE_LESCHE_URL ??
+      (tlsOff ? `http://${domain}:7200` : `https://lesche.${domain}`),
   );
   initFiles(
-    import.meta.env.VITE_FILES_URL ??
-      (tlsOff ? `http://${devDomain}:7400` : `https://files.${devDomain}`),
+    config.services?.files ??
+      import.meta.env.VITE_FILES_URL ??
+      (tlsOff ? `http://${domain}:7400` : `https://files.${domain}`),
   );
   initInstances(
-    import.meta.env.VITE_INSTANCES_URL ??
+    config.services?.instances ??
+      import.meta.env.VITE_INSTANCES_URL ??
       (tlsOff
-        ? `http://${devDomain}:7300/api/instances`
-        : `https://instances.${devDomain}/api/instances`),
+        ? `http://${domain}:7300/api/instances`
+        : `https://instances.${domain}/api/instances`),
   );
   initConfigStorage(localStorageConfigStorage);
 

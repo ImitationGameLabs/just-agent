@@ -8,10 +8,12 @@ import { defineConfig } from "vite";
 // vite.config.ts lives in this package; the shared UI source is a sibling.
 const here = import.meta.dirname;
 
-// The dev domain (see compose/dev/polis.nix `devDomain`). The same env var drives
-// the archeion/lesche env and the Caddyfile, so the whole stack agrees on one
-// name; override it in `.env`. Default must match compose/dev/polis.nix
-// and +layout.svelte.
+// Dev-server shaping only (allowedHosts/HMR ws): the KALLIP_* env is no
+// longer baked into the client bundle — service URLs derive at runtime
+// in +layout.svelte from the browser location (config.js overrides).
+// The same env var drives the archeion/lesche containers and the
+// Caddyfile so the whole dev stack agrees on one name; override it in
+// `.env`.
 const tlsOff = process.env.KALLIP_TLS === "off";
 const devDomain =
   process.env.KALLIP_DOMAIN ?? (tlsOff ? "localhost" : "kallipai.com");
@@ -61,13 +63,6 @@ export default defineConfig({
       },
     },
   ],
-  // Re-export the resolved domain to the client as import.meta.env.KALLIP_DOMAIN
-  // so +layout.svelte can derive the archeion/lesche base URLs from the SAME value
-  // (VITE_ARCHEION_URL / VITE_LESCHE_URL still win if set explicitly).
-  define: {
-    "import.meta.env.KALLIP_DOMAIN": JSON.stringify(devDomain),
-    "import.meta.env.KALLIP_TLS": JSON.stringify(tlsOff ? "off" : "on"),
-  },
   server: {
     // The dev stack is fronted by Caddy, which terminates TLS for *.devDomain
     // and reverse-proxies web.<devDomain> to this dev server. Bind 0.0.0.0 so
