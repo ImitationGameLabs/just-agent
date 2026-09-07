@@ -31,6 +31,12 @@ The `ContextStore` holds two layers, composed in priority order:
 Each turn is a `Vec<ChatMessage>` (assistant message + tool results) with a
 pre-cached token estimate.
 
+Oversized external messages are size-guarded where they enter the working
+turns: beyond the entry cap they are cut to a head+tail slice with a banner
+pointing at the spilled original, while the request-time compaction stays
+the budget-management layer. The two guards compose; neither replaces the
+other.
+
 ## The four context tools
 
 | Tool             | What it does                                                                                |

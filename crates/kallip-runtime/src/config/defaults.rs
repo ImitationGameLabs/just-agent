@@ -72,3 +72,10 @@ pub(crate) const DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS: usize = 10_000;
 /// is bounded in budget terms for both densities — the worst alignment
 /// overshoot stays a fraction of the truncated cap.
 pub(crate) const DEFAULT_TOOL_RESULT_LINE_MAX_TOKENS: usize = 2_000;
+
+/// External messages (peer prompts, inbox deliveries) entering the turn
+/// history at or under this estimated-token size pass through byte-for-byte;
+/// anything larger is cut like an oversized tool result and its full
+/// original spilled to disk. Same budget family as the tool caps: validated
+/// against the same summarizer input budget, same wedge math.
+pub(crate) const DEFAULT_MESSAGE_FULL_TOKENS: usize = DEFAULT_TOOL_RESULT_FULL_TOKENS;

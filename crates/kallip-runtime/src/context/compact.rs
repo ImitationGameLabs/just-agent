@@ -308,6 +308,25 @@ mod tests {
     /// output reserve − summary max. A queue-head turn above this is the wedge.
     const SUMMARIZER_INPUT_BUDGET: usize = 500_000 - 8_192 - 1_200;
 
+    /// Consumer-level pin: the wedge face cuts through the shared helper, so
+    /// the gap marker must survive here — a future local re-derivation of the
+    /// slice in this file would fail loudly.
+    #[test]
+    fn wedge_slice_declares_its_gap() {
+        let turn = Turn {
+            id: crate::context::turn::TurnId(7),
+            messages: vec![ChatMessage::tool_result(oversized_content(), "w0")],
+            estimated_tokens: 0,
+            kind: TurnKind::Conversation,
+        };
+        let sliced = slice_oversized_turn(&turn, SUMMARIZER_INPUT_BUDGET);
+        let content = sliced.messages[0].content().unwrap_or_default();
+        assert!(
+            content.contains("chars omitted"),
+            "wedge slice must declare its gap"
+        );
+    }
+
     /// A conversation turn whose estimate provably exceeds the budget: 600K CJK
     /// chars at tokenx's ~1 token/char. The assertion pins the precondition so a
     /// tokenx drift fails loudly here instead of silently un-testing the slice.

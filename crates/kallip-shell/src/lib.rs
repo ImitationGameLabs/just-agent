@@ -54,6 +54,7 @@ mod pgroup;
 /// the last `pre_exec` step by `landlock::apply` when the feature is on.
 #[cfg(all(target_os = "linux", feature = "seccomp"))]
 pub mod seccomp;
+pub mod spill;
 mod supervisor;
 pub mod tools;
 

@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::acquisition::{AcquireResult, acquire_stream};
-use crate::agent_task::AgentContext;
+use crate::agent_task::{AgentContext, cap_external_message};
 use crate::approval::format_approval_notifications;
 use crate::budget_gate::{BudgetAction, enforce_post_stream_budget, enforce_pre_call_budget};
 use crate::context::{compose_context, estimate_context_tokens};
@@ -166,7 +166,9 @@ pub(crate) async fn run_agent_rounds(
     Ok(RoundOutcome::Park(AgentOutcome::MaxRoundsExceeded))
 }
 
-/// Consume queued interjections (prompts/commands) and record them as a single turn.
+/// Consume queued interjections (prompts/commands) and record them as
+/// a single turn. Each interjection individually passes the entry cap
+/// (spill + cut with banner when oversized) before being wrapped.
 async fn drain_interjections(
     ctx: &mut AgentContext,
     prompt_rx: &mut tokio::sync::mpsc::Receiver<String>,
@@ -178,7 +180,12 @@ async fn drain_interjections(
     if !interjected.is_empty() {
         let msg = interjected
             .iter()
-            .map(|t| format!("[Interjected message]\n{t}\n[/Interjected message]"))
+            .map(|t| {
+                format!(
+                    "[Interjected message]\n{}\n[/Interjected message]",
+                    cap_external_message(t)
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n");
         ctx.record_turn(vec![ChatMessage::user(&msg)]).await;

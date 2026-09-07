@@ -18,7 +18,7 @@ use crate::context::estimate_text;
 use crate::event::AgentEvent;
 use crate::policy::{ToolCallOutcome, error_result, skipped_tool_result, timed_out_tool_result};
 use crate::runner::BreakUntil;
-use crate::text_slice::{char_head_tail, head_tail_slice};
+use crate::text_slice::converge_under_cap;
 use crate::tools::DEFAULT_BREAK_TIMEOUT_SECS;
 use just_llm_client::types::chat::{ChatMessage, ToolCallsMessage};
 // ---------------------------------------------------------------------------
@@ -75,37 +75,8 @@ fn cap_tool_result(result: String) -> String {
     // Density-derived character cap, then re-derived from each cut's measured
     // density: the tokenx scan is linear, but measuring the actual cut is
     // cheaper than proving it so.
-    let mut chars_cap = (DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS * total / full_est).max(1);
-    // Line alignment is best-effort cosmetics; the cap landing is the
-    // invariant. Aligned cuts quantize the kept length to whole lines (up to
-    // a whole-line threshold of slack per side), so the aligned phase gets a
-    // few proportional steps to absorb the overshoot; past that the
-    // char-domain cut has no quantization and converges on any density, and
-    // the halving loop is a backstop that always terminates under the cap.
-    let mut parts = head_tail_slice(&result, chars_cap);
-    for _ in 0..4 {
-        let kept_est = estimate_text(&parts.2);
-        if kept_est <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS {
-            return with_banner(total, full_est, &parts);
-        }
-        chars_cap = chars_cap * DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS / kept_est.max(1);
-        parts = head_tail_slice(&result, chars_cap);
-    }
-    for _ in 0..4 {
-        let kept_est = estimate_text(&parts.2);
-        if kept_est <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS {
-            return with_banner(total, full_est, &parts);
-        }
-        chars_cap = chars_cap * DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS / kept_est.max(1);
-        parts = char_head_tail(&result, chars_cap);
-    }
-    while chars_cap > 1 {
-        chars_cap /= 2;
-        parts = char_head_tail(&result, chars_cap);
-        if estimate_text(&parts.2) <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS {
-            return with_banner(total, full_est, &parts);
-        }
-    }
+    let chars_cap = DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS * total / full_est;
+    let parts = converge_under_cap(&result, chars_cap, DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS);
     with_banner(total, full_est, &parts)
 }
 
@@ -546,6 +517,24 @@ mod cap_tests {
             "mid-seam gap must be declared"
         );
         assert!(capped.starts_with("L0000 "));
+        // The banner's numbers must describe the real keep: a refactor that
+        // swapped in the raw 60/40 targets would still pass the landing check.
+        let banner = &capped[capped.find("truncated: kept first").unwrap()..];
+        let nums: Vec<usize> = banner
+            .split(|c: char| !c.is_ascii_digit())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        assert_eq!(
+            nums[2],
+            text.chars().count(),
+            "banner total must be the output size"
+        );
+        assert!(nums[0] > nums[1], "head must keep more than the tail");
+        assert!(
+            nums[0] + nums[1] < nums[2],
+            "kept plus omitted must not exceed the total"
+        );
         let m = capped.find("\n[... ").unwrap();
         assert_eq!(
             capped.as_bytes()[m - 1],

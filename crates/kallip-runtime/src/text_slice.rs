@@ -57,6 +57,58 @@ pub(crate) fn char_head_tail(text: &str, cap_chars: usize) -> (usize, usize, Str
     marker_slice(text, head_end, tail_start)
 }
 
+/// Drive a cut from a density-derived starting char cap down under the
+/// target token estimate: a few line-aligned proportional steps (alignment
+/// is best-effort cosmetics; the cap landing is the invariant), then
+/// char-domain steps, which have no quantization and converge on any
+/// density, then a halving backstop that always terminates. Returns the
+/// winning (head_chars, tail_chars, sliced) parts. Shared by the tool-result
+/// cap and the message-entry guard so the landing semantics cannot drift
+/// between the two faces. The debug_assert pins the backstop's landing.
+///
+/// Precondition: the target must leave room beyond the omission
+/// marker's own estimated tokens — a target below that can never
+/// land, and the backstop exhausts into the debug_assert (release
+/// would silently overshoot). Both call sites pass a target of
+/// thousands of tokens against a marker of a few, so the bound is
+/// far from live — this documents the contract, not a hazard.
+pub(crate) fn converge_under_cap(
+    text: &str,
+    chars_cap: usize,
+    target_tokens: usize,
+) -> (usize, usize, String) {
+    let mut chars_cap = chars_cap.max(1);
+    let mut parts = head_tail_slice(text, chars_cap);
+    for _ in 0..4 {
+        let kept_est = estimate_text(&parts.2);
+        if kept_est <= target_tokens {
+            return parts;
+        }
+        chars_cap = chars_cap * target_tokens / kept_est.max(1);
+        parts = head_tail_slice(text, chars_cap);
+    }
+    for _ in 0..4 {
+        let kept_est = estimate_text(&parts.2);
+        if kept_est <= target_tokens {
+            return parts;
+        }
+        chars_cap = chars_cap * target_tokens / kept_est.max(1);
+        parts = char_head_tail(text, chars_cap);
+    }
+    while chars_cap > 1 {
+        chars_cap /= 2;
+        parts = char_head_tail(text, chars_cap);
+        if estimate_text(&parts.2) <= target_tokens {
+            return parts;
+        }
+    }
+    debug_assert!(
+        estimate_text(&parts.2) <= target_tokens,
+        "char-domain halving backstop must land under the truncated cap"
+    );
+    parts
+}
+
 /// Head side of the line alignment: the index just past the end of the line
 /// containing `pos` when that line is small enough to keep whole, else `pos`.
 fn aligned_head_end(text: &str, pos: usize, total: usize) -> usize {
@@ -112,7 +164,7 @@ fn line_est(text: &str, start: usize, end: usize) -> usize {
 /// the two kept ends: seamless concatenation can fuse the cut ends into
 /// command or text sequences neither side contained (a prompt-injection
 /// vector), and the reader must see where — and how much — was dropped. Same
-/// shape as the shell capture face's `bytes omitted` marker.
+/// shape as the shell capture face's `bytes omitted` marker (crates/kallip-shell/src/capture.rs).
 fn marker_slice(text: &str, head_end: usize, tail_start: usize) -> (usize, usize, String) {
     let head: String = text.chars().take(head_end).collect();
     let tail: String = text.chars().skip(tail_start).collect();
@@ -230,5 +282,23 @@ mod tests {
         assert!(sliced.starts_with('a'));
         assert!(sliced.ends_with(&format!("{}\n", "y".repeat(39))));
         assert!(sliced.contains("chars omitted"));
+    }
+
+    #[test]
+    fn whole_line_threshold_is_token_based_not_char_based() {
+        // Same 2.5K-char crossing line, two densities: the CJK line
+        // estimates ≈2.5K tokens (over the whole-line budget → char cut),
+        // the latin one ≈625 (under → the line is kept whole). That ~1/4
+        // ratio is tokenx's run-length compression of the repeated char, an
+        // estimate this test pins rather than assumes: a tokenx drift re-
+        // classifies the line and fails loudly here. A char-count threshold
+        // could not tell the two densities apart at all.
+        let cjk = format!("{}\n{}\n", "错".repeat(2_500), "x".repeat(20_000));
+        let (h, _, _) = head_tail_slice(&cjk, 1_000);
+        assert_eq!(h, 600, "2.5K CJK chars ≈2.5K tokens: over budget, char cut");
+
+        let latin = format!("{}\n{}\n", "x".repeat(2_500), "错".repeat(20_000));
+        let (h, _, _) = head_tail_slice(&latin, 1_000);
+        assert_eq!(h, 2_501, "2.5K latin chars ≈625 tokens: whole line kept");
     }
 }

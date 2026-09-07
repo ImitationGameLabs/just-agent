@@ -1224,3 +1224,43 @@ async fn budget_probe_fuse_fire_skips_injection() {
     let requests = server.received_requests().await.unwrap().len();
     assert_eq!(requests, 0, "the probe path must stay LLM-free");
 }
+
+// --- interjection entry cap ---
+
+/// Interjections drained mid-run are external messages: each passes the
+/// entry cap individually, so an oversized one is cut with its banner
+/// and spilled while an ordinary one passes through raw.
+#[tokio::test]
+async fn interjections_pass_entry_cap_individually() {
+    let _serial = crate::agent_task::message_spill_serial().await;
+    let spill_dir = tempfile::TempDir::new().unwrap();
+    crate::agent_task::set_message_spill_root(Some(spill_dir.path().join("spill")));
+    let mut ctx = make_ctx(vec![profile("test", "ep1", 4096)], &["ep1"]).await;
+    let ordinary = "a normal interjection";
+    let oversized = "错".repeat(40_000);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(4);
+    tx.send(ordinary.to_owned()).await.unwrap();
+    tx.send(oversized.clone()).await.unwrap();
+    drop(tx);
+    drain_interjections(&mut ctx, &mut rx).await;
+
+    let store = ctx.store.lock().await;
+    let content = store.turns().back().unwrap().messages[0]
+        .content()
+        .unwrap()
+        .to_owned();
+    assert!(content.contains("[Interjected message]"));
+    assert!(
+        content.contains(ordinary),
+        "ordinary interjection must pass through raw"
+    );
+    assert!(
+        content.contains("message truncated"),
+        "oversized interjection must be cut with a banner"
+    );
+    assert!(
+        !content.contains(oversized.as_str()),
+        "oversized interjection must not survive in full"
+    );
+    crate::agent_task::set_message_spill_root(None);
+}
