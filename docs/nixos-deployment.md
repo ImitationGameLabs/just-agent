@@ -13,9 +13,11 @@ the authoritative reference for everything this guide summarizes.
 - A NixOS host with flakes enabled
   (`nix.settings.experimental-features = [ "nix-command" "flakes" ]`).
 - For the proxied shape: DNS records pointing the subdomains (`archeion.`,
-  `lesche.`, `files.`, `instances.`, and optionally `web.`) at the host,
-  with ports 80 and 443 reachable — Caddy obtains public certificates
-  automatically.
+  `lesche.`, `files.`, `instances.`, and optionally `web.`) at the host.
+  On a public domain with ports 80 and 443 reachable, Caddy obtains
+  certificates automatically; on a private domain like the `kallipai.lan`
+  example below, ACME cannot issue and Caddy falls back to its local CA
+  (see the TLS section).
 - Root access (to rebuild the host and to read the generated admin
   token at first login).
 
@@ -23,9 +25,7 @@ the authoritative reference for everything this guide summarizes.
 
 The module ships as the flake output `nixosModules.kallipai` (also
 exported as `nixosModules.default`). Add the repository as a flake input
-and import the module into your host; the `specialArgs` line passes the
-flake inputs through, so the configuration below can reference the
-kallipai packages:
+and import the module into your host:
 
 ```nix
 {
@@ -34,7 +34,6 @@ kallipai packages:
   outputs = { nixpkgs, ... }@inputs: {
     nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
-      specialArgs = { inherit inputs; };
       modules = [
         inputs.kallipai.nixosModules.kallipai
         ./configuration.nix
@@ -74,33 +73,25 @@ services, the reverse proxy on one domain, and the web app. This is
 the `configuration.nix` the flake above imports:
 
 ```nix
-{ inputs, ... }:
 {
-  services.kallipai.daemon = {
-    enable = true;
-    package = inputs.kallipai.packages.x86_64-linux.kallip-daemon;
-  };
+  services.kallipai.daemon.enable = true;
   services.kallipai.polis = {
     enable = true;
-    archeionPackage = inputs.kallipai.packages.x86_64-linux.kallip-archeion;
-    leschePackage = inputs.kallipai.packages.x86_64-linux.kallip-lesche;
-    filesPackage = inputs.kallipai.packages.x86_64-linux.kallip-files;
-    instancesPackage = inputs.kallipai.packages.x86_64-linux.kallip-instances;
     proxy = {
       enable = true;
-      domain = "example.com";
-      # acmeEmail = "acme@example.com";  # optional: ACME recovery address
+      domain = "kallipai.lan";
+      # acmeEmail = "you@example.org";  # optional: ACME recovery address,
+      # only meaningful on a public domain (a .lan domain uses the local CA)
     };
   };
   services.kallipai.web = {
     enable = true;
-    package = inputs.kallipai.packages.x86_64-linux.kallip-web-dist;
-    domain = "example.com";
+    domain = "kallipai.lan";
   };
 }
 ```
 
-Both `domain` values are the base domain (`example.com`): the proxy
+Both `domain` values are the base domain (`kallipai.lan`): the proxy
 derives the four service subdomains (`archeion.`, `lesche.`, `files.`,
 `instances.`) from it, and the web app serves on `web.<domain>`. The
 module provisions its own PostgreSQL — one database per stateful
@@ -109,8 +100,9 @@ socket — so no database setup is needed. The daemon supervises tagma
 instances over a local control socket and is consumed by `kallipctl`
 and the instances proxy.
 
-The package options carry no default — pinning stays with the consumer
-flake. With `adminTokenFile` unset, the archeion mints a fresh admin
+The package options default to this flake's build for the host system;
+set one explicitly to pin a specific version. With `adminTokenFile`
+unset, the archeion mints a fresh admin
 token on every start into its runtime directory
 (`/run/kallipai/archeion/admin-token.env`, mode 0600) and logs only the
 path — the value never appears in the journal. Read it for the first
@@ -152,7 +144,7 @@ the option is a `types.lines` value, so both definitions concatenate
 into one site block:
 
 ```nix
-services.caddy.virtualHosts."archeion.example.com".extraConfig = ''
+services.caddy.virtualHosts."archeion.kallipai.lan".extraConfig = ''
   tls internal
 '';
 ```
@@ -198,8 +190,8 @@ systemctl status kallip-daemon kallip-archeion kallip-lesche \
   kallip-files kallip-instances
 ```
 
-Then confirm each subdomain answers over https — `archeion.example.com`
-for sign-up and login, `web.example.com` for the app, and the lesche,
+Then confirm each subdomain answers over https — `archeion.kallipai.lan`
+for sign-up and login, `web.kallipai.lan` for the app, and the lesche,
 files, and instances subdomains through the same proxy. A healthy
 deployment: the app loads, you can sign up and sign in, and you can
 create a first agent.

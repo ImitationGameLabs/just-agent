@@ -17,6 +17,7 @@
 # by the archeion into its own state directory on first boot and only
 # read afterwards. Operator token knobs stay paths (pin an admin token,
 # or let the unit mint a short-lived one); no secret hits the store.
+{ packages }:
 {
   config,
   lib,
@@ -27,6 +28,11 @@ let
   cfg = config.services.kallipai.daemon;
   polisCfg = config.services.kallipai.polis;
   webCfg = config.services.kallipai.web;
+
+  # The flake's own build for this host: the package options default to
+  # it, so enabling a service needs no package reference; setting an
+  # option explicitly pins a specific build.
+  hostPackages = packages.${pkgs.stdenv.hostPlatform.system};
 
   # Single source of truth for the polis port defaults: the option
   # defaults and the direct-connect warning both read this one
@@ -64,10 +70,13 @@ in
 
       package = lib.mkOption {
         type = lib.types.package;
+        default = hostPackages.kallip-daemon;
         description = ''
-          The kallipai daemon package. It must ship `kallip-daemon`
-          together with `kallip-daemon-spawn`: the daemon resolves the
-          helper as a sibling of its own binary first.
+          The kallipai daemon package, defaulting to this flake's build
+          (set it explicitly to pin a specific version). It must ship
+          `kallip-daemon` together with `kallip-daemon-spawn`: the
+          daemon resolves the helper as a sibling of its own binary
+          first.
         '';
       };
 
@@ -103,19 +112,23 @@ in
 
       archeionPackage = lib.mkOption {
         type = lib.types.package;
-        description = "The kallip-archeion package. No default: pinning stays with the consumer flake.";
+        default = hostPackages.kallip-archeion;
+        description = "The kallip-archeion package; defaults to this flake's build.";
       };
       leschePackage = lib.mkOption {
         type = lib.types.package;
-        description = "The kallip-lesche package.";
+        default = hostPackages.kallip-lesche;
+        description = "The kallip-lesche package; defaults to this flake's build.";
       };
       filesPackage = lib.mkOption {
         type = lib.types.package;
-        description = "The kallip-files package.";
+        default = hostPackages.kallip-files;
+        description = "The kallip-files package; defaults to this flake's build.";
       };
       instancesPackage = lib.mkOption {
         type = lib.types.package;
-        description = "The kallip-instances package.";
+        default = hostPackages.kallip-instances;
+        description = "The kallip-instances package; defaults to this flake's build.";
       };
 
       adminTokenFile = lib.mkOption {
@@ -400,10 +413,11 @@ in
 
       package = lib.mkOption {
         type = lib.types.package;
+        default = hostPackages.kallip-web-dist;
         description = ''
-          The kallip-web bundle (the flake's packages.kallip-web-dist). No
-          default: pinning stays with the consumer flake, as with the
-          polis packages.
+          The kallip-web bundle (this flake's kallip-web-dist build);
+          set it explicitly to pin a specific build, as with the polis
+          packages.
         '';
       };
 

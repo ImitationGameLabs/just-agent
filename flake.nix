@@ -42,8 +42,13 @@
 
       # NixOS module exposing the daemon as a system service (platform
       # hosting phase). Flake-level output, not perSystem: NixOS modules
-      # are system-agnostic. 'default' follows the flake convention.
-      flake.nixosModules.kallipai = import ./nix/nixos-modules.nix;
+      # are system-agnostic. 'default' follows the flake convention. The
+      # module receives the whole packages set and resolves its defaults
+      # per host system (packages.${pkgs.stdenv.hostPlatform.system})
+      # export lazy and system-agnostic.
+      flake.nixosModules.kallipai = import ./nix/nixos-modules.nix {
+        inherit (self) packages;
+      };
       flake.nixosModules.default = self.nixosModules.kallipai;
 
       perSystem =
@@ -102,7 +107,7 @@
               };
               # The full-workspace build, passed to the tarball + integration
               # tests (they take a single `workspace` derivation).
-              workspace = builds.workspace;
+              inherit (builds) workspace;
             in
             {
               default = workspace;
