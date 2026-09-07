@@ -29,6 +29,14 @@ let
   polisCfg = config.services.kallipai.polis;
   webCfg = config.services.kallipai.web;
 
+  topDomain = config.services.kallipai.domain;
+
+  # One base domain, two consumers: the proxy derives its service
+  # subdomains from it and the web app serves on web.<domain>. The
+  # per-service domain options are overrides, not second sources.
+  proxyDomain = if polisCfg.proxy.domain != null then polisCfg.proxy.domain else topDomain;
+  webDomain = if webCfg.domain != null then webCfg.domain else topDomain;
+
   # The flake's own build for this host: the package options default to
   # it, so enabling a service needs no package reference; setting an
   # option explicitly pins a specific build.
@@ -65,6 +73,17 @@ let
 in
 {
   options.services.kallipai = {
+    domain = lib.mkOption {
+      type = lib.types.str;
+      description = ''
+        The base domain the platform serves on: the proxy derives its
+        service subdomains (<service>.<domain>) from it and the web app
+        serves on web.<domain>. The polis.proxy.domain and web.domain
+        options default to inheriting this value; set them explicitly to
+        override it per service.
+      '';
+    };
+
     daemon = {
       enable = lib.mkEnableOption "the kallipai daemon as a system service";
 
@@ -214,9 +233,8 @@ in
           type = lib.types.nullOr lib.types.str;
           default = null;
           description = ''
-            The deployment domain the subdomains hang off: the virtual hosts
-            archeion.<domain>, lesche.<domain> and files.<domain> route to
-            the localhost listeners. Required when the proxy is enabled.
+            Override for the proxy's virtual-host base domain; null
+            (default) inherits services.kallipai.domain.
           '';
         };
 
@@ -425,9 +443,8 @@ in
         type = lib.types.nullOr lib.types.str;
         default = null;
         description = ''
-          The deployment domain: the virtual host web.<domain> serves the
-          SPA with a fallback to its index.html so client-side routes
-          resolve. Required when the module is enabled.
+          Override for the web app's virtual-host domain; null (default)
+          inherits services.kallipai.domain.
         '';
       };
 
@@ -467,12 +484,12 @@ in
     {
       assertions = [
         {
-          assertion = polisCfg.proxy.enable -> polisCfg.proxy.domain != null;
-          message = "services.kallipai.polis.proxy.domain must be set when the proxy is enabled.";
+          assertion = polisCfg.proxy.enable -> proxyDomain != null;
+          message = "services.kallipai.domain must be set when the proxy is enabled (or set polis.proxy.domain).";
         }
         {
-          assertion = webCfg.enable -> webCfg.domain != null;
-          message = "services.kallipai.web.domain must be set when services.kallipai.web is enabled.";
+          assertion = webCfg.enable -> webDomain != null;
+          message = "services.kallipai.domain must be set when services.kallipai.web is enabled (or set web.domain).";
         }
       ]
       ++ lib.optionals polisCfg.enable (
@@ -863,7 +880,7 @@ in
         };
       };
     })
-    (lib.mkIf (polisCfg.proxy.enable && polisCfg.proxy.domain != null) {
+    (lib.mkIf (polisCfg.proxy.enable && proxyDomain != null) {
       # The public edge: bring up caddy and route the four polis
       # subdomains to their localhost listeners, the NixOS form of the
       # dev Caddyfile's host routing. The lesche route flushes
@@ -873,24 +890,24 @@ in
         enable = true;
         email = lib.mkIf (polisCfg.proxy.acmeEmail != null) polisCfg.proxy.acmeEmail;
         virtualHosts = {
-          "archeion.${polisCfg.proxy.domain}".extraConfig = ''
+          "archeion.${proxyDomain}".extraConfig = ''
             reverse_proxy 127.0.0.1:${toString polisPorts.archeion}
           '';
-          "lesche.${polisCfg.proxy.domain}".extraConfig = ''
+          "lesche.${proxyDomain}".extraConfig = ''
             reverse_proxy 127.0.0.1:${toString polisPorts.lesche} {
               flush_interval -1
             }
           '';
-          "files.${polisCfg.proxy.domain}".extraConfig = ''
+          "files.${proxyDomain}".extraConfig = ''
             reverse_proxy 127.0.0.1:${toString polisPorts.files}
           '';
-          "instances.${polisCfg.proxy.domain}".extraConfig = ''
+          "instances.${proxyDomain}".extraConfig = ''
             reverse_proxy 127.0.0.1:${toString polisPorts.instances}
           '';
         };
       };
     })
-    (lib.mkIf (webCfg.enable && webCfg.domain != null) {
+    (lib.mkIf (webCfg.enable && webDomain != null) {
       # The SPA's virtual host: serve the bundle's files, falling back
       # to index.html so client-side routes resolve on hard reload. The
       # runtimeConfig payload (offline-login branch on by default) is
@@ -900,7 +917,7 @@ in
       services.caddy = {
         enable = true;
         email = lib.mkIf (webCfg.acmeEmail != null) webCfg.acmeEmail;
-        virtualHosts."web.${webCfg.domain}".extraConfig = ''
+        virtualHosts."web.${webDomain}".extraConfig = ''
             handle /config.js {
               root * ${pkgs.writeTextDir "config.js" "window.KALLIP_CONFIG = ${builtins.toJSON webCfg.runtimeConfig};"}
               file_server
@@ -913,7 +930,7 @@ in
         '';
       };
     })
-    (lib.mkIf (webCfg.enable && webCfg.domain != null && polisCfg.enable) {
+    (lib.mkIf (webCfg.enable && webDomain != null && polisCfg.enable) {
       # L1.5 direct-connect drift warning: the module can only see an
       # explicit runtimeConfig.tlsOff — a browser that derives tlsOff from
       # an http location is outside this module's visibility, so the

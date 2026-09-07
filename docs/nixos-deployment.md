@@ -74,26 +74,25 @@ the `configuration.nix` the flake above imports:
 
 ```nix
 {
-  services.kallipai.daemon.enable = true;
-  services.kallipai.polis = {
-    enable = true;
-    proxy = {
+  services.kallipai = {
+    domain = "kallipai.lan";
+    daemon.enable = true;
+    polis = {
       enable = true;
-      domain = "kallipai.lan";
+      proxy.enable = true;
       # acmeEmail = "you@example.org";  # optional: ACME recovery address,
       # only meaningful on a public domain (a .lan domain uses the local CA)
     };
-  };
-  services.kallipai.web = {
-    enable = true;
-    domain = "kallipai.lan";
+    web.enable = true;
   };
 }
 ```
 
-Both `domain` values are the base domain (`kallipai.lan`): the proxy
-derives the four service subdomains (`archeion.`, `lesche.`, `files.`,
+`services.kallipai.domain` is the base domain: the proxy derives the
+four service subdomains (`archeion.`, `lesche.`, `files.`,
 `instances.`) from it, and the web app serves on `web.<domain>`. The
+per-service `domain` options override it when a deployment needs
+different domains. The
 module provisions its own PostgreSQL — one database per stateful
 service (archeion, lesche, files), peer-authenticated over the unix
 socket — so no database setup is needed. The daemon supervises tagma

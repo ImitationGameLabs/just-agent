@@ -44,8 +44,8 @@
       # hosting phase). Flake-level output, not perSystem: NixOS modules
       # are system-agnostic. 'default' follows the flake convention. The
       # module receives the whole packages set and resolves its defaults
-      # per host system (packages.${pkgs.stdenv.hostPlatform.system})
-      # export lazy and system-agnostic.
+      # per host system (packages.${pkgs.stdenv.hostPlatform.system});
+      # the reference stays lazy and the export system-agnostic.
       flake.nixosModules.kallipai = import ./nix/nixos-modules.nix {
         inherit (self) packages;
       };
