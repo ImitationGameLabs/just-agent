@@ -159,8 +159,8 @@ arion -f compose/prod/polis.nix logs -f
 
 ### polis services — the NixOS module
 
-The archeion, lesche, and files services run as systemd units on the NixOS
-host, enabled with one switch:
+The archeion, lesche, files, and instances services run as systemd units
+on the NixOS host, enabled with one switch:
 
 ```nix
 services.kallipai.polis = {
@@ -168,23 +168,28 @@ services.kallipai.polis = {
   archeionPackage = inputs.self.packages.x86_64-linux.kallip-archeion;
   leschePackage = inputs.self.packages.x86_64-linux.kallip-lesche;
   filesPackage = inputs.self.packages.x86_64-linux.kallip-files;
-  internalTokenFile = "/etc/kallipai/polis-internal-tokens";  # 0600, three same-value keys
+  instancesPackage = inputs.self.packages.x86_64-linux.kallip-instances;
+  internalTokenFile = "/etc/kallipai/polis-internal-tokens";  # 0600, four same-value keys
 };
 ```
 
-The module binds all three services to localhost (the host's reverse proxy
-is the only ingress), stands up a shared PostgreSQL with per-service
-databases over unix-socket peer auth, orders the units postgresql →
-archeion → lesche/files, and wires each service's `KALLIP_*_LOG_DIR` to its
-systemd `LogsDirectory`. Secrets enter only as 0600 EnvironmentFile paths
+The module binds all four services to localhost (the host's reverse proxy
+is the only ingress), stands up a shared PostgreSQL for the three stateful
+services (per-service databases, unix-socket peer auth), orders the units
+postgresql → archeion → lesche/files, and wires each stateful service's
+`KALLIP_*_LOG_DIR` to its systemd `LogsDirectory`. The instances proxy
+additionally fronts the host daemon's socket (soft order on
+`kallip-daemon.service`: while the daemon is down it answers 503
+daemon_unreachable) and joins the daemon's socket access group.
+Secrets enter only as 0600 EnvironmentFile paths
 (`internalTokenFile` required; `adminTokenFile` unset means the archeion
 prints a fresh admin token to the journal at every boot; `notifyTokenFile`
 unset disables the files→lesche event push). All service tuning options are
 nullable and default to the binaries' own defaults — see the option
 descriptions in `nix/nixos-modules.nix`.
 
-One switch fronts all three services with the host's caddy: it routes
-`archeion.<domain>`, `lesche.<domain>`, and `files.<domain>` to the
+One switch fronts all four services with the host's caddy: it routes
+`archeion.<domain>`, `lesche.<domain>`, `files.<domain>`, and `instances.<domain>` to the
 localhost listeners (the lesche route flushes immediately so the event
 stream never buffers behind the proxy):
 
@@ -375,7 +380,7 @@ in `.env` via `.env.example`; the code default is the prod `kallipai.com`):
 | `KALLIP_LESCHE_ARCHEION_TOKEN`       | **yes** (prod-archeion)          | Shared secret the lesche presents to the archeion's `/internal/*` surface; must equal the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.          |
 | `KALLIP_LESCHE_CORS_ORIGINS`      | **yes** (prod-archeion)          | The app origin(s) for the lesche; never a wildcard on a public deploy.                                                                 |
 
-The archeion, lesche, and files services can also be configured through the `services.kallipai.polis` NixOS module and its token files instead of `.env` (see the polis section above).
+The archeion, lesche, files, and instances services can also be configured through the `services.kallipai.polis` NixOS module and its token files instead of `.env` (see the polis section above).
 
 Note: unset WebAuthn RP values fall back to the kallipai.com prod pair
 (passkeys simply stay unusable until configured) instead of failing boot.

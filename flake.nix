@@ -120,6 +120,7 @@
               kallip-daemon = builds.daemon;
               kallipctl = builds.ctl;
               kallip-daemon-spawn = builds.daemon-spawn;
+              kallip-instances = builds.instances;
               kallip-tarball = import ./nix/packages/tarball.nix {
                 inherit
                   pkgs

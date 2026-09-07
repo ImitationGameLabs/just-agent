@@ -9,11 +9,12 @@
 # and linger gives every declared user the standard logind runtime
 # directory (/run/user/<uid>), the same semantics a human user gets.
 #
-# The polis section (services.kallipai.polis) brings up the three platform
-# services -- archeion, lesche, files -- on one switch: localhost-only
-# listeners behind the host's reverse proxy, one shared PostgreSQL reached
-# over unix-socket peer auth, and secrets injected from operator-owned
-# 0600 EnvironmentFile paths. The module only accepts token paths, never
+# The polis section (services.kallipai.polis) brings up the four platform
+# services -- archeion, lesche, files, instances -- on one switch:
+# localhost-only listeners behind the host's reverse proxy, one shared
+# PostgreSQL for the three stateful services over unix-socket peer auth,
+# and secrets injected from operator-owned 0600 EnvironmentFile paths.
+# The module only accepts token paths, never
 # token values, so no secret is ever evaluated into the store.
 {
   config,
@@ -35,7 +36,12 @@ let
     archeion = 7100;
     lesche = 7200;
     files = 7400;
+    instances = 7300;
   };
+
+  # The daemon's control socket: the daemon unit sets it and the
+  # instances proxy reads it back, so the path lives in one binding.
+  daemonSocket = "/run/kallipai/daemon.sock";
 
   # Inject an environment key only when the option carries a value: null
   # means "let the service's own default govern", keeping the code default
@@ -89,7 +95,7 @@ in
       };
     };
     polis = {
-      enable = lib.mkEnableOption "the polis platform services (archeion, lesche, files) as system services";
+      enable = lib.mkEnableOption "the polis platform services (archeion, lesche, files, instances) as system services";
 
       archeionPackage = lib.mkOption {
         type = lib.types.package;
@@ -103,17 +109,23 @@ in
         type = lib.types.package;
         description = "The kallip-files package.";
       };
+      instancesPackage = lib.mkOption {
+        type = lib.types.package;
+        description = "The kallip-instances package.";
+      };
 
       internalTokenFile = lib.mkOption {
         type = lib.types.path;
         description = ''
           Root-only (0600) EnvironmentFile carrying the shared archeion-internal
           secret -- the /internal/* ControlPlane trust boundary, so the
-          deployment cannot come up without it. The file must define three keys
+          deployment cannot come up without it. The file must define four keys
           with the same value: KALLIP_ARCHEION_INTERNAL_TOKEN (the archeion
           mounts the /internal nest only when set), KALLIP_LESCHE_ARCHEION_TOKEN
           and KALLIP_FILES_ARCHEION_TOKEN (what the lesche and the files service
-          present to that nest). Format is systemd's line-based KEY=value; a
+          present to that nest), and KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN
+          (what the instances service presents when verifying the SPA's admin
+          bearer). Format is systemd's line-based KEY=value; a
           token containing #, quotes, or leading whitespace breaks the parse.
         '';
       };
@@ -132,7 +144,7 @@ in
           OAuth client secrets (KALLIP_ARCHEION_OAUTH_GITHUB_CLIENT_SECRET,
           KALLIP_ARCHEION_OAUTH_GOOGLE_CLIENT_SECRET; a provider enables only
           when its id option and secret are both set). Keep secrets out of
-          internalTokenFile: all three services read that one.
+          internalTokenFile: all four services read that one.
         '';
       };
       notifyTokenFile = lib.mkOption {
@@ -173,6 +185,16 @@ in
           default = defaultPolisPorts.files;
           description = ''
             Listening port of the files service. Must be 1024-65535;
+            pick a port outside the system's ephemeral range and unused by
+            other services on this host — a conflict surfaces at service
+            start as an address-in-use error.
+          '';
+        };
+        instances = lib.mkOption {
+          type = lib.types.port;
+          default = defaultPolisPorts.instances;
+          description = ''
+            Listening port of the instances service. Must be 1024-65535;
             pick a port outside the system's ephemeral range and unused by
             other services on this host — a conflict surfaces at service
             start as an address-in-use error.
@@ -367,6 +389,18 @@ in
           description = "Maximum catalog rows reclaimed per GC pass.";
         };
       };
+      instances = {
+        corsOrigins = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Comma-separated CORS allow-list origins; the web bundle calls this service cross-origin (web.<domain> to instances.<domain>), so a proxied deployment serving the web app lists that origin here.";
+        };
+        allowedHosts = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Comma-separated extra Host values the host guard admits (IP literals and localhost always pass). The proxied shape receives instances.<domain>; a direct-connect LAN shape names the domain browsers use.";
+        };
+      };
     };
 
     web = {
@@ -436,14 +470,14 @@ in
         }
       ]
       ++ lib.optionals polisCfg.enable (
-        # The three listeners must not collide: a shared port is always a
+        # The four listeners must not collide: a shared port is always a
         # misconfiguration, so fail at eval time with the pair and value.
         (map
           (pair: {
             assertion = polisCfg.ports.${builtins.elemAt pair 0} != polisCfg.ports.${builtins.elemAt pair 1};
             message = "services.kallipai.polis.ports.${builtins.elemAt pair 0} and services.kallipai.polis.ports.${builtins.elemAt pair 1} are both ${
               toString polisCfg.ports.${builtins.elemAt pair 0}
-            }; the three polis listeners must use distinct ports — set one of them to a free port.";
+            }; the four polis listeners must use distinct ports — set one of them to a free port.";
           })
           [
             [
@@ -451,12 +485,24 @@ in
               "lesche"
             ]
             [
+              "lesche"
+              "files"
+            ]
+            [
               "archeion"
               "files"
             ]
             [
+              "archeion"
+              "instances"
+            ]
+            [
               "lesche"
+              "instances"
+            ]
+            [
               "files"
+              "instances"
             ]
           ]
         )
@@ -469,6 +515,7 @@ in
             "archeion"
             "lesche"
             "files"
+            "instances"
           ]
         )
       );
@@ -515,7 +562,7 @@ in
         after = [ "network.target" ];
 
         environment = {
-          KALLIP_DAEMON_SOCKET = "/run/kallipai/daemon.sock";
+          KALLIP_DAEMON_SOCKET = daemonSocket;
           KALLIP_DAEMON_RECORD_DIR = "/var/lib/kallipai/daemon/instances";
           KALLIP_DAEMON_SOCKET_GROUP = cfg.group;
           # NixOS has no /bin/bash; the login-environment harvest needs a
@@ -540,31 +587,43 @@ in
       };
     })
     (lib.mkIf polisCfg.enable {
-      # Dedicated users, per-user primary groups. Deliberately NOT added to
-      # the daemon's kallip gate group: that group admits the daemon socket,
-      # which none of these services consumes.
+      # Dedicated users, per-user primary groups. The three stateful services
+      # deliberately stay out of the daemon's kallip gate group: that group
+      # admits the daemon socket, which none of them consumes.
       users.groups = builtins.listToAttrs (
         map (name: lib.nameValuePair name { }) [
           "kallip-archeion"
           "kallip-lesche"
           "kallip-files"
+          "kallip-instances"
         ]
       );
-      users.users = builtins.listToAttrs (
-        map
-          (
-            name:
-            lib.nameValuePair name {
-              isSystemUser = true;
-              group = name;
-            }
-          )
-          [
-            "kallip-archeion"
-            "kallip-lesche"
-            "kallip-files"
-          ]
-      );
+      users.users =
+        builtins.listToAttrs (
+          map
+            (
+              name:
+              lib.nameValuePair name {
+                isSystemUser = true;
+                group = name;
+              }
+            )
+            [
+              "kallip-archeion"
+              "kallip-lesche"
+              "kallip-files"
+            ]
+        )
+        // {
+          # The instances proxy is the one polis service that consumes the
+          # daemon socket, so it rides the kallip gate group as an extra
+          # group; the map above stays gate-free.
+          kallip-instances = {
+            isSystemUser = true;
+            group = "kallip-instances";
+            extraGroups = [ cfg.group ];
+          };
+        };
 
       # One shared PostgreSQL over the unix socket: each service connects as
       # its own system user (peer auth), so no password exists to leak and
@@ -722,13 +781,48 @@ in
             ++ lib.optional (polisCfg.notifyTokenFile != null) (toString polisCfg.notifyTokenFile);
           };
         };
+        kallip-instances = {
+          description = "kallipai instances management proxy";
+          wantedBy = [ "multi-user.target" ];
+          # Soft dependency on the daemon: while the daemon restarts -- or
+          # when the polis stack runs without it -- the proxy answers 503
+          # daemon_unreachable instead of failing the unit (the lesche's
+          # posture toward the archeion).
+          after = [
+            "network.target"
+            "kallip-daemon.service"
+          ];
+          wants = [ "kallip-daemon.service" ];
+          environment = {
+            KALLIP_INSTANCES_ADDR = "127.0.0.1:${toString polisPorts.instances}";
+            KALLIP_DAEMON_SOCKET = daemonSocket;
+            KALLIP_INSTANCES_ARCHEION_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
+            # Relay defaults must follow the configured polis ports, not the
+            # binary's compiled-in 7100/7200 (the files NOTIFY_URL pattern).
+            KALLIP_INSTANCES_RELAY_ARCHEION_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
+            KALLIP_INSTANCES_RELAY_LESCHE_URL = "http://127.0.0.1:${toString polisPorts.lesche}";
+          }
+          // envOpt "KALLIP_INSTANCES_CORS_ORIGINS" polisCfg.instances.corsOrigins
+          // envOpt "KALLIP_INSTANCES_ALLOWED_HOSTS" polisCfg.instances.allowedHosts;
+          serviceConfig = {
+            ExecStart = "${polisCfg.instancesPackage}/bin/kallip-instances";
+            User = "kallip-instances";
+            Group = "kallip-instances";
+            # A pure UDS proxy: no state or log directory of its own --
+            # the daemon owns both sides of that split.
+            Restart = "on-failure";
+            EnvironmentFile = [
+              (toString polisCfg.internalTokenFile)
+            ];
+          };
+        };
       };
     })
     (lib.mkIf (polisCfg.proxy.enable && polisCfg.proxy.domain != null) {
-      # The public edge: bring up caddy and route the three polis
+      # The public edge: bring up caddy and route the four polis
       # subdomains to their localhost listeners, the NixOS form of the
       # dev Caddyfile's host routing. The lesche route flushes
-      # immediately (the event stream must not buffer); the other two
+      # immediately (the event stream must not buffer); the other three
       # are plain request/response.
       services.caddy = {
         enable = true;
@@ -744,6 +838,9 @@ in
           '';
           "files.${polisCfg.proxy.domain}".extraConfig = ''
             reverse_proxy 127.0.0.1:${toString polisPorts.files}
+          '';
+          "instances.${polisCfg.proxy.domain}".extraConfig = ''
+            reverse_proxy 127.0.0.1:${toString polisPorts.instances}
           '';
         };
       };
@@ -792,6 +889,7 @@ in
                 "archeion"
                 "lesche"
                 "files"
+                "instances"
               ];
         in
         map (
