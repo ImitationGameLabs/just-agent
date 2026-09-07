@@ -6,10 +6,11 @@
   const returnPath = $derived(
     new URLSearchParams(page.url.search).get("next") ?? undefined,
   );
-  // Build-time deployment flag (same injection channel as the domain): a
-  // local-platform build shows the operator-key branch, a cloud build never
-  // renders it (two-way information hiding).
-  const offlineLogin = import.meta.env.VITE_OFFLINE_LOGIN === "1";
+  // Runtime deployment flag from /config.js (see app.d.ts): a self-hosted
+  // deployment sets offlineLogin in its rewritten config.js and shows the
+  // operator-key branch, a cloud deployment never does (two-way
+  // information hiding). The universal dist defaults to hidden.
+  const offlineLogin = window.KALLIP_CONFIG?.offlineLogin === true;
 </script>
 
 <LoginPage {returnPath} {offlineLogin} />

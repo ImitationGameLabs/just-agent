@@ -352,6 +352,20 @@ in
         '';
       };
 
+      runtimeConfig = lib.mkOption {
+        type = lib.types.nullOr (lib.types.attrsOf lib.types.anything);
+        default = null;
+        description = ''
+          Payload for the web app's runtime config (/config.js), serialized
+          as JSON into a window.KALLIP_CONFIG assignment. Keys mirror the
+          app's Window.KALLIP_CONFIG type: domain, tlsOff, offlineLogin,
+          services. Null (default) keeps the bundle's empty shell, so a
+          same-origin deployment derives everything from the browser
+          location. Set e.g. offlineLogin = true on self-hosted forms to
+          show the operator-key login branch.
+        '';
+      };
+
       acmeEmail = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
@@ -653,14 +667,25 @@ in
     })
     (lib.mkIf (webCfg.enable && webCfg.domain != null) {
       # The SPA's virtual host: serve the bundle's files, falling back
-      # to index.html so client-side routes resolve on hard reload.
+      # to index.html so client-side routes resolve on hard reload. A
+      # runtimeConfig payload is served instead of the bundle's empty
+      # config.js shell (handle blocks are mutually exclusive and take
+      # precedence over the catch-all file serving).
       services.caddy = {
         enable = true;
         email = lib.mkIf (webCfg.acmeEmail != null) webCfg.acmeEmail;
         virtualHosts."web.${webCfg.domain}".extraConfig = ''
-          root * ${webCfg.package}
-          try_files {path} /index.html
-          file_server
+          ${lib.optionalString (webCfg.runtimeConfig != null) ''
+            handle /config.js {
+              root * ${pkgs.writeTextDir "config.js" "window.KALLIP_CONFIG = ${builtins.toJSON webCfg.runtimeConfig};"}
+              file_server
+            }
+          ''}
+          handle {
+            root * ${webCfg.package}
+            try_files {path} /index.html
+            file_server
+          }
         '';
       };
     })

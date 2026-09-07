@@ -13,13 +13,9 @@
   deno,
   # The repository source (flake `self`), cleaned of gitignored build state.
   src,
-  # Build-time deployment flag: the operator-key login branch is shown in
-  # the self-hosted NixOS form (the operator is the owner). See
-  # packages/kallip-web/src/routes/login/+page.svelte.
-  offlineLogin ? true,
-  # The deployment domain baked into the client bundle; the WebAuthn rp_id
-  # and the archeion-side web-origin default already assume kallipai.com.
-  domain ? "kallipai.com",
+  # One universal dist: deployment values (domain, TLS shape, offline
+  # login) are runtime config — see the web app's /config.js and the
+  # services.kallipai.web module's runtimeConfig option.
 }:
 let
   # Local build state must not leak into the source closure: the deps
@@ -105,8 +101,6 @@ pkgs.stdenvNoCC.mkDerivation {
 
   buildPhase = ''
     export HOME=$TMPDIR
-    export KALLIP_DOMAIN=${domain}
-    ${pkgs.lib.optionalString offlineLogin "export VITE_OFFLINE_LOGIN=1"}
     # Compile the paraglide messages first: the inlang plugins load from
     # this tree's node_modules per the project's settings.json, and the
     # compile sits in this derivation's regular input graph, so i18n

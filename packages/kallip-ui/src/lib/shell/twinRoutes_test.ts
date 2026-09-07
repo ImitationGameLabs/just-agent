@@ -17,9 +17,12 @@ const WEB_ROUTES = new URL(
   import.meta.url,
 );
 
-// Only the root +layout.svelte differs (host environment adapters). Its twin
+// Two files differ by host environment design: the root +layout.svelte
+// (host adapters) and login/+page.svelte (the offline-login flag is
+// runtime config on the web host, build-time VITE_OFFLINE_LOGIN on the
+// app host, where Tauri packaging is itself the build). Their twin
 // +layout.ts is identical on both hosts and therefore stays guarded.
-const EXEMPTED = new Set(["+layout.svelte"]);
+const EXEMPTED = new Set(["+layout.svelte", "login/+page.svelte"]);
 
 function collectTwinFiles(dir: URL, prefix = ""): Map<string, Uint8Array> {
   const files = new Map<string, Uint8Array>();
