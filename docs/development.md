@@ -54,8 +54,10 @@ for local dev (so dev DNS/certs never clash with production), and you get that
 when you copy `.env.example` to `.env`. direnv's `dotenv` loads `.env` into the
 shell, so arion eval, `mkcert`, and vite all see it. Override further
 by editing `.env` or exporting `KALLIP_DOMAIN` in your shell. The whole
-stack — the archeion/lesche env, the Caddyfile, vite, and the web app's API URLs —
-derives from this one variable.
+stack — the archeion/lesche env, the Caddyfile, and vite's dev-server
+shaping (allowedHosts, HMR websocket) — derives from this one variable.
+The web app's own API URLs no longer read it: they derive at runtime
+from the browser location (see the offline-login notes below).
 
 1. Generate the leaf cert with `mkcert` (provided by the nix devShell). Run this
    from the repo root — `$KALLIP_DOMAIN` comes from `.env` (`kallipai.lan`):
@@ -154,11 +156,14 @@ web app at `https://web.kallipai.lan` and reaches the archeion at
 `https://archeion.kallipai.lan` and the lesche at `https://lesche.kallipai.lan`,
 all TLS-terminated by Caddy. The session cookie carries `Domain=kallipai.lan`
 so it is shared across the archeion/lesche subdomains. The web app (`deno task dev`
-from `packages/kallip-web`) reads its API origins from `VITE_ARCHEION_URL`
-(default `https://archeion.kallipai.lan`), `VITE_LESCHE_URL` (default
-`https://lesche.kallipai.lan`), and `VITE_FILES_URL` (default
-`https://files.kallipai.lan`); the defaults already match the Caddy
-topology, so no `.env` override is needed for normal LAN dev.
+so it is shared across the archeion/lesche subdomains. The web app (`deno task dev`
+from `packages/kallip-web`) derives its API origins in the browser from the
+origin it runs on: `https://web.kallipai.lan` yields the
+`https://archeion.kallipai.lan` / `https://lesche.kallipai.lan` /
+`https://files.kallipai.lan` siblings. The derived URLs already match the
+Caddy topology, so no `.env` override is needed for normal LAN dev;
+build-time `VITE_ARCHEION_URL` / `VITE_LESCHE_URL` / `VITE_FILES_URL`
+still win when explicitly set.
 
 archeion and lesche also publish `7100` / `7200` to the host for plain-HTTP
 tooling — `kallip-admin` and curl keep using `http://localhost:7100` /
@@ -360,15 +365,11 @@ UDS socket. Platform mode: the archeion's internal face
 verifies the SPA's `sk-admin-` key (the operator-key login). The SPA
 itself is served by the host vite dev server (Caddy routes
 `web.<devDomain>` to `:5173`) and calls the API cross-origin from the
-web origin. The operator-key login branch is build-gated:
-
-```sh
-# .env (direnv loads it into the shell for dev and local builds)
-VITE_OFFLINE_LOGIN=1
-```
-
-A cloud build never reads the local `.env`, so the branch stays
-hidden there.
+web origin. The operator-key login branch is runtime-config gated: a
+self-hosted deployment sets `offlineLogin = true` in its
+`/config.js` (the NixOS module's `services.kallipai.web.runtimeConfig`
+option rewrites it), while the universal dist's empty shell keeps the
+branch hidden — cloud deployments configure nothing.
 
 ## Iterating
 

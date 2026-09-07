@@ -423,4 +423,4 @@ server together (both flow from the root `.env` via direnv):
 | Variable        | Default                                     | Purpose                                                                                                                         |
 | --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `KALLIP_TLS`    | `on`                                        | Stack shape: `on` = Caddy-fronted https+domain topology; `off` = plain http (no Caddy/cert/DNS; see docs/development.md).       |
-| `KALLIP_DOMAIN` | `kallipai.com` (`on`) / `localhost` (`off`) | The domain (https shape) or plain host (http shape) everything derives from. Formerly `KALLIP_DEV_DOMAIN` (renamed 2026-08-27). |
+| `KALLIP_DOMAIN` | `kallipai.com` (`on`) / `localhost` (`off`) | The domain (https shape) or plain host (http shape) the dev server and compose topology derive from; the web app's URLs derive in the browser at runtime. Formerly `KALLIP_DEV_DOMAIN` (renamed 2026-08-27). |

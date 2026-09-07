@@ -13,8 +13,10 @@ declare global {
      * Runtime deployment config, loaded from /config.js before the app
      * bundle (see static/config.js for the empty-shell default; the
      * NixOS module rewrites the path per deployment). Every field is
-     * optional: absent values fall through to the build-time VITE_*
-     * overrides and then to location-based derivation.
+     * optional, and each layers differently: services.* URLs fall
+     * through to the build-time VITE_*_URL overrides and then to
+     * location-based derivation; domain and tlsOff fall through to
+     * location derivation only; offlineLogin has no fallback.
      */
     KALLIP_CONFIG?: {
       /** Sibling-subdomain root (archeion.<domain> ...). */
