@@ -12,9 +12,11 @@ logging = ["dep:tracing-subscriber", "dep:tracing-appender"]
 
 [dependencies]
 axum = { workspace = true, optional = true }
+anyhow = { workspace = true }
 futures-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 time = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = { workspace = true, optional = true }

@@ -35,8 +35,12 @@ pub struct Config {
     #[arg(long, env = "KALLIP_INSTANCES_ARCHEION_URL")]
     pub archeion_internal_url: Option<String>,
 
-    /// Shared platform-internal secret (KALLIP_POLIS_INTERNAL_TOKEN).
-    #[arg(long, env = "KALLIP_POLIS_INTERNAL_TOKEN")]
+    /// File holding the shared platform-internal secret — provisioned by
+    /// the archeion (0640 in its state directory), read here at boot.
+    #[arg(long, env = "KALLIP_POLIS_INTERNAL_TOKEN_FILE")]
+    pub archeion_internal_token_file: Option<String>,
+    /// The loaded secret value (from the file above); not a CLI arg.
+    #[arg(skip)]
     pub archeion_internal_token: Option<String>,
     /// Server-side default relay URLs for spawned tagmata that signal
     /// relay intent (any KALLIP_TAGMA_RELAY_* env) but omit a URL; local-
@@ -159,6 +163,7 @@ mod tests {
                     relay_lesche_url: String::new(),
                     archeion_internal_url: None,
                     archeion_internal_token: None,
+                    archeion_internal_token_file: None,
                     allowed_hosts_raw: String::new(),
                     cors_origins: String::new(),
                 };
@@ -189,6 +194,7 @@ mod tests {
                     relay_lesche_url: String::new(),
                     archeion_internal_url: None,
                     archeion_internal_token: None,
+                    archeion_internal_token_file: None,
                     allowed_hosts_raw: String::new(),
                     cors_origins: String::new(),
                 };
@@ -212,6 +218,7 @@ mod tests {
             relay_lesche_url: String::new(),
             archeion_internal_url: None,
             archeion_internal_token: None,
+            archeion_internal_token_file: None,
             allowed_hosts_raw: " platform.internal , localhost ,".into(),
             cors_origins: String::new(),
         };

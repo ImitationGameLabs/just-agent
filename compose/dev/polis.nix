@@ -173,6 +173,9 @@ in
     docker-compose.volumes = {
       archeion_pgdata = { };
       lesche_pgdata = { };
+      # The archeion-provisioned internal secret: written by the archeion
+      # (rw), read by the lesche, files, and instances (ro).
+      polis_internal = { };
     };
 
     # Dev-only hardcoded creds (prod reads them from .env).
@@ -244,9 +247,11 @@ in
       service.useHostStore = true;
       service.command = [ "${workspace}/bin/kallip-archeion" ];
       service.ports = [ "${archeionHostPort}:7100" ];
-      # Optional stable admin token (else generated per boot, printed to
-      # `arion logs archeion`).
+      # The dev admin token is the pin form (stable value, set here); the
+      # generated form writes a fresh token to runtime state on every start
+      # and never reaches the logs.
       service.env_file = [ ".env" ];
+      service.volumes = [ "polis_internal:/var/lib/kallipai/internal" ];
       # cacert: the reqwest oauth client (rustls) loads the system trust
       # store at startup.
       image.contents = [
@@ -282,11 +287,11 @@ in
         # set and log every client as 127.0.0.1 (collapsing per-client rate
         # limiting).
         KALLIP_ARCHEION_TRUSTED_PROXIES = "127.0.0.0/8, ::1/128";
-        # Dev shared secret mounting the /internal ControlPlane surface.
-        # Hardcoded like the dev DB creds (prod reads it from .env). This is
-        # the platform-internal secret; the lesche, files, and instances
-        # services present the SAME key (KALLIP_POLIS_INTERNAL_TOKEN).
-        KALLIP_POLIS_INTERNAL_TOKEN = "dev-internal-secret";
+        # The platform-internal secret is dev-self-managed, matching prod:
+        # first boot generates it into the shared volume, later boots read
+        # the existing value; the lesche, files, and instances read the same
+        # file (mounted read-only below).
+        KALLIP_ARCHEION_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/internal/internal-token";
         # The local-platform login refuses to boot with an operator-set
         # admin token shorter than 32 chars, so the dev fixture pins a
         # compliant one HERE (service.environment overrides the shorter
@@ -318,6 +323,7 @@ in
       service.command = [ "${workspace}/bin/kallip-lesche" ];
       service.ports = [ "${lescheHostPort}:7200" ];
       service.env_file = [ ".env" ];
+      service.volumes = [ "polis_internal:/var/lib/kallipai/internal:ro" ];
       # reqwest (HttpControlPlane -> archeion /internal) builds its Client at
       # startup and the rustls platform verifier loads the system trust store
       # EAGERLY at .build() -- so the lesche needs the CA bundle at the
@@ -333,9 +339,9 @@ in
         KALLIP_LESCHE_ADDR = "0.0.0.0:7200";
         KALLIP_LESCHE_DATABASE_URL = "postgres://kallip:kallip@lesche-postgres:5432/kallip";
         KALLIP_LESCHE_ARCHEION_INTERNAL_URL = "http://archeion:7100";
-        # The archeion reads the same platform-internal key above.
-        KALLIP_POLIS_INTERNAL_TOKEN = "dev-internal-secret";
-        KALLIP_LESCHE_INTERNAL_TOKEN = "dev-internal-secret";
+        # Read the archeion-provisioned internal secret (shared volume).
+        KALLIP_POLIS_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/internal/internal-token";
+        KALLIP_LESCHE_INTERNAL_TOKEN = "dev-notify-secret";
         # Allow the web app origin (https://web.<devDomain> via Caddy) to
         # make credentialed cross-origin calls to lesche.<devDomain>.
         KALLIP_LESCHE_CORS_ORIGINS = webOrigin;
@@ -366,9 +372,12 @@ in
         (if tlsOff then "${instancesHostPort}:7300" else "127.0.0.1:${instancesHostPort}:7300")
       ];
       service.env_file = [ ".env" ];
+      # The archeion provisions the internal secret this service reads.
+      service.depends_on = [ "archeion" ];
       service.volumes = [
         instancesStateBind
         instancesDataBind
+        "polis_internal:/var/lib/kallipai/internal:ro"
       ];
       image.contents = [
         workspace
@@ -381,10 +390,10 @@ in
         # INTO the container mount, never at a host path.
         KALLIP_DAEMON_SOCKET = "/state/control.sock";
         # Platform mode: the archeion's internal face verifies the SPA's
-        # sk-admin- bearer; the token is the archeion's platform-internal
-        # secret (dev fixture, same discipline).
+        # sk-admin- bearer; the secret is the archeion-provisioned
+        # internal token (shared volume, read-only here).
         KALLIP_INSTANCES_ARCHEION_URL = "http://archeion:7100";
-        KALLIP_POLIS_INTERNAL_TOKEN = "dev-internal-secret";
+        KALLIP_POLIS_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/internal/internal-token";
         KALLIP_INSTANCES_ALLOWED_HOSTS = if tlsOff then devDomain else "instances.${devDomain}";
         KALLIP_INSTANCES_CORS_ORIGINS = webOrigin;
         RUST_LOG = "info";

@@ -16,7 +16,8 @@ the authoritative reference for everything this guide summarizes.
   `lesche.`, `files.`, `instances.`, and optionally `web.`) at the host,
   with ports 80 and 443 reachable — Caddy obtains public certificates
   automatically.
-- Root access (the token file below is root-only).
+- Root access (to rebuild the host and to read the generated admin
+  token at first login).
 
 ## Import the module
 
@@ -43,30 +44,34 @@ kallipai packages:
 }
 ```
 
-## Create the internal token file
+## The internal token (self-managed)
 
-The polis services authenticate to each other with one shared secret.
-`internalTokenFile` points at a root-only EnvironmentFile that must
-define that one key:
+The polis services authenticate to each other with one shared secret,
+and the archeion owns its lifecycle: on first boot it generates the
+secret into its state directory
+(`/var/lib/kallipai/archeion/internal-token`, mode 0640, readable by
+the `kallipai-polis` group the module creates), and on every later
+boot it reads the existing value — a token that exists is never
+rewritten. The lesche, files, and instances services read the same
+file, so all four agree on one value for the lifetime of the
+deployment.
 
-```sh
-KALLIP_POLIS_INTERNAL_TOKEN=<random-value>
-```
+Secret state is filed by lifetime: `/etc` holds administrator-owned
+static configuration (a pinned admin token), `/run` holds volatile
+runtime state (the auto-generated admin token, reset on every service
+restart), and `/var/lib` holds service-owned persistent state (the
+internal token, stable across restarts).
 
-Create the file and paste the line:
-
-```sh
-sudo install -m 0600 /dev/null /etc/kallipai/polis-internal-tokens
-sudoedit /etc/kallipai/polis-internal-tokens
-```
-
-The format is systemd's line-based `KEY=value`. Avoid `#`, quotes, and
-leading whitespace in the value — any of these breaks the parse.
+To rotate the internal token: stop the four polis services, delete the
+file, start the archeion (a fresh value is generated), then start the
+other three. The group restart keeps every service on the same
+generation.
 
 ## Minimal configuration
 
 A minimal full-platform configuration — the daemon, the four polis
-services, the reverse proxy on one domain, and the web app:
+services, the reverse proxy on one domain, and the web app. This is
+the `configuration.nix` the flake above imports:
 
 ```nix
 { inputs, ... }:
@@ -81,7 +86,6 @@ services, the reverse proxy on one domain, and the web app:
     leschePackage = inputs.kallipai.packages.x86_64-linux.kallip-lesche;
     filesPackage = inputs.kallipai.packages.x86_64-linux.kallip-files;
     instancesPackage = inputs.kallipai.packages.x86_64-linux.kallip-instances;
-    internalTokenFile = "/etc/kallipai/polis-internal-tokens";
     proxy = {
       enable = true;
       domain = "example.com";
@@ -96,21 +100,43 @@ services, the reverse proxy on one domain, and the web app:
 }
 ```
 
+Both `domain` values are the base domain (`example.com`): the proxy
+derives the four service subdomains (`archeion.`, `lesche.`, `files.`,
+`instances.`) from it, and the web app serves on `web.<domain>`. The
+module provisions its own PostgreSQL — one database per stateful
+service (archeion, lesche, files), peer-authenticated over the unix
+socket — so no database setup is needed. The daemon supervises tagma
+instances over a local control socket and is consumed by `kallipctl`
+and the instances proxy.
+
 The package options carry no default — pinning stays with the consumer
-flake. With `adminTokenFile` unset, the archeion generates a fresh admin
-token at every boot and prints it once to the journal; read it with
-`journalctl -u kallip-archeion` for the first login. A permanent
-deployment pins the file instead (see its option description for the
-format and the OAuth client secrets it can carry).
+flake. With `adminTokenFile` unset, the archeion mints a fresh admin
+token on every start into its runtime directory
+(`/run/kallipai/archeion/admin-token.env`, mode 0600) and logs only the
+path — the value never appears in the journal. Read it for the first
+login with:
+
+```sh
+sudo cat /run/kallipai/archeion/admin-token.env
+```
+
+That token is a short-lived bootstrap credential: rewritten on every
+restart, and sessions minted with it live in the database and survive
+token rotation. A permanent deployment pins the
+file instead (the `adminTokenFile` option description covers the file
+format and the OAuth client secrets it can carry) — pin for a stable
+token, leave unset to accept a short-lived one.
 
 ## Ports
 
 The four listeners bind localhost on 7100 (archeion), 7200 (lesche),
 7400 (files), and 7300 (instances). Override any of them under
 `services.kallipai.polis.ports.<service>` (1024-65535; the four values
-must be distinct — the module fails evaluation otherwise). If you change
-a port and serve the web app in its direct-connect form, pin the new
-port for the UI with
+must be distinct — the module fails evaluation otherwise). If you
+change a port and serve the web app in its direct-connect form —
+browsers reach the polis services directly instead of through the
+proxy, the other of the app's two serving shapes (see the
+`runtimeConfig` option description) — pin the new port for the UI with
 `services.kallipai.web.runtimeConfig.services.<service>`.
 
 ## HTTPS on a LAN or home network
@@ -131,8 +157,9 @@ services.caddy.virtualHosts."archeion.example.com".extraConfig = ''
 '';
 ```
 
-Repeat for the other subdomains as needed. The internal CA's root
-certificate appears after Caddy's first start at
+Repeat for the other subdomains — `lesche.`, `files.`, `instances.`,
+and `web.` — if every subdomain is to serve https. The internal CA's
+root certificate appears after Caddy's first start at
 `/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`
 (confirm it with `ls` on the target host). Distribute trust from there:
 
@@ -173,12 +200,17 @@ systemctl status kallip-daemon kallip-archeion kallip-lesche \
 
 Then confirm each subdomain answers over https — `archeion.example.com`
 for sign-up and login, `web.example.com` for the app, and the lesche,
-files, and instances subdomains through the same proxy.
+files, and instances subdomains through the same proxy. A healthy
+deployment: the app loads, you can sign up and sign in, and you can
+create a first agent.
 
-A missing or unreadable `internalTokenFile` keeps the affected unit from
-starting (the unit fails when the EnvironmentFile cannot be read), and a
-token file without the key keeps the lesche, files, and instances
-units from starting — `journalctl -u kallip-instances` shows the failure.
+A missing internal-token file is not an error on the archeion's first
+boot — it generates one. The lesche, files, and instances units require
+the archeion and read that file at boot; if it has not appeared within a
+short grace window the unit refuses to start, and
+`journalctl -u kallip-instances` shows the path it waited for. An empty
+token file fails every reader explicitly — delete the file to
+re-provision rather than editing it by hand.
 
 ## Further options
 

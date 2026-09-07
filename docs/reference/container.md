@@ -121,7 +121,7 @@ topology).
 
 > **Note**: the data-plane relay (`kallip-lesche`) is a separate service from
 > the archeion, reached over its `/internal/*` ControlPlane API guarded by a shared
-> secret (`KALLIP_POLIS_INTERNAL_TOKEN` on both). The operator's edge
+> secret (the archeion-provisioned internal token on both). The operator's edge
 > HOST-routes the two subdomains to the two
 > services and the session cookie carries `Domain=<parent>`
 > (`KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN`) so login on `archeion.<d>` is recognized on
@@ -174,24 +174,26 @@ services.kallipai.polis = {
   leschePackage = inputs.self.packages.x86_64-linux.kallip-lesche;
   filesPackage = inputs.self.packages.x86_64-linux.kallip-files;
   instancesPackage = inputs.self.packages.x86_64-linux.kallip-instances;
-  internalTokenFile = "/etc/kallipai/polis-internal-tokens";  # 0600, four same-value keys
 };
 ```
 
 The module binds all four services to localhost (the host's reverse proxy
 is the only ingress), stands up a shared PostgreSQL for the three stateful
 services (per-service databases, unix-socket peer auth), orders the units
-postgresql → archeion → lesche/files, and wires each stateful service's
-`KALLIP_*_LOG_DIR` to its systemd `LogsDirectory`. The instances proxy
-additionally fronts the host daemon's socket (soft order on
-`kallip-daemon.service`: while the daemon is down it answers 503
-daemon_unreachable) and joins the daemon's socket access group.
-Secrets enter only as 0600 EnvironmentFile paths
-(`internalTokenFile` required; `adminTokenFile` unset means the archeion
-prints a fresh admin token to the journal at every boot; `notifyTokenFile`
-unset disables the files→lesche event push). All service tuning options are
-nullable and default to the binaries' own defaults — see the option
-descriptions in `nix/nixos-modules.nix`.
+postgresql → archeion → lesche/files (hard `Requires=` on the archeion:
+its consumers read the provisioned internal-token file at boot), and
+wires each stateful service's `KALLIP_*_LOG_DIR` to its systemd
+`LogsDirectory`. The instances proxy additionally fronts the host
+daemon's socket (soft order on `kallip-daemon.service`: while the daemon
+is down it answers 503 daemon_unreachable) and joins the daemon's socket
+access group. Secret state follows lifetime: the archeion provisions the
+platform-internal secret into `/var/lib` (0640, generated once, never
+rewritten); the auto-generated admin token lives in `/run` (0600,
+rewritten every start); pinned token files are administrator-owned 0600
+EnvironmentFile paths (`notifyTokenFile` unset disables the files→lesche
+event push). All service tuning options are nullable and default to the
+binaries' own defaults — see the option descriptions in
+`nix/nixos-modules.nix`.
 
 One switch fronts all four services with the host's caddy: it routes
 `archeion.<domain>`, `lesche.<domain>`, `files.<domain>`, and `instances.<domain>` to the
@@ -381,8 +383,10 @@ in `.env` via `.env.example`; the code default is the prod `kallipai.com`):
 | `KALLIP_ARCHEION_CORS_ORIGINS`       | **yes** (prod-archeion)          | The app origin(s); never a wildcard on a public deploy.                                                                                |
 | `KALLIP_ARCHEION_COOKIE_SECURE`      | no (defaults true)            | Keep `true` behind TLS; `false` only for plain-HTTP dev. Dev is now behind Caddy's TLS and hardcodes `true`.                            |
 | `KALLIP_ARCHEION_TRUSTED_PROXIES`    | **yes** behind a remote proxy | Loopback-only by default and **cleared on a public bind**; set to the proxy's CIDR so X-Forwarded-For / per-client rate limiting work. Dev trusts loopback (`127.0.0.0/8, ::1/128`) because Caddy proxies over the host network. |
-| `KALLIP_ARCHEION_ADMIN_TOKEN`        | no                            | Stable admin token; else generated per boot and printed to `arion logs archeion`.                                                         |
-| `KALLIP_POLIS_INTERNAL_TOKEN`     | **yes** (all four services)     | Shared platform-internal secret presented to the archeion's `/internal/*` surface. |
+| `KALLIP_ARCHEION_ADMIN_TOKEN`        | no                            | Stable admin token (the pin form). The generated form writes a fresh token to runtime state on every start and never reaches the logs. |
+| `KALLIP_ARCHEION_ADMIN_TOKEN_OUT_FILE` | no (required when no token is set) | Where a generated admin token is written (0600, `KEY=value`), rewritten on every start; the NixOS module sets it to `/run/kallipai/archeion/admin-token.env`. |
+| `KALLIP_ARCHEION_INTERNAL_TOKEN_FILE` | no (unset = standalone)    | Where the archeion provisions the platform-internal secret (0640, generated on first boot, never rewritten); the NixOS module sets it to `/var/lib/kallipai/archeion/internal-token`. |
+| `KALLIP_POLIS_INTERNAL_TOKEN_FILE`   | **yes** (lesche / files / instances in platform mode) | File holding the archeion-provisioned internal secret, read at boot (bounded wait, then refuse to start). |
 | `KALLIP_LESCHE_CORS_ORIGINS`      | **yes** (prod-archeion)          | The app origin(s) for the lesche; never a wildcard on a public deploy.                                                                 |
 
 The archeion, lesche, files, and instances services can also be configured through the `services.kallipai.polis` NixOS module and its token files instead of `.env` (see the polis section above).

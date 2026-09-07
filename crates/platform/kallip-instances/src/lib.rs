@@ -76,10 +76,10 @@ pub fn resolve_auth(config: &Config, addr: &str) -> anyhow::Result<guard::AuthMo
         // would silently serve the API under a weaker mode than intended.
         (Some(_), None) => anyhow::bail!(
             "refusing to start: KALLIP_INSTANCES_ARCHEION_URL is set but \
-             KALLIP_POLIS_INTERNAL_TOKEN is missing"
+             KALLIP_POLIS_INTERNAL_TOKEN_FILE is missing"
         ),
         (None, Some(_)) => anyhow::bail!(
-            "refusing to start: KALLIP_POLIS_INTERNAL_TOKEN is set \
+            "refusing to start: KALLIP_POLIS_INTERNAL_TOKEN_FILE is set \
              but KALLIP_INSTANCES_ARCHEION_URL is missing"
         ),
         (None, None) => {}

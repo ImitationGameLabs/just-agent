@@ -298,13 +298,19 @@ archeion, verified per request through the archeion's `/internal/*` surface
 with a shared secret. The CLI reads its credentials from the agent
 shell's spawn env (no flags carry secrets).
 
+Secrets this platform generates are filed by lifetime: `/var/lib` for
+service-owned persistent state (the archeion's internal token, generated
+once and only read after), `/run` for volatile runtime credentials (the
+auto-generated admin token, reset on every restart), and `/etc` for
+administrator-pinned assets.
+
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `KALLIP_FILES_ADDR` | no | `127.0.0.1:7400` | Address the service listens on (behind a TLS-terminating reverse proxy). |
 | `KALLIP_FILES_BLOB_ROOT` | yes (service) | _(unset)_ | Root directory of the content-addressed blob store; created on demand. |
 | `KALLIP_FILES_DATABASE_URL` | yes (service) | _(unset)_ | Postgres URL for the metadata store; a missing URL fails fast at boot. |
 | `KALLIP_FILES_ARCHEION_INTERNAL_URL` | yes (service) | _(unset)_ | Archeion internal base URL for `/internal/*` ControlPlane calls. Must NOT be publicly reachable. |
-| `KALLIP_POLIS_INTERNAL_TOKEN` | yes (service) | _(unset)_ | Shared platform-internal secret bearer for the archeion `/internal/*` API; the same key the archeion, lesche, files, and instances services read. |
+| `KALLIP_POLIS_INTERNAL_TOKEN_FILE` | yes (service) | _(unset)_ | File holding the platform-internal secret bearer for the archeion `/internal/*` API, provisioned by the archeion (0640 under its state directory) and read at boot by the lesche, files, and instances services. |
 | `KALLIP_FILES_MAX_BODY_SIZE_MB` | no | `100` | Maximum accepted upload body, in megabytes; larger streams are cut off with 413. |
 | `KALLIP_FILES_DEGRADE` | no | `closed` | Archeion degrade posture: `closed` fails authorization with 503 when the registry cannot answer; `soft` degrades to deny (403). Neither posture weakens credential verification. |
 | `KALLIP_FILES_GC_INTERVAL_SECS` | no | `60` | Delay between GC passes (sweep + reconcile), in seconds. |

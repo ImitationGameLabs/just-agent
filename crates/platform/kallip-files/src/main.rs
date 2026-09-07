@@ -43,7 +43,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         listen_addr: args.listen_addr,
         database_url: args.database_url,
         archeion_internal_url: args.archeion_internal_url,
-        archeion_internal_token: args.archeion_internal_token,
+        archeion_internal_token: kallip_common::secret_file::read_trimmed_with_retry(
+            std::path::Path::new(&args.archeion_internal_token_file),
+            kallip_common::secret_file::BOOT_RETRY,
+        )?,
         blob_root: args.blob_root.into(),
         files: config,
         notify_url: args.notify_url,

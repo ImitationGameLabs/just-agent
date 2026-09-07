@@ -5,11 +5,12 @@
 //! trait (in `kallip-archeion-common`). The data-plane relay (`kallip-lesche`) is a
 //! separate process that consumes that trait over the `/internal/*` HTTP API
 //! served here (each handler wraps the DB-backed `DbControlPlane`, guarded by a
-//! shared-secret bearer). If `KALLIP_POLIS_INTERNAL_TOKEN` is unset, the
+//! shared-secret bearer). If no internal-token file is configured, the
 //! `/internal` nest is not mounted and the archeion runs standalone.
 
 mod args;
 mod auth;
+mod boot_secrets;
 mod clientip;
 mod code;
 mod control_plane;
@@ -53,18 +54,40 @@ async fn main() -> Result<()> {
         kallip_common::logging::parse_log_dir(std::env::var("KALLIP_ARCHEION_LOG_DIR").ok());
     kallip_common::logging::init_service_logging(&filter, "archeion", log_dir.as_deref());
 
-    // Mint the admin token: honor KALLIP_ARCHEION_ADMIN_TOKEN if set, otherwise
-    // generate a fresh `sk-admin-...`. Only the hash is retained; the plaintext
-    // is printed once below then dropped.
-    let admin = match args.admin_token.clone() {
-        Some(s) => MintedToken::from_secret(s),
-        None => MintedToken::generate(token::ADMIN),
+    // Admin token lifecycle: an operator-provided token is a pinned asset and
+    // stays where the operator put it; a generated one is a short-lived
+    // bootstrap credential, so it is rewritten on every start into runtime
+    // state, valid until the next restart. Either way the plaintext
+    // never reaches the journal — the banner names the source, not the value,
+    // and only the hash is retained beyond this boot.
+    let (admin, admin_source) = match args.admin_token.clone() {
+        Some(s) => (
+            MintedToken::from_secret(s),
+            "KALLIP_ARCHEION_ADMIN_TOKEN / --admin-token".to_owned(),
+        ),
+        None => {
+            let out = args.admin_token_out_file.as_deref().context(concat!(
+                "no admin token configured: pin one via --admin-token ",
+                "(or KALLIP_ARCHEION_ADMIN_TOKEN), or name an output file ",
+                "via --admin-token-out-file (or ",
+                "KALLIP_ARCHEION_ADMIN_TOKEN_OUT_FILE) to have one generated per ",
+                "start; the NixOS module configures the output file automatically",
+            ))?;
+            let generated = MintedToken::generate(token::ADMIN);
+            boot_secrets::write_generated_admin(out, generated.secret())?;
+            info!(
+                "generated admin token written to {} (0600); it is rewritten on every start",
+                out.display()
+            );
+            (
+                generated,
+                format!("generated at {} (rewritten on every start)", out.display()),
+            )
+        }
     };
     println!("==================================================");
     println!("  kallip-archeion {}", env!("CARGO_PKG_VERSION"));
-    println!("  Admin Token:");
-    println!("    {}", admin.secret());
-    println!("  (retain only this hash; plaintext shown once)");
+    println!("  Admin token active (source: {admin_source})");
     println!("==================================================");
 
     // The local-platform admin-login turns the admin token into a User-session
@@ -170,23 +193,22 @@ async fn main() -> Result<()> {
         args.signup_enabled,
     ));
 
-    // The data-plane relay (`kallip-lesche`) is a separate process that calls
-    // the archeion's `/internal/*` ControlPlane API. Mount that surface only when
-    // a non-empty shared secret is configured; an unset (or empty) token runs
-    // the archeion standalone (no relay connected, no internal surface exposed).
-    // Treating the empty string as "unset" is load-bearing: an operator who
-    // exports `KALLIP_POLIS_INTERNAL_TOKEN=` (intending to disable) must NOT
-    // instead enable the surface with a trivially-known empty secret.
+    // The data-plane services (lesche, files, instances) call the archeion's
+    // `/internal/*` ControlPlane API with a shared secret. That secret is
+    // machine-internal alignment material — the four services only need to
+    // agree, the value is regenerable, and it never leaves this host — so the
+    // archeion owns its lifecycle instead of asking the operator to ship it:
+    // first boot generates it into the state directory, later boots read the
+    // existing value. Never overwriting is the load-bearing rule: consumers
+    // serve with the value they read at their own boot, so a rewrite would
+    // silently split the platform into token generations. An unset path runs
+    // the archeion standalone (no /internal nest mounted).
     let internal_hash = args
-        .internal_token
+        .internal_token_file
         .as_deref()
-        .filter(|s| !s.is_empty())
-        .map(TokenHash::of);
-    if matches!(&args.internal_token, Some(s) if s.is_empty()) {
-        warn!(
-            "KALLIP_POLIS_INTERNAL_TOKEN is set but empty; treating as unset (no /internal surface)"
-        );
-    }
+        .map(boot_secrets::provision_internal_token)
+        .transpose()?
+        .map(|secret| TokenHash::of(&secret));
 
     let app = routes::router(state.clone(), internal_hash, args.admin_user_login);
 

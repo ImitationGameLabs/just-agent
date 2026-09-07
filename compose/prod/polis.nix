@@ -43,6 +43,10 @@ in
       lesche_pgdata = { };
       files_pgdata = { };
       kallipai_files_blobs = { };
+      # The archeion-provisioned internal secret: written by the archeion
+      # (rw), read by the lesche and files (ro). Survives restarts, so the
+      # value stays stable for the whole composition.
+      polis_internal = { };
     };
 
     # POSTGRES_USER/PASSWORD/DB come from .env ONLY and are read by all
@@ -74,13 +78,15 @@ in
       build.image = lib.mkForce archeionImage;
       service.command = [ "${archeion}/bin/kallip-archeion" ];
       service.env_file = [ ".env" ];
+      # The internal secret is self-managed: first boot generates it into
+      # the shared volume, later boots read the existing value; the lesche
+      # and files read the same file (mounted read-only below).
+      service.volumes = [ "polis_internal:/var/lib/kallipai/internal" ];
       service.environment = {
         KALLIP_ARCHEION_ADDR = "0.0.0.0:7100";
+        KALLIP_ARCHEION_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/internal/internal-token";
         RUST_LOG = "info";
-        # KALLIP_POLIS_INTERNAL_TOKEN (the shared secret the lesche presents to
-        # the /internal/* surface) comes from .env. When unset, the archeion runs
-        # standalone and the /internal nest is not mounted -- so the lesche
-        # service below will fail its ControlPlane calls until it is set.
+        # KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN comes from .env: set to the parent
         # KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN comes from .env: set to the parent
         # domain (e.g. kallipai.com) so the session cookie is shared across the
         # archeion.<d> and lesche.<d> subdomains the edge routes here.
@@ -108,14 +114,16 @@ in
       build.image = lib.mkForce lescheImage;
       service.command = [ "${lesche}/bin/kallip-lesche" ];
       service.env_file = [ ".env" ];
+      service.volumes = [ "polis_internal:/var/lib/kallipai/internal:ro" ];
       service.environment = {
         KALLIP_LESCHE_ADDR = "0.0.0.0:7200";
         # Private compose-network hop to the archeion's /internal surface; never
         # routed through the public edge.
         KALLIP_LESCHE_ARCHEION_INTERNAL_URL = "http://archeion:7100";
+        # Read the archeion-provisioned internal secret (shared volume).
+        KALLIP_POLIS_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/internal/internal-token";
         RUST_LOG = "info";
-        # KALLIP_LESCHE_DATABASE_URL (the chat schema), KALLIP_POLIS_INTERNAL_TOKEN
-        # (the platform-internal shared secret), and
+        # KALLIP_LESCHE_DATABASE_URL (the chat schema) and
         # KALLIP_LESCHE_CORS_ORIGINS come from .env.
       };
       # No service.ports -- like the archeion, the lesche sits behind the
@@ -135,7 +143,10 @@ in
       build.image = lib.mkForce filesImage;
       service.command = [ "${files}/bin/kallip-files" ];
       service.env_file = [ ".env" ];
-      service.volumes = [ "kallipai_files_blobs:/var/lib/kallipai/files/blobs" ];
+      service.volumes = [
+        "kallipai_files_blobs:/var/lib/kallipai/files/blobs"
+        "polis_internal:/var/lib/kallipai/internal:ro"
+      ];
       service.environment = {
         KALLIP_FILES_ADDR = "0.0.0.0:7400";
         # The blob root INSIDE the container; must equal the kallipai_files_blobs
@@ -145,9 +156,9 @@ in
         # never routed through the public edge.
         KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://archeion:7100";
         RUST_LOG = "info";
-        # KALLIP_FILES_DATABASE_URL (the metadata schema) and
-        # KALLIP_POLIS_INTERNAL_TOKEN (the platform-internal shared secret,
-        # the same key the archeion reads) come from .env.
+        # KALLIP_FILES_DATABASE_URL (the metadata schema) comes from .env;
+        # the internal secret is read from the archeion-provisioned file
+        # (KALLIP_POLIS_INTERNAL_TOKEN_FILE above).
       };
       # No service.ports -- like the archeion and the lesche, the files service
       # sits behind the TLS-terminating reverse proxy.

@@ -31,6 +31,7 @@ cookie = { workspace = true }
 url = { workspace = true }
 ipnet = { workspace = true }
 getrandom = { workspace = true }
+nix = { workspace = true, features = ["user"] }
 email_address = { workspace = true }
 sha2 = { workspace = true }
 reqwest = { workspace = true, features = ["form"] }
@@ -38,5 +39,6 @@ reqwest = { workspace = true, features = ["form"] }
 [dev-dependencies]
 testcontainers = { workspace = true, features = ["reusable-containers"] }
 testcontainers-modules = { workspace = true }
+tempfile = { workspace = true }
 tower = { workspace = true }
 http-body-util = { workspace = true }

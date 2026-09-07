@@ -62,7 +62,10 @@ async fn main() -> Result<()> {
     // `control_plane_http`.
     let control = Arc::new(HttpControlPlane::new(
         args.archeion_internal_url.clone(),
-        args.archeion_internal_token.clone(),
+        kallip_common::secret_file::read_trimmed_with_retry(
+            std::path::Path::new(&args.archeion_internal_token_file),
+            kallip_common::secret_file::BOOT_RETRY,
+        )?,
     ));
 
     // The durable room-message store, connected + migrated at boot. The state

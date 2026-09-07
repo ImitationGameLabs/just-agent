@@ -5,9 +5,14 @@
 use kallip_common::authtoken::TokenKind;
 
 /// Admin token — authorizes control-plane provisioning (enrollment codes,
-/// user/passkey management). Plaintext printed once at startup (or set via
-/// `KALLIP_ARCHEION_ADMIN_TOKEN`); only its hash is retained.
+/// user/passkey management). Operator-pinned or generated to a 0600
+/// runtime file; the plaintext is never logged and only the hash retained.
 pub const ADMIN: TokenKind = TokenKind("sk-admin-");
+
+/// Platform-internal shared secret — the archeion provisions it into its
+/// state directory and consumers read it by file location. The value only
+/// has to agree across the four platform services; it never leaves the host.
+pub const INTERNAL: TokenKind = TokenKind("sk-internal-");
 
 /// Long-lived tagma token — held by the tagma's in-process relay connector to
 /// reopen its tunnel.

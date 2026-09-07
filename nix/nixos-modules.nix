@@ -13,9 +13,10 @@
 # services -- archeion, lesche, files, instances -- on one switch:
 # localhost-only listeners behind the host's reverse proxy, one shared
 # PostgreSQL for the three stateful services over unix-socket peer auth,
-# and secrets injected from operator-owned 0600 EnvironmentFile paths.
-# The module only accepts token paths, never
-# token values, so no secret is ever evaluated into the store.
+# and one self-managed secret: the platform-internal token is generated
+# by the archeion into its own state directory on first boot and only
+# read afterwards. Operator token knobs stay paths (pin an admin token,
+# or let the unit mint a short-lived one); no secret hits the store.
 {
   config,
   lib,
@@ -72,13 +73,16 @@ in
 
       group = lib.mkOption {
         type = lib.types.str;
-        default = "kallip";
+        default = "kallipai-polis";
         description = ''
-          The group gating access to the control socket (0660
-          root:<group>) and, as @<group>, to the nix daemon: one
-          declaration primitive shared by both access paths. Deliberately
-          not the generic `users` group — that would hand the control
-          socket and nix to every human account on the host.
+          The group gating @<group> access to the nix daemon and read
+          access to the archeion's provisioned internal-token file: one
+          declaration primitive shared by every platform-internal access
+          path. The daemon's control socket is gated separately, by the
+          dedicated kallipai-daemon group, so socket admission does
+          not ride the platform gate. Deliberately not the generic
+          `users` group -- that would hand access to every account on
+          the host.
         '';
       };
 
@@ -114,35 +118,25 @@ in
         description = "The kallip-instances package.";
       };
 
-      internalTokenFile = lib.mkOption {
-        type = lib.types.path;
-        description = ''
-          Root-only (0600) EnvironmentFile carrying the shared platform-internal
-          secret -- the /internal/* ControlPlane trust boundary, so the
-          deployment cannot come up without it. The file must define one key:
-          KALLIP_POLIS_INTERNAL_TOKEN (the archeion mounts the /internal nest
-          only when set; the lesche and the files service present it to that
-          nest, and the instances service presents it when verifying the SPA's
-          admin bearer). Format is systemd's line-based KEY=value; a token
-          containing #, quotes, or leading whitespace breaks the parse.
-        '';
-      };
       adminTokenFile = lib.mkOption {
         type = lib.types.nullOr lib.types.path;
         default = null;
         description = ''
           Path to a root-only EnvironmentFile defining
           KALLIP_ARCHEION_ADMIN_TOKEN (the provisioning authority and the
-          admin-login exchange). Default null: the archeion generates a fresh
-          sk-admin-... at every boot and prints it once to the journal -- read
-          it with journalctl -u kallip-archeion. That printed token is the
-          bootstrap credential and rotates on restart, which is why a permanent
-          deployment should pin the file.
-          This file may also carry archeion-only extra keys -- notably the
-          OAuth client secrets (KALLIP_ARCHEION_OAUTH_GITHUB_CLIENT_SECRET,
-          KALLIP_ARCHEION_OAUTH_GOOGLE_CLIENT_SECRET; a provider enables only
-          when its id option and secret are both set). Keep secrets out of
-          internalTokenFile: all four services read that one.
+          admin-login exchange), plus any archeion-only extra keys --
+          notably the OAuth client secrets
+          (KALLIP_ARCHEION_OAUTH_GITHUB_CLIENT_SECRET,
+          KALLIP_ARCHEION_OAUTH_GOOGLE_CLIENT_SECRET; a provider enables
+          only when its id option and secret are both set).
+          This is the pin form: a stable credential the operator owns, so
+          it lives under /etc like other admin assets. Default null means
+          the archeion mints the token itself into its runtime directory
+          (/run/kallipai/archeion/admin-token.env, 0600) on every start --
+          a short-lived bootstrap credential, rewritten on each restart
+          and valid until the next one, never written to the
+          journal. Pin the file to keep a stable token; leave it unset to
+          accept a short-lived one.
         '';
       };
       notifyTokenFile = lib.mkOption {
@@ -520,14 +514,22 @@ in
     }
     (lib.mkIf cfg.enable {
       # One group per declared user plus the shared access gate group
-      # (socket 0660 + nix @group below). Primary groups are per user:
-      # a shared primary group would let the tagma users read each
-      # other's homes, undoing the uid isolation the dedicated-user
-      # form exists for. The gate group rides as an extra group —
-      # kernel group checks accept supplementary membership, so the
-      # socket and nix gates work unchanged.
+      # (nix @group below, and the polis token gate in the polis
+      # block). Primary groups are per user: a shared primary group
+      # would let the tagma users read each other's homes, undoing the
+      # uid isolation the dedicated-user form exists for. The gate
+      # group rides as an extra group — kernel group checks accept
+      # supplementary membership, so the nix gate works unchanged. The
+      # daemon's control socket is gated separately (kallipai-daemon
+      # below): that group admits only actual socket consumers.
       users.groups = lib.listToAttrs (
-        map (name: lib.nameValuePair name { }) (cfg.tagmaUsers ++ [ cfg.group ])
+        map (name: lib.nameValuePair name { }) (
+          cfg.tagmaUsers
+          ++ [
+            cfg.group
+            "kallipai-daemon"
+          ]
+        )
       );
 
       users.users = lib.listToAttrs (
@@ -562,7 +564,10 @@ in
         environment = {
           KALLIP_DAEMON_SOCKET = daemonSocket;
           KALLIP_DAEMON_RECORD_DIR = "/var/lib/kallipai/daemon/instances";
-          KALLIP_DAEMON_SOCKET_GROUP = cfg.group;
+          # Dedicated socket gate, not the shared platform gate: the group
+          # admits only actual socket consumers. The tagma users keep the
+          # nix gate (which the platform gate group carries) untouched.
+          KALLIP_DAEMON_SOCKET_GROUP = "kallipai-daemon";
           # NixOS has no /bin/bash; the login-environment harvest needs a
           # fixed administrative bash, never the caller's shell.
           KALLIP_HARVEST_BASH = "${pkgs.bash}/bin/bash";
@@ -585,9 +590,10 @@ in
       };
     })
     (lib.mkIf polisCfg.enable {
-      # Dedicated users, per-user primary groups. The three stateful services
-      # deliberately stay out of the daemon's kallip gate group: that group
-      # admits the daemon socket, which none of them consumes.
+      # Dedicated users, per-user primary groups. The stateful services
+      # stay out of the daemon-socket gate group (kallipai-daemon):
+      # none of them consumes the socket. They ride the platform gate
+      # group only where the archeion token requires it.
       users.groups = builtins.listToAttrs (
         map (name: lib.nameValuePair name { }) [
           "kallip-archeion"
@@ -604,6 +610,13 @@ in
               lib.nameValuePair name {
                 isSystemUser = true;
                 group = name;
+                # Consumers ride the platform gate group for the archeion's
+                # 0640 internal-token file. The daemon socket is gated
+                # separately (kallipai-daemon) and none of these users
+                # joins it. The archeion keeps its primary group private
+                # and joins the gate only inside its unit, where it needs
+                # membership to chgrp the token file.
+                extraGroups = lib.optionals (name != "kallip-archeion") [ cfg.group ];
               }
             )
             [
@@ -613,13 +626,17 @@ in
             ]
         )
         // {
-          # The instances proxy is the one polis service that consumes the
-          # daemon socket, so it rides the kallip gate group as an extra
-          # group; the map above stays gate-free.
+          # Explicit for symmetry with the map above; see its comment for
+          # the gate-group rationale.
           kallip-instances = {
             isSystemUser = true;
             group = "kallip-instances";
-            extraGroups = [ cfg.group ];
+            # The one polis user that dials the daemon's control socket:
+            # platform gate for the token, socket gate for the proxy.
+            extraGroups = [
+              cfg.group
+              "kallipai-daemon"
+            ];
           };
         };
 
@@ -669,6 +686,12 @@ in
             KALLIP_ARCHEION_ADDR = "127.0.0.1:${toString polisPorts.archeion}";
             KALLIP_ARCHEION_DATABASE_URL = "postgresql:///kallip-archeion?host=/run/postgresql";
             KALLIP_ARCHEION_LOG_DIR = "/var/log/kallipai/archeion";
+            # The internal token is state the archeion owns: generated into
+            # its state dir on first boot, read (never rewritten) after.
+            KALLIP_ARCHEION_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/archeion/internal-token";
+            KALLIP_ARCHEION_INTERNAL_TOKEN_GROUP = cfg.group;
+            # Runtime state: the admin bootstrap token, rewritten every start.
+            KALLIP_ARCHEION_ADMIN_TOKEN_OUT_FILE = "/run/kallipai/archeion/admin-token.env";
           }
           // envOpt "KALLIP_ARCHEION_WEBAUTHN_RP_ID" polisCfg.archeion.webauthnRpId
           // envOpt "KALLIP_ARCHEION_WEBAUTHN_RP_ORIGIN" polisCfg.archeion.webauthnRpOrigin
@@ -694,33 +717,42 @@ in
             ExecStart = "${polisCfg.archeionPackage}/bin/kallip-archeion";
             User = "kallip-archeion";
             Group = "kallip-archeion";
+            # Gate-group membership lives on the unit (not the user): only
+            # this unit chgrps the provisioned token file to the gate group.
+            SupplementaryGroups = [ cfg.group ];
             StateDirectory = "kallipai/archeion";
+            # Runtime sibling: the admin bootstrap token lives here --
+            # rewritten on every start, gone when the unit stops.
+            RuntimeDirectory = "kallipai/archeion";
             LogsDirectory = "kallipai/archeion";
-            StateDirectoryMode = "0700";
+            # 0750 (not 0700): gate-group consumers traverse this directory
+            # to read the provisioned internal token.
+            StateDirectoryMode = "0750";
+            RuntimeDirectoryMode = "0700";
             LogsDirectoryMode = "0750";
             Restart = "on-failure";
-            EnvironmentFile = [
-              (toString polisCfg.internalTokenFile)
-            ]
-            ++ lib.optional (polisCfg.adminTokenFile != null) (toString polisCfg.adminTokenFile);
+            EnvironmentFile = lib.optional (polisCfg.adminTokenFile != null) (toString polisCfg.adminTokenFile);
           };
         };
 
         kallip-lesche = {
           description = "kallipai lesche data-plane relay";
           wantedBy = [ "multi-user.target" ];
-          # Soft dependency: the lesche keeps serving local surfaces while the
-          # archeion restarts; only the ControlPlane calls fail meanwhile.
+          # Hard dependency: the lesche reads the archeion's provisioned
+          # internal-token file at boot, so the archeion must be up (and
+          # the file present) first. Operator-accepted cost: an archeion
+          # stop cascades here.
           after = [
             "network.target"
             "kallip-archeion.service"
           ];
-          wants = [ "kallip-archeion.service" ];
+          requires = [ "kallip-archeion.service" ];
           environment = {
             KALLIP_LESCHE_ADDR = "127.0.0.1:${toString polisPorts.lesche}";
             KALLIP_LESCHE_ARCHEION_INTERNAL_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
             KALLIP_LESCHE_DATABASE_URL = "postgresql:///kallip-lesche?host=/run/postgresql";
             KALLIP_LESCHE_LOG_DIR = "/var/log/kallipai/lesche";
+            KALLIP_POLIS_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/archeion/internal-token";
           }
           // envOpt "KALLIP_LESCHE_PROOF_SKEW_SECS" polisCfg.lesche.proofSkewSecs
           // envOpt "KALLIP_LESCHE_KEY_EXCHANGE_TIMEOUT_SECS" polisCfg.lesche.keyExchangeTimeoutSecs
@@ -730,15 +762,15 @@ in
             ExecStart = "${polisCfg.leschePackage}/bin/kallip-lesche";
             User = "kallip-lesche";
             Group = "kallip-lesche";
+            SupplementaryGroups = [ cfg.group ];
             StateDirectory = "kallipai/lesche";
             LogsDirectory = "kallipai/lesche";
             StateDirectoryMode = "0700";
             LogsDirectoryMode = "0750";
             Restart = "on-failure";
-            EnvironmentFile = [
-              (toString polisCfg.internalTokenFile)
-            ]
-            ++ lib.optional (polisCfg.notifyTokenFile != null) (toString polisCfg.notifyTokenFile);
+            EnvironmentFile = lib.optional (polisCfg.notifyTokenFile != null) (
+              toString polisCfg.notifyTokenFile
+            );
           };
         };
 
@@ -749,7 +781,8 @@ in
             "network.target"
             "kallip-archeion.service"
           ];
-          wants = [ "kallip-archeion.service" ];
+          # Hard dependency: the internal-token file must be provisioned first.
+          requires = [ "kallip-archeion.service" ];
           environment = {
             KALLIP_FILES_ADDR = "127.0.0.1:${toString polisPorts.files}";
             KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
@@ -757,6 +790,7 @@ in
             KALLIP_FILES_LOG_DIR = "/var/log/kallipai/files";
             KALLIP_FILES_BLOB_ROOT = "/var/lib/kallipai/files/blobs";
             KALLIP_FILES_NOTIFY_URL = "http://127.0.0.1:${toString polisPorts.lesche}";
+            KALLIP_POLIS_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/archeion/internal-token";
           }
           // envOpt "KALLIP_FILES_MAX_BODY_SIZE_MB" polisCfg.files.maxBodySizeMb
           // envOpt "KALLIP_FILES_CORS_ORIGINS" polisCfg.files.corsOrigins
@@ -773,28 +807,30 @@ in
             StateDirectoryMode = "0700";
             LogsDirectoryMode = "0750";
             Restart = "on-failure";
-            EnvironmentFile = [
-              (toString polisCfg.internalTokenFile)
-            ]
-            ++ lib.optional (polisCfg.notifyTokenFile != null) (toString polisCfg.notifyTokenFile);
+            EnvironmentFile = lib.optional (polisCfg.notifyTokenFile != null) (
+              toString polisCfg.notifyTokenFile
+            );
           };
         };
         kallip-instances = {
           description = "kallipai instances management proxy";
           wantedBy = [ "multi-user.target" ];
-          # Soft dependency on the daemon: while the daemon restarts -- or
-          # when the polis stack runs without it -- the proxy answers 503
-          # daemon_unreachable instead of failing the unit (the lesche's
-          # posture toward the archeion).
+          # Two dependencies, two postures: the daemon is soft (a restart
+          # answers 503 daemon_unreachable, not a failed unit); the
+          # archeion is hard -- its provisioned internal-token file is read
+          # at boot, so it must be up first.
           after = [
             "network.target"
             "kallip-daemon.service"
+            "kallip-archeion.service"
           ];
           wants = [ "kallip-daemon.service" ];
+          requires = [ "kallip-archeion.service" ];
           environment = {
             KALLIP_INSTANCES_ADDR = "127.0.0.1:${toString polisPorts.instances}";
             KALLIP_DAEMON_SOCKET = daemonSocket;
             KALLIP_INSTANCES_ARCHEION_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
+            KALLIP_POLIS_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/archeion/internal-token";
             # Relay defaults must follow the configured polis ports, not the
             # binary's compiled-in 7100/7200 (the files NOTIFY_URL pattern).
             KALLIP_INSTANCES_RELAY_ARCHEION_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
@@ -809,9 +845,6 @@ in
             # A pure UDS proxy: no state or log directory of its own --
             # the daemon owns both sides of that split.
             Restart = "on-failure";
-            EnvironmentFile = [
-              (toString polisCfg.internalTokenFile)
-            ];
           };
         };
       };

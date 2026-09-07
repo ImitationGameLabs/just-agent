@@ -21,11 +21,11 @@ pub struct Args {
     /// `http://127.0.0.1:7100`). Must NOT be publicly reachable.
     #[arg(long, env = "KALLIP_LESCHE_ARCHEION_INTERNAL_URL")]
     pub archeion_internal_url: String,
-    /// Shared secret bearer for the archeion `/internal/*` API; the
-    /// platform-internal secret (`KALLIP_POLIS_INTERNAL_TOKEN`) shared by
-    /// all four platform services.
-    #[arg(long, env = "KALLIP_POLIS_INTERNAL_TOKEN")]
-    pub archeion_internal_token: String,
+    /// File holding the shared secret bearer for the archeion
+    /// `/internal/*` API — provisioned by the archeion (0640 in its state
+    /// directory), read here at boot and never rewritten by this service.
+    #[arg(long, env = "KALLIP_POLIS_INTERNAL_TOKEN_FILE")]
+    pub archeion_internal_token_file: String,
     /// Shared secret bearer for THIS service's internal surface, consumed
     /// by the files service to push file-delivery events. Must equal the
     /// files service's KALLIP_FILES_NOTIFY_TOKEN. Empty (the default)

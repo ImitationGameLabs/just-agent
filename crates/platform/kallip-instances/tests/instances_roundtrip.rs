@@ -693,6 +693,7 @@ fn refuses_to_start_unauthenticated_on_non_loopback() {
         relay_lesche_url: String::new(),
         archeion_internal_url: None,
         archeion_internal_token: None,
+        archeion_internal_token_file: None,
         allowed_hosts_raw: String::new(),
         cors_origins: String::new(),
     };
@@ -711,6 +712,7 @@ fn open_mode_allowed_on_loopback() {
         relay_lesche_url: String::new(),
         archeion_internal_url: None,
         archeion_internal_token: None,
+        archeion_internal_token_file: None,
         allowed_hosts_raw: String::new(),
         cors_origins: String::new(),
     };
@@ -732,12 +734,15 @@ fn half_configured_archeion_url_refuses_to_start() {
         relay_lesche_url: String::new(),
         archeion_internal_url: Some("http://127.0.0.1:7100".into()),
         archeion_internal_token: None,
+        archeion_internal_token_file: None,
         allowed_hosts_raw: String::new(),
         cors_origins: String::new(),
     };
     let error = kallip_instances::resolve_auth(&config, &config.addr).expect_err("must refuse");
     assert!(
-        error.to_string().contains("KALLIP_POLIS_INTERNAL_TOKEN"),
+        error
+            .to_string()
+            .contains("KALLIP_POLIS_INTERNAL_TOKEN_FILE"),
         "{error}"
     );
 }
@@ -753,6 +758,7 @@ fn half_configured_archeion_token_refuses_to_start() {
         relay_lesche_url: String::new(),
         archeion_internal_url: None,
         archeion_internal_token: Some("internal-secret".into()),
+        archeion_internal_token_file: None,
         allowed_hosts_raw: String::new(),
         cors_origins: String::new(),
     };

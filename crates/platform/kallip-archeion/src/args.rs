@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::path::PathBuf;
 
 /// Default trusted-proxy CIDRs: loopback only, matching the default same-box
 /// reverse-proxy deploy. Kept as a const so boot logic can tell "operator left
@@ -119,9 +120,15 @@ pub struct Args {
     )]
     pub trusted_proxies: String,
     /// Admin token (provisioning authority). Unset = generate a fresh
-    /// `sk-admin-...` printed once at startup.
+    /// `sk-admin-...` into the runtime file named by
+    /// KALLIP_ARCHEION_ADMIN_TOKEN_OUT_FILE. The value is never logged.
     #[arg(long, env = "KALLIP_ARCHEION_ADMIN_TOKEN")]
     pub admin_token: Option<String>,
+    /// Where a generated admin token is written (0600, KEY=value),
+    /// required when --admin-token is unset. Runtime state: rewritten on
+    /// every start and valid until the next restart, never logged.
+    #[arg(long, env = "KALLIP_ARCHEION_ADMIN_TOKEN_OUT_FILE")]
+    pub admin_token_out_file: Option<PathBuf>,
     /// Max HTTP request body size in kilobytes. 0 = axum default (2 MB).
     #[arg(long, env = "KALLIP_ARCHEION_MAX_BODY_SIZE_KB", default_value = "256")]
     pub max_body_size_kb: usize,
@@ -160,13 +167,16 @@ pub struct Args {
     pub oauth_google_client_id: Option<String>,
     #[arg(long, env = "KALLIP_ARCHEION_OAUTH_GOOGLE_CLIENT_SECRET")]
     pub oauth_google_client_secret: Option<String>,
-    /// Shared secret that `kallip-lesche` presents as `Authorization: Bearer`
-    /// to the `/internal/*` ControlPlane API. Unset = the `/internal` nest is
-    /// not mounted (archeion runs standalone, no relay connected). This is the
-    /// platform-internal secret shared by the archeion, lesche, files, and
-    /// instances services (`KALLIP_POLIS_INTERNAL_TOKEN`).
-    #[arg(long, env = "KALLIP_POLIS_INTERNAL_TOKEN")]
-    pub internal_token: Option<String>,
+    /// File holding the platform-internal secret shared with the lesche,
+    /// files, and instances services. Unset = the `/internal` nest is not
+    /// mounted (archeion runs standalone). Set = first boot generates the
+    /// secret into the file (0640, group-readable); later boots read the
+    /// existing value and never overwrite it, so the four services keep
+    /// agreeing while they restart around it. Machine-internal alignment
+    /// material — regenerable, host-local — which is why the archeion owns
+    /// it as state instead of asking the operator to ship it as config.
+    #[arg(long, env = "KALLIP_ARCHEION_INTERNAL_TOKEN_FILE")]
+    pub internal_token_file: Option<PathBuf>,
     /// Mount POST /v1/auth/admin-login: exchange the admin token for a normal
     /// User session on a fixed local account (the local-platform login; see
     /// docs/reference/auth.md). Default off: the route is not mounted at

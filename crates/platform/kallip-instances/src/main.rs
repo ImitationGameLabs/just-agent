@@ -12,7 +12,16 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    let config = Config::parse();
+    let mut config = Config::parse();
+    // Load the archeion-internal secret from its provisioned file (the
+    // archeion generates it on first boot). The bounded wait absorbs the
+    // boot-ordering race; expiry refuses to start rather than degrade.
+    if let Some(path) = config.archeion_internal_token_file.as_deref() {
+        config.archeion_internal_token = Some(kallip_common::secret_file::read_trimmed_with_retry(
+            std::path::Path::new(path),
+            kallip_common::secret_file::BOOT_RETRY,
+        )?);
+    }
     let socket = config.resolve_socket()?;
     let addr = config.addr.clone();
 
