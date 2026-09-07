@@ -18,9 +18,11 @@
 //! directory, so the distro's tmpfiles/system tmp cleanup owns their
 //! lifecycle; duplicating that here would only diverge from the system's
 //! policy.
+use nix::errno::Errno;
 
-use nix::fcntl::{OFlag, open, openat};
+use nix::fcntl::{AT_FDCWD, AtFlags, OFlag, open, openat};
 use nix::sys::stat::Mode;
+use nix::unistd::linkat;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -29,9 +31,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 /// Parameters that distinguish one spill family from another.
+#[derive(Clone, Copy)]
 pub struct SpillLayout {
-    /// Subdirectory under the spill root (`message`; `bash-exec` after the
-    /// capture migration).
+    /// Subdirectory under the spill root (`message` or `bash-exec`).
     pub subdir: &'static str,
     /// Filename prefix before the hash segment (empty for `message`).
     pub prefix: &'static str,
@@ -47,6 +49,12 @@ pub const MESSAGE_SPILL: SpillLayout = SpillLayout {
     prefix: "",
     hash_hex_chars: 16,
 };
+/// The bash-exec capture spill family: kallipai/spill/bash-exec/{2 hex}/{14 hex}.txt.
+pub const BASH_EXEC_SPILL: SpillLayout = SpillLayout {
+    subdir: "bash-exec",
+    prefix: "",
+    hash_hex_chars: 16,
+};
 
 /// Root for all spill families — one constant so a root relocation is a
 /// one-line change. Cleanup belongs to the system /tmp mechanisms.
@@ -54,13 +62,46 @@ pub fn spill_root() -> PathBuf {
     std::env::temp_dir().join("kallipai").join("spill")
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+fn digest_to_hex(digest: impl AsRef<[u8]>) -> String {
+    let digest = digest.as_ref();
     let mut hex = String::with_capacity(digest.len() * 2);
     for byte in digest {
         hex.push_str(&format!("{byte:02x}"));
     }
     hex
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    digest_to_hex(Sha256::digest(bytes))
+}
+
+/// The 0700 chain for one spill family: root's parent, root, the family
+/// dir, and (when a shard is named) the shard dir. Built level by level;
+/// on an existing level the mode is re-asserted so a stale wider mode
+/// cannot quietly persist. A symlink at any leaf is then refused by the
+/// caller's O_NOFOLLOW open, so this only ever creates or tightens real
+/// dirs.
+fn ensure_private_chain(
+    root: &Path,
+    subdir: &str,
+    shard: Option<&str>,
+) -> std::io::Result<PathBuf> {
+    let family = root.join(subdir);
+    let mut chain = vec![root.to_path_buf(), family.clone()];
+    if let Some(shard) = shard {
+        chain.push(family.join(shard));
+    }
+    if let Some(grand) = root.parent() {
+        chain.insert(0, grand.to_path_buf());
+    }
+    for dir in &chain {
+        let _ = std::fs::create_dir(dir);
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(match shard {
+        Some(shard) => family.join(shard),
+        None => family,
+    })
 }
 
 /// Spill content under root/layout: create-or-verify-and-reuse.
@@ -88,21 +129,8 @@ pub fn spill_content(root: &Path, layout: &SpillLayout, content: &str) -> std::i
     let (shard, stem) = full_hash.split_at(2);
     let stem = &stem[..layout.hash_hex_chars - 2];
     let filename = format!("{}{stem}.txt", layout.prefix);
-    let shard_dir = root.join(layout.subdir).join(shard);
+    let shard_dir = ensure_private_chain(root, layout.subdir, Some(shard))?;
 
-    // Build the chain level by level at 0700; on an existing level the mode
-    // is re-asserted so a stale wider mode cannot quietly persist. A symlink
-    // at any leaf is then refused by the O_NOFOLLOW open below, so this only
-    // ever creates or tightens real dirs.
-    let mut chain = vec![root.to_path_buf(), root.join(layout.subdir)];
-    chain.push(shard_dir.clone());
-    if let Some(grand) = root.parent() {
-        chain.insert(0, grand.to_path_buf());
-    }
-    for dir in &chain {
-        let _ = std::fs::create_dir(dir);
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-    }
     let dirfd = open(
         &shard_dir,
         OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_RDONLY,
@@ -151,6 +179,135 @@ fn reuse_verified(
         )));
     }
     Ok(())
+}
+
+/// A streaming spill: an append-facing writer for a stream whose content —
+/// and therefore whose content-addressed name — is unknown until it
+/// completes. While the stream runs, bytes go to
+/// `<root>/<subdir>/.tmp-{stream key}`, a name that exists from the first
+/// overflow so an early banner can reference a live path (a timed-out
+/// foreground exec converts to a background task whose banner keeps
+/// naming a file that is still growing). `finalize` completes the
+/// incremental sha256 (no re-read) and links the temp file to its
+/// content-addressed name under the same pre-occupation contract as
+/// spill_content: an existing file is read back and full hashes compared
+/// — a match reuses the existing file without re-linking, a mismatch is
+/// an error, never a silent reuse. The temp name survives the link on
+/// purpose: banners that pointed at the in-flight path stay valid, and
+/// the leftover is reclaimed by the system /tmp cleanup like every other
+/// spill file.
+pub struct StreamingSpill {
+    file: File,
+    tmp_path: PathBuf,
+    hasher: Sha256,
+    layout: SpillLayout,
+}
+
+impl StreamingSpill {
+    /// Create the temp file under `<root>/<layout.subdir>/`, building the
+    /// 0700 directory chain the same way spill_content does.
+    pub fn create(root: &Path, layout: &SpillLayout, stream_key: &str) -> std::io::Result<Self> {
+        // Refuse a symlink swapped in at the caller-given root itself: the
+        // family mkdir below would otherwise follow it and land the
+        // in-flight file under the symlink's target. (O_NOFOLLOW only
+        // guards a final component, and root is an interior one here.)
+        // Root may legitimately not exist yet (lazy chain creation), so
+        // the branch below admits only plain ENOENT: any other error —
+        // including every symlink form the open can surface — fails
+        // closed, and the mkdir chain then builds a real directory.
+        match open(
+            root,
+            OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_RDONLY,
+            Mode::empty(),
+        ) {
+            Ok(_) => {}
+            Err(Errno::ENOENT) => {}
+            Err(e) => return Err(std::io::Error::from(e)),
+        }
+        let family = ensure_private_chain(root, layout.subdir, None)?;
+        let name = format!(".tmp-{stream_key}");
+        let dirfd = open(
+            &family,
+            OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_RDONLY,
+            Mode::empty(),
+        )
+        .map_err(std::io::Error::from)?;
+        let file = openat(
+            dirfd.as_fd(),
+            name.as_str(),
+            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW,
+            Mode::from_bits_truncate(0o600),
+        )
+        .map_err(std::io::Error::from)?;
+        Ok(Self {
+            file: File::from(file),
+            tmp_path: family.join(name),
+            hasher: Sha256::new(),
+            layout: *layout,
+        })
+    }
+
+    /// Append one chunk to the spill and fold it into the running hash.
+    pub fn append(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.file.write_all(bytes)?;
+        self.hasher.update(bytes);
+        Ok(())
+    }
+
+    /// Path of the in-flight temp file (valid from creation until the
+    /// process exits; the finalize link does not remove it).
+    pub fn tmp_path(&self) -> &Path {
+        &self.tmp_path
+    }
+
+    /// Complete the stream: finish the hash, then link the temp file to
+    /// its content-addressed name. See the type doc for the pre-occupation
+    /// contract and why the temp name is left in place.
+    pub fn finalize(self) -> std::io::Result<PathBuf> {
+        let StreamingSpill {
+            file,
+            tmp_path,
+            hasher,
+            layout,
+        } = self;
+        drop(file);
+        let full_hash = digest_to_hex(hasher.finalize());
+        let (shard, stem) = full_hash.split_at(2);
+        let stem = &stem[..layout.hash_hex_chars - 2];
+        let filename = format!("{}{stem}.txt", layout.prefix);
+        // Rebuild the chain through the shared helper so every level is
+        // re-asserted 0700, then link and verify through a dirfd — the
+        // same channel spill_content uses, so both families share one
+        // hardening story instead of two.
+        let family = tmp_path.parent().expect("tmp path always has a parent");
+        let root = family.parent().expect("family always has a parent");
+        let shard_dir = ensure_private_chain(root, layout.subdir, Some(shard))?;
+        let dirfd = open(
+            &shard_dir,
+            OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_RDONLY,
+            Mode::empty(),
+        )
+        .map_err(std::io::Error::from)?;
+        match linkat(
+            AT_FDCWD,
+            tmp_path.as_path(),
+            dirfd.as_fd(),
+            filename.as_str(),
+            AtFlags::empty(),
+        ) {
+            Ok(()) => {}
+            Err(Errno::EEXIST) => {
+                // The content-addressed file already exists: verify it
+                // really is this content, and reuse it without re-linking.
+                // Equivalence goes through the hash, not a byte compare:
+                // the streaming design never retains the incoming stream,
+                // so the running digest is all we have to compare against.
+                reuse_verified(&dirfd, &filename, &full_hash)?;
+            }
+            Err(e) => return Err(std::io::Error::from(e)),
+        }
+        Ok(shard_dir.join(filename))
+    }
 }
 
 #[cfg(test)]

@@ -1,18 +1,37 @@
 use super::*;
 use crate::builder::ShellBuilder;
 
-/// Collect all `bash_exec-*.txt` spill files directly under `root` (the spill
-/// layout is flat -- no per-backend subdir).
+/// Collect all spill files under `root`, recursively: in-flight `.tmp-*`
+/// temp names and finalized content-addressed `{2 hex}/{14 hex}.txt` files.
 fn spill_files(root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
     };
-    entries
-        .flatten()
-        .map(|e| e.path())
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(spill_files(&path));
+        } else {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if name.starts_with(".tmp-") || (name.ends_with(".txt") && !name.starts_with('.')) {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
+/// The finalized (content-addressed) spill files among [`spill_files`].
+fn finalized_spills(root: &Path) -> Vec<PathBuf> {
+    spill_files(root)
+        .into_iter()
         .filter(|p| {
-            p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with("bash_exec-"))
+            !p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(".tmp-"))
         })
         .collect()
 }
@@ -447,7 +466,7 @@ async fn overflow_before_conversion_keeps_banner_and_cleans_spill() {
     let spill = tempfile::TempDir::new().unwrap();
     let mut backend = ShellBuilder::new()
         .max_output_bytes(2048)
-        .spill_dir(spill.path())
+        .spill_dir(spill.path().join("spill"))
         .build()
         .await
         .unwrap();
@@ -598,7 +617,7 @@ async fn dropping_backend_unlinks_post_adoption_spill() {
     let spill = tempfile::TempDir::new().unwrap();
     let mut backend = ShellBuilder::new()
         .max_output_bytes(2048)
-        .spill_dir(spill.path())
+        .spill_dir(spill.path().join("spill"))
         .build()
         .await
         .unwrap();
@@ -750,7 +769,7 @@ async fn exec_leaves_no_scratch_in_cwd() {
     let scratch = tempfile::TempDir::new().unwrap();
     let mut backend = ShellBuilder::new()
         .initial_cwd(probe.clone())
-        .spill_dir(scratch.path().to_path_buf())
+        .spill_dir(scratch.path().join("spill"))
         .build()
         .await
         .unwrap();
@@ -906,6 +925,41 @@ async fn exec_stderr_mode_with_command_merge() {
     assert_eq!(out.cwd, target.display().to_string());
 }
 
+/// A discarded stream whose bytes are identical to the kept stream
+/// must not damage the kept banner: both finalize to the same
+/// content-addressed name, and discarding one unlinks only its own
+/// nonce-unique .tmp twin, never the shared content name.
+#[tokio::test]
+async fn exec_discarded_twin_stream_leaves_stdout_banner_intact() {
+    let scratch = tempfile::TempDir::new().unwrap();
+    let mut backend = ShellBuilder::new()
+        .max_output_bytes(64)
+        .spill_dir(scratch.path().join("spill"))
+        .build()
+        .await
+        .unwrap();
+    // stdout and stderr overflow with byte-identical streams, so both
+    // finalize to the SAME content-addressed name; CaptureMode::Stdout
+    // keeps stdout (banner emitted) and discards stderr (twin unlinked).
+    let out = backend
+        .exec(
+            "printf 'A%.0s' {1..4096}; printf 'A%.0s' {1..4096} >&2",
+            Duration::from_secs(10),
+            CaptureMode::Stdout,
+        )
+        .await
+        .unwrap();
+    let text = out.stdout.as_deref().unwrap();
+    let path = text
+        .lines()
+        .find_map(|l| l.split("cat ").nth(1))
+        .map(|p| p.trim_end().trim_end_matches(']'))
+        .expect("banner carries the cat hint");
+    assert!(
+        std::path::Path::new(path).exists(),
+        "banner path must survive its twin-stream discard: {path}"
+    );
+}
 /// `Merged` overflow clips the single combined capture to a head+tail view,
 /// flags `truncated`, prepends the recovery banner, and spills the complete
 /// stream to a file whose contents equal the full emitted output.
@@ -914,7 +968,7 @@ async fn exec_merged_truncation_single_stream() {
     let scratch = tempfile::TempDir::new().unwrap();
     let mut backend = ShellBuilder::new()
         .max_output_bytes(64)
-        .spill_dir(scratch.path().to_path_buf())
+        .spill_dir(scratch.path().join("spill"))
         .build()
         .await
         .unwrap();
@@ -945,8 +999,9 @@ async fn exec_merged_truncation_single_stream() {
     );
     // No marker bytes from the fd channel leak into the captured stream.
     assert!(!merged.contains("__ja_pwd"));
-    // Exactly one spill file, holding the complete stream.
-    let files = spill_files(scratch.path());
+    // Exactly one content-addressed spill file, holding the complete stream
+    // (the .tmp twin of the same inode survives by design).
+    let files = finalized_spills(scratch.path());
     assert_eq!(files.len(), 1, "only one spill file under Merged");
     let spilled = std::fs::read(&files[0]).unwrap();
     // 200 'A's + 200 'B's = the complete emitted output, in some order.
@@ -962,7 +1017,7 @@ async fn exec_separate_overflow_spills_each_stream() {
     let scratch = tempfile::TempDir::new().unwrap();
     let mut backend = ShellBuilder::new()
         .max_output_bytes(64)
-        .spill_dir(scratch.path().to_path_buf())
+        .spill_dir(scratch.path().join("spill"))
         .build()
         .await
         .unwrap();
@@ -979,8 +1034,9 @@ async fn exec_separate_overflow_spills_each_stream() {
     let stderr = out.stderr.as_deref().unwrap();
     assert!(stdout.contains("clipped (middle omitted)"));
     assert!(stderr.contains("clipped (middle omitted)"));
-    // Two distinct spill files (-stdout / -stderr).
-    let spills: Vec<String> = spill_files(scratch.path())
+    // Two distinct content-addressed spill files: stdout and stderr differ
+    // in content, so their hashes — and names — differ.
+    let spills: Vec<String> = finalized_spills(scratch.path())
         .into_iter()
         .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
@@ -989,8 +1045,7 @@ async fn exec_separate_overflow_spills_each_stream() {
         2,
         "two spill files under Separate: {spills:?}"
     );
-    assert!(spills.iter().any(|n| n.ends_with("-stdout.txt")));
-    assert!(spills.iter().any(|n| n.ends_with("-stderr.txt")));
+    assert_ne!(spills[0], spills[1], "distinct hashes: {spills:?}");
 }
 
 // -- CwdProbe / script-shape / spill-security tests -----------------------
@@ -1065,7 +1120,7 @@ async fn spill_file_is_owner_only() {
     let scratch = tempfile::TempDir::new().unwrap();
     let mut backend = ShellBuilder::new()
         .max_output_bytes(32)
-        .spill_dir(scratch.path().to_path_buf())
+        .spill_dir(scratch.path().join("spill"))
         .build()
         .await
         .unwrap();
@@ -1078,7 +1133,9 @@ async fn spill_file_is_owner_only() {
         .await
         .unwrap();
     assert!(out.truncated);
-    let spill = spill_files(scratch.path()).pop().expect("a spill file");
+    let spill = finalized_spills(scratch.path())
+        .pop()
+        .expect("a spill file");
     use std::os::unix::fs::PermissionsExt;
     let mode = std::fs::metadata(&spill).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "spill file must be owner-only, got {:o}", mode);
@@ -1157,7 +1214,7 @@ async fn spilled_file_is_readable_by_landlocked_cat() {
     let scratch = tempfile::TempDir::new().unwrap();
     let mut backend = ShellBuilder::new()
         .max_output_bytes(32)
-        .spill_dir(scratch.path().to_path_buf())
+        .spill_dir(scratch.path().join("spill"))
         .access_source(|| {
             Ok(landlock::AccessDecision {
                 read: landlock::ReadPolicy::Broad,

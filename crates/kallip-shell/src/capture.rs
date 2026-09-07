@@ -12,13 +12,9 @@
 //! `spill_dir`, so the caller can surface its path and the agent can `Read` the
 //! full output back. Under-budget commands create no file and pay no spill I/O.
 
-use std::fs::File;
-use std::io::Write;
-use std::os::fd::AsFd;
 use std::path::PathBuf;
 
-use nix::fcntl::{OFlag, open, openat};
-use nix::sys::stat::Mode;
+use crate::spill::{BASH_EXEC_SPILL, StreamingSpill};
 
 /// A bounded head+tail collector for one stream.
 ///
@@ -39,13 +35,15 @@ pub(super) struct BoundedCapture {
     /// if the file could not be created or a mid-stream write failed, so the
     /// failing `open`/`write` is never retried for a long overflowing command.
     spill: SpillState,
-    /// Per-exec uuid nonce; names the spill file so concurrent execs and the two
-    /// streams of one exec never collide.
+    /// Per-exec uuid nonce plus the stream label: the pair keys the in-flight
+    /// spill temp name so concurrent execs and the two streams of one exec
+    /// never collide.
     nonce: String,
-    /// Stream label embedded in the spill filename: `merged`, `stdout`, or
-    /// `stderr` (the backend chooses per capture mode).
+    /// Stream label (`merged`, `stdout`, or `stderr`; the backend chooses per
+    /// capture mode), combined with the nonce into the spill stream key.
     stream_label: &'static str,
-    /// Where the spill file is created (a landlocked-readable temp dir).
+    /// Root of the bash-exec spill family the temp file is created under
+    /// (a landlocked-readable directory).
     spill_dir: PathBuf,
 }
 
@@ -56,15 +54,9 @@ enum SpillState {
     #[default]
     Closed,
     /// Overflowing; the file is open and being appended.
-    Open(SpillHandle),
+    Open(StreamingSpill),
     /// Spill failed irrecoverably; degrade to head+tail view with no path.
     Poisoned,
-}
-
-/// An open spill file and its path.
-struct SpillHandle {
-    file: File,
-    path: PathBuf,
 }
 
 /// The finalized capture of one stream.
@@ -79,6 +71,12 @@ pub(super) struct CaptureResult {
     /// when this stream overflowed AND the spill file is healthy. `None` for
     /// under-budget streams or a poisoned (failed) spill.
     pub spill: Option<PathBuf>,
+    /// The nonce-unique `.tmp-` twin of the spill file while it was open,
+    /// present whenever this stream opened a spill. This — not the shared
+    /// content-addressed name — is the only path a discard cleanup may
+    /// safely unlink: unlinking the content name would pull the file out
+    /// from under every other banner that resolved to the same bytes.
+    pub tmp_twin: Option<PathBuf>,
 }
 
 impl BoundedCapture {
@@ -119,14 +117,14 @@ impl BoundedCapture {
         // (head + tail = the complete prefix so far, <= max_bytes) so the file
         // ultimately holds the entire stream.
         if will_overflow && matches!(self.spill, SpillState::Closed) {
-            match self.open_spill_with_head_and_tail() {
+            match self.open_streaming_spill() {
                 Ok(handle) => self.spill = SpillState::Open(handle),
                 Err(_) => self.spill = SpillState::Poisoned,
             }
         }
         // Every chunk after the spill opens is appended, so the file is complete.
         if let SpillState::Open(handle) = &mut self.spill
-            && handle.file.write_all(chunk).is_err()
+            && handle.append(chunk).is_err()
         {
             // Mid-stream write failure: stop spilling and keep what we have;
             // surface no path so the caller never points at a partial file.
@@ -149,50 +147,26 @@ impl BoundedCapture {
         }
     }
 
-    /// Create the spill file, writing the current head+tail prefix first. The
-    /// caller then appends each subsequent chunk via the `Open` arm of `push`.
+    /// Open the streaming spill, writing the current head+tail prefix
+    /// first. The caller then appends each subsequent chunk via the `Open`
+    /// arm of `push`.
     ///
-    /// TOCTOU-safe against a symlink swapped in at the spill path between build
-    /// and this first overflow: the dir is opened with `O_NOFOLLOW | O_DIRECTORY`
-    /// (refuses a symlink at the final component, pins the real dir inode), then
-    /// the file is created with `openat` relative to that dirfd and `O_NOFOLLOW`
-    /// at the leaf. Done back-to-back at overflow time, there is no check/use
-    /// window for the leaf: once the dirfd is held, swapping the path for a
-    /// symlink cannot redirect the `openat` (it is relative to the inode). The
-    /// dir is created here, lazily, so under-budget captures write nothing.
-    ///
-    /// Scope note: `O_NOFOLLOW` only guards the final component, so a symlink on
-    /// an *intermediate* component of `spill_dir` (a parent) is still followed.
-    /// Acceptable because `spill_dir` is tagma-controlled and defaults to
-    /// `temp_dir()/kallip` (real parents); closing it would need `openat2` with
-    /// `RESOLVE_NO_SYMLINKS`, which is Linux-5.6+ only and this file stays
-    /// portable-Unix (no `cfg` gates).
-    fn open_spill_with_head_and_tail(&self) -> std::io::Result<SpillHandle> {
-        // Best-effort: create the dir tree only when absent. `create_dir_all`
-        // follows symlinks, but a symlink at the leaf of `spill_dir` is refused
-        // by the `O_NOFOLLOW` open below, so this only ever creates real dirs.
-        let _ = std::fs::create_dir_all(&self.spill_dir);
-        let dirfd = open(
+    /// The safe-write discipline (0700 directory chain, O_NOFOLLOW dir
+    /// open, O_EXCL leaf) lives in spill::StreamingSpill — single-sourced
+    /// with the message-entry spill so the two faces cannot drift. The dir
+    /// is created lazily here, so under-budget captures write nothing. The
+    /// temp name survives finalize's content-addressed link on purpose:
+    /// banners that named the in-flight file (peek while a converted
+    /// background task is still running) must keep resolving.
+    fn open_streaming_spill(&self) -> std::io::Result<StreamingSpill> {
+        let mut spill = StreamingSpill::create(
             &self.spill_dir,
-            OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_RDONLY,
-            Mode::empty(),
-        )
-        .map_err(std::io::Error::from)?;
-        let filename = format!("bash_exec-{}-{}.txt", self.nonce, self.stream_label);
-        let file = openat(
-            dirfd.as_fd(),
-            filename.as_str(),
-            OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_NOFOLLOW,
-            Mode::from_bits_truncate(0o600),
-        )
-        .map_err(std::io::Error::from)?;
-        let mut file = File::from(file);
-        file.write_all(&self.head)?;
-        file.write_all(&self.tail)?;
-        Ok(SpillHandle {
-            file,
-            path: self.spill_dir.join(filename),
-        })
+            &BASH_EXEC_SPILL,
+            &format!("{}-{}", self.nonce, self.stream_label),
+        )?;
+        spill.append(&self.head)?;
+        spill.append(&self.tail)?;
+        Ok(spill)
     }
 
     /// Render the current in-memory view, shared by `finish` and `peek`: the
@@ -220,19 +194,37 @@ impl BoundedCapture {
     }
 
     /// Finalize into a [`CaptureResult`], rendering the head+tail view (with a
-    /// middle-omitted marker on overflow) and surfacing the spill path when the
-    /// spill is healthy. The spill `File` is dropped here, closing the fd;
-    /// writes already reached the page cache, so a same-host reader sees them.
+    /// middle-omitted marker on overflow) and surfacing the spill path when
+    /// the spill is healthy. Finalizing links the temp file to its
+    /// content-addressed name (see spill::StreamingSpill); the surfaced path
+    /// is that content-addressed one, while earlier peek banners keep
+    /// resolving through the surviving temp name.
     pub(super) fn finish(mut self) -> CaptureResult {
         let (text, truncated) = self.render_view();
+        // Take the twin before the handle is consumed; it exists once the
+        // spill opened, whether or not finalize later succeeds.
+        let tmp_twin = match &self.spill {
+            SpillState::Open(handle) => Some(handle.tmp_path().to_path_buf()),
+            _ => None,
+        };
         let spill = match std::mem::replace(&mut self.spill, SpillState::Closed) {
-            SpillState::Open(handle) => Some(handle.path),
+            SpillState::Open(handle) => match handle.finalize() {
+                Ok(path) => Some(path),
+                // A finalize failure (e.g. a pre-occupied content hash with
+                // different bytes) degrades to the head+tail view with no
+                // path, exactly like a failed open mid-stream.
+                Err(e) => {
+                    tracing::warn!("bash-exec spill finalize failed: {e}");
+                    None
+                }
+            },
             _ => None,
         };
         CaptureResult {
             text,
             truncated,
             spill,
+            tmp_twin,
         }
     }
 
@@ -245,10 +237,12 @@ impl BoundedCapture {
     pub(super) fn peek(&self) -> CaptureResult {
         let (text, truncated) = self.render_view();
         let spill = self.spill_path();
+        let tmp_twin = self.spill_path();
         CaptureResult {
             text,
             truncated,
             spill,
+            tmp_twin,
         }
     }
 
@@ -259,7 +253,7 @@ impl BoundedCapture {
     /// disk: without this it would outlive its last banner.
     pub(super) fn spill_path(&self) -> Option<PathBuf> {
         match &self.spill {
-            SpillState::Open(handle) => Some(handle.path.clone()),
+            SpillState::Open(handle) => Some(handle.tmp_path().to_path_buf()),
             _ => None,
         }
     }
@@ -284,6 +278,7 @@ impl BoundedCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::MetadataExt;
 
     /// A scratch dir that isolates spill files to the test and cleans them on drop.
     fn scratch() -> tempfile::TempDir {
@@ -291,7 +286,7 @@ mod tests {
     }
 
     fn cap(budget: usize, dir: &tempfile::TempDir) -> BoundedCapture {
-        BoundedCapture::new(budget, "nonce", "out", dir.path().to_path_buf())
+        BoundedCapture::new(budget, "nonce", "out", dir.path().join("spill"))
     }
 
     #[test]
@@ -435,5 +430,83 @@ mod tests {
         c.push(b"abcdefghij");
         assert_eq!(c.total_bytes(), 20);
         assert_eq!(c.tail_text(), "cdefghij");
+    }
+
+    /// After finish, the spill's content-addressed name sits under the
+    /// family's 2-hex shard, and the .tmp twin survives under the same
+    /// inode: earlier banners naming the in-flight path keep resolving.
+    #[test]
+    fn finish_links_content_addressed_name_and_keeps_tmp_twin() {
+        let dir = scratch();
+        let mut c = cap(8, &dir);
+        c.push(b"abcdefghijkl");
+        let r = c.finish();
+        let final_path = r.spill.expect("final spill path");
+        let name = final_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        // 14 hex chars + .txt, at the 2-hex shard level.
+        assert_eq!(name.len(), 18, "14 hex + .txt: {name}");
+        let shard = final_path.parent().unwrap();
+        assert_eq!(shard.file_name().unwrap().len(), 2, "2-hex shard");
+        assert_eq!(shard.parent().unwrap(), dir.path().join("spill/bash-exec"));
+        let tmps: Vec<PathBuf> = std::fs::read_dir(dir.path().join("spill/bash-exec"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with(".tmp-"))
+            })
+            .collect();
+        assert_eq!(tmps.len(), 1, "one tmp twin: {tmps:?}");
+        assert_eq!(
+            final_path.metadata().unwrap().ino(),
+            tmps[0].metadata().unwrap().ino(),
+            "hard link: same inode"
+        );
+        assert_eq!(std::fs::read(&tmps[0]).unwrap(), b"abcdefghijkl");
+    }
+
+    /// A pre-occupied content-addressed file with identical bytes is
+    /// reused: the second stream lands on the same name and inode without
+    /// re-linking.
+    #[test]
+    fn finalize_reuses_a_matching_preoccupied_file() {
+        let dir = scratch();
+        let mut first = cap(8, &dir);
+        first.push(b"shared stream bytes");
+        let path1 = first.finish().spill.expect("first final");
+        let ino1 = path1.metadata().unwrap().ino();
+
+        let mut second = BoundedCapture::new(8, "nonce-2", "out", dir.path().join("spill"));
+        second.push(b"shared stream bytes");
+        let path2 = second.finish().spill.expect("second final");
+        assert_eq!(path1, path2, "content addressing: same name");
+        assert_eq!(
+            path2.metadata().unwrap().ino(),
+            ino1,
+            "reused, not relinked"
+        );
+    }
+
+    /// A pre-occupied name holding different bytes is a collision: the
+    /// capture poisons and surfaces no path, per the never-silently-reuse
+    /// contract.
+    #[test]
+    fn finalize_mismatch_on_preoccupied_name_poisons() {
+        let dir = scratch();
+        let mut probe = cap(8, &dir);
+        probe.push(b"seed bytes");
+        let name_path = probe.finish().spill.expect("seed final");
+        std::fs::write(&name_path, b"foreign").unwrap();
+
+        let mut c = cap(8, &dir);
+        c.push(b"seed bytes");
+        let r = c.finish();
+        assert!(r.spill.is_none(), "mismatch poisons: no path surfaced");
+        assert!(r.text.contains("bytes omitted"));
     }
 }

@@ -746,10 +746,15 @@ pub(super) fn with_banner(stream: &str, cap: &capture::CaptureResult) -> String 
     }
 }
 
-/// Best-effort unlink of a discarded capture's spill file so it does not leak
-/// under `spill_dir` with no banner referencing it.
+/// Best-effort unlink of a discarded capture's spill twin so the spill
+/// does not leak under `spill_dir` with no banner referencing it. The
+/// nonce-unique `.tmp-` twin is the only safe target: the
+/// content-addressed name may be shared with any other stream holding
+/// identical bytes, and unlinking it would dangle those banners.
+/// Whatever remains after this (the shared content name) is reclaimed
+/// by the system tmp cleanup like every other spill file.
 fn drop_spill(cap: &capture::CaptureResult) {
-    if let Some(path) = &cap.spill {
+    if let Some(path) = &cap.tmp_twin {
         let _ = std::fs::remove_file(path);
     }
 }
