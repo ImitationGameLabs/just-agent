@@ -119,6 +119,49 @@ a port and serve the web app in its direct-connect form, pin the new
 port for the UI with
 `services.kallipai.web.runtimeConfig.services.<service>`.
 
+## HTTPS on a LAN or home network
+
+Without reachable ports 80 and 443, ACME cannot issue certificates. On
+a private network, Caddy's `tls internal` directive issues certificates
+from Caddy's own local CA instead; browsers show a warning until the
+host trusts that CA.
+
+The module writes each virtual host's site block. Append the directive
+by setting `extraConfig` for the same host in your own configuration —
+the option is a `types.lines` value, so both definitions concatenate
+into one site block:
+
+```nix
+services.caddy.virtualHosts."archeion.example.com".extraConfig = ''
+  tls internal
+'';
+```
+
+Repeat for the other subdomains as needed. The internal CA's root
+certificate appears after Caddy's first start at
+`/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt`
+(confirm it with `ls` on the target host). Distribute trust from there:
+
+- Firefox keeps its own trust store, separate from the system bundle —
+  import the file manually as an authority (Privacy & Security →
+  Certificates → View Certificates → Authorities → Import) and do not
+  rely on OS-level trust reaching it.
+- For command-line tools (curl, git), copy the root into your
+  configuration tree and add it to the system trust:
+
+```sh
+cp /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt \
+  /etc/nixos/kallipai-root.crt
+```
+
+```nix
+security.pki.certificateFiles = [ ./kallipai-root.crt ];
+```
+
+The copy exists because the CA generates its root at runtime, while
+`security.pki.certificateFiles` is read while the system trust bundle
+is built — a direct reference to the `/var/lib` path cannot resolve.
+
 ## Deploy and verify
 
 Switch into the new generation:
