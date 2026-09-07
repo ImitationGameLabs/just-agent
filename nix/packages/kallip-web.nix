@@ -6,8 +6,8 @@
 # `deno install` (networked sandbox, output pinned by hash against
 # deno.lock) and a pure build derivation reuses its node_modules offline.
 #
-# The deps derivation unpacks the cleaned source for its manifests and
-# i18n messages, and a deno.lock change re-locks the hash.
+# The deps derivation unpacks the cleaned source for the workspace's
+# manifests (deno install), and a deno.lock change re-locks the hash.
 {
   pkgs,
   deno,
@@ -18,24 +18,55 @@
   # services.kallipai.web module's runtimeConfig option.
 }:
 let
-  # Local build state must not leak into the source closure: the deps
-  # derivation produces its own node_modules.
-  filteredSrc = pkgs.lib.cleanSourceWith {
-    inherit src;
-    filter =
-      path: type:
-      !(
-        type == "directory"
-        && builtins.elem (baseNameOf path) [
-          "node_modules"
-          "build"
-          ".svelte-kit"
-          ".git"
-          "target"
-          "dev-certs"
-        ]
-      );
-  };
+  # The web build's read closure as a single-level allowlist: the root
+  # manifests the deno workspace resolves, tsconfig.base.json (which the
+  # library packages' tsconfigs extend and vite/esbuild follows while
+  # transforming them), the seven package subtrees the bundle imports
+  # (kallip-web -> kallip-ui -> {common, kallip-client, archeion/lesche/
+  # files clients}), and the manifests of the two app packages whose
+  # sources the web build never reads -- deno install resolves the whole
+  # workspace, so their package.json rides along. Excluding the rest
+  # (Rust crates, docs, nix expressions, the kallip-app and kallip-direct
+  # trees) keeps unrelated edits from re-materializing the web build
+  # chain. Build state never enters src anyway: the flake source only
+  # carries git-tracked files.
+  filteredSrc =
+    let
+      subtreeRoots = [
+        "packages/kallip-web"
+        "packages/kallip-ui"
+        "packages/kallip-common"
+        "packages/kallip-client"
+        "packages/kallip-archeion-client"
+        "packages/kallip-lesche-client"
+        "packages/kallip-files-client"
+      ];
+      exactEntries = subtreeRoots ++ [
+        # The parent directory is allow-listed for reachability: a
+        # filter false on a directory prunes the whole subtree, so the
+        # entries below are reachable only if "packages" admits it.
+        # True merely descends; children are still filtered one by one.
+        "packages"
+        "deno.json"
+        "deno.lock"
+        "package.json"
+        "tsconfig.base.json"
+        "packages/kallip-app"
+        "packages/kallip-direct"
+        "packages/kallip-app/package.json"
+        "packages/kallip-direct/package.json"
+      ];
+    in
+    pkgs.lib.cleanSourceWith {
+      inherit src;
+      filter =
+        path: type:
+        let
+          relPath = pkgs.lib.removePrefix (toString src + "/") (toString path);
+        in
+        builtins.elem relPath exactEntries
+        || builtins.any (root: pkgs.lib.hasPrefix (root + "/") relPath) subtreeRoots;
+    };
 
   # Both derivations unpack the same cleaned source tree; the deps one
   # only consumes the manifests from it.

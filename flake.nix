@@ -40,8 +40,8 @@
         "aarch64-darwin"
       ];
 
-      # NixOS module exposing the daemon as a system service (platform
-      # hosting phase). Flake-level output, not perSystem: NixOS modules
+      # NixOS module exposing the daemon as a system service. Flake-level
+      # output, not perSystem: NixOS modules
       # are system-agnostic. 'default' follows the flake convention. The
       # module receives the whole packages set and resolves its defaults
       # per host system (packages.${pkgs.stdenv.hostPlatform.system});

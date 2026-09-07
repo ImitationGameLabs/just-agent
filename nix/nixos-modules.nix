@@ -46,7 +46,7 @@ let
   # defaults and the direct-connect warning both read this one
   # binding, so a default change happens here and nowhere else. The
   # web UI's compiled-in copies of these numbers are reconciled by
-  # the config.ports schema work (handover note), not here.
+  # the config.ports schema work, not here.
   defaultPolisPorts = {
     archeion = 7100;
     lesche = 7200;
