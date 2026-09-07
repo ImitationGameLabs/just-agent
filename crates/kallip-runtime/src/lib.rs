@@ -23,6 +23,7 @@ pub(crate) mod runner;
 mod stream_accumulator;
 #[cfg(test)]
 mod test_support;
+mod text_slice;
 pub mod token_budget;
 pub(crate) mod tool_execution;
 pub mod tools;

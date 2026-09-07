@@ -66,3 +66,9 @@ pub(crate) const DEFAULT_TOOL_RESULT_FULL_TOKENS: usize = 30_000;
 /// (startup and failover), because a cap loose enough to survive that
 /// budget would re-create the oversized-turn compaction wedge.
 pub(crate) const DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS: usize = 10_000;
+/// A line at or under this estimate is kept whole when a slice cut lands
+/// inside it (line-aligned slicing in `text_slice`); bigger lines degrade to
+/// char cuts. Token-based, not char-based, so the whole-line slack on the cut
+/// is bounded in budget terms for both densities — the worst alignment
+/// overshoot stays a fraction of the truncated cap.
+pub(crate) const DEFAULT_TOOL_RESULT_LINE_MAX_TOKENS: usize = 2_000;

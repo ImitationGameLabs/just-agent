@@ -11,6 +11,7 @@ use super::turn::{Turn, TurnKind};
 use crate::agent_task::AgentContext;
 use crate::context::AgenticContext;
 use crate::history::{RecordKind, SystemEvent};
+use crate::text_slice::head_tail_slice;
 
 /// Outcome of context compaction via [`summarize_and_evict`].
 pub(crate) enum CompactOutcome {
@@ -51,17 +52,7 @@ fn slice_oversized_turn(turn: &Turn, input_budget: usize) -> Turn {
             text.push('\n');
         }
     }
-    let total = text.chars().count();
-    let sliced = if total <= cap_chars {
-        text
-    } else {
-        let head_chars = cap_chars * 3 / 5;
-        let tail_chars = cap_chars - head_chars;
-        let omitted = total - head_chars - tail_chars;
-        let head: String = text.chars().take(head_chars).collect();
-        let tail: String = text.chars().skip(total - tail_chars).collect();
-        format!("{head}\n[... {omitted} chars omitted ...]\n{tail}")
-    };
+    let (_, _, sliced) = head_tail_slice(&text, cap_chars);
     let messages = vec![ChatMessage::user(format!(
         "[Turn {} exceeded the summarizer budget; head+tail slice]\n{sliced}",
         turn.id.0

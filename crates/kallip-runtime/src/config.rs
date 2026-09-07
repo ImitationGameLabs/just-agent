@@ -15,11 +15,14 @@ use defaults::{
     DEFAULT_TOKEN_BUDGET_WARNINGS, DEFAULT_TOOL_TIMEOUT_SECS, MAX_RETRIES_LIMIT,
     RETRY_DELAY_SECS_LIMIT, RETRY_TIMEOUT_SECS_LIMIT,
 };
-pub(crate) use defaults::{DEFAULT_TOOL_RESULT_FULL_TOKENS, DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS};
-mod exec_hooks;
-pub use exec_hooks::{builtin_exec_hook_rules, load_exec_hook_rules};
+pub(crate) use defaults::{
+    DEFAULT_TOOL_RESULT_FULL_TOKENS, DEFAULT_TOOL_RESULT_LINE_MAX_TOKENS,
+    DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS,
+};
 mod env;
+mod exec_hooks;
 pub use env::{permission_class_from_env, policy_preset_from_env};
+pub use exec_hooks::{builtin_exec_hook_rules, load_exec_hook_rules};
 mod permissions;
 pub use permissions::{
     DEFAULT_MAX_DEPTH, DelegationMode, ParsePermissionClassError, PermissionClass,

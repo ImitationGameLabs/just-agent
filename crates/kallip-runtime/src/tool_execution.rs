@@ -18,6 +18,7 @@ use crate::context::estimate_text;
 use crate::event::AgentEvent;
 use crate::policy::{ToolCallOutcome, error_result, skipped_tool_result, timed_out_tool_result};
 use crate::runner::BreakUntil;
+use crate::text_slice::{char_head_tail, head_tail_slice};
 use crate::tools::DEFAULT_BREAK_TIMEOUT_SECS;
 use just_llm_client::types::chat::{ChatMessage, ToolCallsMessage};
 // ---------------------------------------------------------------------------
@@ -71,42 +72,57 @@ fn cap_tool_result(result: String) -> String {
         return result;
     }
     let total = result.chars().count();
-    // Density-derived character cap, then re-derived once from the cut's own
-    // measured density: the tokenx scan is linear, but measuring the actual
-    // cut is cheaper than proving it so.
+    // Density-derived character cap, then re-derived from each cut's measured
+    // density: the tokenx scan is linear, but measuring the actual cut is
+    // cheaper than proving it so.
     let mut chars_cap = (DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS * total / full_est).max(1);
-    let (mut head, mut tail, mut kept) = head_tail_slice(&result, chars_cap);
-    for _ in 0..2 {
-        let kept_est = estimate_text(&kept);
+    // Line alignment is best-effort cosmetics; the cap landing is the
+    // invariant. Aligned cuts quantize the kept length to whole lines (up to
+    // a whole-line threshold of slack per side), so the aligned phase gets a
+    // few proportional steps to absorb the overshoot; past that the
+    // char-domain cut has no quantization and converges on any density, and
+    // the halving loop is a backstop that always terminates under the cap.
+    let mut parts = head_tail_slice(&result, chars_cap);
+    for _ in 0..4 {
+        let kept_est = estimate_text(&parts.2);
         if kept_est <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS {
-            break;
+            return with_banner(total, full_est, &parts);
         }
         chars_cap = chars_cap * DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS / kept_est.max(1);
-        (head, tail, kept) = head_tail_slice(&result, chars_cap);
+        parts = head_tail_slice(&result, chars_cap);
     }
+    for _ in 0..4 {
+        let kept_est = estimate_text(&parts.2);
+        if kept_est <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS {
+            return with_banner(total, full_est, &parts);
+        }
+        chars_cap = chars_cap * DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS / kept_est.max(1);
+        parts = char_head_tail(&result, chars_cap);
+    }
+    while chars_cap > 1 {
+        chars_cap /= 2;
+        parts = char_head_tail(&result, chars_cap);
+        if estimate_text(&parts.2) <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS {
+            return with_banner(total, full_est, &parts);
+        }
+    }
+    with_banner(total, full_est, &parts)
+}
+
+/// Wrap the capped body with the truncation banner: what was kept, how big
+/// the whole output was, and how to get at the rest. The gap itself is
+/// declared by the marker inside the body — the banner covers the totals.
+fn with_banner(total: usize, full_est: usize, parts: &(usize, usize, String)) -> String {
     let banner = format!(
-        "{kept}\n[... truncated: kept first {head} and last {tail} of {total} chars (~{} of ~{full_est} estimated tokens). Narrow the command's output and re-run to see other parts ...]",
-        estimate_text(&kept)
+        "{}\n[... truncated: kept first {} and last {} of {total} chars (~{} of ~{full_est} estimated tokens). Narrow the command's output and re-run to see other parts ...]",
+        parts.2,
+        parts.0,
+        parts.1,
+        estimate_text(&parts.2)
     );
     banner
 }
 
-/// Head (60%) + tail (40%) character slice of `text` within `cap_chars`.
-/// Returns `(head_chars, tail_chars, sliced)`.
-fn head_tail_slice(text: &str, cap_chars: usize) -> (usize, usize, String) {
-    let total = text.chars().count();
-    if total <= cap_chars {
-        return (total, 0, text.to_owned());
-    }
-    let head = cap_chars * 3 / 5;
-    let tail = cap_chars - head;
-    let sliced: String = text
-        .chars()
-        .take(head)
-        .chain(text.chars().skip(total - tail))
-        .collect();
-    (head, tail, sliced)
-}
 /// Run one tool call, applying the outer timeout only when the tool does
 /// not own its own bound (see [`OWNS_TIMEOUT_TOOLS`]).
 pub(crate) async fn run_tool_bounded<F>(
@@ -508,6 +524,50 @@ mod cap_tests {
     use kallip_common::toolresult::ToolResultEnvelope;
 
     #[test]
+    fn line_structured_output_is_cut_on_line_boundaries() {
+        // ~80 chars/line of prose: every line is far under the whole-line
+        // threshold, so both cut sides must land on line boundaries.
+        let mut text = String::new();
+        for i in 0..3_000 {
+            // Prose-plus-numbers filler: tokenx compresses runs of repeated
+            // chars, so the gate fixture needs varied text to stay over the
+            // full-result line.
+            text.push_str(&format!(
+                "L{i:04} line {i} value {} carries state and diagnostics for slice {}\n",
+                i * 37,
+                i * 91
+            ));
+        }
+        assert!(estimate_text(&text) > DEFAULT_TOOL_RESULT_FULL_TOKENS);
+
+        let capped = cap_tool_result(text.clone());
+        assert!(
+            capped.contains("chars omitted"),
+            "mid-seam gap must be declared"
+        );
+        assert!(capped.starts_with("L0000 "));
+        let m = capped.find("\n[... ").unwrap();
+        assert_eq!(
+            capped.as_bytes()[m - 1],
+            b'\n',
+            "head must end at a line end"
+        );
+        let after = capped.find("chars omitted ...]\n").unwrap() + "chars omitted ...]\n".len();
+        let tail = &capped[after..];
+        assert!(tail.starts_with('L'), "tail must start at a line start");
+        let line_end = tail.find('\n').unwrap() + 1;
+        assert!(
+            text.contains(&tail[..line_end]),
+            "tail must begin with a complete source line"
+        );
+        assert!(
+            estimate_text(&capped) <= DEFAULT_TOOL_RESULT_TRUNCATED_TOKENS + 200,
+            "kept estimate {} exceeded the cap",
+            estimate_text(&capped)
+        );
+    }
+
+    #[test]
     fn small_tool_result_passes_through_untouched() {
         let r = "plain small output".to_string();
         assert_eq!(cap_tool_result(r.clone()), r);
@@ -524,6 +584,10 @@ mod cap_tests {
 
         let capped = cap_tool_result(big.clone());
         assert!(capped.contains("truncated"), "banner must be present");
+        assert!(
+            capped.contains("chars omitted"),
+            "mid-seam gap must be declared"
+        );
         assert!(capped.starts_with("HEAD"), "head sentinel must be kept");
         assert!(capped.contains("TAIL"), "tail sentinel must be kept");
         // The cap covers the banner too: everything over it is the marker text.
