@@ -503,9 +503,11 @@ async fn overflow_before_conversion_keeps_banner_and_cleans_spill() {
 /// size_watchdog_kills_overflow; this pins the adopted-task branch.
 #[tokio::test]
 async fn converted_pipes_size_watchdog_kills_overflow() {
+    let spill = tempfile::TempDir::new().unwrap();
     let mut backend = ShellBuilder::new()
         .max_output_bytes(2048)
         .max_bg_bytes(8192)
+        .spill_dir(spill.path().join("spill"))
         .build()
         .await
         .unwrap();
@@ -577,8 +579,10 @@ async fn converted_grandchild_pipe_drain_reaches_terminal() {
 /// (clipped head+tail view) with the real exit code.
 #[tokio::test]
 async fn converted_task_read_after_exit_keeps_head_and_tail() {
+    let spill = tempfile::TempDir::new().unwrap();
     let mut backend = ShellBuilder::new()
         .max_output_bytes(2048)
+        .spill_dir(spill.path().join("spill"))
         .build()
         .await
         .unwrap();
@@ -1186,6 +1190,54 @@ async fn spill_refuses_symlinked_spill_dir() {
     );
 }
 
+/// Suite hermeticity guard (the F-4 class): a cap-lowering, overflowing
+/// exec spills only into the injected scratch — the bash-exec family of
+/// the real default root, the only family tests can write, must end
+/// the test with exactly the files it started with. Every
+/// spill-capable test injects a scratch dir; this test fails if one
+/// ever defaults to the live root and leans on cleanup chains instead.
+///
+/// The family scope is deliberate: the message family belongs to the
+/// live platform, whose concurrent prompt spills would make a
+/// whole-tree count flaky; that surface belongs to the review-side
+/// acceptance check, which diffs the whole root around the suite. A
+/// move inside the bash-exec family is low-probability (the live root
+/// should have no concurrent writes during a synchronous run), so a
+/// move is a real anomaly signal, not noise to filter.
+#[tokio::test]
+async fn overflowing_exec_leaves_the_default_spill_root_untouched() {
+    let default_family = crate::spill::spill_root().join("bash-exec");
+    let residue = || spill_files(&default_family).len();
+    let before = residue();
+    let scratch = tempfile::TempDir::new().unwrap();
+    let mut backend = ShellBuilder::new()
+        .max_output_bytes(32)
+        .spill_dir(scratch.path().join("spill"))
+        .build()
+        .await
+        .unwrap();
+    let out = backend
+        .exec(
+            "printf 'A%.0s' {1..200}",
+            Duration::from_secs(10),
+            CaptureMode::Merged,
+        )
+        .await
+        .unwrap();
+    assert!(
+        out.truncated,
+        "the exec must overflow for this guard to bite"
+    );
+    assert!(
+        !finalized_spills(scratch.path()).is_empty(),
+        "the spill must land in the injected scratch"
+    );
+    assert_eq!(
+        before,
+        residue(),
+        "the real default spill root changed during the test"
+    );
+}
 /// A SIGKILL before the EXIT trap fires loses the cwd (no trap ran); the
 /// caller falls back rather than reporting a stale path.
 #[tokio::test]

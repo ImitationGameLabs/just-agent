@@ -366,6 +366,10 @@ in
           owner. Set offlineLogin = false to hide it (a cloud-facing
           deployment), or add domain/tlsOff/services to pin values the
           app would otherwise derive from the browser location.
+          The file is served publicly by Caddy, so anything placed here is
+          readable by anyone who can reach the site — keep it to values the
+          browser is meant to see; secrets belong in environment files or
+          credential stores, never in this option.
         '';
       };
 

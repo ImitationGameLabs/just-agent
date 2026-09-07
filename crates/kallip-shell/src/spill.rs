@@ -196,6 +196,10 @@ fn reuse_verified(
 /// purpose: banners that pointed at the in-flight path stay valid, and
 /// the leftover is reclaimed by the system /tmp cleanup like every other
 /// spill file.
+/// A twin orphaned by a crash between create and
+/// finalize or discard is the same residue: no code path re-reads a
+/// temp name, so a stale or poisoned twin stays inert until the
+/// system cleanup reclaims it.
 pub struct StreamingSpill {
     file: File,
     tmp_path: PathBuf,
@@ -384,5 +388,62 @@ mod tests {
             let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o700, "chain dir {:?} must be 0700", dir);
         }
+    }
+
+    /// The finalized content-addressed file exists and the `.tmp-` twin is
+    /// still in place: banners that named the in-flight path stay valid
+    /// after completion. The twin is intentional residue, reclaimed by the
+    /// system /tmp cleanup like every other spill file.
+    #[test]
+    fn finalize_leaves_the_tmp_twin_in_place() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("kallipai").join("spill");
+        let mut spill = StreamingSpill::create(&root, &MESSAGE_SPILL, "nonce-1").unwrap();
+        spill.append(b"hello").unwrap();
+        let finalized = spill.finalize().unwrap();
+        assert_eq!(std::fs::read(&finalized).unwrap(), b"hello");
+        let twin = root.join("message").join(".tmp-nonce-1");
+        assert!(twin.exists(), "tmp twin survives finalize for banners");
+        assert_eq!(std::fs::read(&twin).unwrap(), b"hello");
+    }
+
+    /// A poisoned `.tmp-` twin (e.g. left behind by a crashed run) is
+    /// inert: content spill only ever touches content-addressed names, a
+    /// fresh stream never reopens another stream's temp name, and the
+    /// poison is neither read nor rewritten — it waits for the system
+    /// /tmp cleanup. No cleanup path exists in-process on purpose.
+    #[test]
+    fn poisoned_tmp_twin_is_never_read() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("kallipai").join("spill");
+        std::fs::create_dir_all(root.join("message")).unwrap();
+        let poison = root.join("message").join(".tmp-poisoned");
+        std::fs::write(&poison, b"garbage").unwrap();
+        let path = spill_content(&root, &layout(), "real").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"real");
+        let mut spill = StreamingSpill::create(&root, &MESSAGE_SPILL, "fresh").unwrap();
+        spill.append(b"stream").unwrap();
+        let finalized = spill.finalize().unwrap();
+        assert_eq!(std::fs::read(&finalized).unwrap(), b"stream");
+        assert_eq!(std::fs::read(&poison).unwrap(), b"garbage");
+    }
+
+    /// A stale twin at a reused stream key fails the create closed: O_EXCL
+    /// refuses the name, so the stale bytes are never truncated, read, or
+    /// silently reused as if they were this stream's content.
+    #[test]
+    fn same_stream_key_fails_closed_over_a_stale_twin() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("kallipai").join("spill");
+        let mut first = StreamingSpill::create(&root, &MESSAGE_SPILL, "dup").unwrap();
+        first.append(b"first").unwrap();
+        let second = StreamingSpill::create(&root, &MESSAGE_SPILL, "dup");
+        let err = match second {
+            Ok(_) => panic!("same stream key must fail closed"),
+            Err(e) => e,
+        };
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        let finalized = first.finalize().unwrap();
+        assert_eq!(std::fs::read(&finalized).unwrap(), b"first");
     }
 }
