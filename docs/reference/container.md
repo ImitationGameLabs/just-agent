@@ -159,6 +159,11 @@ arion -f compose/prod/polis.nix logs -f
 
 ### polis services — the NixOS module
 
+For a step-by-step walkthrough of a full host deployment — module import,
+token file, and verification — see
+[nixos-deployment.md](../nixos-deployment.md); this section is the
+option-level reference.
+
 The archeion, lesche, files, and instances services run as systemd units
 on the NixOS host, enabled with one switch:
 

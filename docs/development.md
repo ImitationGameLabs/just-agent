@@ -10,6 +10,8 @@ This doc covers the day-1 bring-up and the iteration loop. For the container
 images, the production split, and the integration-test mode, see
 [container.md](reference/container.md); for the frontend workspace, see
 [frontend-development.md](frontend-development.md).
+For the NixOS host deployment, see
+[nixos-deployment.md](nixos-deployment.md).
 
 ## Prerequisites
 
