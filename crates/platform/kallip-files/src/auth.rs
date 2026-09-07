@@ -48,7 +48,7 @@ pub struct FilesControlPlane {
     /// is appended per call.
     base_url: String,
     /// Plaintext shared secret sent as `Authorization: Bearer <token>`;
-    /// must equal the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.
+    /// must equal the archeion's `KALLIP_POLIS_INTERNAL_TOKEN`.
     token: String,
     http: reqwest::Client,
 }

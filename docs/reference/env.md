@@ -304,7 +304,7 @@ shell's spawn env (no flags carry secrets).
 | `KALLIP_FILES_BLOB_ROOT` | yes (service) | _(unset)_ | Root directory of the content-addressed blob store; created on demand. |
 | `KALLIP_FILES_DATABASE_URL` | yes (service) | _(unset)_ | Postgres URL for the metadata store; a missing URL fails fast at boot. |
 | `KALLIP_FILES_ARCHEION_INTERNAL_URL` | yes (service) | _(unset)_ | Archeion internal base URL for `/internal/*` ControlPlane calls. Must NOT be publicly reachable. |
-| `KALLIP_FILES_ARCHEION_TOKEN` | yes (service) | _(unset)_ | Shared secret bearer for the archeion `/internal/*` API; must equal the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`. |
+| `KALLIP_POLIS_INTERNAL_TOKEN` | yes (service) | _(unset)_ | Shared platform-internal secret bearer for the archeion `/internal/*` API; the same key the archeion, lesche, files, and instances services read. |
 | `KALLIP_FILES_MAX_BODY_SIZE_MB` | no | `100` | Maximum accepted upload body, in megabytes; larger streams are cut off with 413. |
 | `KALLIP_FILES_DEGRADE` | no | `closed` | Archeion degrade posture: `closed` fails authorization with 503 when the registry cannot answer; `soft` degrades to deny (403). Neither posture weakens credential verification. |
 | `KALLIP_FILES_GC_INTERVAL_SECS` | no | `60` | Delay between GC passes (sweep + reconcile), in seconds. |

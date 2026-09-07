@@ -43,7 +43,7 @@ pub trait AuthVerifier: Send + Sync {
 pub struct ArcheionVerifier {
     /// Archeion internal root (e.g. `http://127.0.0.1:7100`).
     base_url: String,
-    /// Shared secret matching the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.
+    /// Shared secret matching the archeion's `KALLIP_POLIS_INTERNAL_TOKEN`.
     internal_token: String,
     http: reqwest::Client,
 }

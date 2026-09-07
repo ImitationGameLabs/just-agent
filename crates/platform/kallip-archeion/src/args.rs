@@ -162,9 +162,10 @@ pub struct Args {
     pub oauth_google_client_secret: Option<String>,
     /// Shared secret that `kallip-lesche` presents as `Authorization: Bearer`
     /// to the `/internal/*` ControlPlane API. Unset = the `/internal` nest is
-    /// not mounted (archeion runs standalone, no relay connected). Must equal the
-    /// lesche's `KALLIP_LESCHE_ARCHEION_TOKEN`.
-    #[arg(long, env = "KALLIP_ARCHEION_INTERNAL_TOKEN")]
+    /// not mounted (archeion runs standalone, no relay connected). This is the
+    /// platform-internal secret shared by the archeion, lesche, files, and
+    /// instances services (`KALLIP_POLIS_INTERNAL_TOKEN`).
+    #[arg(long, env = "KALLIP_POLIS_INTERNAL_TOKEN")]
     pub internal_token: Option<String>,
     /// Mount POST /v1/auth/admin-login: exchange the admin token for a normal
     /// User session on a fixed local account (the local-platform login; see

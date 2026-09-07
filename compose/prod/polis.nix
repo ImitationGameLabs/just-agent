@@ -77,7 +77,7 @@ in
       service.environment = {
         KALLIP_ARCHEION_ADDR = "0.0.0.0:7100";
         RUST_LOG = "info";
-        # KALLIP_ARCHEION_INTERNAL_TOKEN (the shared secret the lesche presents to
+        # KALLIP_POLIS_INTERNAL_TOKEN (the shared secret the lesche presents to
         # the /internal/* surface) comes from .env. When unset, the archeion runs
         # standalone and the /internal nest is not mounted -- so the lesche
         # service below will fail its ControlPlane calls until it is set.
@@ -114,8 +114,8 @@ in
         # routed through the public edge.
         KALLIP_LESCHE_ARCHEION_INTERNAL_URL = "http://archeion:7100";
         RUST_LOG = "info";
-        # KALLIP_LESCHE_DATABASE_URL (the chat schema), KALLIP_LESCHE_ARCHEION_TOKEN
-        # (must equal the archeion's KALLIP_ARCHEION_INTERNAL_TOKEN), and
+        # KALLIP_LESCHE_DATABASE_URL (the chat schema), KALLIP_POLIS_INTERNAL_TOKEN
+        # (the platform-internal shared secret), and
         # KALLIP_LESCHE_CORS_ORIGINS come from .env.
       };
       # No service.ports -- like the archeion, the lesche sits behind the
@@ -146,8 +146,8 @@ in
         KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://archeion:7100";
         RUST_LOG = "info";
         # KALLIP_FILES_DATABASE_URL (the metadata schema) and
-        # KALLIP_FILES_ARCHEION_TOKEN (must equal the archeion's
-        # KALLIP_ARCHEION_INTERNAL_TOKEN) come from .env.
+        # KALLIP_POLIS_INTERNAL_TOKEN (the platform-internal shared secret,
+        # the same key the archeion reads) come from .env.
       };
       # No service.ports -- like the archeion and the lesche, the files service
       # sits behind the TLS-terminating reverse proxy.

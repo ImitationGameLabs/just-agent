@@ -117,16 +117,14 @@ in
       internalTokenFile = lib.mkOption {
         type = lib.types.path;
         description = ''
-          Root-only (0600) EnvironmentFile carrying the shared archeion-internal
+          Root-only (0600) EnvironmentFile carrying the shared platform-internal
           secret -- the /internal/* ControlPlane trust boundary, so the
-          deployment cannot come up without it. The file must define four keys
-          with the same value: KALLIP_ARCHEION_INTERNAL_TOKEN (the archeion
-          mounts the /internal nest only when set), KALLIP_LESCHE_ARCHEION_TOKEN
-          and KALLIP_FILES_ARCHEION_TOKEN (what the lesche and the files service
-          present to that nest), and KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN
-          (what the instances service presents when verifying the SPA's admin
-          bearer). Format is systemd's line-based KEY=value; a
-          token containing #, quotes, or leading whitespace breaks the parse.
+          deployment cannot come up without it. The file must define one key:
+          KALLIP_POLIS_INTERNAL_TOKEN (the archeion mounts the /internal nest
+          only when set; the lesche and the files service present it to that
+          nest, and the instances service presents it when verifying the SPA's
+          admin bearer). Format is systemd's line-based KEY=value; a token
+          containing #, quotes, or leading whitespace breaks the parse.
         '';
       };
       adminTokenFile = lib.mkOption {

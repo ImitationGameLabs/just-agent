@@ -5,7 +5,7 @@
 //! trait (in `kallip-archeion-common`). The data-plane relay (`kallip-lesche`) is a
 //! separate process that consumes that trait over the `/internal/*` HTTP API
 //! served here (each handler wraps the DB-backed `DbControlPlane`, guarded by a
-//! shared-secret bearer). If `KALLIP_ARCHEION_INTERNAL_TOKEN` is unset, the
+//! shared-secret bearer). If `KALLIP_POLIS_INTERNAL_TOKEN` is unset, the
 //! `/internal` nest is not mounted and the archeion runs standalone.
 
 mod args;
@@ -175,7 +175,7 @@ async fn main() -> Result<()> {
     // a non-empty shared secret is configured; an unset (or empty) token runs
     // the archeion standalone (no relay connected, no internal surface exposed).
     // Treating the empty string as "unset" is load-bearing: an operator who
-    // exports `KALLIP_ARCHEION_INTERNAL_TOKEN=` (intending to disable) must NOT
+    // exports `KALLIP_POLIS_INTERNAL_TOKEN=` (intending to disable) must NOT
     // instead enable the surface with a trivially-known empty secret.
     let internal_hash = args
         .internal_token
@@ -184,7 +184,7 @@ async fn main() -> Result<()> {
         .map(TokenHash::of);
     if matches!(&args.internal_token, Some(s) if s.is_empty()) {
         warn!(
-            "KALLIP_ARCHEION_INTERNAL_TOKEN is set but empty; treating as unset (no /internal surface)"
+            "KALLIP_POLIS_INTERNAL_TOKEN is set but empty; treating as unset (no /internal surface)"
         );
     }
 

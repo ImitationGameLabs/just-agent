@@ -121,8 +121,8 @@ topology).
 
 > **Note**: the data-plane relay (`kallip-lesche`) is a separate service from
 > the archeion, reached over its `/internal/*` ControlPlane API guarded by a shared
-> secret (`KALLIP_ARCHEION_INTERNAL_TOKEN` on the archeion, `KALLIP_LESCHE_ARCHEION_TOKEN`
-> on the lesche). The operator's edge HOST-routes the two subdomains to the two
+> secret (`KALLIP_POLIS_INTERNAL_TOKEN` on both). The operator's edge
+> HOST-routes the two subdomains to the two
 > services and the session cookie carries `Domain=<parent>`
 > (`KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN`) so login on `archeion.<d>` is recognized on
 > `lesche.<d>`. `/internal` is reached by the lesche over the private network,
@@ -382,7 +382,7 @@ in `.env` via `.env.example`; the code default is the prod `kallipai.com`):
 | `KALLIP_ARCHEION_COOKIE_SECURE`      | no (defaults true)            | Keep `true` behind TLS; `false` only for plain-HTTP dev. Dev is now behind Caddy's TLS and hardcodes `true`.                            |
 | `KALLIP_ARCHEION_TRUSTED_PROXIES`    | **yes** behind a remote proxy | Loopback-only by default and **cleared on a public bind**; set to the proxy's CIDR so X-Forwarded-For / per-client rate limiting work. Dev trusts loopback (`127.0.0.0/8, ::1/128`) because Caddy proxies over the host network. |
 | `KALLIP_ARCHEION_ADMIN_TOKEN`        | no                            | Stable admin token; else generated per boot and printed to `arion logs archeion`.                                                         |
-| `KALLIP_LESCHE_ARCHEION_TOKEN`       | **yes** (prod-archeion)          | Shared secret the lesche presents to the archeion's `/internal/*` surface; must equal the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.          |
+| `KALLIP_POLIS_INTERNAL_TOKEN`     | **yes** (all four services)     | Shared platform-internal secret presented to the archeion's `/internal/*` surface. |
 | `KALLIP_LESCHE_CORS_ORIGINS`      | **yes** (prod-archeion)          | The app origin(s) for the lesche; never a wildcard on a public deploy.                                                                 |
 
 The archeion, lesche, files, and instances services can also be configured through the `services.kallipai.polis` NixOS module and its token files instead of `.env` (see the polis section above).

@@ -35,8 +35,8 @@ pub struct Config {
     #[arg(long, env = "KALLIP_INSTANCES_ARCHEION_URL")]
     pub archeion_internal_url: Option<String>,
 
-    /// Shared secret matching the archeion's KALLIP_ARCHEION_INTERNAL_TOKEN.
-    #[arg(long, env = "KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN")]
+    /// Shared platform-internal secret (KALLIP_POLIS_INTERNAL_TOKEN).
+    #[arg(long, env = "KALLIP_POLIS_INTERNAL_TOKEN")]
     pub archeion_internal_token: Option<String>,
     /// Server-side default relay URLs for spawned tagmata that signal
     /// relay intent (any KALLIP_TAGMA_RELAY_* env) but omit a URL; local-

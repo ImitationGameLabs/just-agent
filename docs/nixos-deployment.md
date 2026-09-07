@@ -47,19 +47,13 @@ kallipai packages:
 
 The polis services authenticate to each other with one shared secret.
 `internalTokenFile` points at a root-only EnvironmentFile that must
-define four keys carrying the same value:
+define that one key:
 
 ```sh
-KALLIP_ARCHEION_INTERNAL_TOKEN=<same-random-value>
-KALLIP_LESCHE_ARCHEION_TOKEN=<same-random-value>
-KALLIP_FILES_ARCHEION_TOKEN=<same-random-value>
-KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN=<same-random-value>
+KALLIP_POLIS_INTERNAL_TOKEN=<random-value>
 ```
 
-Create the file and paste the four lines (a fresh deployment writes all
-four keys in one go; an existing deployment that already runs an earlier
-token file adds the fourth key — the instances service fails closed and
-refuses to start without it):
+Create the file and paste the line:
 
 ```sh
 sudo install -m 0600 /dev/null /etc/kallipai/polis-internal-tokens
@@ -183,8 +177,8 @@ files, and instances subdomains through the same proxy.
 
 A missing or unreadable `internalTokenFile` keeps the affected unit from
 starting (the unit fails when the EnvironmentFile cannot be read), and a
-token file without the fourth key keeps `kallip-instances` from
-starting — `journalctl -u kallip-instances` shows the failure.
+token file without the key keeps the lesche, files, and instances
+units from starting — `journalctl -u kallip-instances` shows the failure.
 
 ## Further options
 

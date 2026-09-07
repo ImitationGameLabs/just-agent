@@ -24,9 +24,9 @@ pub struct Args {
     /// `http://127.0.0.1:7100`). Must NOT be publicly reachable.
     #[arg(long, env = "KALLIP_FILES_ARCHEION_INTERNAL_URL")]
     pub archeion_internal_url: String,
-    /// Shared secret bearer for the archeion `/internal/*` API. Must equal
-    /// the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.
-    #[arg(long, env = "KALLIP_FILES_ARCHEION_TOKEN")]
+    /// Shared secret bearer for the archeion `/internal/*` API; the
+    /// platform-internal secret (`KALLIP_POLIS_INTERNAL_TOKEN`).
+    #[arg(long, env = "KALLIP_POLIS_INTERNAL_TOKEN")]
     pub archeion_internal_token: String,
     /// Postgres URL for the metadata store (e.g.
     /// `postgres://user:pass@host/db`). Required: records, refcounts, and

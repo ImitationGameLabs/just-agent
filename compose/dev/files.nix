@@ -7,8 +7,8 @@
 # Shape follows the stack's existing services: the workspace `files` binary
 # via useHostStore, its own postgres:17.5 with a files_pgdata named volume,
 # and the dev shared internal secret ("dev-internal-secret") presented as
-# KALLIP_FILES_ARCHEION_TOKEN -- it must equal the archeion's
-# KALLIP_ARCHEION_INTERNAL_TOKEN (same discipline as the lesche/instances pair).
+# KALLIP_POLIS_INTERNAL_TOKEN -- the same key the archeion reads (same
+# discipline as the lesche/instances pair).
 { pkgs, lib, ... }:
 let
   # Load via git+file URL (not a bare path) so getFlake applies fetchGit's VCS
@@ -91,9 +91,9 @@ in
         # Private compose-network hop to the archeion's /internal surface; never
         # routed through the public edge.
         KALLIP_FILES_ARCHEION_INTERNAL_URL = "http://archeion:7100";
-        # Must equal the archeion's KALLIP_ARCHEION_INTERNAL_TOKEN (dev
-        # fixture, same discipline as the lesche's KALLIP_LESCHE_ARCHEION_TOKEN).
-        KALLIP_FILES_ARCHEION_TOKEN = "dev-internal-secret";
+        # Must equal the archeion's KALLIP_POLIS_INTERNAL_TOKEN (dev
+        # fixture, same discipline as the lesche/instances pair).
+        KALLIP_POLIS_INTERNAL_TOKEN = "dev-internal-secret";
         KALLIP_FILES_NOTIFY_URL = "http://lesche:7200";
         # Same dev shared secret discipline: must equal the lesche's
         # KALLIP_LESCHE_INTERNAL_TOKEN.

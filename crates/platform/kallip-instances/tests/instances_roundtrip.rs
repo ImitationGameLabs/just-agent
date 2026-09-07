@@ -737,9 +737,7 @@ fn half_configured_archeion_url_refuses_to_start() {
     };
     let error = kallip_instances::resolve_auth(&config, &config.addr).expect_err("must refuse");
     assert!(
-        error
-            .to_string()
-            .contains("KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN"),
+        error.to_string().contains("KALLIP_POLIS_INTERNAL_TOKEN"),
         "{error}"
     );
 }

@@ -46,7 +46,7 @@ pub struct HttpControlPlane {
 
 impl HttpControlPlane {
     /// `base_url` is the archeion's internal root; `token` is the plaintext shared
-    /// secret that must match the archeion's `KALLIP_ARCHEION_INTERNAL_TOKEN`.
+    /// secret that must match the archeion's `KALLIP_POLIS_INTERNAL_TOKEN`.
     pub fn new(base_url: String, token: String) -> Self {
         let http = reqwest::Client::builder()
             .timeout(INTERNAL_TIMEOUT)

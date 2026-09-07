@@ -282,11 +282,11 @@ in
         # set and log every client as 127.0.0.1 (collapsing per-client rate
         # limiting).
         KALLIP_ARCHEION_TRUSTED_PROXIES = "127.0.0.0/8, ::1/128";
-        # Dev shared secret mounting the /internal ControlPlane surface for
-        # the lesche. Hardcoded like the dev DB creds (prod reads it from
-        # .env). The lesche presents the SAME value as
-        # KALLIP_LESCHE_ARCHEION_TOKEN.
-        KALLIP_ARCHEION_INTERNAL_TOKEN = "dev-internal-secret";
+        # Dev shared secret mounting the /internal ControlPlane surface.
+        # Hardcoded like the dev DB creds (prod reads it from .env). This is
+        # the platform-internal secret; the lesche, files, and instances
+        # services present the SAME key (KALLIP_POLIS_INTERNAL_TOKEN).
+        KALLIP_POLIS_INTERNAL_TOKEN = "dev-internal-secret";
         # The local-platform login refuses to boot with an operator-set
         # admin token shorter than 32 chars, so the dev fixture pins a
         # compliant one HERE (service.environment overrides the shorter
@@ -333,8 +333,8 @@ in
         KALLIP_LESCHE_ADDR = "0.0.0.0:7200";
         KALLIP_LESCHE_DATABASE_URL = "postgres://kallip:kallip@lesche-postgres:5432/kallip";
         KALLIP_LESCHE_ARCHEION_INTERNAL_URL = "http://archeion:7100";
-        # Must equal the archeion's KALLIP_ARCHEION_INTERNAL_TOKEN above.
-        KALLIP_LESCHE_ARCHEION_TOKEN = "dev-internal-secret";
+        # The archeion reads the same platform-internal key above.
+        KALLIP_POLIS_INTERNAL_TOKEN = "dev-internal-secret";
         KALLIP_LESCHE_INTERNAL_TOKEN = "dev-internal-secret";
         # Allow the web app origin (https://web.<devDomain> via Caddy) to
         # make credentialed cross-origin calls to lesche.<devDomain>.
@@ -381,10 +381,10 @@ in
         # INTO the container mount, never at a host path.
         KALLIP_DAEMON_SOCKET = "/state/control.sock";
         # Platform mode: the archeion's internal face verifies the SPA's
-        # sk-admin- bearer; the token must equal the archeion's
-        # KALLIP_ARCHEION_INTERNAL_TOKEN (dev fixture, same discipline).
+        # sk-admin- bearer; the token is the archeion's platform-internal
+        # secret (dev fixture, same discipline).
         KALLIP_INSTANCES_ARCHEION_URL = "http://archeion:7100";
-        KALLIP_INSTANCES_ARCHEION_INTERNAL_TOKEN = "dev-internal-secret";
+        KALLIP_POLIS_INTERNAL_TOKEN = "dev-internal-secret";
         KALLIP_INSTANCES_ALLOWED_HOSTS = if tlsOff then devDomain else "instances.${devDomain}";
         KALLIP_INSTANCES_CORS_ORIGINS = webOrigin;
         RUST_LOG = "info";

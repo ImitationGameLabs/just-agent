@@ -127,8 +127,8 @@ each service's CORS allowlist authorizes the web origin with credentials. A
 single-origin deploy leaves the cookie host-only (the attribute unset).
 
 That `/internal/*` surface is guarded by a shared-secret bearer
-(`KALLIP_ARCHEION_INTERNAL_TOKEN` on the archeion, `KALLIP_LESCHE_ARCHEION_TOKEN` on the
-lesche — the same value). The comparison is constant-time. If the token is
+(`KALLIP_POLIS_INTERNAL_TOKEN`, the same key on the archeion and the
+lesche). The comparison is constant-time. If the token is
 unset on the archeion, the `/internal` nest is not mounted at all (the archeion runs
 standalone, no relay connected). The surface must be network-isolated so only
 the lesche can reach it.
