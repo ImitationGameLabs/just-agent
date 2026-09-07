@@ -26,6 +26,17 @@ let
   polisCfg = config.services.kallipai.polis;
   webCfg = config.services.kallipai.web;
 
+  # Single source of truth for the polis port defaults: the option
+  # defaults and the direct-connect warning both read this one
+  # binding, so a default change happens here and nowhere else. The
+  # web UI's compiled-in copies of these numbers are reconciled by
+  # the config.ports schema work (handover note), not here.
+  defaultPolisPorts = {
+    archeion = 7100;
+    lesche = 7200;
+    files = 7400;
+  };
+
   # Inject an environment key only when the option carries a value: null
   # means "let the service's own default govern", keeping the code default
   # the single source of truth -- a mirrored default here would drift from
@@ -35,14 +46,9 @@ let
     lib.optionalAttrs (value != null) {
       ${name} = if lib.isBool value then lib.boolToString value else toString value;
     };
-  # The polis listeners' fixed localhost ports, shared by the systemd
-  # environment and the caddy routes; one table so a port change is a
-  # one-line edit.
-  polisPorts = {
-    archeion = 7100;
-    lesche = 7200;
-    files = 7400;
-  };
+  # The polis listeners' localhost ports, configured per service under
+  # services.kallipai.polis.ports and shared by the env and caddy routes.
+  polisPorts = polisCfg.ports;
 in
 {
   options.services.kallipai = {
@@ -139,6 +145,39 @@ in
           null: the lesche leaves its internal surface unmounted and the push
           stays disabled (the safe standalone posture).
         '';
+      };
+
+      ports = {
+        archeion = lib.mkOption {
+          type = lib.types.port;
+          default = defaultPolisPorts.archeion;
+          description = ''
+            Listening port of the archeion service. Must be 1024-65535;
+            pick a port outside the system's ephemeral range and unused by
+            other services on this host — a conflict surfaces at service
+            start as an address-in-use error.
+          '';
+        };
+        lesche = lib.mkOption {
+          type = lib.types.port;
+          default = defaultPolisPorts.lesche;
+          description = ''
+            Listening port of the lesche service. Must be 1024-65535;
+            pick a port outside the system's ephemeral range and unused by
+            other services on this host — a conflict surfaces at service
+            start as an address-in-use error.
+          '';
+        };
+        files = lib.mkOption {
+          type = lib.types.port;
+          default = defaultPolisPorts.files;
+          description = ''
+            Listening port of the files service. Must be 1024-65535;
+            pick a port outside the system's ephemeral range and unused by
+            other services on this host — a conflict surfaces at service
+            start as an address-in-use error.
+          '';
+        };
       };
 
       proxy = {
@@ -395,7 +434,44 @@ in
           assertion = webCfg.enable -> webCfg.domain != null;
           message = "services.kallipai.web.domain must be set when services.kallipai.web is enabled.";
         }
-      ];
+      ]
+      ++ lib.optionals polisCfg.enable (
+        # The three listeners must not collide: a shared port is always a
+        # misconfiguration, so fail at eval time with the pair and value.
+        (map
+          (pair: {
+            assertion = polisCfg.ports.${builtins.elemAt pair 0} != polisCfg.ports.${builtins.elemAt pair 1};
+            message = "services.kallipai.polis.ports.${builtins.elemAt pair 0} and services.kallipai.polis.ports.${builtins.elemAt pair 1} are both ${
+              toString polisCfg.ports.${builtins.elemAt pair 0}
+            }; the three polis listeners must use distinct ports — set one of them to a free port.";
+          })
+          [
+            [
+              "archeion"
+              "lesche"
+            ]
+            [
+              "archeion"
+              "files"
+            ]
+            [
+              "lesche"
+              "files"
+            ]
+          ]
+        )
+        ++ (map
+          (svc: {
+            assertion = polisCfg.ports.${svc} >= 1024 && polisCfg.ports.${svc} <= 65535;
+            message = "services.kallipai.polis.ports.${svc} is ${toString polisCfg.ports.${svc}}; it must be 1024-65535 — the polis services do not hold CAP_NET_BIND_SERVICE, so a lower port cannot be bound. Set it to a port in that range.";
+          })
+          [
+            "archeion"
+            "lesche"
+            "files"
+          ]
+        )
+      );
     }
     (lib.mkIf cfg.enable {
       # One group per declared user plus the shared access gate group
@@ -623,7 +699,7 @@ in
             KALLIP_FILES_DATABASE_URL = "postgresql:///kallip-files?host=/run/postgresql";
             KALLIP_FILES_LOG_DIR = "/var/log/kallipai/files";
             KALLIP_FILES_BLOB_ROOT = "/var/lib/kallipai/files/blobs";
-            KALLIP_FILES_NOTIFY_URL = "http://127.0.0.1:7200";
+            KALLIP_FILES_NOTIFY_URL = "http://127.0.0.1:${toString polisPorts.lesche}";
           }
           // envOpt "KALLIP_FILES_MAX_BODY_SIZE_MB" polisCfg.files.maxBodySizeMb
           // envOpt "KALLIP_FILES_CORS_ORIGINS" polisCfg.files.corsOrigins
@@ -694,6 +770,36 @@ in
           }
         '';
       };
+    })
+    (lib.mkIf (webCfg.enable && webCfg.domain != null && polisCfg.enable) {
+      # L1.5 direct-connect drift warning: the module can only see an
+      # explicit runtimeConfig.tlsOff — a browser that derives tlsOff from
+      # an http location is outside this module's visibility, so the
+      # warning is best-effort by design (documented gap until the
+      # config.ports schema lands).
+      warnings =
+        let
+          userServices = webCfg.runtimeConfig.services or { };
+          unpinnedChanged =
+            builtins.filter
+              (
+                svc:
+                (webCfg.runtimeConfig.tlsOff or false) == true
+                && polisCfg.ports.${svc} != defaultPolisPorts.${svc}
+                && !(builtins.isAttrs userServices && userServices ? ${svc})
+              )
+              [
+                "archeion"
+                "lesche"
+                "files"
+              ];
+        in
+        map (
+          svc:
+          "services.kallipai.polis.ports.${svc} is set to ${toString polisCfg.ports.${svc}}, but the web UI's direct-connect derivation still targets the default port ${
+            toString defaultPolisPorts.${svc}
+          } for ${svc}. Set services.kallipai.web.runtimeConfig.services.${svc} to pin the new port."
+        ) unpinnedChanged;
     })
   ];
 }

@@ -10,6 +10,7 @@
 // readable by anyone who can reach the site — keep it to values the
 // browser is meant to see; secrets belong in environment files or
 // credential stores, never in this file.
+// NixOS deployments rewrite this file from module options; direct-connect port changes flow through services.kallipai.polis.ports.
 window.KALLIP_CONFIG = {
   // domain: "example.com", // sibling-subdomain root (archeion.<domain> ...)
   // tlsOff: false, // true = plain-http direct ports instead of https subdomains
