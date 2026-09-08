@@ -33,10 +33,6 @@ pub enum Commands {
     /// Discover and inspect skills via the generated index.
     #[command(subcommand)]
     Skill(SkillCommand),
-    /// Machine checks over repo objects (commit messages now; static
-    /// gates reserved).
-    #[command(subcommand)]
-    Check(CheckCommand),
     /// Manage the tagma-wide token budget (shared by all agents; set 0 to
     /// pause everyone).
     #[command(subcommand)]
@@ -848,12 +844,4 @@ pub struct TaskExtractArgs {
     /// Destination directory (created if absent).
     #[arg(long)]
     pub to: PathBuf,
-}
-
-#[derive(Subcommand)]
-pub enum CheckCommand {
-    /// Run the commit-message battery: subject shape and width, body
-    /// length, bullet consistency, line width, and the process-word,
-    /// numbering, and timestamp scans. Exits non-zero on any failure.
-    Message(crate::check::CheckMessageArgs),
 }
