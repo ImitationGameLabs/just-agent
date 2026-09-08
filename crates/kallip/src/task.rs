@@ -1,21 +1,20 @@
-//! The `kallip task` family: thin rendering over the kallip-task store.
-//! Process-local — no tagma daemon connection. Storage hangs off the tagma
-//! data dir: `tasks.sqlite` plus the `task-blobs/` content-addressed root
-//! for closed archives. Every write verb resolves the acting agent from
-//! `KALLIP_ID` (or --actor) and passes it down as the event `actor`.
+//! The `kallip task` family: thin rendering over the task-domain API.
+//! Everything rides the tagma HTTP face (`/tasks`); the tagma process is
+//! the SOLE writer of tasks.sqlite. Every write verb resolves the acting
+//! agent from `KALLIP_ID` (or --actor) and passes it down as the event
+//! `actor`.
+
+use std::io::Cursor;
 
 use anyhow::{Result, anyhow};
-use kallip_blob_store::LocalBackend;
-use kallip_task::store::{CheckpointSpec, CreateSpec, TaskExport, TaskFilter};
-use kallip_task::{ClosedReason, TaskStatus, TaskStore};
+use kallip_client::{
+    ChainOpRequest, CheckpointRequest, CloseRequest, ClosedReason, CreateTaskRequest,
+    DispatchRequest, ForceRequest, NoteRequest, TagmaClient, TaskExport, TaskListQuery,
+};
 
 use crate::args::{TaskChainOpType, TaskCloseReason, TaskCommand, TaskStartArgs};
 
-pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
-    let data_root = kallip_runtime::persistence::data_dir_root()?;
-    let store = TaskStore::open(&data_root.join("tasks.sqlite")).await?;
-    let blobs = LocalBackend::arc(data_root.join("task-blobs"));
-
+pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
     match cmd {
         TaskCommand::Start(args) => {
             let actor = task_actor(args.actor.as_deref())?;
@@ -27,18 +26,26 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
                              metadata (--title and friends) registers a new one"
                         ));
                     }
-                    store.start(id, &actor, args.force).await?
+                    client
+                        .task_start(
+                            id,
+                            &ForceRequest {
+                                actor,
+                                force: args.force,
+                            },
+                        )
+                        .await?
                 }
                 None => {
                     let title = args.title.as_deref().ok_or_else(|| {
                         anyhow!("give a task id to pick up, or --title to register a new task")
                     })?;
-                    store
-                        .create(CreateSpec {
+                    client
+                        .task_create(&CreateTaskRequest {
                             title: title.to_string(),
                             creator: args.creator.clone().unwrap_or_else(|| actor.clone()),
                             assignee: args.assignee.clone(),
-                            seats: args.seats.clone(),
+                            seats: (!args.seats.is_empty()).then(|| args.seats.clone()),
                             dossier_path: args.dossier.as_ref().map(|p| p.display().to_string()),
                             inbox_id_start: args.inbox_start,
                             inbox_id_end: args.inbox_end,
@@ -54,28 +61,31 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
         TaskCommand::Checkpoint(args) => {
             let actor = task_actor(args.actor.as_deref())?;
             let waiting = tri_flag(args.waiting, args.no_waiting)?;
-            let task = store
-                .checkpoint(CheckpointSpec {
-                    id: args.id,
-                    actor,
-                    note: args.note.clone(),
-                    receipt: args.receipt,
-                    review: args.review,
-                    waiting,
-                })
+            let task = client
+                .task_checkpoint(
+                    args.id,
+                    &CheckpointRequest {
+                        actor,
+                        note: args.note.clone(),
+                        receipt: args.receipt,
+                        review: args.review,
+                        waiting,
+                    },
+                )
                 .await?;
             print_state_line(&task);
         }
         TaskCommand::Close(args) => {
             let actor = task_actor(args.actor.as_deref())?;
-            let task = store
-                .close(
+            let task = client
+                .task_close(
                     args.id,
-                    &actor,
-                    close_reason(args.reason),
-                    args.summary.clone(),
-                    args.force,
-                    Some(blobs),
+                    &CloseRequest {
+                        actor,
+                        reason: close_reason(args.reason),
+                        summary: args.summary.clone(),
+                        force: args.force,
+                    },
                 )
                 .await?;
             print_state_line(&task);
@@ -88,13 +98,29 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
         }
         TaskCommand::Reopen(args) => {
             let actor = task_actor(args.actor.as_deref())?;
-            let task = store.reopen(args.id, &actor, args.force).await?;
+            let task = client
+                .task_reopen(
+                    args.id,
+                    &ForceRequest {
+                        actor,
+                        force: args.force,
+                    },
+                )
+                .await?;
             print_state_line(&task);
         }
 
         TaskCommand::Annotate(args) => {
             let actor = task_actor(args.actor.as_deref())?;
-            let task = store.annotate(args.id, &actor, args.note.clone()).await?;
+            let task = client
+                .task_annotate(
+                    args.id,
+                    &NoteRequest {
+                        actor,
+                        note: args.note.clone(),
+                    },
+                )
+                .await?;
             print_state_line(&task);
         }
         TaskCommand::Dispatch(args) => {
@@ -108,51 +134,69 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
                     .filter(|s| !s.trim().is_empty())
                     .collect::<Vec<String>>()
             });
-            let task = store.dispatch(args.id, &actor, seats).await?;
+            let task = client
+                .task_dispatch(args.id, &DispatchRequest { actor, seats })
+                .await?;
             print_state_line(&task);
         }
         TaskCommand::GateReport(args) => {
             let actor = task_actor(args.actor.as_deref())?;
-            let task = store
-                .gate_report(args.id, &actor, args.note.clone())
+            let task = client
+                .task_gate_report(
+                    args.id,
+                    &NoteRequest {
+                        actor,
+                        note: args.note.clone(),
+                    },
+                )
                 .await?;
             print_state_line(&task);
         }
         TaskCommand::ChainOp(args) => {
             let actor = task_actor(args.actor.as_deref())?;
-            let task = store
-                .chain_op(
+            let task = client
+                .task_chain_op(
                     args.id,
-                    &actor,
-                    chain_op_name(args.op),
-                    args.detail.clone(),
-                    args.force,
+                    &ChainOpRequest {
+                        actor,
+                        op: chain_op_name(args.op).to_string(),
+                        detail: args.detail.clone(),
+                        force: args.force,
+                    },
                 )
                 .await?;
             print_state_line(&task);
         }
         TaskCommand::Archive(args) => {
             let actor = task_actor(args.actor.as_deref())?;
-            let task = store.archive_task(args.id, &actor, args.force).await?;
+            let task = client
+                .task_archive(
+                    args.id,
+                    &ForceRequest {
+                        actor,
+                        force: args.force,
+                    },
+                )
+                .await?;
             print_state_line(&task);
         }
         TaskCommand::List(args) => {
             let status = args
                 .status
                 .as_deref()
-                .map(|s| {
-                    TaskStatus::parse(s).ok_or_else(|| {
-                        anyhow!("unknown status '{s}' (queued|in_progress|review|closed)")
-                    })
+                .map(|s| match s {
+                    "queued" | "in_progress" | "review" | "closed" => Ok(s.to_string()),
+                    _ => Err(anyhow!(
+                        "unknown status '{s}' (queued|in_progress|review|closed)"
+                    )),
                 })
                 .transpose()?;
-            let tasks = store
-                .list(TaskFilter {
-                    status,
-                    archived: args.archived,
-                    assignee: args.assignee.clone(),
-                })
-                .await?;
+            let query = TaskListQuery {
+                archived: args.archived,
+                status,
+                assignee: args.assignee.clone(),
+            };
+            let tasks = client.task_list(&query).await?;
             if tasks.is_empty() {
                 println!("(no tasks)");
             } else {
@@ -169,16 +213,16 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
             }
         }
         TaskCommand::Show(args) => {
-            let export = store.export(args.id).await?;
+            let export = client.task_show(args.id).await?;
             print_show(&export);
         }
         TaskCommand::Export(args) => {
             let mut exports = Vec::new();
             if args.all {
-                exports = store.export_all().await?;
+                exports = client.task_export_all().await?;
             } else {
                 let id = args.id.ok_or_else(|| anyhow!("give a task id, or --all"))?;
-                exports.push(store.export(id).await?);
+                exports.push(client.task_show(id).await?);
             }
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&exports)?);
@@ -190,10 +234,13 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
             }
         }
         TaskCommand::Extract(args) => {
-            let (task, _) = store.get(args.id).await?;
-            let blob = TaskStore::archive_blob_id(&task)?
-                .ok_or_else(|| anyhow!("task {} has no closed archive", args.id))?;
-            kallip_task::archive::extract(blobs.as_ref(), &blob, &args.to).await?;
+            let export = client.task_show(args.id).await?;
+            if export.archive_hash.is_none() {
+                return Err(anyhow!("task {} has no closed archive", args.id));
+            }
+            let bytes = client.task_fetch_archive(args.id).await?;
+            let mut archive = tar::Archive::new(Cursor::new(bytes));
+            archive.unpack(&args.to)?;
             println!(
                 "extracted task {} archive to {}",
                 args.id,
@@ -204,7 +251,7 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
     Ok(())
 }
 
-fn print_state_line(task: &kallip_task::Task) {
+fn print_state_line(task: &TaskExport) {
     println!("task {} {} '{}'", task.id, task.status, task.title);
 }
 

@@ -155,7 +155,6 @@ fn api_error(err: kallip_task::Error) -> ApiError {
 }
 
 type TaskResult<T> = Result<Json<T>, ApiError>;
-
 async fn create(
     State(state): State<SharedState>,
     Json(body): Json<CreateTaskBody>,
@@ -346,6 +345,30 @@ async fn archive(
     let export = store(&state)?.export(id).await.map_err(api_error)?;
     Ok(Json(export))
 }
+/// Serves the closed-task archive blob: canonical tar bytes, verbatim
+/// from the content-addressed store. 404 when the task has no closed
+/// archive (never closed, or not yet archived).
+async fn fetch_archive(
+    State(state): State<SharedState>,
+    Path(id): Path<i64>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    let store = store(&state)?;
+    let (task, _) = store.get(id).await.map_err(api_error)?;
+    let blob = TaskStore::archive_blob_id(&task)
+        .map_err(api_error)?
+        .ok_or_else(|| ApiError::not_found(format!("task {id} has no closed archive")))?;
+    let blobs = blobs(&state).ok_or_else(|| ApiError::internal("blob store not installed"))?;
+    let bytes = blobs
+        .get(&blob)
+        .await
+        .map_err(|err| ApiError::internal(err.to_string()))?;
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/x-tar")],
+        bytes,
+    )
+        .into_response())
+}
 
 /// The task-domain router: mounted at /tasks by the root router.
 pub(crate) fn router() -> axum::Router<SharedState> {
@@ -362,5 +385,8 @@ pub(crate) fn router() -> axum::Router<SharedState> {
         .route("/{id}/chain-op", axum::routing::post(chain_op))
         .route("/{id}/close", axum::routing::post(close))
         .route("/{id}/reopen", axum::routing::post(reopen))
-        .route("/{id}/archive", axum::routing::post(archive))
+        .route(
+            "/{id}/archive",
+            axum::routing::post(archive).get(fetch_archive),
+        )
 }

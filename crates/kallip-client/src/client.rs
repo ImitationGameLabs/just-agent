@@ -9,6 +9,12 @@ mod budget;
 mod inbox;
 mod lesche;
 mod status;
+mod task;
+pub use kallip_task::TaskExport;
+pub use task::{
+    ChainOpRequest, CheckpointRequest, CloseRequest, CreateTaskRequest, DispatchRequest,
+    ForceRequest, NoteRequest, TaskListQuery,
+};
 
 struct Inner {
     base_url: String,

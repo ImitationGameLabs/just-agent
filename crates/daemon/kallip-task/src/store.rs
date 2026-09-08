@@ -17,7 +17,7 @@ use sea_orm::{
     DatabaseTransaction, QueryOrder, Statement, TransactionError, TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::entities::task::{ActiveModel, Column as TaskColumn, Entity as TaskEntity};
@@ -28,7 +28,7 @@ use crate::model::{ClosedReason, TaskStatus, Transition};
 use crate::{Error, archive};
 
 /// One task plus its event trail, shaped for the machine face (export).
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct TaskExport {
     pub id: i64,
     pub title: String,
@@ -57,7 +57,7 @@ pub struct TaskExport {
 
 /// Association keys (K8s involvedObject shape): message windows the
 /// task lives in — an inbox id range and/or a lesche room + seq range.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct AssociationExport {
     pub inbox_id_start: Option<i64>,
     pub inbox_id_end: Option<i64>,
@@ -66,7 +66,7 @@ pub struct AssociationExport {
     pub room_seq_end: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct EventExport {
     pub id: i64,
     pub kind: String,

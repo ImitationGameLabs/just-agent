@@ -60,8 +60,8 @@ pub enum Commands {
     /// KALLIP_FILES_URL + KALLIP_FILES_TOKEN.
     #[command(subcommand)]
     File(FileCommand),
-    /// Local task ledger: queue, state machine, event trail, hard gates, and
-    /// closed-task archives (process-local; no tagma daemon connection).
+    /// Task ledger on the tagma: queue, state machine, event trail, hard
+    /// gates, and closed-task archives (served by the tagma task API).
     #[command(subcommand)]
     Task(TaskCommand),
 }
@@ -569,14 +569,14 @@ pub enum SubagentCommand {
 }
 
 // ---------------------------------------------------------------------------
-// Task commands — local tasks.sqlite via kallip-task (no tagma connection)
+// Task commands — the tagma's task ledger, over the task domain API
 // ---------------------------------------------------------------------------
 
-/// The local task ledger: queue, coarse state machine, event trail, hard
-/// gates, and closed-task archives in `tasks.sqlite`. Verbs run
-/// process-local (no tagma daemon connection); the acting agent is taken
-/// from `KALLIP_ID` (or --actor). Write verbs are enforced in the store:
-/// the CLI is an entry point, the store is the law.
+/// The tagma's task ledger: queue, coarse state machine, event trail, hard
+/// gates, and closed-task archives. Verbs go through the tagma task API
+/// (the CLI never touches tasks.sqlite); the acting agent is taken
+/// from `KALLIP_ID` (or --actor). Write verbs are enforced server-side:
+/// the CLI is an entry point, the tagma is the law.
 #[derive(Subcommand)]
 pub enum TaskCommand {
     /// Register a task in the queue (--title ...), or pick a queued task up
