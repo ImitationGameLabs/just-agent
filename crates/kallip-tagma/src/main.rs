@@ -179,6 +179,22 @@ async fn run(args: Args) -> Result<()> {
         .context("open inbox store")?;
     state.inboxes.set(inbox_store).ok();
 
+    // Open the task coordination store and install it on AppState.
+    // `TaskStore::open` runs the migration chain, so the boot brings the
+    // schema to head. This process is the SOLE writer of tasks.sqlite.
+    let task_store = kallip_task::TaskStore::open(
+        &kallip_runtime::persistence::data_dir_root()?.join("tasks.sqlite"),
+    )
+    .await
+    .context("open task store")?;
+    state.tasks.set(Arc::new(task_store)).ok();
+    state
+        .task_blobs
+        .set(kallip_blob_store::LocalBackend::arc(
+            kallip_runtime::persistence::data_dir_root()?.join("task-blobs"),
+        ))
+        .ok();
+
     // Start the work-schedule engine (sleeps until the next due transition;
     // wakes on store mutations, with a ~60 s heartbeat as clock-divergence net).
     engine::spawn(state.clone());

@@ -257,6 +257,14 @@ pub struct AppState {
     pub duty: Arc<crate::duty::DutyStore>,
     /// SQLite-backed work-schedule store. Opened at startup.
     pub work_schedules: std::sync::OnceLock<crate::work_schedule::WorkScheduleStore>,
+    /// SQLite-backed task coordination store. Opened at startup —
+    /// `TaskStore::open` runs the migration chain, so the boot brings
+    /// the schema to head. The SOLE writer of tasks.sqlite: CLI
+    /// processes never touch the file, they go through the task API.
+    pub tasks: std::sync::OnceLock<std::sync::Arc<kallip_task::TaskStore>>,
+    /// Content-addressed blob root for closed-task dossiers, handed to
+    /// close/extract alongside the store. Installed at startup.
+    pub task_blobs: std::sync::OnceLock<std::sync::Arc<dyn kallip_task::BlobStore>>,
     /// Agent spawn entry used by delivery's reactivation (slow path).
     /// An indirection so tests can observe/stub the spawn without spinning a
     /// real runtime; production default is `lifecycle::spawn_agent_boxed`.
@@ -694,6 +702,8 @@ impl AppState {
                 invalidations.clone(),
             )),
             work_schedules: std::sync::OnceLock::new(),
+            tasks: std::sync::OnceLock::new(),
+            task_blobs: std::sync::OnceLock::new(),
             invalidations,
         }
     }
