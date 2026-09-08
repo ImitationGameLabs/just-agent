@@ -1,4 +1,4 @@
-//! Content-addressed blob storage primitives: hash-addressed ids,
+//! The content-addressed blob store: hash-addressed ids,
 //! write-once ingest, and range reads over a sharded on-disk layout.
 //!
 //! Content is addressed by its SHA-256 digest: the id is the algorithm

@@ -1,4 +1,4 @@
-//! Error vocabulary for the blob layer.
+//! Error vocabulary for the blob store.
 
 use crate::hash::BlobId;
 

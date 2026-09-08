@@ -130,7 +130,7 @@ async fn delete_is_idempotent_and_reads_then_miss() {
     assert!(matches!(backend.get(&id).await, Err(Error::NotFound(_))));
 }
 
-/// The stored file lives at `blobs/<first two hex chars>/<id>`.
+/// The stored file lives at `blobs/<first two hex characters>/<id>`.
 #[tokio::test]
 async fn stored_file_lands_in_its_bucket() {
     let (backend, dir) = store().await;

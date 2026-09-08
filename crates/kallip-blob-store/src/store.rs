@@ -1,4 +1,4 @@
-//! The storage seam: one object-safe trait storage consumers program
+//! The blob store seam: one object-safe trait storage consumers program
 //! against, independent of where bytes actually live.
 
 use async_trait::async_trait;
@@ -16,7 +16,7 @@ pub struct BlobInfo {
 
 /// The full blob surface, backend-agnostic.
 ///
-/// The trait is object-safe so the service can hold an
+/// The trait is object-safe so services can hold an
 /// `Arc<dyn BlobStore>` and stay ignorant of the backend (local disk
 /// now, a cloud object store later), the same seam shape as the
 /// instances `InstanceBackend`. `put` takes a `dyn AsyncRead` -- a

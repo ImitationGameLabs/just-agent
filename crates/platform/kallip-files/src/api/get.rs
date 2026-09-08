@@ -77,6 +77,13 @@ pub async fn head_file(
         .into_response())
 }
 
+/// Validate the blob id stored in the catalog row. Ids are checked at
+/// ingest time, so a malformed value here means catalog corruption, not
+/// a client mistake -- hence 500 rather than 400. The store's
+/// invalid-id/missing-blob distinction never surfaces as 4xx on this
+/// path: a valid id whose file is gone is the reconciler's drift (see
+/// `stat_size`); only an endpoint accepting client-supplied id strings
+/// would map malformed input to 400.
 fn parse_blob_id(raw: &str) -> Result<BlobId, ApiError> {
     BlobId::parse(raw).map_err(ApiError::internal)
 }

@@ -1,6 +1,6 @@
 [package]
 name = "kallip-blob-store"
-description = "Content-addressed blob storage primitives: sha256 ids, write-once ingest, sharded local layout"
+description = "Content-addressed blob store: sha256 ids, write-once ingest, sharded local layout"
 edition = "2024"
 version.workspace = true
 license.workspace = true
