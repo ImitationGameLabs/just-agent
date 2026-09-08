@@ -12,9 +12,9 @@ use kallip_common::agentid::AgentId;
 use kallip_common::authtoken::MintedToken;
 use kallip_common::policy::ExecPolicy;
 use kallip_common::protocol::ApiError;
-use kallip_runtime::config::{AgentConfig, DelegationMode, permission_class_from_env};
-#[cfg(test)]
-use kallip_runtime::config::{PermissionClass, PermissionProfile};
+use kallip_runtime::config::{
+    AgentConfig, DelegationMode, PermissionClass, permission_class_from_env,
+};
 use kallip_runtime::persistence;
 use serde::Deserialize;
 use tracing::{debug, error, info, warn};
@@ -47,17 +47,11 @@ pub async fn create_agent(
         ));
     };
 
-    let id = AgentId::random();
-    // Mint a fresh 256-bit `sk-agent-…` token. The plaintext goes into the agent
-    // shell env (`KALLIP_AUTH_TOKEN`); only its SHA-256 is indexed for auth lookup.
-    let token = MintedToken::generate(AGENT);
-
     let mut config = {
         let ws = std::path::PathBuf::from(&req.workspace_root);
         AgentConfig::load(req.prompt, req.skills, Some(ws))
             .map_err(|e| ApiError::bad_request(e.to_string()))?
     };
-    config.agent_id = Some(id.clone());
     if let Some(rounds) = req.max_tool_rounds {
         match rounds {
             kallip_common::protocol::MaxToolRounds::Unlimited => {
@@ -104,6 +98,65 @@ pub async fn create_agent(
     // rejection. The tagma is the reference monitor: the value is accepted
     // only as a downgrade inside validate_subagent_request.
     let requested_class = parse_requested_class(&req.permission_class)?;
+    let id = spawn_subagent(
+        &state,
+        auth.identity(),
+        SubagentSpawn {
+            supervisor_id,
+            config,
+            requested_class,
+        },
+    )
+    .await?;
+
+    Ok((StatusCode::CREATED, Json(CreateAgentResponse { id })))
+}
+/// The shared subagent-spawn core behind `POST /agents` and converge's
+/// spawn action: mint the identity, run the reference monitor (role
+/// uniqueness, supervisor validation, slot reservation — all under one
+/// registry write lock so a concurrent same-role spawn cannot slip
+/// through the gap), then hand the prepared config to
+/// [`crate::lifecycle::Materialize`]. Callers own the request-shaped
+/// config build and the permission-class parse; everything below them
+/// is lifecycle mechanics this function owns, so the two entry points
+/// cannot drift on reservation or rollback semantics.
+pub(crate) struct SubagentSpawn {
+    /// The supervisor the new agent is created under. Converge always
+    /// uses the tagma root; the HTTP face passes the request's
+    /// `created_by`.
+    pub supervisor_id: AgentId,
+    /// Request-shaped config: workspace, role, description,
+    /// delegation mode, profile set, skills, prompt. `agent_id`,
+    /// `created_by`, `permissions`, and `permissions_class` are
+    /// filled in here.
+    pub config: AgentConfig,
+    /// The parsed permission class request — a caller spelling error
+    /// is a cheap `400` at the parse site, not a held-write-lock
+    /// rejection here.
+    pub requested_class: PermissionClass,
+}
+
+pub(crate) async fn spawn_subagent(
+    state: &SharedState,
+    identity: &crate::auth::Identity,
+    req: SubagentSpawn,
+) -> Result<AgentId, ApiError> {
+    let id = AgentId::random();
+    // Mint a fresh 256-bit `sk-agent-…` token. The plaintext goes into the agent
+    // shell env (`KALLIP_AUTH_TOKEN`); only its SHA-256 is indexed for auth lookup.
+    let token = MintedToken::generate(AGENT);
+    let mut config = req.config;
+    config.agent_id = Some(id.clone());
+
+    // Reject any workspace that overlaps the tagma data tree BEFORE reserving
+    // the subagent slot, so a rejected workspace leaves no dangling slot.
+    // (`validate_subagent_request` already confines a subagent's workspace within
+    // its supervisor's, which is itself disjoint, so this is a backstop here; it
+    // is load-bearing for the tagma-owned root, where it is checked in
+    // `ensure_root_agent`.)
+    persistence::ensure_workspace_disjoint(&config.workspace_root)
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+
     // Subagent head: validate supervisor + delegation constraints and pre-reserve
     // the slot under write lock to eliminate TOCTOU. The tagma-global preset
     // applies to every agent, so only the per-agent exec-policy is resolved here.
@@ -126,15 +179,15 @@ pub async fn create_agent(
         }
         let (permissions, exec, permission_class) = validate_subagent_request(
             &registry,
-            auth.identity(),
-            &supervisor_id,
+            identity,
+            &req.supervisor_id,
             &config.workspace_root,
-            requested_class,
+            req.requested_class,
             config.delegation_mode,
         )?;
         // Check per-agent subagent limit and pre-reserve the slot.
         let supervisor = registry
-            .get_mut(&supervisor_id)
+            .get_mut(&req.supervisor_id)
             .ok_or_else(|| ApiError::not_found("supervisor not found"))?;
         if supervisor.subagent_ids().len() >= state.max_subagents {
             return Err(ApiError::unavailable(format!(
@@ -145,24 +198,22 @@ pub async fn create_agent(
         }
         // Pre-reserve: push the new ID so concurrent requests see the updated count.
         supervisor.subagent_ids_mut().push(id.clone());
-        config.created_by = Some(supervisor_id.clone());
+        config.created_by = Some(req.supervisor_id.clone());
         config.permissions = permissions;
         config.permissions_class = permission_class;
         exec
     };
 
-    let id = crate::lifecycle::Materialize {
-        state: &state,
+    crate::lifecycle::Materialize {
+        state,
         id,
         token,
         config,
         exec_policy,
-        rollback_supervisor: Some(supervisor_id),
+        rollback_supervisor: Some(req.supervisor_id),
     }
     .run()
-    .await?;
-
-    Ok((StatusCode::CREATED, Json(CreateAgentResponse { id })))
+    .await
 }
 
 /// Ensure the tagma's single root agent exists. Called once at startup, after
@@ -350,6 +401,7 @@ pub async fn update_metadata(
         body.role.as_deref(),
         body.description.as_deref(),
         None,
+        None, // permissions_class: not updatable through this route
     )
     .map_err(ApiError::internal)?;
     if let Some(role) = &body.role {
@@ -518,6 +570,33 @@ pub async fn remove_agent(
         }
     };
 
+    // The shared teardown tail (see `teardown_agent`) returns the
+    // workspace lock to the supervisor, releases the child's locks,
+    // and cancels the task; the only removal-specific act left here
+    // is the final archive.
+    teardown_agent(&state, &id, entry).await;
+    if let Err(e) = persistence::archive_agent_dir(&id) {
+        warn!(id = %id, "agent dir archive failed: {e:#}");
+    }
+    info!(id = %id, "archived agent");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The shared teardown tail of every path that ends an agent's
+/// lifecycle — `remove_agent` (archive) and converge's deactivate
+/// (inactive-area park) — extracted so the two cannot drift: the
+/// FullHandoff lock transfer back to the supervisor, the release of
+/// every directory write-lock, the duty and inbox clearing, and the
+/// graceful cancel+shutdown of the live task. The caller has already
+/// unregistered the entry under the write lock and owns what happens
+/// to the directory afterwards; this only tears the running agent
+/// down. Faulted entries have no task: the helper logs and moves on,
+/// matching the removal path's behavior.
+pub(crate) async fn teardown_agent(
+    state: &SharedState,
+    id: &AgentId,
+    entry: crate::state::RegistryEntry,
+) {
     // FullHandoff: return the workspace lock to the supervisor before the
     // child's locks are released. The transfer reassigns the ws entry from the
     // child to the supervisor; `release_all(child)` below then clears any OTHER
@@ -528,7 +607,7 @@ pub async fn remove_agent(
         && let Some(supervisor_id) = entry.identity().config.created_by.as_ref()
     {
         match state.lock_manager.transfer(
-            &id,
+            id,
             supervisor_id,
             &entry.identity().config.workspace_root,
         ) {
@@ -548,11 +627,11 @@ pub async fn remove_agent(
     // Release all of this agent's directory write-locks (coupled to task death,
     // not registry removal — see DirLockManager invariants). A no-op for
     // faulted entries, which never acquired locks.
-    state.lock_manager.release_all(&id);
+    state.lock_manager.release_all(id);
     // Clear the duty status entry — the agent is gone.
-    state.duty.remove(&id);
+    state.duty.remove(id);
     if let Some(store) = state.inboxes.get() {
-        store.clear_for(&id).await;
+        store.clear_for(id).await;
     }
 
     match entry {
@@ -570,17 +649,10 @@ pub async fn remove_agent(
             }
         }
         crate::state::RegistryEntry::Faulted(_) => {
-            // No task to cancel or await -- go straight to archival so the
-            // operator can clean up the orphaned data dir.
-            info!(id = %id, "removing faulted agent (no task to shut down)");
+            // No task to cancel or await.
+            info!(id = %id, "tearing down faulted agent (no task to shut down)");
         }
     }
-
-    if let Err(e) = persistence::archive_agent_dir(&id) {
-        warn!(id = %id, "agent dir archive failed: {e:#}");
-    }
-    info!(id = %id, "archived agent");
-    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Cancel the target's current round (or kick it out of a parked wait) — the
@@ -686,7 +758,7 @@ pub async fn update_profile_set(
         .clone()
         .ok_or_else(|| ApiError::internal("agent has no on-disk directory to update"))?;
     // Persist first (disk is the source of truth across restarts), then memory.
-    persistence::rewrite_meta(&agent_dir, None, None, Some(&body.profile_set))
+    persistence::rewrite_meta(&agent_dir, None, None, Some(&body.profile_set), None)
         .map_err(ApiError::internal)?;
     entry.identity_mut().config.profile_set = Some(body.profile_set.clone());
     // A live agent swaps its failover chain on its next wake-up — signal

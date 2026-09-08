@@ -2,6 +2,7 @@ pub mod agentid;
 pub mod approval;
 pub mod authtoken;
 pub mod context;
+pub mod declaration;
 pub mod idtype;
 pub mod message;
 pub mod policy;

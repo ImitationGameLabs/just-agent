@@ -12,6 +12,7 @@ mod message;
 pub(crate) mod profile_probe;
 pub(crate) mod profiles;
 pub(crate) mod task;
+pub(crate) mod team;
 
 use axum::Router;
 use kallip_common::protocol::{ListAgentsResponse, ListApprovalsQuery, MessageRequest};
@@ -43,6 +44,7 @@ pub fn cors_layer() -> CorsLayer {
 pub fn router() -> Router<SharedState> {
     Router::new()
         .nest("/tasks", task::router())
+        .nest("/team", team::router())
         .route(
             "/agents",
             axum::routing::post(agent::create_agent).get(agent::list_agents),

@@ -271,6 +271,14 @@ pub struct AppState {
     /// create/restore call `lifecycle::spawn_agent` directly (no test seam
     /// needed there).
     pub spawn_fn: crate::lifecycle::SpawnFn,
+    /// Converge mutual exclusion: at most one `POST /team/converge`
+    /// run at a time. A second request is refused with `409` rather
+    /// than queued — converge is an explicit operator action, and a
+    /// collision means the operator should look at the current state
+    /// before retrying, not wait behind a stale plan. The guard is
+    /// held for the whole plan/preflight/execute pipeline via
+    /// `try_lock`, so a crashed run cannot wedge the field.
+    pub converge: tokio::sync::Mutex<()>,
 }
 
 /// Combined index: agent map + token-hash→id lookup + subagent reverse pointers.
@@ -704,6 +712,7 @@ impl AppState {
             work_schedules: std::sync::OnceLock::new(),
             tasks: std::sync::OnceLock::new(),
             task_blobs: std::sync::OnceLock::new(),
+            converge: tokio::sync::Mutex::new(()),
             invalidations,
         }
     }

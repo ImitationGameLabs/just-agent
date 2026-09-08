@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::{
-    AgentConfig, AgentId, DelegationMode, MAX_ACTIVITY_CHARS, PermissionClass, PermissionProfile,
-    interrupt_agent, list_agents, remove_agent, resolve_granted_class, truncate_chars,
+    AgentConfig, AgentId, DelegationMode, MAX_ACTIVITY_CHARS, PermissionClass, interrupt_agent,
+    list_agents, remove_agent, resolve_granted_class, truncate_chars,
 };
 use crate::auth::{AuthIdentity, Identity};
 use crate::lifecycle::{
@@ -17,6 +17,7 @@ use crate::test_helpers::{
 };
 use axum::extract::{Path, Query, State};
 use kallip_common::protocol::ListAgentsQuery;
+use kallip_runtime::config::PermissionProfile;
 
 #[test]
 fn truncate_keeps_short_strings() {

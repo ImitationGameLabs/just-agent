@@ -10,6 +10,7 @@ mod inbox;
 mod lesche;
 mod status;
 mod task;
+mod team;
 pub use kallip_task::TaskExport;
 pub use task::{
     ChainOpRequest, CheckpointRequest, CloseRequest, CreateTaskRequest, DispatchRequest,

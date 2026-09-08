@@ -8,6 +8,7 @@ pub mod external;
 pub mod inbox;
 pub mod skill;
 pub mod sse;
+pub mod team;
 
 // Re-export all public types for convenience.
 // Downstream `use kallip_common::protocol::*` continues to work unchanged.
@@ -27,3 +28,8 @@ pub use external::{AuthoredEvent, SignalEvent};
 pub use inbox::{InboxEntry, InboxListQuery, InboxSummary};
 pub use skill::{SkillMeta, parse_frontmatter, parse_frontmatter_description};
 pub use sse::{FailoverChainExhaustion, SseEvent, TransientRetryInfo};
+pub use team::{
+    RoleDisposition, TeamAction, TeamActionResult, TeamConvergeOutcome, TeamConvergeRequest,
+    TeamConvergeResponse, TeamLockEntry, TeamPlanRow, TeamRoleStatus, TeamRowOutcome,
+    TeamStatusQuery, TeamStatusResponse,
+};

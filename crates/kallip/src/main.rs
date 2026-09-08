@@ -4,6 +4,7 @@ mod args;
 mod reference;
 mod skill;
 mod task;
+mod team;
 
 use anyhow::Result;
 use args::{
@@ -539,6 +540,7 @@ async fn main() -> Result<()> {
         // still wants the arm here.
         Commands::File(_) => unreachable!("file family dispatched above"),
         Commands::Task(cmd) => task::run_task(&client, &cmd).await?,
+        Commands::Team(cmd) => team::run_team(&client, &cmd).await?,
     }
     Ok(())
 }

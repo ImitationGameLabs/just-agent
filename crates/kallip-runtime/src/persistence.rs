@@ -185,8 +185,28 @@ fn archived_base() -> Result<PathBuf> {
     Ok(data_dir_root()?.join("archived"))
 }
 
+/// Resolve the base deactivated (inactive) agents directory (sibling of
+/// `agents/`).
+///
+/// Inactive agents are parked here by the declarative-team converge flow:
+/// their declaration no longer references them, but the lock still holds
+/// their role↔id binding, so they can be restored identity-intact. Fully
+/// transparent to [`scan_agents`] and the live registry — see
+/// [`deactivate_agent_dir`].
+fn inactive_base() -> Result<PathBuf> {
+    Ok(data_dir_root()?.join("agents-inactive"))
+}
+
+/// Inactive directory for a given agent (sibling of [`agent_dir`]).
+///
+/// Public for the tagma's team status face, which probes whether a lock
+/// record's id is parked here (the restore-vs-spawn input); the layout
+/// knowledge stays in this module.
+pub fn inactive_dir(agent_id: &AgentId) -> Result<PathBuf> {
+    Ok(inactive_base()?.join(agent_id.as_ref()))
+}
 /// Archived directory for a given agent (sibling of [`agent_dir`]).
-fn archived_dir(agent_id: &AgentId) -> Result<PathBuf> {
+pub fn archived_dir(agent_id: &AgentId) -> Result<PathBuf> {
     Ok(archived_base()?.join(agent_id.as_ref()))
 }
 
@@ -224,6 +244,7 @@ pub fn rewrite_meta(
     role: Option<&str>,
     description: Option<&str>,
     profile_set: Option<&str>,
+    permissions_class: Option<crate::config::PermissionClass>,
 ) -> Result<()> {
     let path = dir.join("meta.json");
     let json = fs::read_to_string(&path).context("reading meta.json")?;
@@ -237,7 +258,79 @@ pub fn rewrite_meta(
     if let Some(s) = profile_set {
         meta.profile_set = Some(s.to_owned());
     }
+    if let Some(c) = permissions_class {
+        meta.permissions_class = c;
+    }
     atomic_write(&path, &serde_json::to_string_pretty(&meta)?)?;
+    Ok(())
+}
+
+/// Move a live agent directory into the inactive area (declarative-team
+/// deactivation).
+///
+/// The rename/copy semantics mirror [`archive_agent_dir`] (atomic on one
+/// filesystem, EXDEV copy+delete fallback). The inactive destination must
+/// not already exist — a stale sibling would mean two preserved bodies for
+/// one identity, and guessing which is current is exactly what this flow
+/// must never do.
+pub fn deactivate_agent_dir(agent_id: &AgentId) -> Result<()> {
+    let src = agent_dir(agent_id)?;
+    if !src.exists() {
+        anyhow::bail!("cannot deactivate agent {agent_id}: no live directory");
+    }
+    let dst = inactive_dir(agent_id)?;
+    if dst.exists() {
+        anyhow::bail!(
+            "inactive destination already exists for agent {agent_id} — refusing to overwrite (stale inactive body; resolve manually)"
+        );
+    }
+    std::fs::create_dir_all(dst.parent().context("inactive path has no parent")?)?;
+    move_agent_dir(&src, &dst, agent_id, "deactivation")
+}
+
+/// Move an inactive agent directory back into the live area (declarative-
+/// team restoration). Identity-intact by construction: the whole directory
+/// (context, approvals, meta) moves verbatim; the caller runs the regular
+/// restore path afterwards — no prompt is injected.
+///
+/// The live destination must not already exist (pre-check before calling:
+/// a live body for the same id means the restore plan is stale).
+pub fn reactivate_agent_dir(agent_id: &AgentId) -> Result<()> {
+    let src = inactive_dir(agent_id)?;
+    if !src.exists() {
+        anyhow::bail!("cannot reactivate agent {agent_id}: no inactive directory");
+    }
+    let dst = agent_dir(agent_id)?;
+    if dst.exists() {
+        anyhow::bail!(
+            "live destination already exists for agent {agent_id} — refusing to overwrite"
+        );
+    }
+    std::fs::create_dir_all(dst.parent().context("live path has no parent")?)?;
+    move_agent_dir(&src, &dst, agent_id, "reactivation")
+}
+
+/// Shared rename/copy core for [`archive_agent_dir`],
+/// [`deactivate_agent_dir`], and [`reactivate_agent_dir`]: atomic rename
+/// on one filesystem, EXDEV copy+delete fallback across a boundary.
+fn move_agent_dir(src: &Path, dst: &Path, agent_id: &AgentId, what: &str) -> Result<()> {
+    if let Err(e) = std::fs::rename(src, dst) {
+        if e.kind() != std::io::ErrorKind::CrossesDevices {
+            return Err(e).context("moving agent directory");
+        }
+        // The caller's `dst.exists()` bail covers the rename path; the copy
+        // fallback must hold the same invariant.
+        if dst.exists() {
+            anyhow::bail!(
+                "{what} destination appeared during cross-device move of agent {agent_id} — refusing to overwrite"
+            );
+        }
+        copy_dir_all(src, dst).context("cross-device agent dir copy")?;
+        // Only delete the source once the copy fully succeeds — a failed copy
+        // leaves `src` intact (and a partial `dst`) for manual recovery rather
+        // than losing the agent's data.
+        std::fs::remove_dir_all(src).context("removing source after cross-device move")?;
+    }
     Ok(())
 }
 
@@ -253,9 +346,9 @@ pub fn rewrite_meta(
 /// anomaly (backup restore / tampering / bug), not a collision; surfacing it
 /// loudly beats silently overwriting a prior archive.
 ///
-/// The move is atomic via `rename` when the data dir is on one filesystem; if
-/// the root is symlinked across a filesystem boundary the `rename` fails with
-/// `EXDEV` and we fall back to a recursive copy + delete (`copy_dir_all`).
+/// The move itself goes through the shared `move_agent_dir` core for
+/// every agent-directory move (archive, deactivation, reactivation):
+/// atomic `rename` on one filesystem, copy + delete across a boundary.
 ///
 /// Rollback of never-alive agents (spawn/abort failure) stays a direct
 /// [`std::fs::remove_dir_all`] at the call site — those agents never produced
@@ -274,28 +367,7 @@ pub fn archive_agent_dir(agent_id: &AgentId) -> Result<()> {
     }
     // Ensure the archived base exists (parent of `dst`), co-located with `agents_base`.
     std::fs::create_dir_all(dst.parent().context("archived path has no parent")?)?;
-    // Atomic when `agents/` and `archived/` share one filesystem. Across a
-    // filesystem boundary (a symlinked data-root segment) `rename` returns
-    // `EXDEV`; fall back to copy + delete so archival still completes.
-    if let Err(e) = std::fs::rename(&src, &dst) {
-        if e.kind() != std::io::ErrorKind::CrossesDevices {
-            return Err(e).context("archiving agent directory");
-        }
-        // The top-level `dst.exists()` bail above covers the rename path; the
-        // copy fallback must hold the same invariant.
-        if dst.exists() {
-            anyhow::bail!(
-                "archived destination appeared during cross-device archive of agent \
-                 {agent_id} — refusing to overwrite"
-            );
-        }
-        copy_dir_all(&src, &dst).context("cross-device archive copy")?;
-        // Only delete the source once the copy fully succeeds — a failed copy
-        // leaves `src` intact (and a partial `dst`) for manual recovery rather
-        // than losing the agent's data.
-        std::fs::remove_dir_all(&src).context("removing source after cross-device archive")?;
-    }
-    Ok(())
+    move_agent_dir(&src, &dst, agent_id, "archive")
 }
 
 /// Recursively copy a directory tree `src` → `dst` (`dst` must not yet exist).
@@ -647,6 +719,49 @@ pub fn scan_agents() -> Result<(Vec<PendingRestore>, Vec<RefusedRestore>)> {
         }
     }
     Ok((pending, refused))
+}
+
+/// Scan the inactive area for parked bodies: the declarative-team
+/// lock-rebuild substrate. Each entry is (agent id, on-disk metadata);
+/// unreadable directories are skipped with a warning (a parked body
+/// whose meta cannot be read cannot be re-bound by role anyway).
+/// Mirrors [`scan_agents`] over the inactive base — the live scan
+/// deliberately never enters this area, keeping the two areas disjoint.
+pub fn scan_inactive() -> Result<Vec<(AgentId, AgentMeta)>> {
+    let base = inactive_base()?;
+    let entries = match std::fs::read_dir(&base) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Vec::new());
+        }
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "cannot list the inactive area {}: {err}",
+                base.display()
+            ));
+        }
+    };
+    let mut parked = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let agent_id = match path
+            .file_name()
+            .map(|n| AgentId::from(n.to_string_lossy().into_owned()))
+        {
+            Some(id) => id,
+            None => continue,
+        };
+        match read_meta_from_dir(&path) {
+            Ok(meta) => parked.push((agent_id, meta)),
+            Err(e) => {
+                tracing::warn!(id = %agent_id, "inactive directory unreadable: {e:#}");
+            }
+        }
+    }
+    Ok(parked)
 }
 
 /// Deserialize a single agent from its directory.
@@ -2357,7 +2472,8 @@ mod tests {
         })
     }
 
-    // `copy_dir_all` is the EXDEV fallback path inside `archive_agent_dir`; the
+    // `copy_dir_all` is the EXDEV fallback path inside `move_agent_dir` (shared by
+    // the archive, deactivate, and reactivate movers); the
     // same-fs archive tests above exercise the `rename` path. Forcing a real
     // cross-device `EXDEV` needs two tmpfs mounts (impractical here), so this
     // tests the copier directly: a nested tree with a file and a symlink must
@@ -2391,5 +2507,93 @@ mod tests {
                 .file_type()
                 .is_symlink()
         );
+    }
+
+    // ----- inactive (declarative-team deactivation) tests -----
+
+    fn meta_for(role: &str) -> AgentMeta {
+        AgentMeta {
+            workspace_root: PathBuf::from("/app"),
+            created_by: None,
+            role: role.into(),
+            description: String::new(),
+            profile_set: None,
+            permissions_class: crate::config::PermissionClass::Normal,
+            delegation_mode: crate::config::DelegationMode::CarveOut,
+        }
+    }
+
+    /// The structural restore boundary: deactivating moves the directory out
+    /// of `agents/`, so the next scan neither sees nor restores it. The
+    /// declarative-team converge flow relies on this — "not referenced by
+    /// the declaration" must mean "not resurrected at boot".
+    #[test]
+    #[serial]
+    fn scan_agents_ignores_inactive() {
+        with_data_dir(|_| {
+            let id = AgentId::from("aaaa1111-1111-4111-8111-111111111111".to_owned());
+            create_agent_dir(&id, meta_for("scout")).unwrap();
+            assert_eq!(
+                scan_agents().unwrap().0.len(),
+                1,
+                "live before deactivation"
+            );
+
+            deactivate_agent_dir(&id).unwrap();
+            assert!(!agent_dir(&id).unwrap().exists(), "left the live area");
+            assert!(inactive_dir(&id).unwrap().exists(), "parked in inactive");
+
+            let (pending, refused) = scan_agents().unwrap();
+            assert!(
+                pending.iter().all(|p| p.agent_id != id),
+                "inactive agent must not be scanned for restore"
+            );
+            assert!(refused.is_empty());
+
+            // Round trip: reactivation puts it back where the scan finds it.
+            reactivate_agent_dir(&id).unwrap();
+            assert_eq!(scan_agents().unwrap().0.len(), 1, "live after reactivation");
+        })
+    }
+
+    /// The pre-check is bidirectional and refuses to overwrite: a stale body
+    /// in the destination area means two preserved bodies for one identity,
+    /// and picking between them silently is exactly what must never happen.
+    #[test]
+    #[serial]
+    fn deactivate_and_reactivate_refuse_existing_destination() {
+        with_data_dir(|_| {
+            let id = AgentId::from("aaaa2222-2222-4222-8222-222222222222".to_owned());
+            create_agent_dir(&id, meta_for("scout")).unwrap();
+            // Stale inactive body: deactivate must refuse, leaving the live
+            // directory untouched.
+            std::fs::create_dir_all(inactive_dir(&id).unwrap()).unwrap();
+            let err = deactivate_agent_dir(&id).unwrap_err();
+            assert!(err.to_string().contains("refusing to overwrite"));
+            assert!(agent_dir(&id).unwrap().exists(), "live body intact");
+
+            // Clean the stale body, deactivate for real, then plant a live
+            // body: reactivation must refuse the same way.
+            std::fs::remove_dir_all(inactive_dir(&id).unwrap()).unwrap();
+            deactivate_agent_dir(&id).unwrap();
+            create_agent_dir(&id, meta_for("scout")).unwrap();
+            let err = reactivate_agent_dir(&id).unwrap_err();
+            assert!(err.to_string().contains("refusing to overwrite"));
+            assert!(inactive_dir(&id).unwrap().exists(), "inactive body intact");
+        })
+    }
+
+    /// The archive path is deliberately one-way: deactivate operates on the
+    /// live area only, and an archived id never re-enters the flow through
+    /// it (archived is terminal: nothing in the lifecycle moves an archived
+    /// directory back — reactivation reads the inactive area only).
+    #[test]
+    #[serial]
+    fn deactivate_requires_a_live_directory() {
+        with_data_dir(|_| {
+            let id = AgentId::from("aaaa3333-3333-4333-8333-333333333333".to_owned());
+            let err = deactivate_agent_dir(&id).unwrap_err();
+            assert!(err.to_string().contains("no live directory"));
+        })
     }
 }

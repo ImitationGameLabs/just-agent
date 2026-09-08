@@ -39,9 +39,34 @@ struct ChainNode {
 /// Pre-loaded data for all agents being restored.
 /// Eliminates redundant disk reads during supervisor chain validation
 /// by caching meta and exec-policy loaded during the scan phase.
+#[derive(Default)]
 struct RestoreIndex {
     meta: HashMap<AgentId, persistence::AgentMeta>,
     exec: HashMap<AgentId, ExecPolicy>,
+}
+
+/// Restore one inactive-area agent back as a live registry entry —
+/// the substrate of converge's restore action (and of nothing else:
+/// boot restore walks the whole scan, this walks one body). The
+/// caller has already moved the directory back into the live area
+/// ([`persistence::reactivate_agent_dir`]) and passes the resulting
+/// live-area dir plus its metadata; this builds the one-agent
+/// restore index and runs the same [`restore_one`] path boot uses,
+/// so identity reconstruction, workspace guards, and delegation
+/// chain validation cannot drift between the two entry points.
+/// Registration is the caller's job (it owns the write lock and the
+/// batch's fail-fast policy).
+pub(crate) async fn restore_inactive(
+    shutdown: CancellationToken,
+    shared_state: SharedState,
+    p: persistence::PendingRestore,
+) -> anyhow::Result<(AgentId, AgentEntry)> {
+    let mut index = RestoreIndex::default();
+    index.meta.insert(p.agent_id.clone(), p.meta.clone());
+    if let Ok(exec) = persistence::load_exec_policy(&p.agent_dir) {
+        index.exec.insert(p.agent_id.clone(), exec);
+    }
+    restore_one(p, shutdown, shared_state, &index).await
 }
 
 impl RestoreIndex {
