@@ -54,6 +54,7 @@ async fn tagma_topics_roundtrip_preserve_payloads() {
     let mut signals = bus.subscribe::<SignalFrame>().unwrap();
     let mut statuses = bus.subscribe::<StatusSnapshot>().unwrap();
     let mut projections = bus.subscribe::<ProjectionSnapshot>().unwrap();
+    let mut tasks = bus.subscribe::<TaskChanged>().unwrap();
     bus.publish(AuthoredFrame {
         sender: user_sender(),
         reply: TagmaReply::Event {
@@ -81,6 +82,16 @@ async fn tagma_topics_roundtrip_preserve_payloads() {
         work_schedule: None,
     }))
     .unwrap();
+    bus.publish(TaskChanged {
+        task_id: 5,
+        title: "ledger walk".into(),
+        status: "in_progress".into(),
+        verb: "start".into(),
+        creator: Some("root".into()),
+        assignee: Some("scout".into()),
+        seats: vec!["scout".into()],
+    })
+    .unwrap();
 
     let got = authored.recv().await.unwrap();
     assert_eq!(got.sender.handle, "Alice");
@@ -101,6 +112,12 @@ async fn tagma_topics_roundtrip_preserve_payloads() {
     assert_eq!(statuses.recv().await.unwrap().0, status);
     let projection = projections.recv().await.unwrap().0;
     assert_eq!(projection.push_seq, 9, "the payload survives the slot");
+    let task = tasks.recv().await.unwrap();
+    assert_eq!(
+        (task.task_id, task.title.as_str(), task.status.as_str()),
+        (5, "ledger walk", "in_progress"),
+        "the task payload survives the slot"
+    );
     let stats = bus.stats();
     assert_eq!(
         stats,
@@ -125,6 +142,12 @@ async fn tagma_topics_roundtrip_preserve_payloads() {
             },
             TopicStats {
                 topic: "projection_snapshot",
+                publishes: 1,
+                lagged: 0,
+                last_gap: None
+            },
+            TopicStats {
+                topic: "task_changed",
                 publishes: 1,
                 lagged: 0,
                 last_gap: None

@@ -16,7 +16,9 @@ use kallip_common::protocol::ApiError;
 use kallip_task::{CheckpointSpec, ClosedReason, CreateSpec, TaskFilter, TaskStore};
 use serde::Deserialize;
 
+use crate::bus::TaskChanged;
 use crate::state::SharedState;
+use tracing::warn;
 
 #[derive(Deserialize)]
 pub(crate) struct CreateTaskBody {
@@ -150,11 +152,35 @@ fn api_error(err: kallip_task::Error) -> ApiError {
         | E::DispatchGate { .. }
         | E::GateReportGate { .. }
         | E::ArchiveGate { .. } => ApiError::conflict(err.to_string()),
+        // Malformed association keys are a caller input problem, not a
+        // server fault: 400, not 500.
+        E::AssociationInvalid { .. } => ApiError::bad_request(err.to_string()),
+        // DossierNotDir is about a caller-supplied dossier_path (the
+        // create body registered it), so it stays in the 400 family;
+        // the file system merely reports the bad input.
+        E::DossierNotDir { .. } => ApiError::bad_request(err.to_string()),
         _ => ApiError::internal(err.to_string()),
     }
 }
 
 type TaskResult<T> = Result<Json<T>, ApiError>;
+
+/// One wake broadcast per successful write verb. Publish failure is
+/// log-and-drop by bus contract: no subscribers (watcher not running)
+/// is benign, and the next verb on the task re-announces state.
+fn notify(state: &SharedState, verb: &str, export: &kallip_task::TaskExport) {
+    if let Err(err) = state.bus.publish(TaskChanged {
+        task_id: export.id,
+        title: export.title.clone(),
+        status: export.status.to_string(),
+        verb: verb.to_string(),
+        creator: export.creator.clone(),
+        assignee: export.assignee.clone(),
+        seats: export.seats.clone(),
+    }) {
+        warn!(task = export.id, verb, error = %err, "task wake broadcast dropped");
+    }
+}
 async fn create(
     State(state): State<SharedState>,
     Json(body): Json<CreateTaskBody>,
@@ -174,6 +200,7 @@ async fn create(
     let task = store(&state)?.create(spec).await.map_err(api_error)?;
     let id = task.id;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "create", &export);
     Ok(Json(export))
 }
 
@@ -187,6 +214,7 @@ async fn start(
         .await
         .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "start", &export);
     Ok(Json(export))
 }
 
@@ -245,6 +273,7 @@ async fn checkpoint(
     };
     store(&state)?.checkpoint(spec).await.map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "checkpoint", &export);
     Ok(Json(export))
 }
 
@@ -258,6 +287,7 @@ async fn annotate(
         .await
         .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "annotate", &export);
     Ok(Json(export))
 }
 
@@ -271,6 +301,7 @@ async fn gate_report(
         .await
         .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "gate_report", &export);
     Ok(Json(export))
 }
 
@@ -284,6 +315,7 @@ async fn dispatch(
         .await
         .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "dispatch", &export);
     Ok(Json(export))
 }
 
@@ -297,6 +329,7 @@ async fn chain_op(
         .await
         .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "chain_op", &export);
     Ok(Json(export))
 }
 
@@ -317,6 +350,7 @@ async fn close(
         .await
         .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "close", &export);
     Ok(Json(export))
 }
 
@@ -330,6 +364,7 @@ async fn reopen(
         .await
         .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "reopen", &export);
     Ok(Json(export))
 }
 
@@ -343,6 +378,7 @@ async fn archive(
         .await
         .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
+    notify(&state, "archive", &export);
     Ok(Json(export))
 }
 /// Serves the closed-task archive blob: canonical tar bytes, verbatim
@@ -389,4 +425,73 @@ pub(crate) fn router() -> axum::Router<SharedState> {
             "/{id}/archive",
             axum::routing::post(archive).get(fetch_archive),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The gate taxonomy is the 409 family: every state refusal maps to
+    /// conflict, unknown ids to not-found, and anything else (storage,
+    /// serialization) stays internal — a wrong arm here would turn "the
+    /// task refused" into "we broke", or worse, the reverse.
+    #[test]
+    fn gate_errors_map_to_conflict() {
+        for err in [
+            kallip_task::Error::InvalidTransition {
+                id: 1,
+                from: "queued".into(),
+                action: "checkpoint".into(),
+                expected: "in_progress|review".into(),
+            },
+            kallip_task::Error::SerialGate {
+                assignee: "scout".into(),
+                blocked_by: 1,
+                title: "t".into(),
+            },
+            kallip_task::Error::ReceiptGate {
+                missing: "scout".into(),
+            },
+            kallip_task::Error::DispatchGate { id: 1 },
+            kallip_task::Error::GateReportGate { id: 1 },
+            kallip_task::Error::ArchiveGate {
+                id: 1,
+                status: "queued".into(),
+            },
+        ] {
+            assert_eq!(api_error(err).status, 409, "gates are conflicts");
+        }
+    }
+
+    #[test]
+    fn unknown_ids_map_to_not_found() {
+        let err = kallip_task::Error::NotFound { id: 7 };
+        assert_eq!(api_error(err).status, 404);
+    }
+
+    /// Malformed association keys ride in the request body: the caller's
+    /// input problem is a 400, never a 500.
+    #[test]
+    fn association_invalid_maps_to_bad_request() {
+        let err = kallip_task::Error::AssociationInvalid {
+            detail: "empty range".into(),
+        };
+        assert_eq!(api_error(err).status, 400);
+    }
+
+    /// Same 400 family for a caller-supplied dossier path that turns out
+    /// not to be a directory.
+    #[test]
+    fn dossier_not_dir_maps_to_bad_request() {
+        let err = kallip_task::Error::DossierNotDir {
+            path: "/no/such/dir".into(),
+        };
+        assert_eq!(api_error(err).status, 400);
+    }
+
+    #[test]
+    fn anything_else_stays_internal() {
+        let err = kallip_task::Error::Other("storage went away".into());
+        assert_eq!(api_error(err).status, 500);
+    }
 }

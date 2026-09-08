@@ -89,6 +89,27 @@ impl Event for ProjectionSnapshot {
     const TOPIC: &'static str = "projection_snapshot";
 }
 
+/// A task-ledger mutation worth waking the task's people for: published by
+/// the task routes after every write verb; consumed by the task watcher,
+/// which drops a wake hint into the prompt queue of every agent whose role
+/// appears in the task's people set (assignee, seats, creator). Live-only
+/// economics: a lost frame costs one missed hint, and the next verb on the
+/// task re-announces the current state.
+#[derive(Clone, Debug)]
+pub(crate) struct TaskChanged {
+    pub(crate) task_id: i64,
+    pub(crate) title: String,
+    pub(crate) status: String,
+    pub(crate) verb: String,
+    pub(crate) creator: Option<String>,
+    pub(crate) assignee: Option<String>,
+    pub(crate) seats: Vec<String>,
+}
+
+impl Event for TaskChanged {
+    const TOPIC: &'static str = "task_changed";
+}
+
 /// Per-topic capacities. Bounded memory with lag-drop is the
 /// written contract: a receiver that falls `capacity` behind loses frames and
 /// must self-heal (history re-pull / snapshot cadence). Snapshot topics carry
@@ -99,6 +120,7 @@ const SIGNAL_CAPACITY: usize = 256;
 const STATUS_CAPACITY: usize = 16;
 const PROJECTION_CAPACITY: usize = 16;
 
+const TASK_CAPACITY: usize = 64;
 /// The tagma's topic registry: the single registration site —
 /// one site, one shape.
 pub(crate) fn tagma_bus() -> Result<EventBus, RegistryError> {
@@ -107,6 +129,7 @@ pub(crate) fn tagma_bus() -> Result<EventBus, RegistryError> {
         .topic::<SignalFrame>(SIGNAL_CAPACITY)
         .topic::<StatusSnapshot>(STATUS_CAPACITY)
         .topic::<ProjectionSnapshot>(PROJECTION_CAPACITY)
+        .topic::<TaskChanged>(TASK_CAPACITY)
         .build()
 }
 

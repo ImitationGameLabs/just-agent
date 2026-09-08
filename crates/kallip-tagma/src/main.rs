@@ -26,6 +26,7 @@ pub(crate) mod routes;
 mod shutdown;
 mod sse;
 mod state;
+mod task_watcher;
 mod token;
 mod work_schedule;
 
@@ -312,6 +313,11 @@ async fn run(args: Args) -> Result<()> {
             }
         });
     }
+
+    // Task-ledger change watcher: turns task-route writes into wake hints
+    // for the task's people (see task_watcher). Best-effort by contract —
+    // a dropped hint costs one missed wake, never data.
+    tokio::spawn(task_watcher::run(state.clone()));
 
     // Always-on direct (local) serving path: serves the external event
     // vocabulary to any local frontend client over a plain SSE. Forwards the
