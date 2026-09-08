@@ -60,6 +60,10 @@ pub enum Commands {
     /// KALLIP_FILES_URL + KALLIP_FILES_TOKEN.
     #[command(subcommand)]
     File(FileCommand),
+    /// Local task ledger: queue, state machine, event trail, hard gates, and
+    /// closed-task archives (process-local; no tagma daemon connection).
+    #[command(subcommand)]
+    Task(TaskCommand),
 }
 
 /// The `kallip profile-set` family — runtime profile-set management.
@@ -562,4 +566,187 @@ pub enum SubagentCommand {
     Interrupt(IdArgs),
     /// Update a direct subagent's role and/or description
     Metadata(MetadataArgs),
+}
+
+// ---------------------------------------------------------------------------
+// Task commands — local tasks.sqlite via kallip-task (no tagma connection)
+// ---------------------------------------------------------------------------
+
+/// The local task ledger: queue, coarse state machine, event trail, hard
+/// gates, and closed-task archives in `tasks.sqlite`. Verbs run
+/// process-local (no tagma daemon connection); the acting agent is taken
+/// from `KALLIP_ID` (or --actor). Write verbs are enforced in the store:
+/// the CLI is an entry point, the store is the law.
+#[derive(Subcommand)]
+pub enum TaskCommand {
+    /// Register a task in the queue (--title ...), or pick a queued task up
+    /// by id (queued -> in_progress; the serial gate applies, --force to
+    /// override with an auditable escape).
+    Start(TaskStartArgs),
+    /// Record a checkpoint: a work note, a review receipt (--receipt), a
+    /// move to review (--review), and/or the waiting timing marker
+    /// (--waiting / --no-waiting; a marker, never a state).
+    Checkpoint(TaskCheckpointArgs),
+    /// Close a task: every review seat registered at dispatch must have
+    /// filed a receipt (checkpoint --receipt), or pass --force with an
+    /// auditable escape. The dossier (if registered) is packed canonically
+    /// and content-addressed on close.
+    Close(TaskCloseArgs),
+    /// Reopen a closed task (back to in_progress).
+    Reopen(TaskReopenArgs),
+    /// List tasks (oldest first).
+    List(TaskListArgs),
+    /// Show one task: current state, association keys, event trail.
+    Show(TaskShowArgs),
+    /// Export a task (id, or all tasks with --all). Default renders the
+    /// show view; --json emits the machine face (stable field names, ISO
+    /// 8601 UTC times) including the full event trail.
+    Export(TaskExportArgs),
+    /// Extract a closed task's content-addressed archive (the dossier
+    /// snapshot frozen at close) into a directory.
+    Extract(TaskExtractArgs),
+}
+
+#[derive(Args)]
+pub struct TaskStartArgs {
+    /// Existing task id to pick up (queued -> in_progress). Omit to
+    /// register a new task from --title.
+    pub id: Option<i64>,
+    /// Title for a new task (registers it in the queue).
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Creator for a new task (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub creator: Option<String>,
+    /// Assignee for a new task; defaults to whoever picks it up.
+    #[arg(long)]
+    pub assignee: Option<String>,
+    /// Register a review seat (repeatable). Every seat must file a receipt
+    /// before the task can close.
+    #[arg(long = "seat")]
+    pub seats: Vec<String>,
+    /// Dossier directory packed into the closed archive on close.
+    #[arg(long)]
+    pub dossier: Option<PathBuf>,
+    /// Association key: inbox id window start (the task's message trail).
+    #[arg(long)]
+    pub inbox_start: Option<i64>,
+    /// Association key: inbox id window end.
+    #[arg(long)]
+    pub inbox_end: Option<i64>,
+    /// Association key: lesche room id.
+    #[arg(long)]
+    pub room: Option<String>,
+    /// Association key: room seq window start.
+    #[arg(long)]
+    pub room_seq_start: Option<i64>,
+    /// Association key: room seq window end.
+    #[arg(long)]
+    pub room_seq_end: Option<i64>,
+    /// Override the serial gate (the escape is recorded in the event trail).
+    #[arg(long)]
+    pub force: bool,
+    /// Acting agent (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub actor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct TaskCheckpointArgs {
+    /// Task id.
+    pub id: i64,
+    /// Work note recorded with the checkpoint.
+    #[arg(long)]
+    pub note: Option<String>,
+    /// File a review receipt as this actor (satisfies the close gate).
+    #[arg(long)]
+    pub receipt: bool,
+    /// Move the task in_progress -> review.
+    #[arg(long)]
+    pub review: bool,
+    /// Set the waiting timing marker.
+    #[arg(long)]
+    pub waiting: bool,
+    /// Clear the waiting timing marker.
+    #[arg(long = "no-waiting")]
+    pub no_waiting: bool,
+    /// Acting agent (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub actor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct TaskCloseArgs {
+    /// Task id.
+    pub id: i64,
+    /// Why the task closes (gh-style two-level terminal state).
+    #[arg(long, value_enum, default_value_t = TaskCloseReason::Completed)]
+    pub reason: TaskCloseReason,
+    /// One-sentence result recorded with the close event.
+    #[arg(long)]
+    pub summary: Option<String>,
+    /// Override the receipt gate (the escape is recorded in the event trail).
+    #[arg(long)]
+    pub force: bool,
+    /// Acting agent (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub actor: Option<String>,
+}
+
+/// Terminal-state reason, serialized snake_case on the store face.
+#[derive(clap::ValueEnum, Clone, Copy)]
+#[value(rename_all = "snake_case")]
+pub enum TaskCloseReason {
+    Completed,
+    NotPlanned,
+    Duplicate,
+}
+
+#[derive(Args)]
+pub struct TaskReopenArgs {
+    /// Task id.
+    pub id: i64,
+    /// Override the serial gate (the escape is recorded in the event trail).
+    #[arg(long)]
+    pub force: bool,
+    /// Acting agent (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub actor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct TaskListArgs {
+    /// Filter by status: queued, in_progress, review, closed.
+    #[arg(long)]
+    pub status: Option<String>,
+    /// Filter by assignee.
+    #[arg(long)]
+    pub assignee: Option<String>,
+}
+
+#[derive(Args)]
+pub struct TaskShowArgs {
+    /// Task id.
+    pub id: i64,
+}
+
+#[derive(Args)]
+pub struct TaskExportArgs {
+    /// Task id; omit with --all.
+    pub id: Option<i64>,
+    /// Export every task.
+    #[arg(long)]
+    pub all: bool,
+    /// Emit the machine face (JSON) instead of the show view.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args)]
+pub struct TaskExtractArgs {
+    /// Task id.
+    pub id: i64,
+    /// Destination directory (created if absent).
+    #[arg(long)]
+    pub to: PathBuf,
 }

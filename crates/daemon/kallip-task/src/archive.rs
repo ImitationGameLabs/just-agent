@@ -1,0 +1,183 @@
+//! Closed-task archives: canonical tar -> content-addressed blob -> hash
+//! pointer, and the extraction half of the round trip.
+//!
+//! Canonical packing is what makes the archive verifiable: the same tree
+//! always produces byte-identical bytes (entries sorted by path, mtime/uid/
+//! gid zeroed, fixed modes), so the content address is a property of the
+//! dossier content, not of when it was packed. Regular files and directories
+//! only — a dossier with anything else is a caller error, not a silent skip.
+
+use std::fs;
+use std::io::Cursor;
+use std::path::Path;
+
+use kallip_blob_store::{BlobId, BlobStore};
+
+use crate::Error;
+
+/// Packs `dir` into canonical tar bytes (whole directory, relative
+/// paths). Symlinks are rejected outright — the canonical archive
+/// contains regular files and directories only; a link could silently
+/// pull out-of-dossier content into the archive or loop the walk.
+pub fn pack_dir(dir: &Path) -> Result<Vec<u8>, Error> {
+    let mut paths: Vec<_> = collect_relative(dir, dir)?;
+    // Fixed ordering is half of canonicity.
+    paths.sort();
+
+    let mut builder = tar::Builder::new(Vec::new());
+    for rel in paths {
+        let full = dir.join(&rel);
+        let meta = fs::symlink_metadata(&full)?;
+        // symlink_metadata, not metadata: a link swapped in between the
+        // walk above and this stat must land in the error arm, not get
+        // silently dereferenced into the archive.
+        if meta.is_dir() {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(0);
+            header.set_mode(0o755);
+            header.set_mtime(0);
+            header.set_uid(0);
+            header.set_gid(0);
+            header.set_entry_type(tar::EntryType::Directory);
+            builder.append_data(&mut header, format!("{}/", rel.display()), std::io::empty())?;
+        } else if meta.is_file() {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(meta.len());
+            header.set_mode(0o644);
+            header.set_mtime(0);
+            header.set_uid(0);
+            header.set_gid(0);
+            header.set_entry_type(tar::EntryType::Regular);
+            let bytes = fs::read(&full)?;
+            builder.append_data(&mut header, &rel, bytes.as_slice())?;
+        } else {
+            return Err(Error::Other(format!(
+                "dossier contains a non-regular entry: {}",
+                rel.display()
+            )));
+        }
+    }
+    Ok(builder.into_inner()?)
+}
+
+/// Stores the packed bytes; the returned id is the content address.
+pub async fn ingest(blobs: &dyn BlobStore, bytes: Vec<u8>) -> Result<BlobId, Error> {
+    let mut cursor = Cursor::new(bytes);
+    let id = blobs.put(&mut cursor).await?;
+    Ok(id)
+}
+
+/// Fetches the closed archive and unpacks it under `dest` (created if
+/// absent). Entry paths are checked against `dest` (`unpack_in`).
+pub async fn extract(blobs: &dyn BlobStore, id: &BlobId, dest: &Path) -> Result<(), Error> {
+    let bytes = blobs.get(id).await?;
+    fs::create_dir_all(dest)?;
+    let mut archive = tar::Archive::new(&bytes[..]);
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        entry.unpack_in(dest)?;
+    }
+    Ok(())
+}
+
+fn collect_relative(root: &Path, dir: &Path) -> Result<Vec<std::path::PathBuf>, Error> {
+    let mut out = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(root)
+            .expect("walk rooted at `root`")
+            .to_path_buf();
+        let meta = fs::symlink_metadata(&path)?;
+        if meta.file_type().is_symlink() {
+            return Err(Error::Other(format!(
+                "dossier contains a symlink entry: {}",
+                rel.display()
+            )));
+        }
+        if meta.is_dir() {
+            out.push(rel.clone());
+            out.extend(collect_relative(root, &path)?);
+        } else {
+            out.push(rel);
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kallip_blob_store::LocalBackend;
+    use std::fs;
+
+    fn scratch(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(name);
+        fs::create_dir_all(&dir).unwrap();
+        (tmp, dir)
+    }
+
+    #[test]
+    fn pack_is_canonical_same_tree_same_bytes() {
+        let (_t1, a) = scratch("dossier");
+        let (_t2, b) = scratch("dossier");
+        for root in [&a, &b] {
+            fs::write(root.join("plan.md"), "# plan\n").unwrap();
+            fs::create_dir(root.join("notes")).unwrap();
+            fs::write(root.join("notes/z.md"), "z").unwrap();
+            fs::write(root.join("notes/a.md"), "a").unwrap();
+        }
+        let bytes_a = pack_dir(&a).unwrap();
+        let bytes_b = pack_dir(&b).unwrap();
+        assert_eq!(bytes_a, bytes_b, "same tree must pack identically");
+
+        // Sorted order: "notes" precedes "plan.md", "notes/a.md" before
+        // "notes/z.md" — independent of readdir order.
+        let text = String::from_utf8_lossy(&bytes_a);
+        let a_pos = text.find("notes/a.md").unwrap();
+        let z_pos = text.find("notes/z.md").unwrap();
+        assert!(a_pos < z_pos);
+    }
+
+    #[tokio::test]
+    async fn ingest_extract_round_trip() {
+        let (_t, dir) = scratch("dossier");
+        fs::write(dir.join("plan.md"), "# plan\n").unwrap();
+        let packed = pack_dir(&dir).unwrap();
+
+        let root = tempfile::tempdir().unwrap();
+        let blobs = LocalBackend::new(root.path().join("blobs"));
+        let id = ingest(&blobs, packed.clone()).await.unwrap();
+
+        // Content addressing: repacking the same content is idempotent.
+        let id2 = ingest(&blobs, pack_dir(&dir).unwrap()).await.unwrap();
+        assert_eq!(id.as_str(), id2.as_str());
+
+        let out = tempfile::tempdir().unwrap();
+        extract(&blobs, &id, &out.path().join("unpacked"))
+            .await
+            .unwrap();
+        let restored = out.path().join("unpacked/plan.md");
+        assert_eq!(fs::read_to_string(restored).unwrap(), "# plan\n");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn pack_rejects_symlinks_instead_of_dereferencing_or_looping() {
+        let (_t, dir) = scratch("dossier");
+        fs::write(dir.join("real.txt"), "stay").unwrap();
+        // A file symlink must be an error, not silently dereferenced
+        // into the archive (out-of-dossier content would leak in).
+        std::os::unix::fs::symlink("/etc/hostname", dir.join("link.txt")).unwrap();
+        let err = pack_dir(&dir).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+
+        // A directory symlink pointing at an ancestor must not loop the
+        // walk into a stack overflow either.
+        std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
+        let err = pack_dir(&dir).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+    }
+}

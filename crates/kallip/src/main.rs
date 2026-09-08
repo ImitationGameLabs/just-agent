@@ -3,6 +3,7 @@
 mod args;
 mod reference;
 mod skill;
+mod task;
 
 use anyhow::Result;
 use args::{
@@ -63,6 +64,12 @@ async fn main() -> Result<()> {
     // before the tagma client is built.
     if let Commands::File(cmd) = &command {
         run_file(cmd).await?;
+        return Ok(());
+    }
+    // The task family talks to the local tasks.sqlite (process-local; no
+    // tagma daemon connection), so dispatch it before the client is built.
+    if let Commands::Task(cmd) = &command {
+        task::run_task(cmd).await?;
         return Ok(());
     }
     let client = TagmaClient::from_env()?;
@@ -537,6 +544,7 @@ async fn main() -> Result<()> {
         // Dispatched before the tagma client is built; the compiler
         // still wants the arm here.
         Commands::File(_) => unreachable!("file family dispatched above"),
+        Commands::Task(_) => unreachable!("task family dispatched above"),
     }
     Ok(())
 }

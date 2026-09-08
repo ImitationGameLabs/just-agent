@@ -1,0 +1,23 @@
+[package]
+name = "kallip-task"
+description = "Task ledger library: coarse state machine, event trail, hard gates, and closed-task content-addressed archives"
+edition = "2024"
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+kallip-blob-store = { workspace = true }
+kallip-runtime = { workspace = true }
+sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
+sea-orm-migration = { workspace = true, features = ["sqlx-sqlite"] }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+thiserror = { workspace = true }
+tar = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -23,6 +23,7 @@ members = [
   "crates/daemon/kallip-daemon-client",
   "crates/daemon/kallip-daemon",
   "crates/daemon/kallip-daemon-spawn",
+  "crates/daemon/kallip-task",
   "crates/daemon/kallipctl",
   "crates/platform/kallip-instances",
   "crates/platform/kallip-files",
@@ -60,6 +61,7 @@ kallip-daemon-common = { path = "crates/daemon/kallip-daemon-common" }
 kallip-daemon-client = { path = "crates/daemon/kallip-daemon-client" }
 kallip-daemon = { path = "crates/daemon/kallip-daemon" }
 kallip-daemon-spawn = { path = "crates/daemon/kallip-daemon-spawn" }
+kallip-task = { path = "crates/daemon/kallip-task" }
 kallipctl = { path = "crates/daemon/kallipctl" }
 kallip-instances = { path = "crates/platform/kallip-instances" }
 kallip-blob-store = { path = "crates/kallip-blob-store" }
@@ -160,6 +162,7 @@ ipnet = "2.12"
 unicode-normalization = "0.1"
 time = { version = "0.3", features = ["serde-well-known", "macros"] }
 toml = "1"
+tar = "0.4.46"
 arc-swap = "1"
 tokenx-rs = "0.1"
 temp-env = "0.3"

@@ -9,6 +9,9 @@ license.workspace = true
 anyhow = { workspace = true }
 kallip-client = { workspace = true }
 kallip-common = { workspace = true }
+kallip-blob-store = { workspace = true }
+kallip-runtime = { workspace = true }
+kallip-task = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 tokio-util = { workspace = true, features = ["io"] }
 clap = { workspace = true }
