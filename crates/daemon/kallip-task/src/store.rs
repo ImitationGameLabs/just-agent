@@ -6,6 +6,7 @@
 //! actor position: `actor` = who triggered the verb, `assignee` = who
 //! executes the work at that moment.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use crate::{Task, TaskEvent};
@@ -41,6 +42,9 @@ pub struct TaskExport {
     pub ended_at: Option<String>,
     pub waiting: bool,
     pub waiting_since: Option<String>,
+    /// The archive partition marker (a query partition, not a state).
+    pub archived: bool,
+    pub archived_at: Option<String>,
     pub closed_reason: Option<String>,
     pub close_summary: Option<String>,
     pub association: Option<AssociationExport>,
@@ -104,10 +108,19 @@ pub struct CheckpointSpec {
     pub waiting: Option<bool>,
 }
 
+/// The seat roster recorded in a `dispatch` action event's payload —
+/// the roster the close gate counts receipts against.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct DispatchPayload {
+    seats: Vec<String>,
+}
 #[derive(Debug, Clone, Default)]
 pub struct TaskFilter {
     pub status: Option<TaskStatus>,
     pub assignee: Option<String>,
+    /// The archive partition: false (default) lists active tasks only,
+    /// true lists archived tasks only.
+    pub archived: bool,
 }
 
 /// SQLite-backed task store.
@@ -125,6 +138,9 @@ impl TaskStore {
         }
         let url = format!("sqlite://{}?mode=rwc", path.display());
         let mut opts = ConnectOptions::new(url);
+        // 5s busy_timeout x BUSY_RETRIES(3) retries: a write queueing
+        // behind sustained contention waits ~20s at worst before the store
+        // surfaces the underlying busy error.
         opts.max_connections(4);
         opts.map_sqlx_sqlite_opts(|o| {
             o.journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
@@ -461,7 +477,10 @@ impl TaskStore {
     /// the transaction trades a dossier-change window (TOCTOU) for a
     /// short write lock: the hash is the content address of what was
     /// actually archived, so the pointer is exact for that snapshot even
-    /// if the live directory moves on afterwards.
+    /// if the live directory moves on afterwards. Orphan note: a
+    /// successful ingest followed by a failed commit leaves the packed
+    /// blob unreferenced — bounded growth; the blob store's gc reclaims
+    /// on demand but nothing schedules it yet.
     pub async fn close(
         &self,
         id: i64,
@@ -514,16 +533,36 @@ impl TaskStore {
                         check_transition(Transition::Close, status, id)?;
 
                         let seats: Vec<String> = serde_json::from_str(&row.seats)?;
+                        let cycle_open = gates::dispatch_in_current_cycle(tx, row.id).await?;
                         if !force {
-                            let missing = gates::missing_receipts(tx, row.id, &seats).await?;
+                            // Dispatch gate: the review round must have been
+                            // dispatched in this cycle before close counts as
+                            // reviewed.
+                            if !cycle_open {
+                                return Err(Error::DispatchGate { id: row.id });
+                            }
+                            // Receipt gate: the roster is the latest
+                            // dispatch's seats (the gate above guarantees one
+                            // exists); row.seats is only a defensive fallback.
+                            let roster = gates::latest_dispatch(tx, row.id)
+                                .await?
+                                .and_then(|e| e.payload)
+                                .and_then(|p| serde_json::from_str::<DispatchPayload>(&p).ok())
+                                .map(|p| p.seats)
+                                .unwrap_or_else(|| seats.clone());
+                            let missing = gates::missing_receipts(tx, row.id, &roster).await?;
                             if !missing.is_empty() {
                                 return Err(Error::ReceiptGate {
                                     missing: missing.join(", "),
                                 });
                             }
                         } else {
+                            let mut escaped: Vec<&str> = vec!["receipts"];
+                            if !cycle_open {
+                                escaped.insert(0, "dispatch");
+                            }
                             let payload = serde_json::json!({
-                                "gate": "receipts",
+                                "gates": escaped,
                                 "registered_seats": seats,
                             });
                             append_event_tx(
@@ -635,7 +674,7 @@ impl TaskStore {
                                 tx,
                                 row.id,
                                 "action",
-                                "force_start",
+                                "force_reopen",
                                 Some(actor.to_string()),
                                 row.assignee.clone(),
                                 None,
@@ -692,8 +731,317 @@ impl TaskStore {
         unreachable!("busy retries are bounded")
     }
 
+    /// Appends a note to the trail. Never moves the machine and never
+    /// mutates a field: this is the structured append-only record
+    /// surface (the event table has no update or delete path). Allowed
+    /// in any state, `closed` included — an annotation is audit-log
+    /// material, not a state change.
+    pub async fn annotate(&self, id: i64, actor: &str, note: String) -> Result<Task, Error> {
+        for attempt in 0..=BUSY_RETRIES {
+            let actor = actor.to_owned();
+            let note = note.clone();
+            match self
+                .db
+                .transaction(|tx| {
+                    Box::pin(async move {
+                        take_write_lock(tx).await?;
+                        let row = load(tx, id).await?;
+                        append_event_tx(
+                            tx,
+                            row.id,
+                            "action",
+                            "annotate",
+                            Some(actor),
+                            row.assignee.clone(),
+                            None,
+                            None,
+                            note_payload(&Some(note)),
+                            now(),
+                        )
+                        .await?;
+                        load(tx, id).await
+                    })
+                })
+                .await
+            {
+                Err(TransactionError::Connection(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_conn(e) =>
+                {
+                    continue;
+                }
+                Err(TransactionError::Transaction(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_err(e) =>
+                {
+                    continue;
+                }
+                other => return other.map_err(flat_txn),
+            }
+        }
+        unreachable!("busy retries are bounded")
+    }
+
+    /// Records a gate report — the announcement that must precede every
+    /// recorded chain operation (the report-before-you-move discipline,
+    /// tool-faced). An append-only record, any state.
+    pub async fn gate_report(&self, id: i64, actor: &str, note: String) -> Result<Task, Error> {
+        for attempt in 0..=BUSY_RETRIES {
+            let actor = actor.to_owned();
+            let note = note.clone();
+            match self
+                .db
+                .transaction(|tx| {
+                    Box::pin(async move {
+                        take_write_lock(tx).await?;
+                        let row = load(tx, id).await?;
+                        append_event_tx(
+                            tx,
+                            row.id,
+                            "action",
+                            "gate_report",
+                            Some(actor),
+                            row.assignee.clone(),
+                            None,
+                            None,
+                            note_payload(&Some(note)),
+                            now(),
+                        )
+                        .await?;
+                        load(tx, id).await
+                    })
+                })
+                .await
+            {
+                Err(TransactionError::Connection(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_conn(e) =>
+                {
+                    continue;
+                }
+                Err(TransactionError::Transaction(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_err(e) =>
+                {
+                    continue;
+                }
+                other => return other.map_err(flat_txn),
+            }
+        }
+        unreachable!("busy retries are bounded")
+    }
+
+    /// Dispatches the review round: records the seat roster for the
+    /// current cycle and re-bases the receipt boundary (receipts filed
+    /// before the dispatch do not count). Omitting the roster re-affirms
+    /// the seats registered at create; an empty roster is an explicit
+    /// zero-seat registration (no receipts required at close).
+    pub async fn dispatch(
+        &self,
+        id: i64,
+        actor: &str,
+        seats: Option<Vec<String>>,
+    ) -> Result<Task, Error> {
+        for attempt in 0..=BUSY_RETRIES {
+            let actor = actor.to_owned();
+            let seats = seats.clone();
+            match self
+                .db
+                .transaction(|tx| {
+                    Box::pin(async move {
+                        take_write_lock(tx).await?;
+                        let row = load(tx, id).await?;
+                        let status = parse_status(&row)?;
+                        match status {
+                            TaskStatus::InProgress | TaskStatus::Review => {}
+                            _ => {
+                                return Err(Error::InvalidTransition {
+                                    id: row.id,
+                                    from: status.as_str().to_string(),
+                                    action: "dispatch".to_string(),
+                                    expected: "in_progress|review".to_string(),
+                                });
+                            }
+                        }
+                        let roster = seats.unwrap_or_else(|| {
+                            serde_json::from_str::<Vec<String>>(&row.seats).unwrap_or_default()
+                        });
+                        let payload = serde_json::json!({ "seats": roster });
+                        append_event_tx(
+                            tx,
+                            row.id,
+                            "action",
+                            "dispatch",
+                            Some(actor),
+                            row.assignee.clone(),
+                            None,
+                            None,
+                            Some(payload.to_string()),
+                            now(),
+                        )
+                        .await?;
+                        load(tx, id).await
+                    })
+                })
+                .await
+            {
+                Err(TransactionError::Connection(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_conn(e) =>
+                {
+                    continue;
+                }
+                Err(TransactionError::Transaction(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_err(e) =>
+                {
+                    continue;
+                }
+                other => return other.map_err(flat_txn),
+            }
+        }
+        unreachable!("busy retries are bounded")
+    }
+
+    /// Records a chain operation on the trail. The gate-report gate
+    /// requires a `gate_report` event newer than the last recorded chain
+    /// operation — the tool face of report-before-you-move. The CLI
+    /// cannot wrap git, so recording is voluntary; once recorded, an
+    /// out-of-order chain op is refused here instead of passing unseen.
+    pub async fn chain_op(
+        &self,
+        id: i64,
+        actor: &str,
+        op: &str,
+        detail: Option<String>,
+        force: bool,
+    ) -> Result<Task, Error> {
+        for attempt in 0..=BUSY_RETRIES {
+            let actor = actor.to_owned();
+            let detail = detail.clone();
+            let op = op.to_owned();
+            match self
+                .db
+                .transaction(|tx| {
+                    Box::pin(async move {
+                        take_write_lock(tx).await?;
+                        let row = load(tx, id).await?;
+                        if !force && !gates::gate_report_current(tx, row.id).await? {
+                            return Err(Error::GateReportGate { id: row.id });
+                        }
+                        let mut payload = serde_json::json!({ "op": op });
+                        if let Some(detail) = &detail {
+                            payload["detail"] = serde_json::Value::String(detail.clone());
+                        }
+                        if force {
+                            payload["gate"] = serde_json::Value::String("gate_report".into());
+                        }
+                        append_event_tx(
+                            tx,
+                            row.id,
+                            "action",
+                            "chain_op",
+                            Some(actor),
+                            row.assignee.clone(),
+                            None,
+                            None,
+                            Some(payload.to_string()),
+                            now(),
+                        )
+                        .await?;
+                        load(tx, id).await
+                    })
+                })
+                .await
+            {
+                Err(TransactionError::Connection(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_conn(e) =>
+                {
+                    continue;
+                }
+                Err(TransactionError::Transaction(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_err(e) =>
+                {
+                    continue;
+                }
+                other => return other.map_err(flat_txn),
+            }
+        }
+        unreachable!("busy retries are bounded")
+    }
+
+    /// Archives a task: the query partition marker flips and the task
+    /// leaves the default list view. The gate requires `closed` —
+    /// archiving an open task would hide active work — and `--force`
+    /// escapes with an auditable event.
+    pub async fn archive_task(&self, id: i64, actor: &str, force: bool) -> Result<Task, Error> {
+        for attempt in 0..=BUSY_RETRIES {
+            let actor = actor.to_owned();
+            match self
+                .db
+                .transaction(|tx| {
+                    Box::pin(async move {
+                        take_write_lock(tx).await?;
+                        let row = load(tx, id).await?;
+                        let status = parse_status(&row)?;
+                        let escaped = status != TaskStatus::Closed;
+                        if escaped && !force {
+                            return Err(Error::ArchiveGate {
+                                id: row.id,
+                                status: status.as_str().to_string(),
+                            });
+                        }
+                        let payload = if escaped {
+                            Some(
+                                serde_json::json!({
+                                    "gate": "archive_requires_closed",
+                                    "status": status.as_str(),
+                                })
+                                .to_string(),
+                            )
+                        } else {
+                            None
+                        };
+                        let update = ActiveModel {
+                            id: Set(row.id),
+                            archived: Set(1),
+                            archived_at: Set(Some(now())),
+                            updated_at: Set(now()),
+                            ..Default::default()
+                        };
+                        update.update(tx).await?;
+                        append_event_tx(
+                            tx,
+                            row.id,
+                            "action",
+                            "archive",
+                            Some(actor),
+                            row.assignee.clone(),
+                            None,
+                            None,
+                            payload,
+                            now(),
+                        )
+                        .await?;
+                        load(tx, id).await
+                    })
+                })
+                .await
+            {
+                Err(TransactionError::Connection(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_conn(e) =>
+                {
+                    continue;
+                }
+                Err(TransactionError::Transaction(ref e))
+                    if attempt < BUSY_RETRIES && is_busy_err(e) =>
+                {
+                    continue;
+                }
+                other => return other.map_err(flat_txn),
+            }
+        }
+        unreachable!("busy retries are bounded")
+    }
     pub async fn list(&self, filter: TaskFilter) -> Result<Vec<Task>, Error> {
         let mut query = TaskEntity::find();
+        // The archive partition: the default view is the active one
+        // (done.txt precedent); `archived` flips to archived-only.
+        query = query.filter(TaskColumn::Archived.eq(i64::from(filter.archived)));
         if let Some(status) = filter.status {
             query = query.filter(TaskColumn::Status.eq(status.as_str()));
         }
@@ -703,9 +1051,28 @@ impl TaskStore {
         Ok(query.order_by_asc(TaskColumn::Id).all(&self.db).await?)
     }
 
+    /// The task row and its trail are a pair: one read transaction keeps
+    /// a concurrent write from interleaving between the two queries (a
+    /// torn read).
     pub async fn get(&self, id: i64) -> Result<(Task, Vec<TaskEvent>), Error> {
-        let task = self.load(id).await?;
-        let events = self.events_of(id).await?;
+        self.db
+            .transaction(|tx| Box::pin(async move { Self::get_in_tx(tx, id).await }))
+            .await
+            .map_err(flat_txn)
+    }
+
+    /// Shared body of the single-task read face, run inside whatever
+    /// read transaction the caller opened (get, export).
+    async fn get_in_tx(tx: &DatabaseTransaction, id: i64) -> Result<(Task, Vec<TaskEvent>), Error> {
+        let task = TaskEntity::find_by_id(id)
+            .one(tx)
+            .await?
+            .ok_or(Error::NotFound { id })?;
+        let events = EventEntity::find()
+            .filter(task_event::Column::TaskId.eq(id))
+            .order_by_asc(task_event::Column::Id)
+            .all(tx)
+            .await?;
         Ok((task, events))
     }
 
@@ -720,8 +1087,46 @@ impl TaskStore {
     /// The machine face: the task plus its trail, stable field names, ISO
     /// 8601 UTC times.
     pub async fn export(&self, id: i64) -> Result<TaskExport, Error> {
-        let (task, events) = self.get(id).await?;
-        to_export(task, events)
+        self.db
+            .transaction(|tx| {
+                Box::pin(async move {
+                    let (task, events) = Self::get_in_tx(tx, id).await?;
+                    to_export(task, events)
+                })
+            })
+            .await
+            .map_err(flat_txn)
+    }
+
+    /// The machine face for every task, archived included: one pass over
+    /// tasks and one over events, grouped per task — no per-task queries.
+    pub async fn export_all(&self) -> Result<Vec<TaskExport>, Error> {
+        self.db
+            .transaction(|tx| {
+                Box::pin(async move {
+                    let tasks = TaskEntity::find()
+                        .order_by_asc(task::Column::Id)
+                        .all(tx)
+                        .await?;
+                    let events = EventEntity::find()
+                        .order_by_asc(task_event::Column::Id)
+                        .all(tx)
+                        .await?;
+                    let mut by_task: std::collections::BTreeMap<i64, Vec<TaskEvent>> =
+                        std::collections::BTreeMap::new();
+                    for e in events {
+                        by_task.entry(e.task_id).or_default().push(e);
+                    }
+                    let mut exports = Vec::with_capacity(tasks.len());
+                    for t in tasks {
+                        let trail = by_task.remove(&t.id).unwrap_or_default();
+                        exports.push(to_export(t, trail)?);
+                    }
+                    Ok(exports)
+                })
+            })
+            .await
+            .map_err(flat_txn)
     }
 
     /// Content address of a closed archive, for `task extract`.
@@ -787,6 +1192,8 @@ fn to_export(task: Task, events: Vec<TaskEvent>) -> Result<TaskExport, Error> {
         ended_at: iso(task.ended_at)?,
         waiting: task.waiting != 0,
         waiting_since: iso(task.waiting_since)?,
+        archived: task.archived != 0,
+        archived_at: iso(task.archived_at)?,
         closed_reason: task.closed_reason.clone(),
         close_summary: task.close_summary.clone(),
         association,
@@ -890,14 +1297,45 @@ async fn take_write_lock(tx: &DatabaseTransaction) -> Result<(), Error> {
 /// errors return immediately.
 const BUSY_RETRIES: usize = 3;
 
+/// The single busy classifier: every `DbErr` shape that can carry a SQLite
+/// error funnels through one code match. SQLITE_BUSY (5) and SQLITE_LOCKED
+/// (6) are transient contention a retry can clear; matching by result code
+/// (never message text) keeps gate errors that embed user text from
+/// masquerading as busy, and vice versa.
+fn is_busy_code(code: Option<Cow<'_, str>>) -> bool {
+    // SQLite reports extended result codes (517 = BUSY_SNAPSHOT and
+    // friends); the primary code is the low byte, and the low byte is
+    // what marks transient contention (5 = BUSY, 6 = LOCKED).
+    let primary = code
+        .as_deref()
+        .and_then(|c| c.parse::<u32>().ok())
+        .map(|c| c & 0xFF);
+    matches!(primary, Some(5) | Some(6))
+}
+
+fn is_busy_db(e: &sea_orm::DbErr) -> bool {
+    use sea_orm::RuntimeErr;
+    let sqlx_err = match e {
+        sea_orm::DbErr::Conn(RuntimeErr::SqlxError(e))
+        | sea_orm::DbErr::Exec(RuntimeErr::SqlxError(e))
+        | sea_orm::DbErr::Query(RuntimeErr::SqlxError(e)) => Some(e),
+        _ => None,
+    };
+    match sqlx_err {
+        Some(sqlx::Error::Database(db)) => is_busy_code(db.code()),
+        _ => false,
+    }
+}
+
 fn is_busy_err(e: &Error) -> bool {
-    let s = e.to_string();
-    s.contains("database is locked") || s.contains("database table is locked")
+    match e {
+        Error::Db(db) => is_busy_db(db),
+        _ => false,
+    }
 }
 
 fn is_busy_conn(e: &sea_orm::DbErr) -> bool {
-    let s = e.to_string();
-    s.contains("database is locked") || s.contains("database table is locked")
+    is_busy_db(e)
 }
 
 /// Association keys are paired windows: each range is either fully
@@ -930,4 +1368,29 @@ fn validate_association(spec: &CreateSpec) -> Result<(), Error> {
 
 fn now() -> i64 {
     OffsetDateTime::now_utc().unix_timestamp()
+}
+
+#[cfg(test)]
+mod busy_tests {
+    use super::is_busy_code;
+    use std::borrow::Cow;
+
+    #[test]
+    fn busy_codes_are_exactly_five_and_six() {
+        // SQLITE_BUSY = 5, SQLITE_LOCKED = 6; the extended codes mask
+        // down to the same primary byte (261/517 are BUSY-family,
+        // 262/518 are LOCKED-family) and must retry just the same.
+        assert!(is_busy_code(Some(Cow::Borrowed("5"))));
+        assert!(is_busy_code(Some(Cow::Borrowed("6"))));
+        assert!(is_busy_code(Some(Cow::Borrowed("261"))));
+        assert!(is_busy_code(Some(Cow::Borrowed("517"))));
+        assert!(is_busy_code(Some(Cow::Borrowed("262"))));
+        assert!(is_busy_code(Some(Cow::Borrowed("518"))));
+        // Anything else (constraint 19, corruption 11, non-numeric,
+        // no code at all) never retries.
+        assert!(!is_busy_code(Some(Cow::Borrowed("19"))));
+        assert!(!is_busy_code(Some(Cow::Borrowed("11"))));
+        assert!(!is_busy_code(Some(Cow::Borrowed("x"))));
+        assert!(!is_busy_code(None));
+    }
 }

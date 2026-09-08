@@ -22,11 +22,18 @@ pub struct Model {
     pub seats: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Set at first start; preserved across reopen (the original start
+    /// line stays the task's start line).
     pub started_at: Option<i64>,
     pub ended_at: Option<i64>,
     /// Timing marker, not a state (taskwarrior precedent).
     pub waiting: i64,
     pub waiting_since: Option<i64>,
+    /// Query partition marker, not a state: archived tasks leave the
+    /// default list view (`task list --archived` shows them). Set by
+    /// `task archive`; the gate requires `closed` (the escape is recorded).
+    pub archived: i64,
+    pub archived_at: Option<i64>,
     pub closed_reason: Option<String>,
     /// One-sentence result of the task, recorded at close (close-gate product).
     pub close_summary: Option<String>,

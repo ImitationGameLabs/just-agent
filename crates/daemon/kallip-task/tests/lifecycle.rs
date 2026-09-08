@@ -46,6 +46,10 @@ async fn lifecycle_with_review_and_receipts() {
     assert_eq!(t.status, "in_progress");
     assert!(t.started_at.is_some());
 
+    // Dispatching the review round registers the roster the close gate
+    // counts receipts against (r1, r2 from create).
+    let t = store.dispatch(t.id, "root", None).await.unwrap();
+
     let t = store
         .checkpoint(checkpoint(t.id, "dev", Some("wip"), false, false))
         .await
@@ -173,6 +177,7 @@ async fn export_json_shape_is_stable() {
         .await
         .unwrap();
     store.start(t.id, "dev", false).await.unwrap();
+    store.dispatch(t.id, "root", None).await.unwrap();
     store
         .checkpoint(checkpoint(t.id, "r1", None, true, false))
         .await
@@ -203,6 +208,7 @@ async fn export_json_shape_is_stable() {
     let closed = store
         .list(TaskFilter {
             status: Some(TaskStatus::Closed),
+            archived: false,
             assignee: None,
         })
         .await
@@ -227,6 +233,8 @@ async fn close_archives_dossier_content_addressed() {
         .await
         .unwrap();
     store.start(t.id, "dev", false).await.unwrap();
+    // Explicit zero-seat dispatch: no receipts are required at close.
+    store.dispatch(t.id, "root", Some(vec![])).await.unwrap();
 
     let blob_root = tempfile::tempdir().unwrap();
     let blobs: Arc<dyn kallip_blob_store::BlobStore> =
@@ -286,7 +294,7 @@ async fn reopen_runs_the_serial_gate_and_force_is_audited() {
     assert!(
         events
             .iter()
-            .any(|e| e.kind == "action" && e.name == "force_start")
+            .any(|e| e.kind == "action" && e.name == "force_reopen")
     );
 }
 
@@ -295,6 +303,7 @@ async fn reopen_invalidates_prior_cycle_receipts() {
     let store = TaskStore::open_in_memory().await;
     let t = store.create(spec("cycle", "dev", &["r1"])).await.unwrap();
     store.start(t.id, "dev", false).await.unwrap();
+    store.dispatch(t.id, "root", None).await.unwrap();
     store
         .checkpoint(checkpoint(t.id, "r1", None, true, false))
         .await
@@ -304,8 +313,16 @@ async fn reopen_invalidates_prior_cycle_receipts() {
         .await
         .unwrap();
 
-    // Reopen starts a new review cycle: the old receipt no longer counts.
+    // Reopen starts a new review cycle: the old receipt no longer counts
+    // and the cycle needs a fresh dispatch too.
     store.reopen(t.id, "dev", false).await.unwrap();
+    let err = store
+        .close(t.id, "dev", ClosedReason::Completed, None, false, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::DispatchGate { id } if id == t.id));
+
+    store.dispatch(t.id, "root", None).await.unwrap();
     let err = store
         .close(t.id, "dev", ClosedReason::Completed, None, false, None)
         .await
@@ -338,6 +355,7 @@ async fn close_clears_the_waiting_marker() {
         .unwrap();
     assert_eq!(t.waiting, 1);
 
+    store.dispatch(t.id, "root", Some(vec![])).await.unwrap();
     let t = store
         .close(t.id, "dev", ClosedReason::Completed, None, false, None)
         .await
@@ -369,6 +387,7 @@ async fn force_close_escapes_the_receipt_gate_and_is_audited() {
     let store = TaskStore::open_in_memory().await;
     let t = store.create(spec("urgent", "dev", &["r1"])).await.unwrap();
     store.start(t.id, "dev", false).await.unwrap();
+    store.dispatch(t.id, "root", None).await.unwrap();
 
     // Without a receipt in the current cycle the close gate refuses;
     // --force escapes it and leaves an auditable event behind.
@@ -383,11 +402,18 @@ async fn force_close_escapes_the_receipt_gate_and_is_audited() {
         .await
         .unwrap();
     let (_, events) = store.get(t.id).await.unwrap();
-    assert!(
-        events
-            .iter()
-            .any(|e| e.kind == "action" && e.name == "force_close")
-    );
+    let escapes: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "action" && e.name == "force_close")
+        .collect();
+    // Exactly one escape, naming its actor and the gates it skipped
+    // (dispatch was recorded this cycle, so only the receipt gate).
+    assert_eq!(escapes.len(), 1);
+    assert_eq!(escapes[0].actor.as_deref(), Some("dev"));
+    let payload: serde_json::Value =
+        serde_json::from_str(escapes[0].payload.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["gates"], serde_json::json!(["receipts"]));
+    assert_eq!(payload["registered_seats"], serde_json::json!(["r1"]));
 }
 #[tokio::test]
 async fn association_windows_are_validated() {
@@ -457,4 +483,270 @@ async fn concurrent_starts_on_separate_pools_both_land() {
     assert!(rb.is_ok(), "second start failed: {rb:?}");
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn annotate_records_a_note_in_any_state() {
+    let store = TaskStore::open_in_memory().await;
+    let t = store.create(spec("noted", "dev", &[])).await.unwrap();
+    store.start(t.id, "dev", false).await.unwrap();
+
+    let t = store
+        .annotate(t.id, "dev", "mid-work observation".to_string())
+        .await
+        .unwrap();
+    assert_eq!(t.status, "in_progress");
+
+    store
+        .close(t.id, "dev", ClosedReason::Completed, None, true, None)
+        .await
+        .unwrap();
+    // Annotations land on closed tasks too: the trail is append-only.
+    store
+        .annotate(t.id, "root", "post-mortem note".to_string())
+        .await
+        .unwrap();
+    let (_, events) = store.get(t.id).await.unwrap();
+    let notes: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "action" && e.name == "annotate")
+        .collect();
+    assert_eq!(notes.len(), 2);
+}
+
+#[tokio::test]
+async fn archive_gate_rejects_open_tasks_and_force_is_audited() {
+    let store = TaskStore::open_in_memory().await;
+    let t = store.create(spec("open", "dev", &[])).await.unwrap();
+
+    let err = store.archive_task(t.id, "root", false).await.unwrap_err();
+    assert!(
+        matches!(err, Error::ArchiveGate { id, ref status } if id == t.id && status == "queued")
+    );
+
+    store.archive_task(t.id, "root", true).await.unwrap();
+    let (_, events) = store.get(t.id).await.unwrap();
+    let archive = events
+        .iter()
+        .find(|e| e.kind == "action" && e.name == "archive")
+        .unwrap();
+    let payload: serde_json::Value =
+        serde_json::from_str(archive.payload.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["gate"], "archive_requires_closed");
+    assert_eq!(payload["status"], "queued");
+}
+
+#[tokio::test]
+async fn archived_tasks_leave_the_default_view() {
+    let store = TaskStore::open_in_memory().await;
+    let t = store.create(spec("done", "dev", &[])).await.unwrap();
+    store.start(t.id, "dev", false).await.unwrap();
+    store
+        .close(t.id, "dev", ClosedReason::Completed, None, true, None)
+        .await
+        .unwrap();
+    store.archive_task(t.id, "root", false).await.unwrap();
+
+    let active = store
+        .list(TaskFilter {
+            status: None,
+            assignee: None,
+            archived: false,
+        })
+        .await
+        .unwrap();
+    assert!(active.is_empty());
+    let archived = store
+        .list(TaskFilter {
+            status: None,
+            assignee: None,
+            archived: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(archived.len(), 1);
+    assert_eq!(archived[0].archived, 1);
+    assert!(archived[0].archived_at.is_some());
+
+    // The machine face carries the partition fields.
+    let export = store.export(t.id).await.unwrap();
+    let v = serde_json::to_value(&export).unwrap();
+    assert_eq!(v["archived"], true);
+    assert!(v["archived_at"].as_str().unwrap().ends_with('Z'));
+}
+
+#[tokio::test]
+async fn close_requires_a_dispatch_in_the_cycle() {
+    let store = TaskStore::open_in_memory().await;
+    let t = store
+        .create(spec("undispatched", "dev", &["r1"]))
+        .await
+        .unwrap();
+    store.start(t.id, "dev", false).await.unwrap();
+
+    let err = store
+        .close(t.id, "dev", ClosedReason::Completed, None, false, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::DispatchGate { id } if id == t.id));
+
+    store.dispatch(t.id, "root", None).await.unwrap();
+    store
+        .checkpoint(checkpoint(t.id, "r1", None, true, false))
+        .await
+        .unwrap();
+    let t = store
+        .close(t.id, "dev", ClosedReason::Completed, None, false, None)
+        .await
+        .unwrap();
+    assert_eq!(t.status, "closed");
+}
+
+#[tokio::test]
+async fn dispatch_rebases_the_receipt_boundary() {
+    let store = TaskStore::open_in_memory().await;
+    let t = store.create(spec("rebased", "dev", &["r1"])).await.unwrap();
+    store.start(t.id, "dev", false).await.unwrap();
+    store.dispatch(t.id, "root", None).await.unwrap();
+    store
+        .checkpoint(checkpoint(t.id, "r1", None, true, false))
+        .await
+        .unwrap();
+
+    // A re-dispatch starts a fresh round: the earlier receipt no longer
+    // counts.
+    store.dispatch(t.id, "root", None).await.unwrap();
+    let err = store
+        .close(t.id, "dev", ClosedReason::Completed, None, false, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::ReceiptGate { ref missing } if missing == "r1"));
+}
+
+#[tokio::test]
+async fn chain_op_requires_a_fresh_gate_report() {
+    let store = TaskStore::open_in_memory().await;
+    let t = store.create(spec("chained", "dev", &[])).await.unwrap();
+    store.start(t.id, "dev", false).await.unwrap();
+
+    let err = store
+        .chain_op(t.id, "dev", "commit", Some("abc".into()), false)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::GateReportGate { id } if id == t.id));
+
+    store
+        .gate_report(t.id, "dev", "gate report before commit".to_string())
+        .await
+        .unwrap();
+    store
+        .chain_op(t.id, "dev", "commit", Some("abc".into()), false)
+        .await
+        .unwrap();
+
+    // A second chain op needs its own gate report; --force escapes and
+    // marks the event with the gate it skipped.
+    let err = store
+        .chain_op(t.id, "dev", "amend", None, false)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::GateReportGate { .. }));
+
+    store
+        .chain_op(t.id, "dev", "amend", None, true)
+        .await
+        .unwrap();
+    let (_, events) = store.get(t.id).await.unwrap();
+    let escapes: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == "action" && e.name == "chain_op")
+        .filter(|e| {
+            e.payload
+                .as_deref()
+                .map(|p| p.contains("\"gate\""))
+                .unwrap_or(false)
+        })
+        .collect();
+    assert_eq!(escapes.len(), 1);
+}
+
+#[tokio::test]
+async fn zero_seat_dispatch_closes_without_receipts() {
+    let store = TaskStore::open_in_memory().await;
+    let t = store
+        .create(spec("zero seats", "dev", &["r1"]))
+        .await
+        .unwrap();
+    store.start(t.id, "dev", false).await.unwrap();
+
+    // An explicit empty roster replaces the registered one: no seat is
+    // asked for a receipt, so close passes with none filed.
+    store
+        .dispatch(t.id, "root", Some(Vec::new()))
+        .await
+        .unwrap();
+    let t = store
+        .close(t.id, "dev", ClosedReason::Completed, None, false, None)
+        .await
+        .unwrap();
+    assert_eq!(t.status, "closed");
+}
+
+#[tokio::test]
+async fn dispatch_status_gate_accepts_only_active_states() {
+    let store = TaskStore::open_in_memory().await;
+    let t = store.create(spec("gated", "dev", &[])).await.unwrap();
+
+    // Queued: not an active review cycle, dispatch is refused.
+    let err = store.dispatch(t.id, "root", None).await.unwrap_err();
+    assert!(matches!(err, Error::InvalidTransition { .. }), "{err}");
+
+    store.start(t.id, "dev", false).await.unwrap();
+    store.dispatch(t.id, "root", None).await.unwrap();
+
+    // Review (moved by checkpoint) is equally dispatchable.
+    store
+        .checkpoint(checkpoint(t.id, "dev", None, false, true))
+        .await
+        .unwrap();
+    store.dispatch(t.id, "root", None).await.unwrap();
+
+    // Closed: the machine is shut, dispatch is refused.
+    store
+        .close(t.id, "dev", ClosedReason::Completed, None, false, None)
+        .await
+        .unwrap();
+    let err = store.dispatch(t.id, "root", None).await.unwrap_err();
+    assert!(matches!(err, Error::InvalidTransition { .. }), "{err}");
+}
+
+#[tokio::test]
+async fn export_all_groups_events_under_the_right_task() {
+    let store = TaskStore::open_in_memory().await;
+    let a = store.create(spec("alpha", "dev", &[])).await.unwrap();
+    let b = store.create(spec("beta", "ops", &[])).await.unwrap();
+    store.start(a.id, "dev", false).await.unwrap();
+    store.start(b.id, "ops", false).await.unwrap();
+    store
+        .checkpoint(checkpoint(a.id, "dev", Some("note on a"), false, false))
+        .await
+        .unwrap();
+    store
+        .checkpoint(checkpoint(b.id, "ops", Some("note on b"), false, false))
+        .await
+        .unwrap();
+
+    let all = store.export_all().await.unwrap();
+    let by_id: std::collections::BTreeMap<i64, usize> =
+        all.iter().map(|e| (e.id, e.events.len())).collect();
+    let (a_events, b_events) = (by_id[&a.id], by_id[&b.id]);
+    assert_eq!(a_events, 3, "create + start + checkpoint");
+    assert_eq!(b_events, 3, "create + start + checkpoint");
+
+    let a_export = all.iter().find(|e| e.id == a.id).unwrap();
+    let trail = serde_json::to_string(&a_export.events).unwrap();
+    assert!(
+        trail.contains("note on a") && !trail.contains("note on b"),
+        "a's export carries a's trail, not b's"
+    );
 }

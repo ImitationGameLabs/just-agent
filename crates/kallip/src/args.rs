@@ -33,6 +33,10 @@ pub enum Commands {
     /// Discover and inspect skills via the generated index.
     #[command(subcommand)]
     Skill(SkillCommand),
+    /// Machine checks over repo objects (commit messages now; static
+    /// gates reserved).
+    #[command(subcommand)]
+    Check(CheckCommand),
     /// Manage the tagma-wide token budget (shared by all agents; set 0 to
     /// pause everyone).
     #[command(subcommand)]
@@ -594,6 +598,20 @@ pub enum TaskCommand {
     Close(TaskCloseArgs),
     /// Reopen a closed task (back to in_progress).
     Reopen(TaskReopenArgs),
+    /// Append a note to the task's trail (never moves the machine).
+    Annotate(TaskAnnotateArgs),
+    /// Dispatch the review round: registers the seat roster for the
+    /// current review cycle; the close gate counts receipts against it.
+    Dispatch(TaskDispatchArgs),
+    /// Record a gate report — the announcement that precedes every
+    /// recorded chain operation.
+    GateReport(TaskGateReportArgs),
+    /// Record a chain operation (commit/amend/rebase/reset); requires a
+    /// gate report newer than the last recorded chain op.
+    ChainOp(TaskChainOpArgs),
+    /// Archive a closed task: it leaves the default list view
+    /// (`task list --archived` shows archived tasks).
+    Archive(TaskArchiveArgs),
     /// List tasks (oldest first).
     List(TaskListArgs),
     /// Show one task: current state, association keys, event trail.
@@ -702,11 +720,89 @@ pub enum TaskCloseReason {
     Duplicate,
 }
 
+/// The recorded git chain operation, serialized snake_case on the store face.
+#[derive(clap::ValueEnum, Clone, Copy)]
+#[value(rename_all = "snake_case")]
+pub enum TaskChainOpType {
+    Commit,
+    Amend,
+    Rebase,
+    Reset,
+}
+
 #[derive(Args)]
 pub struct TaskReopenArgs {
     /// Task id.
     pub id: i64,
     /// Override the serial gate (the escape is recorded in the event trail).
+    #[arg(long)]
+    pub force: bool,
+    /// Acting agent (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub actor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct TaskAnnotateArgs {
+    /// Task id (any state, closed included).
+    pub id: i64,
+    /// The note to append.
+    #[arg(long)]
+    pub note: String,
+    /// Acting agent (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub actor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct TaskDispatchArgs {
+    /// Task id (must be in_progress or review).
+    pub id: i64,
+    /// Seat roster for this review cycle (comma-separated). Omit to
+    /// re-affirm the roster registered at create; pass an empty value
+    /// for an explicit zero-seat registration.
+    #[arg(long, value_delimiter = ',')]
+    pub seats: Option<Vec<String>>,
+    /// Acting agent (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub actor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct TaskGateReportArgs {
+    /// Task id.
+    pub id: i64,
+    /// One-line report (what was announced, where).
+    #[arg(long)]
+    pub note: String,
+    /// Acting agent (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub actor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct TaskChainOpArgs {
+    /// Task id.
+    pub id: i64,
+    /// The chain operation: commit, amend, rebase, or reset.
+    #[arg(long)]
+    pub op: TaskChainOpType,
+    /// Reference or one-line detail (e.g. the resulting hash).
+    #[arg(long)]
+    pub detail: Option<String>,
+    /// Override the gate-report gate (the escape is recorded).
+    #[arg(long)]
+    pub force: bool,
+    /// Acting agent (defaults to KALLIP_ID).
+    #[arg(long)]
+    pub actor: Option<String>,
+}
+
+#[derive(Args)]
+pub struct TaskArchiveArgs {
+    /// Task id (must be closed).
+    pub id: i64,
+    /// Override the closed-only gate (the escape is recorded).
     #[arg(long)]
     pub force: bool,
     /// Acting agent (defaults to KALLIP_ID).
@@ -722,6 +818,9 @@ pub struct TaskListArgs {
     /// Filter by assignee.
     #[arg(long)]
     pub assignee: Option<String>,
+    /// List archived tasks only (the default view is the active one).
+    #[arg(long)]
+    pub archived: bool,
 }
 
 #[derive(Args)]
@@ -749,4 +848,12 @@ pub struct TaskExtractArgs {
     /// Destination directory (created if absent).
     #[arg(long)]
     pub to: PathBuf,
+}
+
+#[derive(Subcommand)]
+pub enum CheckCommand {
+    /// Run the commit-message battery: subject shape and width, body
+    /// length, bullet consistency, line width, and the process-word,
+    /// numbering, and timestamp scans. Exits non-zero on any failure.
+    Message(crate::check::CheckMessageArgs),
 }

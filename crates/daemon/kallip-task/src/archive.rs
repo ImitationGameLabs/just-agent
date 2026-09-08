@@ -19,6 +19,8 @@ use crate::Error;
 /// paths). Symlinks are rejected outright — the canonical archive
 /// contains regular files and directories only; a link could silently
 /// pull out-of-dossier content into the archive or loop the walk.
+/// Names must be UTF-8 too: a non-UTF-8 name would be mangled into
+/// the tar entry name, so it is a caller error as well.
 pub fn pack_dir(dir: &Path) -> Result<Vec<u8>, Error> {
     let mut paths: Vec<_> = collect_relative(dir, dir)?;
     // Fixed ordering is half of canonicity.
@@ -89,6 +91,15 @@ fn collect_relative(root: &Path, dir: &Path) -> Result<Vec<std::path::PathBuf>, 
             .strip_prefix(root)
             .expect("walk rooted at `root`")
             .to_path_buf();
+        // A non-UTF-8 name would be lossily mangled the moment it
+        // became a tar entry name; reject it here like any other
+        // non-canonical content instead of archiving a corrupted name.
+        if rel.to_str().is_none() {
+            return Err(Error::Other(format!(
+                "dossier contains a non-UTF-8 entry name: {}",
+                rel.display()
+            )));
+        }
         let meta = fs::symlink_metadata(&path)?;
         if meta.file_type().is_symlink() {
             return Err(Error::Other(format!(
@@ -179,5 +190,17 @@ mod tests {
         std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
         let err = pack_dir(&dir).unwrap_err();
         assert!(err.to_string().contains("symlink"), "{err}");
+    }
+    #[test]
+    #[cfg(unix)]
+    fn pack_rejects_non_utf8_names_instead_of_lossy_archiving() {
+        let (_t, dir) = scratch("dossier");
+        fs::write(dir.join("plan.md"), "# plan\n").unwrap();
+        // A non-UTF-8 name cannot survive the tar entry name round trip
+        // without loss; caller error, matching the symlink rule.
+        let bad: std::ffi::OsString = std::os::unix::ffi::OsStringExt::from_vec(vec![0xff]);
+        fs::write(dir.join(bad), "x").unwrap();
+        let err = pack_dir(&dir).unwrap_err();
+        assert!(err.to_string().contains("non-UTF-8"), "{err}");
     }
 }

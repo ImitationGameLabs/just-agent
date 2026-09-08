@@ -9,7 +9,7 @@ use kallip_blob_store::LocalBackend;
 use kallip_task::store::{CheckpointSpec, CreateSpec, TaskExport, TaskFilter};
 use kallip_task::{ClosedReason, TaskStatus, TaskStore};
 
-use crate::args::{TaskCloseReason, TaskCommand, TaskStartArgs};
+use crate::args::{TaskChainOpType, TaskCloseReason, TaskCommand, TaskStartArgs};
 
 pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
     let data_root = kallip_runtime::persistence::data_dir_root()?;
@@ -91,6 +91,51 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
             let task = store.reopen(args.id, &actor, args.force).await?;
             print_state_line(&task);
         }
+
+        TaskCommand::Annotate(args) => {
+            let actor = task_actor(args.actor.as_deref())?;
+            let task = store.annotate(args.id, &actor, args.note.clone()).await?;
+            print_state_line(&task);
+        }
+        TaskCommand::Dispatch(args) => {
+            let actor = task_actor(args.actor.as_deref())?;
+            // Blank seat entries are dropped: a blank seat name would
+            // ghost the close gate forever. `--seats ""` therefore
+            // registers an explicit empty roster; omitting --seats
+            // re-affirms the registered seats.
+            let seats = args.seats.clone().map(|list| {
+                list.into_iter()
+                    .filter(|s| !s.trim().is_empty())
+                    .collect::<Vec<String>>()
+            });
+            let task = store.dispatch(args.id, &actor, seats).await?;
+            print_state_line(&task);
+        }
+        TaskCommand::GateReport(args) => {
+            let actor = task_actor(args.actor.as_deref())?;
+            let task = store
+                .gate_report(args.id, &actor, args.note.clone())
+                .await?;
+            print_state_line(&task);
+        }
+        TaskCommand::ChainOp(args) => {
+            let actor = task_actor(args.actor.as_deref())?;
+            let task = store
+                .chain_op(
+                    args.id,
+                    &actor,
+                    chain_op_name(args.op),
+                    args.detail.clone(),
+                    args.force,
+                )
+                .await?;
+            print_state_line(&task);
+        }
+        TaskCommand::Archive(args) => {
+            let actor = task_actor(args.actor.as_deref())?;
+            let task = store.archive_task(args.id, &actor, args.force).await?;
+            print_state_line(&task);
+        }
         TaskCommand::List(args) => {
             let status = args
                 .status
@@ -104,6 +149,7 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
             let tasks = store
                 .list(TaskFilter {
                     status,
+                    archived: args.archived,
                     assignee: args.assignee.clone(),
                 })
                 .await?;
@@ -129,9 +175,7 @@ pub async fn run_task(cmd: &TaskCommand) -> Result<()> {
         TaskCommand::Export(args) => {
             let mut exports = Vec::new();
             if args.all {
-                for t in store.list(TaskFilter::default()).await? {
-                    exports.push(store.export(t.id).await?);
-                }
+                exports = store.export_all().await?;
             } else {
                 let id = args.id.ok_or_else(|| anyhow!("give a task id, or --all"))?;
                 exports.push(store.export(id).await?);
@@ -245,6 +289,15 @@ fn close_reason(reason: TaskCloseReason) -> ClosedReason {
         TaskCloseReason::Completed => ClosedReason::Completed,
         TaskCloseReason::NotPlanned => ClosedReason::NotPlanned,
         TaskCloseReason::Duplicate => ClosedReason::Duplicate,
+    }
+}
+
+fn chain_op_name(op: TaskChainOpType) -> &'static str {
+    match op {
+        TaskChainOpType::Commit => "commit",
+        TaskChainOpType::Amend => "amend",
+        TaskChainOpType::Rebase => "rebase",
+        TaskChainOpType::Reset => "reset",
     }
 }
 

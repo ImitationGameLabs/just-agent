@@ -1,14 +1,16 @@
 //! kallip: tagma client CLI.
 
 mod args;
+mod check;
 mod reference;
 mod skill;
 mod task;
 
 use anyhow::Result;
 use args::{
-    AgentCommand, AgentDirCommand, ApprovalCommand, BudgetCommand, Cli, Commands, FileCommand,
-    InboxCommand, LescheCommand, PolicyCommand, ProfileSetCommand, SkillCommand, SubagentCommand,
+    AgentCommand, AgentDirCommand, ApprovalCommand, BudgetCommand, CheckCommand, Cli, Commands,
+    FileCommand, InboxCommand, LescheCommand, PolicyCommand, ProfileSetCommand, SkillCommand,
+    SubagentCommand,
 };
 use clap::{CommandFactory, Parser};
 use kallip::file::FilesClient;
@@ -73,6 +75,15 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let client = TagmaClient::from_env()?;
+    // The check family runs git in the working directory (process-local;
+    // no tagma daemon connection), so dispatch it before the client is
+    // built.
+    if let Commands::Check(cmd) = &command {
+        match cmd {
+            CheckCommand::Message(args) => check::run_message_check(args)?,
+        }
+        return Ok(());
+    }
 
     match command {
         Commands::Agent(cmd) => match cmd {
@@ -545,6 +556,7 @@ async fn main() -> Result<()> {
         // still wants the arm here.
         Commands::File(_) => unreachable!("file family dispatched above"),
         Commands::Task(_) => unreachable!("task family dispatched above"),
+        Commands::Check(_) => unreachable!("check family dispatched above"),
     }
     Ok(())
 }

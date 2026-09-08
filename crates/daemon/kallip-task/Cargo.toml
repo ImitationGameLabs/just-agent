@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 kallip-blob-store = { workspace = true }
-kallip-runtime = { workspace = true }
 sea-orm = { workspace = true, features = ["sqlx-sqlite"] }
 sea-orm-migration = { workspace = true, features = ["sqlx-sqlite"] }
 sqlx = { workspace = true }

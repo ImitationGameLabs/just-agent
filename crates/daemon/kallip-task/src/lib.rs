@@ -50,6 +50,20 @@ pub enum Error {
          --force to override (escape is recorded)"
     )]
     ReceiptGate { missing: String },
+    #[error(
+        "archive gate: task {id} is {status}; only closed tasks archive; --force to override (escape is recorded)"
+    )]
+    ArchiveGate { id: i64, status: String },
+
+    #[error(
+        "dispatch gate: task {id} has no review dispatch this cycle; run `task dispatch` first, or --force to override (escape is recorded)"
+    )]
+    DispatchGate { id: i64 },
+
+    #[error(
+        "gate-report gate: task {id} has no gate report since its last recorded chain op; run `task gate-report` first, or --force to override (escape is recorded)"
+    )]
+    GateReportGate { id: i64 },
 
     #[error("dossier path {path} is not a directory")]
     DossierNotDir { path: String },
