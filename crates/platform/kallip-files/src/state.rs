@@ -11,10 +11,9 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::api;
 use crate::auth::FilesControlPlane;
-use crate::backend::LocalBackend;
-use crate::blob::BlobStore;
 use crate::gc::GcConfig;
 use kallip_archeion_common::control_plane::ControlPlane;
+use kallip_blob_store::{BlobStore, LocalBackend};
 
 /// Static service configuration, resolved once at boot.
 #[derive(Debug, Clone)]

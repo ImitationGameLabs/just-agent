@@ -11,11 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = { workspace = true }
-getrandom = { workspace = true }
-hex = { workspace = true }
 sea-orm = { workspace = true }
 sea-orm-migration = { workspace = true }
-sha2 = { workspace = true }
 thiserror = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "net"] }
@@ -23,6 +20,7 @@ time = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 kallip-archeion-common = { workspace = true }
+kallip-blob-store = { workspace = true }
 kallip-common = { workspace = true, features = ["axum", "logging"] }
 axum = { workspace = true }
 tokio-util = { workspace = true, features = ["io"] }
@@ -36,6 +34,7 @@ reqwest = { workspace = true }
 cookie = { workspace = true }
 
 [dev-dependencies]
+sha2 = { workspace = true }
 tempfile = { workspace = true }
 testcontainers = { workspace = true, features = ["reusable-containers"] }
 testcontainers-modules = { workspace = true }

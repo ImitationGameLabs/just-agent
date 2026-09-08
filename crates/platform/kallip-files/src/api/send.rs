@@ -93,7 +93,7 @@ pub async fn send_file(
 
     let landing = resolve_landing(&state, &principal, facts.as_ref(), &target, &filename).await?;
 
-    let blob_id = crate::blob::BlobId::parse(&record.blob_id).map_err(ApiError::internal)?;
+    let blob_id = kallip_blob_store::BlobId::parse(&record.blob_id).map_err(ApiError::internal)?;
     let size = stat_or_drift(&state, &blob_id).await?;
     let (record_id, _event_id) = crate::metadata::repo::register_delivery(
         &state.db,
@@ -260,7 +260,10 @@ fn parse_tagma(raw: &str) -> Result<kallip_archeion_common::ids::TagmaId, ApiErr
 
 /// Stat the source blob. `None` is catalog/store drift (the reconciler's
 /// missing_blobs face): a 500, not a 404.
-async fn stat_or_drift(state: &AppState, blob_id: &crate::blob::BlobId) -> Result<i64, ApiError> {
+async fn stat_or_drift(
+    state: &AppState,
+    blob_id: &kallip_blob_store::BlobId,
+) -> Result<i64, ApiError> {
     let info = state.blob.stat(blob_id).await.map_err(ApiError::internal)?;
     info.map(|info| info.size as i64)
         .ok_or_else(|| ApiError::internal("catalog row without a blob file"))

@@ -1,11 +1,11 @@
 //! Error vocabulary for the blob layer.
 
-use super::hash::BlobId;
+use crate::hash::BlobId;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// The requested blob does not exist. Missing and invalid ids stay
-    /// distinct errors so the HTTP layer can map them to 404 and 400.
+    /// distinct errors so consumers can tell absent content from malformed ids.
     #[error("blob not found: {0}")]
     NotFound(BlobId),
 
@@ -14,7 +14,7 @@ pub enum Error {
     #[error("invalid blob id: {0}")]
     InvalidId(String),
 
-    /// A range request started at or past the end of the blob. A `len`
+    /// A read range started at or past the end of the content. A `len`
     /// running past the end is clamped instead (open-ended ranges must
     /// succeed), so this fires only when there is nothing to serve.
     #[error("range out of bounds: offset {offset} beyond size {size}")]

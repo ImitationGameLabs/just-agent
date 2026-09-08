@@ -15,8 +15,8 @@ use uuid::Uuid;
 
 use super::{load_record, parse_record_path};
 use crate::auth::AuthPrincipal;
-use crate::blob::BlobId;
 use crate::state::AppState;
+use kallip_blob_store::BlobId;
 use kallip_common::protocol::ApiError;
 
 /// Window size for streamed reads: the service reads the blob this many

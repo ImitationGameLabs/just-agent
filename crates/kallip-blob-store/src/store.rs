@@ -1,11 +1,11 @@
-//! The storage seam: one object-safe trait the HTTP layer programs
+//! The storage seam: one object-safe trait storage consumers program
 //! against, independent of where bytes actually live.
 
 use async_trait::async_trait;
 use tokio::io::AsyncRead;
 
-use super::Error;
-use super::hash::BlobId;
+use crate::error::Error;
+use crate::hash::BlobId;
 
 /// Metadata for one stored blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,10 +25,10 @@ pub struct BlobInfo {
 /// together, nothing is ever fully buffered.
 ///
 /// Range contract, fixed for every backend: `(offset, len) -> bytes`.
-/// An `offset` at or past the end is [`Error::RangeOutOfBounds`] (the
-/// HTTP seam maps that to 416); a `len` running past the end is
-/// clamped to EOF, because open-ended ranges ("bytes=0-") must
-/// succeed.
+/// An `offset` at or past the end of the content is
+/// [`Error::RangeOutOfBounds`]; a `len` running past the end is
+/// clamped to the available bytes, so open-ended reads from the
+/// start to EOF must succeed.
 #[async_trait]
 pub trait BlobStore: Send + Sync + 'static {
     /// Stream `content` in, store it, return its content address.

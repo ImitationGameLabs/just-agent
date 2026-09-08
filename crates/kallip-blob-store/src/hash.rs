@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::Error;
+use crate::error::Error;
 
 /// A content address: the algorithm prefix plus the full digest.
 ///
@@ -55,5 +55,31 @@ impl BlobId {
 impl fmt::Display for BlobId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn digest_round_trips_through_parse() {
+        let digest = [0xab_u8; 32];
+        let id = BlobId::from_digest(digest);
+        assert_eq!(
+            id.as_str(),
+            format!("{}{}", BlobId::PREFIX, hex::encode(digest))
+        );
+        assert_eq!(id.bucket(), "ab");
+        assert_eq!(BlobId::parse(id.as_str()).unwrap(), id);
+    }
+
+    #[test]
+    fn parse_rejects_bad_ids() {
+        assert!(BlobId::parse("md5-deadbeef").is_err());
+        assert!(BlobId::parse("sha256-TOOSHORT").is_err());
+        assert!(BlobId::parse("sha256-deadbeef").is_err());
+        assert!(BlobId::parse(&format!("sha256-{}", "A".repeat(64))).is_err());
+        assert!(BlobId::parse(&format!("sha256-{}", "g".repeat(64))).is_err());
     }
 }

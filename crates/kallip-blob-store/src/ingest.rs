@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
-use super::Error;
-use super::hash::BlobId;
+use crate::error::Error;
+use crate::hash::BlobId;
 
 /// Bytes per ingest read. One buffer bounds peak memory no matter how
 /// large the upload is; 64 KiB keeps syscall count low without
@@ -84,8 +84,8 @@ pub(crate) async fn ingest(
     Ok(id)
 }
 
-/// `<root>/blobs/<first two hex chars>/<id>`.
-pub(crate) fn blob_path(root: &Path, id: &BlobId) -> PathBuf {
+/// `<root>/blobs/<first two hex characters>/<id>`.
+pub fn blob_path(root: &Path, id: &BlobId) -> PathBuf {
     root.join("blobs").join(id.bucket()).join(id.as_str())
 }
 

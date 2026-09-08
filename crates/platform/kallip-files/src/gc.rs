@@ -29,9 +29,9 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::blob::ingest::blob_path;
-use crate::blob::{BlobId, BlobStore};
 use crate::metadata::Db;
+use kallip_blob_store::blob_path;
+use kallip_blob_store::{BlobId, BlobStore};
 use sea_orm::{ConnectionTrait, DbErr, EntityTrait, Statement};
 use time::OffsetDateTime;
 use tracing::warn;
@@ -67,7 +67,7 @@ pub enum GcError {
     #[error(transparent)]
     Db(#[from] DbErr),
     #[error(transparent)]
-    Store(#[from] crate::blob::Error),
+    Store(#[from] kallip_blob_store::Error),
     #[error("blob store walk failed: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -254,9 +254,9 @@ async fn blob_files_on_disk(root: &Path) -> Result<Vec<BlobId>, std::io::Error> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::LocalBackend;
     use crate::metadata::repo::{register_upload, remove_record};
     use crate::test_helpers::migrated_test_db;
+    use kallip_blob_store::LocalBackend;
 
     fn id_from(content: &[u8]) -> BlobId {
         use sha2::{Digest, Sha256};

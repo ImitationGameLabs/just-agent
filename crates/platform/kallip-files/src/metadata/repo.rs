@@ -17,8 +17,8 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::Db;
-use crate::blob::BlobId;
 use crate::metadata::models::file_records;
+use kallip_blob_store::BlobId;
 
 /// Outcome of removing a file record.
 #[derive(Debug)]
