@@ -720,7 +720,7 @@ async fn bridge_idle_dispatch_off_duty_superior_not_woken() {
     drop(agent_tx);
 }
 
-// -- B①: park-event notifications (Error / FCE / MaxRounds) --
+// -- Park-event notifications (Error / FCE / MaxRounds) --
 
 /// Full-bridge dispatch of `AgentEvent::Error`: the superior's inbox
 /// receives a `[Subagent Error]` notification carrying the error detail.

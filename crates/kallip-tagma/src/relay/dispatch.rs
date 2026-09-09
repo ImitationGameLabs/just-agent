@@ -35,8 +35,8 @@ impl RelayHandle {
         // shape, but each surface decodes its own type so a future field on
         // one surface cannot silently leak into the other's decode.
         // The attachment field is deliberately dropped at this decode:
-        // rendering attachments on the relay surfaces (direct included) is
-        // a later batch.
+        // attachments do not render on the relay surfaces (direct
+        // included).
         let decoded: Result<String, _> = match surface {
             crate::messaging::Surface::Room(_) => {
                 serde_json::from_slice::<RoomMessage>(&payload.plaintext).map(|r| r.text)

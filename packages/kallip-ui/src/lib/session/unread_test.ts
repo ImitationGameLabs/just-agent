@@ -58,7 +58,7 @@ function baseline(): void {
 }
 
 Deno.test(
-  "① 1:1 line entry: new ids count, replays at/below the fence do not",
+  "1:1 line entry: new ids count, replays at/below the fence do not",
   async () => {
     baseline();
     unreadStore.hydrateTagma("t1", 3);
@@ -75,7 +75,7 @@ Deno.test(
 );
 
 Deno.test(
-  "② explicit open clears only the viewed key; other keys keep their count",
+  "explicit open clears only the viewed key; other keys keep their count",
   () => {
     baseline();
     unreadStore.hydrateTagma("t1", 3);
@@ -97,7 +97,7 @@ Deno.test(
 );
 
 Deno.test(
-  "③ room pull counts precisely, skips own lines; a full page reads 99+",
+  "room pull counts precisely, skips own lines; a full page reads 99+",
   async () => {
     baseline();
     pages.set("r1", [
@@ -126,14 +126,14 @@ Deno.test(
   },
 );
 
-Deno.test("④ badgeLabel caps the display at the cap", () => {
+Deno.test("badgeLabel caps the display at the cap", () => {
   assertEquals(badgeLabel(0), "0");
   assertEquals(badgeLabel(5), "5");
   assertEquals(badgeLabel(99), "99");
   assertEquals(badgeLabel(100), "99+");
 });
 
-Deno.test("⑤ the bar total is the sum across conversations", async () => {
+Deno.test("the bar total is the sum across conversations", async () => {
   baseline();
   unreadStore.hydrateTagma("t1", 0);
   unreadStore.observeTagmaLine("t1", 1);
@@ -149,7 +149,7 @@ Deno.test("⑤ the bar total is the sum across conversations", async () => {
 });
 
 Deno.test(
-  "⑥ cursor-changed reduces by the advance; stale events never regress",
+  "cursor-changed reduces by the advance; stale events never regress",
   async () => {
     baseline();
     unreadStore.initRooms([{ roomId: "r1", lastReadSeq: 10 }]);
@@ -173,7 +173,7 @@ Deno.test(
 );
 
 Deno.test(
-  "⑦ watermark rehydration: restored fence counts the delta, null seeds",
+  "watermark rehydration: restored fence counts the delta, null seeds",
   async () => {
     baseline();
     // A restored watermark: the reload's catch-up replays nothing below it.
@@ -194,7 +194,7 @@ Deno.test(
 );
 
 Deno.test(
-  "⑧ tab scope: a fresh store converges from server truth (no cross-tab broadcast)",
+  "tab scope: a fresh store converges from server truth (no cross-tab broadcast)",
   async () => {
     baseline();
     pages.set(
@@ -216,7 +216,7 @@ Deno.test(
 );
 
 Deno.test(
-  "⑨ viewing: count holds at zero, cursor writes coalesce, leave flushes",
+  "viewing: count holds at zero, cursor writes coalesce, leave flushes",
   async () => {
     baseline();
     unreadStore.initRooms([{ roomId: "r1", lastReadSeq: 0 }]);
