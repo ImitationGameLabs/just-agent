@@ -17,6 +17,11 @@
 # by the archeion into its own state directory on first boot and only
 # read afterwards. Operator token knobs stay paths (pin an admin token,
 # or let the unit mint a short-lived one); no secret hits the store.
+
+# The platform knobs services.kallipai.domain and services.kallipai.tls
+# feed every web-facing default (CORS origins, the session cookie,
+# webauthn, the baked runtime config); each derivation is a mkDefault,
+# so an explicit option still wins.
 { packages }:
 {
   config,
@@ -66,9 +71,29 @@ let
   # The polis listeners' localhost ports, configured per service under
   # services.kallipai.polis.ports and shared by the env and the edge
   polisPorts = polisCfg.ports;
+  # The platform's web-facing knobs and the origins derived from them.
+  # Only forced under the domain-is-set guard in the derivation arm
+  # (Nix laziness), so a null domain never reaches the interpolation.
+  platformDomain = config.services.kallipai.domain;
+  platformTls = config.services.kallipai.tls;
+  webScheme = if platformTls then "https" else "http";
+  webOrigin = "${webScheme}://web.${platformDomain}";
+  archeionOrigin = "${webScheme}://archeion.${platformDomain}";
 in
 {
   options.services.kallipai = {
+    domain = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Sibling-subdomain root (archeion.<domain> ...); every web-facing default derives from it.";
+    };
+
+    tls = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Serve the platform over https; switching it off derives http origins and forces the session cookie non-Secure.";
+    };
+
     daemon = {
       enable = lib.mkEnableOption "the kallipai daemon as a system service";
 
@@ -408,12 +433,7 @@ in
             domain = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;
-              description = "Sibling-subdomain root (archeion.<domain> ...).";
-            };
-            tlsOff = lib.mkOption {
-              type = lib.types.nullOr lib.types.bool;
-              default = null;
-              description = "True = plain-http direct ports instead of https subdomains.";
+              description = "Sibling-subdomain root (archeion.<domain> ...); defaults to services.kallipai.domain when that is set.";
             };
             offlineLogin = lib.mkOption {
               type = lib.types.nullOr lib.types.bool;
@@ -431,17 +451,18 @@ in
         description = ''
           Values for the web app's runtime config (/config.js), baked
           into the site root as a window.KALLIP_CONFIG assignment. Keys
-          mirror the app's Window.KALLIP_CONFIG type: domain, tlsOff,
+          mirror the app's Window.KALLIP_CONFIG type: domain,
           offlineLogin, services; an unknown key fails evaluation. The
           empty default keeps the shipped config.js defaults. Set
           offlineLogin = false to hide the operator-key login branch (a
-          cloud-facing deployment), or add domain/tlsOff/services to pin
-          values the app would otherwise derive from the browser
-          location. The file is baked into the site root and served
-          publicly, so anything placed here is readable by anyone who
-          can reach the site — keep it to values the browser is meant
-          to see; secrets belong in environment files or credential
-          stores, never in this option.
+          cloud-facing deployment), or add domain/services to pin values
+          the app would otherwise derive from the browser location;
+          domain already defaults to services.kallipai.domain. The file
+          is baked into the site root and served publicly, so anything
+          placed here is readable by anyone who can reach the site —
+          keep it to values the browser is meant to see; secrets belong
+          in environment files or credential stores, never in this
+          option.
         '';
       };
 
@@ -883,36 +904,26 @@ in
           }
       );
     })
-    (lib.mkIf (webCfg.enable && polisCfg.enable) {
-      # L1.5 direct-connect drift warning: the module can only see an
-      # explicit runtimeConfig.tlsOff — a browser that derives tlsOff
-      # from an http location is outside this module's visibility, so
-      # the warning is best-effort by design (documented gap until the
-      # config.ports schema lands).
-      warnings =
-        let
-          userServices = if webCfg.runtimeConfig.services == null then { } else webCfg.runtimeConfig.services;
-          unpinnedChanged =
-            builtins.filter
-              (
-                svc:
-                webCfg.runtimeConfig.tlsOff == true
-                && polisCfg.ports.${svc} != defaultPolisPorts.${svc}
-                && !(userServices ? ${svc})
-              )
-              [
-                "archeion"
-                "lesche"
-                "files"
-                "instances"
-              ];
-        in
-        map (
-          svc:
-          "services.kallipai.polis.ports.${svc} is set to ${toString polisCfg.ports.${svc}}, but the web UI's direct-connect derivation still targets the default port ${
-            toString defaultPolisPorts.${svc}
-          } for ${svc}. Set services.kallipai.web.runtimeConfig.services.${svc} to pin the new port."
-        ) unpinnedChanged;
+    # Platform-derived service defaults: every value embeds the domain,
+    # so the whole arm waits for one to be set; each mkDefault keeps an
+    # operator-set option in charge.
+    (lib.mkIf (platformDomain != null) {
+      services.kallipai.polis.archeion.corsOrigins = lib.mkDefault webOrigin;
+      services.kallipai.polis.archeion.cookieDomain = lib.mkDefault platformDomain;
+      services.kallipai.polis.archeion.webauthnRpId = lib.mkDefault platformDomain;
+      services.kallipai.polis.archeion.webauthnRpOrigin = lib.mkDefault archeionOrigin;
+      services.kallipai.polis.archeion.oauthRedirectBase = lib.mkDefault webOrigin;
+      services.kallipai.polis.lesche.corsOrigins = lib.mkDefault webOrigin;
+      services.kallipai.polis.files.corsOrigins = lib.mkDefault webOrigin;
+      services.kallipai.polis.instances.corsOrigins = lib.mkDefault webOrigin;
+      services.kallipai.polis.instances.allowedHosts = lib.mkDefault "instances.${platformDomain}";
+      services.kallipai.web.runtimeConfig.domain = lib.mkDefault platformDomain;
     })
+    # Cookie security tracks the tls knob only downward: https leaves
+    # the option null (the code default already sends Secure), plain
+    # http forces it off because a Secure cookie would never round-trip.
+    {
+      services.kallipai.polis.archeion.cookieSecure = lib.mkIf (!platformTls) (lib.mkDefault false);
+    }
   ];
 }

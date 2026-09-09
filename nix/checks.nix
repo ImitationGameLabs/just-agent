@@ -95,10 +95,10 @@ in
 
   # Evaluate the NixOS module (pure eval): a stub host with
   # every switch on must typecheck, pass its assertions, and stay
-  # warning-free; a drifted port must fire the L1.5 direct-connect
-  # warning; and the merged site root must carry the baked runtime
-  # config. Builds here: a stub bundle plus the real workspace (pulled
-  # in by the bin/ assertion, seconds on a warm store).
+  # warning-free; the domain knob must drive the derived defaults; and
+  # the merged site root must carry the baked runtime config. Builds
+  # here: a stub bundle plus the real workspace (pulled in by the bin/
+  # assertion, seconds on a warm store).
   "${project}-nixos-module-eval" =
     let
       stubPackages = {
@@ -189,12 +189,16 @@ in
       webPlain = evalHost {
         services.kallipai.web.enable = true;
       };
+      # An explicit runtimeConfig key beats its platform-derived default.
       webCustom = evalHost {
-        services.kallipai.web = {
-          enable = true;
-          runtimeConfig = {
-            offlineLogin = false;
-            domain = "kallipai.lan";
+        services.kallipai = {
+          domain = "platform.example";
+          web = {
+            enable = true;
+            runtimeConfig = {
+              offlineLogin = false;
+              domain = "kallipai.lan";
+            };
           };
         };
       };
@@ -207,30 +211,33 @@ in
       };
       bogusRejected =
         !(builtins.tryEval webBogusKey.config.services.kallipai.web.distWithRuntimeConfig.outPath).success;
-      # The L1.5 drift warning fires for a drifted port with tlsOff
-      # pinned and the service unpinned, and stays silent once the
-      # service is pinned in runtimeConfig.services.
-      driftedWeb = evalHost {
+      # The domain knob drives every web-facing default: the derived
+      # CORS origin and the baked runtime config follow it, and tls off
+      # flips both the scheme and the cookie. An explicit service option
+      # beats its derived default.
+      webDerived = evalHost {
         services.kallipai = {
           daemon.enable = true;
           polis.enable = true;
-          polis.ports.lesche = 7250;
           web.enable = true;
-          web.runtimeConfig.tlsOff = true;
+          domain = "kallipai.com";
         };
       };
-      pinnedWeb = evalHost {
+      webTlsOff = evalHost {
         services.kallipai = {
           daemon.enable = true;
           polis.enable = true;
-          polis.ports.lesche = 7250;
-          web = {
-            enable = true;
-            runtimeConfig = {
-              tlsOff = true;
-              services.lesche = "http://lesche.example.com";
-            };
-          };
+          web.enable = true;
+          domain = "kallipai.com";
+          tls = false;
+        };
+      };
+      webOverride = evalHost {
+        services.kallipai = {
+          daemon.enable = true;
+          polis.enable = true;
+          domain = "kallipai.com";
+          polis.archeion.corsOrigins = "https://custom.example";
         };
       };
       # The baking helper, called directly (no module), writes exactly
@@ -239,7 +246,7 @@ in
         inherit pkgs;
         package = stubDist;
         runtimeConfig = {
-          tlsOff = true;
+          offlineLogin = false;
         };
       };
     in
@@ -264,9 +271,8 @@ in
       # alone turns this check red.
       grep -q 'daemonSocket = "/run/kallipai/daemon.sock";' "${./nixos-modules.nix}"
       grep -q 'SYSTEM_DAEMON_SOCKET: &str = "/run/kallipai/daemon.sock";' "${../crates/daemon/kallip-daemon-common/src/socket.rs}"
-      # A polis-only drifted host stays warning-free: the L1.5 drift
-      # warning fires at evaluation time only on hosts with the web
-      # enabled (driftedWeb below asserts the firing side).
+      # A drifted polis-only host stays warning-free: no drift warning
+      # exists since the subdomain shape hides ports behind the edge.
       test "${toString (builtins.length (failedAssertions drifted))}" = "0"
       test "${toString (builtins.length drifted.config.warnings)}" = "0"
       # No runtime keys: the stub bundle passes straight through, shell
@@ -283,13 +289,18 @@ in
       grep -q bundle-page "$custom/index.html"
       # An unknown runtimeConfig key failed the evaluation itself.
       test "${toString bogusRejected}" = "1"
-      # The drift warning fires unpinned and stays silent once the
-      # service is pinned.
-      test "${toString (builtins.length driftedWeb.config.warnings)}" = "1"
-      test "${toString (builtins.length pinnedWeb.config.warnings)}" = "0"
+      # The domain knob drives the derived defaults; tls off flips the
+      # scheme and the cookie; an explicit option beats the derivation.
+      test "${webDerived.config.services.kallipai.polis.archeion.corsOrigins}" = "https://web.kallipai.com"
+      test "${lib.boolToString webTlsOff.config.services.kallipai.polis.archeion.cookieSecure}" = "false"
+      test "${webTlsOff.config.services.kallipai.polis.archeion.corsOrigins}" = "http://web.kallipai.com"
+      test "${webTlsOff.config.services.kallipai.polis.archeion.webauthnRpId}" = "kallipai.com"
+      test "${webOverride.config.services.kallipai.polis.archeion.corsOrigins}" = "https://custom.example"
+      derived="${webDerived.config.services.kallipai.web.distWithRuntimeConfig}"
+      grep -q '"domain":"kallipai.com"' "$derived/config.js"
       # The baking helper, called directly, writes exactly the payload.
       direct="${directBake}"
-      grep -q '"tlsOff":true' "$direct/config.js"
+      grep -q '"offlineLogin":false' "$direct/config.js"
       test -z "$(grep bundle-shell "$direct/config.js")"
       grep -q bundle-page "$direct/index.html"
       printf %s ok > "$out"
