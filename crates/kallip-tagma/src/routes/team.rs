@@ -2189,7 +2189,7 @@ mod tests {
         );
     }
     #[test]
-    fn preflight_allows_a_pure_deactivation_plan_at_capacity() {
+    fn preflight_allows_a_pure_deactivation_plan() {
         let state = make_state();
         let root = body("root");
         let dev = AgentId::random();
@@ -2292,5 +2292,162 @@ mod tests {
                 .detail
                 .contains("vanished in the plan→execute window")
         );
+    }
+    // ---- execute-layer harness: a counting spawn stub drives the
+    // converge spawn/restore paths without a real runtime ----
+
+    /// Spawn stub for the execution-layer tests: counts calls, returns
+    /// a fresh entry per call, and fails on demand so both spawn
+    /// outcomes are drivable.
+    fn spawn_stub(
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        fail: bool,
+    ) -> crate::lifecycle::SpawnFn {
+        std::sync::Arc::new(move |_args: crate::lifecycle::SpawnArgs| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let fresh = crate::test_helpers::make_entry_with_rx(None, "stub-token".to_string());
+            let crate::state::AgentEntry {
+                identity, agent, ..
+            } = fresh.0;
+            let _keep_rx_open = fresh.1;
+            Box::pin(async move {
+                if fail {
+                    anyhow::bail!("stub spawn failure");
+                }
+                Ok((agent, identity))
+            })
+        })
+    }
+
+    #[tokio::test]
+    async fn converge_spawn_row_spawns_binds_the_mapping_and_reports() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let state = crate::test_helpers::make_state_with_spawn(spawn_stub(calls.clone(), false));
+        let declaration = declaration("[[role]]\nname = \"dev\"\nprofile_set = \"default\"\n");
+        let plan = converge_plan(&declaration, &[], &[]);
+        let root = body("root");
+        // AgentConfig::load resolves the derived workspace, so the
+        // directory must exist before the row executes.
+        std::fs::create_dir_all(root.workspace_root.join("team").join("dev")).unwrap();
+        // spawn_subagent re-reads the supervisor from the registry.
+        let (root_entry, _rx) =
+            crate::test_helpers::make_entry_with_rx(None, "root-token".to_string());
+        state.registry.write().await.register(
+            root.id.clone(),
+            crate::state::RegistryEntry::Live(root_entry),
+        );
+        let mut mapping = Vec::new();
+        let (results, aborted) = execute_converge(
+            &state,
+            &plan,
+            &mut mapping,
+            &Some(root),
+            false,
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        assert!(!aborted, "results: {results:?}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].outcome, TeamRowOutcome::Applied);
+        let id = results[0]
+            .agent_id
+            .clone()
+            .expect("spawn reports the new id");
+        assert_eq!(mapping.len(), 1);
+        assert_eq!(mapping[0].role, "dev");
+        assert_eq!(mapping[0].id, id);
+    }
+
+    #[tokio::test]
+    async fn converge_spawn_failure_fails_loudly_and_stops_the_batch() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let state = crate::test_helpers::make_state_with_spawn(spawn_stub(calls.clone(), true));
+        let declaration = declaration("[[role]]\nname = \"dev\"\nprofile_set = \"default\"\n");
+        let plan = converge_plan(&declaration, &[], &[]);
+        let root = body("root");
+        std::fs::create_dir_all(root.workspace_root.join("team").join("dev")).unwrap();
+        let (root_entry, _rx) =
+            crate::test_helpers::make_entry_with_rx(None, "root-token".to_string());
+        state.registry.write().await.register(
+            root.id.clone(),
+            crate::state::RegistryEntry::Live(root_entry),
+        );
+        let mut mapping = Vec::new();
+        let (results, aborted) = execute_converge(
+            &state,
+            &plan,
+            &mut mapping,
+            &Some(root),
+            false,
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        assert!(aborted);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].outcome, TeamRowOutcome::Failed);
+        // The stub's cause is logged, not surfaced: `ApiError::internal`
+        // sanitizes the row detail to the generic message.
+        assert!(results[0].detail.contains("internal error"));
+        assert!(!results[0].detail.contains("stub spawn failure"));
+        assert!(mapping.is_empty());
+    }
+
+    #[tokio::test]
+    async fn converge_restore_degrades_into_a_fresh_spawn_and_rebinds() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let state = crate::test_helpers::make_state_with_spawn(spawn_stub(calls.clone(), false));
+        // The degraded fallback spawns under the registry's live root.
+        let mut root_entry =
+            crate::test_helpers::make_entry_with_rx(None, "root-token".to_string()).0;
+        let root_ws = std::env::temp_dir().join(format!("kallip-conv-root-{}", std::process::id()));
+        root_entry.identity.config.workspace_root = root_ws.clone();
+        let root_id = AgentId::random();
+        state
+            .registry
+            .write()
+            .await
+            .register(root_id, crate::state::RegistryEntry::Live(root_entry));
+        std::fs::create_dir_all(root_ws.join("team").join("dev")).unwrap();
+        let old = AgentId::random();
+        let declaration = declaration("[[role]]\nname = \"dev\"\nprofile_set = \"default\"\n");
+        let lock = vec![lock_pair("dev", &old, true)];
+        let plan = converge_plan(&declaration, &lock, &[]);
+        // The recorded body never reached the inactive area: the restore
+        // degrades into a fresh spawn instead of resurrecting it.
+        let mut mapping = vec![TeamLockEntry {
+            role: "dev".to_string(),
+            id: old.clone(),
+            converged_at: "2025-12-01T00:00:00Z".to_string(),
+        }];
+        let root: Option<LiveBody> = None;
+        let (results, aborted) = execute_converge(
+            &state,
+            &plan,
+            &mut mapping,
+            &root,
+            false,
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        assert!(!aborted, "results: {results:?}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].outcome, TeamRowOutcome::Applied);
+        assert!(results[0].detail.contains("degraded into a fresh spawn"));
+        assert!(
+            results[0]
+                .notes
+                .iter()
+                .any(|n| n.contains("was not reused"))
+        );
+        let new_id = results[0]
+            .agent_id
+            .clone()
+            .expect("degraded spawn reports the new id");
+        assert_ne!(new_id, old);
+        assert_eq!(mapping[0].id, new_id);
+        assert!(state.registry.read().await.get(&old).is_none());
     }
 }
