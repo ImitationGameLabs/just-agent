@@ -2214,4 +2214,75 @@ mod tests {
         // nowhere on disk.
         assert!(!dev.notes.iter().any(|n| n.contains("not on disk")));
     }
+
+    #[tokio::test]
+    async fn restore_degrades_loudly_when_the_body_meta_is_unreadable() {
+        let state = crate::test_helpers::make_state();
+        let id = AgentId::random();
+        // A parked body whose meta cannot be read: the restore path must
+        // degrade loudly (a fresh-spawn attempt surfaces), never land as
+        // if nothing happened.
+        let dir = kallip_runtime::persistence::inactive_dir(&id).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("meta.json"), "not valid meta").unwrap();
+        let row = planned(
+            "dev",
+            kallip_common::protocol::TeamAction::Restore,
+            Some(id),
+        );
+        match restore_action(&state, &row).await {
+            RestoreFallout::Failed(detail) => {
+                assert!(detail.contains("restore degraded to a fresh spawn"));
+                assert!(detail.contains("the spawn failed"));
+            }
+            RestoreFallout::Restored { .. } | RestoreFallout::Degraded { .. } => {
+                panic!("restore must not land when the body meta is unreadable")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn window_violation_stops_the_batch_with_applied_rows_reported() {
+        let state = crate::test_helpers::make_state();
+        let aligned = AgentId::random();
+        let vanished = AgentId::random();
+        let plan = vec![
+            planned(
+                "dev",
+                kallip_common::protocol::TeamAction::AlignMetadata,
+                Some(aligned),
+            ),
+            planned(
+                "scout",
+                kallip_common::protocol::TeamAction::Deactivate,
+                Some(vanished),
+            ),
+        ];
+        let mut mapping = Vec::new();
+        let root: Option<LiveBody> = None;
+        let (results, aborted) = execute_converge(
+            &state,
+            &plan,
+            &mut mapping,
+            &root,
+            false,
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        assert!(aborted);
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[0].outcome,
+            kallip_common::protocol::TeamRowOutcome::Applied
+        );
+        assert_eq!(
+            results[1].outcome,
+            kallip_common::protocol::TeamRowOutcome::Failed
+        );
+        assert!(
+            results[1]
+                .detail
+                .contains("vanished in the plan→execute window")
+        );
+    }
 }
