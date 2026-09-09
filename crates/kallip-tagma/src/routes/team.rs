@@ -966,7 +966,7 @@ fn preflight_converge(
 }
 
 /// Execute the plan in row order, fail-fast: each action re-reads its
-/// target first (the execute window is converge's one
+/// target first (the plan→execute window is converge's one
 /// blind spot), and any violation or failure stops the batch with the
 /// applied rows reported. Returns the result rows and whether the run
 /// aborted early.
@@ -1168,7 +1168,7 @@ enum RestoreFallout {
 /// (`<root workspace>/team/<role>`), declaration prompt and skills,
 /// carve-out delegation. The reference monitor inside `spawn_subagent`
 /// re-checks role uniqueness under the write lock, so a same-role body
-/// that raced in during the execute window fails this action and
+/// that raced in during the plan→execute window fails this action and
 /// stops the batch.
 async fn spawn_action(
     state: &SharedState,
@@ -1502,7 +1502,7 @@ async fn align_live(state: &SharedState, a: &PlannedAction) -> Result<Vec<String
     Ok(notes)
 }
 
-/// Park one live body into the inactive area: blind-spot busy/children
+/// Park one live body into the inactive area: plan→execute window busy/children
 /// re-read, unregister, the shared teardown tail, then the rename.
 /// `force` interrupts a busy target first and says so in the notes (the
 /// auditable escape).

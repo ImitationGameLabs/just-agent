@@ -205,7 +205,7 @@ pub enum TeamConvergeOutcome {
     /// Every planned action was applied.
     Applied,
     /// Execution stopped early (a pre-execution state re-read found
-    /// the execute window open, or an action failed). Applied
+    /// the plan→execute window open, or an action failed). Applied
     /// rows are listed; the returned mapping is the input records that
     /// survived planning, updated by the rows that landed.
     Aborted,
