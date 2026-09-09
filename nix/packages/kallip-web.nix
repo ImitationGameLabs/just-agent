@@ -6,8 +6,9 @@
 # `deno install` (networked sandbox, output pinned by hash against
 # deno.lock) and a pure build derivation reuses its node_modules offline.
 #
-# The deps derivation unpacks the cleaned source for the workspace's
-# manifests (deno install), and a deno.lock change re-locks the hash.
+# The deps derivation unpacks only the workspace manifests for the
+# deno install resolution, so a deno.lock change re-locks the hash
+# while a source-only edit cannot retrigger the install.
 {
   pkgs,
   deno,
@@ -68,8 +69,54 @@ let
         || builtins.any (root: pkgs.lib.hasPrefix (root + "/") relPath) subtreeRoots;
     };
 
-  # Both derivations unpack the same cleaned source tree; the deps one
-  # only consumes the manifests from it.
+  # The deps layer's input: the workspace manifests and nothing else.
+  # deno install resolves the module graph from the root manifests and
+  # the per-package manifests, never from sources, so pinning this
+  # derivation's input to those files keeps a source-only edit from
+  # re-running the install on a cold store or in CI. Source edits
+  # retrigger the dist build below, never this one.
+  manifestsSrc =
+    let
+      # Directories are admitted for reachability: a filter false on a
+      # directory prunes the whole subtree, so each manifest file below
+      # is reachable only if its ancestors are listed too.
+      manifests = [
+        "deno.json"
+        "deno.lock"
+        "package.json"
+        "packages"
+        "packages/kallip-web"
+        "packages/kallip-web/package.json"
+        "packages/kallip-ui"
+        "packages/kallip-ui/package.json"
+        "packages/kallip-common"
+        "packages/kallip-common/package.json"
+        "packages/kallip-client"
+        "packages/kallip-client/package.json"
+        "packages/kallip-archeion-client"
+        "packages/kallip-archeion-client/package.json"
+        "packages/kallip-lesche-client"
+        "packages/kallip-lesche-client/package.json"
+        "packages/kallip-files-client"
+        "packages/kallip-files-client/package.json"
+        "packages/kallip-app"
+        "packages/kallip-app/package.json"
+        "packages/kallip-direct"
+        "packages/kallip-direct/package.json"
+      ];
+    in
+    pkgs.lib.cleanSourceWith {
+      inherit src;
+      filter =
+        path: type:
+        let
+          relPath = pkgs.lib.removePrefix (toString src + "/") (toString path);
+        in
+        builtins.elem relPath manifests;
+    };
+
+  # The dist derivation unpacks the full cleaned source tree; the deps
+  # derivation unpacks only the manifests tree above.
   nodeModules = pkgs.stdenvNoCC.mkDerivation {
     pname = "kallip-web-node-modules";
     version = "0.0.1";
@@ -82,7 +129,7 @@ let
 
     nativeBuildInputs = [ deno ];
 
-    src = filteredSrc;
+    src = manifestsSrc;
     # The output is an intermediate: keep the link graph exactly as deno
     # wrote it (fixup's shebang patching would materialize .bin symlinks).
     dontFixup = true;
