@@ -10,7 +10,8 @@
     "prepare": "(svelte-kit sync || echo '') && paraglide-js compile --project ../kallip-ui/i18n/project.inlang --strategy cookie preferredLanguage baseLocale --emit-ts-declarations --output-structure message-modules --outdir ../kallip-ui/src/paraglide",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "clean": "rm -rf node_modules/.vite .svelte-kit"
+    "clean": "rm -rf node_modules/.vite .svelte-kit",
+    "test": "deno test"
   },
   "dependencies": {
     "@kallipai/kallip-archeion-client": "workspace:*",
@@ -22,6 +23,7 @@
     "@lucide/svelte": "^1.24.0"
   },
   "devDependencies": {
+    "@std/assert": "npm:@jsr/std__assert@^1.0.19",
     "@fontsource/fira-mono": "^5.2.7",
     "@inlang/plugin-message-format": "4.4.0",
     "@inlang/plugin-m-function-matcher": "2.2.6",

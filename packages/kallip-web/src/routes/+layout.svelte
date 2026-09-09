@@ -13,6 +13,7 @@
     localStorageConfigStorage,
     type NavIcons,
   } from "@kallipai/kallip-ui";
+  import { serviceUrl } from "../lib/service-urls.ts";
   import {
     Calendar,
     Cpu,
@@ -30,41 +31,19 @@
   // $app/* or import.meta.env from inside the library package). Idempotent
   // setters; the root layout has a single instance so this runs once at boot.
   initShell(goto);
-  // Service URLs resolve at runtime, in three layers: the deployment
+  // Service URLs resolve at runtime in two layers: the deployment
   // config from /config.js (window.KALLIP_CONFIG — the factory file by
-  // default, or baked from runtimeConfig by the NixOS module), then the
-  // build-time VITE_*_URL overrides, then derivation from the browser
-  // location — the origin it is on names the deployment domain, so a
-  // same-origin deployment (web.<domain> sibling subdomains, or the
-  // plain-http direct-port shape) needs zero configuration.
-  // The https shape is fronted by Caddy: the browser reaches
-  // archeion/lesche at their *.<domain> subdomains. Any other protocol
-  // means the plain-http shape: direct ports on the host.
+  // default, or baked from runtimeConfig by the NixOS module) overrides,
+  // otherwise the URL derives from the browser location: the origin the
+  // page is on names the deployment domain (web.<domain> strips to
+  // <domain>), and the sibling subdomains follow the page's own
+  // protocol. The edge proxy owns the TLS split, so the app never
+  // branches on it and never names a port.
   const config = window.KALLIP_CONFIG ?? {};
-  const tlsOff = config.tlsOff ?? location.protocol !== "https:";
-  const domain = (config.domain ?? location.hostname).replace(/^web\./, "");
-  initArcheion(
-    config.services?.archeion ??
-      import.meta.env.VITE_ARCHEION_URL ??
-      (tlsOff ? `http://${domain}:7100` : `https://archeion.${domain}`),
-  );
-  initLesche(
-    config.services?.lesche ??
-      import.meta.env.VITE_LESCHE_URL ??
-      (tlsOff ? `http://${domain}:7200` : `https://lesche.${domain}`),
-  );
-  initFiles(
-    config.services?.files ??
-      import.meta.env.VITE_FILES_URL ??
-      (tlsOff ? `http://${domain}:7400` : `https://files.${domain}`),
-  );
-  initInstances(
-    config.services?.instances ??
-      import.meta.env.VITE_INSTANCES_URL ??
-      (tlsOff
-        ? `http://${domain}:7300/api/instances`
-        : `https://instances.${domain}/api/instances`),
-  );
+  initArcheion(serviceUrl("archeion", config, location));
+  initLesche(serviceUrl("lesche", config, location));
+  initFiles(serviceUrl("files", config, location));
+  initInstances(serviceUrl("instances", config, location));
   initConfigStorage(localStorageConfigStorage);
 
   const icons: NavIcons = {

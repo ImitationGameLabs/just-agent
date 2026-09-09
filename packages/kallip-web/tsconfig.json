@@ -12,7 +12,12 @@
     "sourceMap": true,
     "strict": true,
     "moduleResolution": "bundler"
-  }
+  },
+  // Deno test files use `Deno` globals + jsr: imports that svelte-check
+  // (tsc) can't resolve; `deno test` type-checks them with its own
+  // types. Excluded here so the app's standalone `check` stays green
+  // (same convention as kallip-ui).
+  "exclude": ["src/**/*_test.ts"]
   // Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
   // except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
   //

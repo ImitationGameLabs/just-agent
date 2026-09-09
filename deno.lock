@@ -2152,6 +2152,7 @@
             "npm:@inlang/paraglide-js@2.20.0",
             "npm:@inlang/plugin-m-function-matcher@2.2.6",
             "npm:@inlang/plugin-message-format@4.4.0",
+            "npm:@jsr/std__assert@^1.0.19",
             "npm:@lucide/svelte@^1.24.0",
             "npm:@neoconfetti/svelte@^2.2.2",
             "npm:@skeletonlabs/skeleton-svelte@5",

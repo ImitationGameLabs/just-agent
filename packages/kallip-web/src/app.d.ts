@@ -13,17 +13,13 @@ declare global {
      * Runtime deployment config, loaded from /config.js before the app
      * bundle (see static/config.js for the factory default; the NixOS
      * module bakes over it from runtimeConfig). Every field is
-     * optional, and each layers differently: services.* URLs fall
-     * through to the build-time VITE_*_URL overrides and then to
-     * location-based derivation; domain and tlsOff fall through to
-     * location derivation only; offlineLogin defaults to true when
-     * unset (the factory file ships it as true).
+     * optional, and each layers differently: services.* URLs and the
+     * domain override location-based derivation; offlineLogin
+     * defaults to true when unset (the factory file ships it as true).
      */
     KALLIP_CONFIG?: {
       /** Sibling-subdomain root (archeion.<domain> ...). */
       domain?: string;
-      /** True = plain-http direct ports instead of https subdomains. */
-      tlsOff?: boolean;
       /** True = show the operator-key login branch. */
       offlineLogin?: boolean;
       /** Full URL overrides, one per backend service. */

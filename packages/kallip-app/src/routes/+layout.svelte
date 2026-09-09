@@ -35,6 +35,15 @@
   // once the plugin is wired. The WebAuthn passkey ceremony in this webview is
   // gated on Tauri webview origin support.
   initShell(goto);
+  // Desktop-surface boundary: this app runs in the Tauri webview on the
+  // user's own machine, so falling back to localhost direct ports is
+  // the dev-local default here (VITE_*_URL overrides point it
+  // elsewhere). This is not a browser fallback: the web app served
+  // from a deployment derives its sibling-subdomain URLs from the
+  // page location and never reaches these defaults.
+  //
+  // Service URLs on this surface: explicit VITE_*_URL build-time
+  // overrides, then localhost direct ports.
   initArcheion(import.meta.env.VITE_ARCHEION_URL ?? "http://localhost:7100");
   initLesche(import.meta.env.VITE_LESCHE_URL ?? "http://localhost:7200");
   initFiles(import.meta.env.VITE_FILES_URL ?? "http://localhost:7400");
