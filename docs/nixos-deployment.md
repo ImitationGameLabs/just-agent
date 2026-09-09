@@ -81,9 +81,13 @@ runtime config baked into `config.js` once keys are set. The site
 addresses are plain `http://` on purpose: ACME cannot issue for a
 `.lan` domain, so plain http runs with zero browser setup — the HTTPS
 section below shows the two upgrade paths.
+One caveat: a plain-http page on a real domain is not a secure
+context, so browsers refuse passkey ceremonies there —
+`localhost`-based dev keeps them, and the https upgrades below restore
+them.
 
 ```nix
-{ config, lib, ... }:
+{ config, ... }:
 let
   domain = "kallipai.lan";
   # The lesche streams event payloads, so its proxy disables response
