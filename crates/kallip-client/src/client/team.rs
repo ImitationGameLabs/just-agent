@@ -109,6 +109,7 @@ mod tests {
                     {
                         "role": "dev",
                         "action": "spawn",
+                        "disposition": "spawn",
                         "notes": [],
                     },
                 ],

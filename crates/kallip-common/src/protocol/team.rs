@@ -168,6 +168,50 @@ pub struct TeamPlanRow {
     /// caveats). Empty when the row is unremarkable.
     #[serde(default)]
     pub notes: Vec<String>,
+
+    /// The presence-level verdict behind the row (duplicate, restore,
+    /// spawn, ...). Programs branch on this instead of matching note
+    /// text; `notes` stays the human-readable face.
+    pub disposition: RoleDisposition,
+}
+/// Why preflight refused the batch: a machine-readable kind plus the
+/// human-facing message. Programs branch on the kind — the CLI's
+/// `--drain` loop waits specifically on busy rejections — while the
+/// message is what the operator reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamRejectionKind {
+    /// One id mapped to two roles in the submitted lock.
+    LockAmbiguity,
+    /// The declaration claims the reserved `root` role.
+    RootRole,
+    /// Multiple live bodies carry one declared role.
+    Duplicate,
+    /// A deactivation target is mid-task; `force` is the escape.
+    Busy,
+    /// A deactivation target still has live subagents.
+    LiveChildren,
+    /// A stale inactive body would collide with the rename.
+    StaleInactive,
+    /// The declaration names no profile_set.
+    SpawnProfileSet,
+    /// The declared permission_class is unknown or exceeds the root's.
+    SpawnProfileClass,
+    /// A declared skill cannot be loaded.
+    SpawnSkill,
+    /// The tagma root is not live; declared roles spawn under it.
+    SpawnRootDown,
+    /// The batch would end over the global agent limit.
+    CapacityAgents,
+    /// The root would end over its subagent limit.
+    CapacityChildren,
+}
+
+/// One preflight refusal: kind for programs, message for operators.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamRejection {
+    pub kind: TeamRejectionKind,
+    pub message: String,
 }
 
 /// How one executed action landed.
@@ -246,7 +290,7 @@ pub struct TeamConvergeResponse {
     pub results: Vec<TeamActionResult>,
     /// Preflight refusal reasons (rejected runs), each naming the
     /// role or agent involved and the fix.
-    pub rejections: Vec<String>,
+    pub rejections: Vec<TeamRejection>,
     /// The lock mapping to write. For an applied run this is the
     /// full post-converge set; for an aborted run it covers applied
     /// rows only; for a planned (dry) run it is the mapping modulo

@@ -219,17 +219,17 @@ async fn run_converge(client: &TagmaClient, args: &TeamConvergeArgs) -> Result<(
             force: args.force,
         };
         let (outcome, resp) = client.team_converge(&req).await?;
-        let busy: Vec<&String> = resp
+        let busy: Vec<&kallip_common::protocol::TeamRejection> = resp
             .rejections
             .iter()
-            .filter(|r| r.contains("is busy"))
+            .filter(|r| r.kind == kallip_common::protocol::TeamRejectionKind::Busy)
             .collect();
         let only_busy = !busy.is_empty() && busy.len() == resp.rejections.len();
         if args.drain && outcome == TeamConvergeOutcome::Rejected && only_busy {
             attempt += 1;
             if attempt == 1 {
                 for b in &busy {
-                    println!("draining: {b}");
+                    println!("draining: {}", b.message);
                 }
                 println!("draining — waiting for idle (Ctrl-C to abort)...");
             }
@@ -360,7 +360,7 @@ fn render_converge(
             }
         }
         for r in &resp.rejections {
-            println!("REJECTED: {r}");
+            println!("REJECTED: {}", r.message);
         }
         for r in &resp.results {
             let marker = match r.outcome {

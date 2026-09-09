@@ -13,8 +13,10 @@ use axum::extract::{Query, State};
 use kallip_common::AgentId;
 use kallip_common::declaration::{RoleDeclaration, TeamDeclaration, parse_declaration};
 use kallip_common::protocol::{
-    ApiError, RoleDisposition, TeamConvergeOutcome, TeamConvergeRequest, TeamConvergeResponse,
-    TeamLockEntry, TeamRoleStatus, TeamStatusQuery, TeamStatusResponse,
+    ApiError, DELEGATION_CARVE_OUT, RoleDisposition, TeamAction, TeamActionResult,
+    TeamConvergeOutcome, TeamConvergeRequest, TeamConvergeResponse, TeamLockEntry, TeamPlanRow,
+    TeamRejection, TeamRejectionKind, TeamRoleStatus, TeamRowOutcome, TeamStatusQuery,
+    TeamStatusResponse,
 };
 use kallip_runtime::config::AgentConfig;
 use tracing::warn;
@@ -327,15 +329,18 @@ impl AlignItems {
 }
 
 /// One planned action — the plan's internal form. Rows render into
-/// [`kallip_common::protocol::TeamPlanRow`] for the wire; execution
+/// [`TeamPlanRow`] for the wire; execution
 /// consumes this richer form directly.
 struct PlannedAction {
     role: String,
-    action: kallip_common::protocol::TeamAction,
+    action: TeamAction,
     /// Live body (adopt/align/deactivate) or lock-recorded id
     /// (restore). `None` for planned spawns.
     target: Option<AgentId>,
     notes: Vec<String>,
+    /// The presence-level verdict that produced this row; preflight and
+    /// the wire row both read it instead of parsing notes text.
+    disposition: RoleDisposition,
     declared: Option<RoleDeclaration>,
     align: AlignItems,
     /// True when the row's lock record was discarded (drift, archived,
@@ -345,12 +350,13 @@ struct PlannedAction {
 }
 
 impl PlannedAction {
-    fn to_wire(&self) -> kallip_common::protocol::TeamPlanRow {
-        kallip_common::protocol::TeamPlanRow {
+    fn to_wire(&self) -> TeamPlanRow {
+        TeamPlanRow {
             role: self.role.clone(),
             action: self.action,
             agent_id: self.target.clone(),
             notes: self.notes.clone(),
+            disposition: self.disposition,
         }
     }
 }
@@ -470,11 +476,12 @@ fn plan_converge(
             .unwrap_or_default();
         let mut action = PlannedAction {
             role: row.role.clone(),
-            action: kallip_common::protocol::TeamAction::Retain,
+            action: TeamAction::Retain,
             target: None,
             notes: Vec::new(),
             declared: row.declaration.clone(),
             align: AlignItems::default(),
+            disposition: row.disposition,
             discard_record: false,
         };
         // Record hygiene runs first on every row carrying a lock record:
@@ -511,7 +518,7 @@ fn plan_converge(
                     // The lock names a different body than the one alive
                     // under the role: reality wins, the live body is
                     // recorded, the parked one stays parked.
-                    action.action = kallip_common::protocol::TeamAction::Adopt;
+                    action.action = TeamAction::Adopt;
                     action.target = Some(body.id.clone());
                     if let Some(p) = pair
                         && p.in_inactive
@@ -524,7 +531,7 @@ fn plan_converge(
                 } else if action.discard_record {
                     // Drifted/archived record under a live body: keep the
                     // body, drop the record, adopt the body into the mapping.
-                    action.action = kallip_common::protocol::TeamAction::Adopt;
+                    action.action = TeamAction::Adopt;
                     action.target = Some(body.id.clone());
                 } else {
                     // In-sync presence: align metadata or retain.
@@ -534,25 +541,25 @@ fn plan_converge(
                         action.align = items;
                     }
                     action.action = if action.align.is_empty() {
-                        kallip_common::protocol::TeamAction::Retain
+                        TeamAction::Retain
                     } else {
-                        kallip_common::protocol::TeamAction::AlignMetadata
+                        TeamAction::AlignMetadata
                     };
                 }
             }
             RoleDisposition::Adopt => {
-                action.action = kallip_common::protocol::TeamAction::Adopt;
+                action.action = TeamAction::Adopt;
                 action.target = Some(bodies[0].id.clone());
             }
             RoleDisposition::Restore => {
-                action.action = kallip_common::protocol::TeamAction::Restore;
+                action.action = TeamAction::Restore;
                 action.target = pair.map(|p| p.id.clone());
             }
             RoleDisposition::Spawn => {
-                action.action = kallip_common::protocol::TeamAction::Spawn;
+                action.action = TeamAction::Spawn;
             }
             RoleDisposition::Deactivate => {
-                action.action = kallip_common::protocol::TeamAction::Deactivate;
+                action.action = TeamAction::Deactivate;
                 action.target = Some(bodies[0].id.clone());
             }
             RoleDisposition::Exempt => {
@@ -570,11 +577,8 @@ fn plan_converge(
         }
         // Adopt/align annotations: the prompt field and declared skills
         // have no live-body basis and are never rewritten automatically.
-        if matches!(
-            action.action,
-            kallip_common::protocol::TeamAction::Adopt
-                | kallip_common::protocol::TeamAction::AlignMetadata
-        ) && let Some(d) = &action.declared
+        if matches!(action.action, TeamAction::Adopt | TeamAction::AlignMetadata)
+            && let Some(d) = &action.declared
         {
             if d.prompt.is_some() {
                 action.notes.push(
@@ -755,22 +759,19 @@ fn project_mapping(
 ) {
     for a in plan {
         match a.action {
-            kallip_common::protocol::TeamAction::Spawn => {
+            TeamAction::Spawn => {
                 if let Some(map) = spawned
                     && let Some(id) = map.get(&a.role)
                 {
                     upsert_mapping(mapping, &a.role, id, stamped);
                 }
             }
-            kallip_common::protocol::TeamAction::Restore
-            | kallip_common::protocol::TeamAction::Adopt
-            | kallip_common::protocol::TeamAction::Deactivate => {
+            TeamAction::Restore | TeamAction::Adopt | TeamAction::Deactivate => {
                 if let Some(id) = &a.target {
                     upsert_mapping(mapping, &a.role, id, stamped);
                 }
             }
-            kallip_common::protocol::TeamAction::AlignMetadata
-            | kallip_common::protocol::TeamAction::Retain => {}
+            TeamAction::AlignMetadata | TeamAction::Retain => {}
         }
     }
 }
@@ -787,7 +788,7 @@ fn preflight_converge(
     lock: &[LockPair],
     live: &[LiveBody],
     force: bool,
-) -> Vec<String> {
+) -> Vec<TeamRejection> {
     let mut rejections = Vec::new();
 
     // One id keyed under two roles poisons every later decision
@@ -795,10 +796,13 @@ fn preflight_converge(
     let mut seen: HashMap<&AgentId, &str> = HashMap::new();
     for pair in lock {
         if let Some(prev) = seen.get(&pair.id) {
-            rejections.push(format!(
-                "lock maps agent {} to both {prev:?} and {:?} — run `kallip team lock rebuild`",
-                pair.id, pair.role
-            ));
+            rejections.push(TeamRejection {
+                kind: TeamRejectionKind::LockAmbiguity,
+                message: format!(
+                    "lock maps agent {} to both {prev:?} and {:?} — run `kallip team lock rebuild`",
+                    pair.id, pair.role
+                ),
+            });
         } else {
             seen.insert(&pair.id, pair.role.as_str());
         }
@@ -807,10 +811,11 @@ fn preflight_converge(
     // The root is boot-built and outside the declaration's reach.
     for a in plan {
         if a.role == "root" && a.declared.is_some() {
-            rejections.push(
-                "declaration declares the reserved role \"root\": the root is boot-built and cannot converge; remove the role from the declaration"
+            rejections.push(TeamRejection {
+                kind: TeamRejectionKind::RootRole,
+                message: "declaration declares the reserved role \"root\": the root is boot-built and cannot converge; remove the role from the declaration"
                     .to_string(),
-            );
+            });
         }
     }
 
@@ -818,14 +823,14 @@ fn preflight_converge(
     // one — converge never silently picks (that would drop the other's
     // identity binding). The plan rows carry the duplicate finding.
     for a in plan {
-        if a.notes
-            .iter()
-            .any(|n| n.contains("live bodies carry this role"))
-        {
-            rejections.push(format!(
+        if a.disposition == RoleDisposition::Duplicate {
+            rejections.push(TeamRejection {
+                kind: TeamRejectionKind::Duplicate,
+                message: format!(
                 "role {:?} has multiple live bodies — retire or rename one before converging (converge never picks for you)",
                 a.role
-            ));
+                ),
+            });
         }
     }
 
@@ -833,7 +838,7 @@ fn preflight_converge(
     // auditable escape); targets with live children refuse outright
     // (the same registry invariant remove enforces).
     for a in plan {
-        if a.action != kallip_common::protocol::TeamAction::Deactivate {
+        if a.action != TeamAction::Deactivate {
             continue;
         }
         let body = a
@@ -842,16 +847,22 @@ fn preflight_converge(
             .and_then(|id| live.iter().find(|b| &b.id == id));
         if let Some(body) = body {
             if body.busy && !force {
-                rejections.push(format!(
+                rejections.push(TeamRejection {
+                    kind: TeamRejectionKind::Busy,
+                    message: format!(
                     "role {:?} agent {} is busy — wait for it to go idle (re-run), or pass force to interrupt it (recorded as an escape)",
                     a.role, body.id
-                ));
+                ),
+            });
             }
             if body.children > 0 {
-                rejections.push(format!(
+                rejections.push(TeamRejection {
+                    kind: TeamRejectionKind::LiveChildren,
+                    message: format!(
                     "role {:?} agent {} has {} live subagent(s) — deactivate or remove them first",
                     a.role, body.id, body.children
-                ));
+                ),
+            });
             }
         }
         // A stale inactive body under the same id would refuse the rename
@@ -860,9 +871,12 @@ fn preflight_converge(
             && let Ok(dir) = kallip_runtime::persistence::inactive_dir(id)
             && dir.is_dir()
         {
-            rejections.push(format!(
+            rejections.push(TeamRejection {
+                kind: TeamRejectionKind::StaleInactive,
+                message: format!(
                 "deactivating agent {id} would overwrite a stale inactive body with the same id — resolve it manually first"
-            ));
+            ),
+        });
         }
     }
 
@@ -872,38 +886,46 @@ fn preflight_converge(
     // mid-execution.
     let spawns: Vec<&PlannedAction> = plan
         .iter()
-        .filter(|a| a.action == kallip_common::protocol::TeamAction::Spawn)
+        .filter(|a| a.action == TeamAction::Spawn)
         .collect();
     if !spawns.is_empty() {
         let root_ok = root.as_ref().is_some_and(|r| !r.faulted);
         if !root_ok {
-            rejections.push(
-                "cannot spawn: the tagma root is not live (declaration roles spawn under it)"
-                    .to_string(),
-            );
+            rejections.push(TeamRejection {
+                kind: TeamRejectionKind::SpawnRootDown,
+                message:
+                    "cannot spawn: the tagma root is not live (declaration roles spawn under it)"
+                        .to_string(),
+            });
         }
         let bundle = state.profiles.load();
         for a in &spawns {
             let Some(d) = &a.declared else { continue };
             match &d.profile_set {
                 None => {
-                    rejections.push(format!(
-                        "role {:?} cannot spawn: the declaration names no profile_set",
-                        a.role
-                    ));
+                    rejections.push(TeamRejection {
+                        kind: TeamRejectionKind::SpawnProfileSet,
+                        message: format!(
+                            "role {:?} cannot spawn: the declaration names no profile_set",
+                            a.role
+                        ),
+                    });
                 }
                 Some(set) if !bundle.config.sets.contains_key(set) => {
-                    rejections.push(format!(
-                        "role {:?}: unknown profile_set {set:?} (available: {})",
-                        a.role,
-                        bundle
-                            .config
-                            .sets
-                            .keys()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
+                    rejections.push(TeamRejection {
+                        kind: TeamRejectionKind::SpawnProfileSet,
+                        message: format!(
+                            "role {:?}: unknown profile_set {set:?} (available: {})",
+                            a.role,
+                            bundle
+                                .config
+                                .sets
+                                .keys()
+                                .cloned()
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    });
                 }
                 Some(_) => {}
             }
@@ -913,26 +935,35 @@ fn preflight_converge(
                         if let Some(r) = root
                             && want > r.permissions_class
                         {
-                            rejections.push(format!(
+                            rejections.push(TeamRejection {
+                                kind: TeamRejectionKind::SpawnProfileClass,
+                                message: format!(
                                 "role {:?}: permission_class {raw:?} exceeds the root's own class — converge never grants above the supervisor",
                                 a.role
-                            ));
+                            ),
+                            });
                         }
                     }
                     Err(_) => {
-                        rejections.push(format!(
-                            "role {:?}: permission_class {raw:?} is not a known spelling",
-                            a.role
-                        ));
+                        rejections.push(TeamRejection {
+                            kind: TeamRejectionKind::SpawnProfileClass,
+                            message: format!(
+                                "role {:?}: permission_class {raw:?} is not a known spelling",
+                                a.role
+                            ),
+                        });
                     }
                 }
             }
             for skill in &d.skills {
                 if let Err(e) = kallip_runtime::tools::load_skill(skill) {
-                    rejections.push(format!(
-                        "role {:?}: skill {skill:?} cannot be loaded ({e})",
-                        a.role
-                    ));
+                    rejections.push(TeamRejection {
+                        kind: TeamRejectionKind::SpawnSkill,
+                        message: format!(
+                            "role {:?}: skill {skill:?} cannot be loaded ({e})",
+                            a.role
+                        ),
+                    });
                 }
             }
         }
@@ -941,25 +972,31 @@ fn preflight_converge(
     // Capacity: the same caps Materialize enforces per-spawn, checked
     // batch-wide so an oversized converge fails before touching anything.
     let count = |verb| plan.iter().filter(|a| a.action == verb).count();
-    let spawns_n = count(kallip_common::protocol::TeamAction::Spawn);
-    let restores_n = count(kallip_common::protocol::TeamAction::Restore);
-    let deactivates_n = count(kallip_common::protocol::TeamAction::Deactivate);
+    let spawns_n = count(TeamAction::Spawn);
+    let restores_n = count(TeamAction::Restore);
+    let deactivates_n = count(TeamAction::Deactivate);
     let projected =
         live.len() as isize + spawns_n as isize + restores_n as isize - deactivates_n as isize;
     if projected > state.max_agents as isize {
-        rejections.push(format!(
-            "converge would hold {projected} agents over the limit of {} — shrink the declaration or raise the limit",
-            state.max_agents
-        ));
+        rejections.push(TeamRejection {
+            kind: TeamRejectionKind::CapacityAgents,
+            message: format!(
+                "converge would hold {projected} agents over the limit of {} — shrink the declaration or raise the limit",
+                state.max_agents
+            ),
+        });
     }
     if let Some(r) = root {
-        let new_children = spawns_n + restores_n;
-        if r.children + new_children > state.max_subagents {
-            rejections.push(format!(
+        let new_children = spawns_n as isize + restores_n as isize - deactivates_n as isize;
+        if r.children as isize + new_children > state.max_subagents as isize {
+            rejections.push(TeamRejection {
+                kind: TeamRejectionKind::CapacityChildren,
+                message: format!(
                 "the root would hold {}/{} subagents after converge — deactivate roles or raise the limit",
-                r.children + new_children,
+                r.children as isize + new_children,
                 state.max_subagents
-            ));
+            ),
+        });
         }
     }
     rejections
@@ -977,7 +1014,7 @@ async fn execute_converge(
     root: &Option<LiveBody>,
     force: bool,
     stamped: &str,
-) -> (Vec<kallip_common::protocol::TeamActionResult>, bool) {
+) -> (Vec<TeamActionResult>, bool) {
     let mut results = Vec::new();
     let mut spawned: HashMap<String, AgentId> = HashMap::new();
     // Spawns run under operator identity: converge was already authorized,
@@ -986,23 +1023,28 @@ async fn execute_converge(
     let identity = crate::auth::Identity::Operator;
     let root_arg = root.as_ref().map(|r| (&r.id, r.workspace_root.as_path()));
 
-    for a in plan {
+    // Deactivations run first: a net-zero batch (spawn N, deactivate N)
+    // passes the net capacity preflight, so the live per-spawn checks must
+    // never see a transient over-limit count. One role has exactly one
+    // plan row, so reordering cannot create dependencies between rows.
+    let (deactivates, rest): (Vec<_>, Vec<_>) = plan
+        .iter()
+        .partition(|a| a.action == TeamAction::Deactivate);
+    for a in deactivates.iter().chain(rest.iter()) {
         match a.action {
-            kallip_common::protocol::TeamAction::Retain => {}
-            kallip_common::protocol::TeamAction::Spawn => {
-                match spawn_action(state, a, identity.clone(), root_arg).await {
-                    Ok(id) => {
-                        spawned.insert(a.role.clone(), id.clone());
-                        upsert_mapping(mapping, &a.role, &id, stamped);
-                        results.push(row_ok(a, Some(id.clone()), format!("spawned agent {id}")));
-                    }
-                    Err(detail) => {
-                        results.push(row_failed(a, None, detail));
-                        return (results, true);
-                    }
+            TeamAction::Retain => {}
+            TeamAction::Spawn => match spawn_action(state, a, identity.clone(), root_arg).await {
+                Ok(id) => {
+                    spawned.insert(a.role.clone(), id.clone());
+                    upsert_mapping(mapping, &a.role, &id, stamped);
+                    results.push(row_ok(a, Some(id.clone()), format!("spawned agent {id}")));
                 }
-            }
-            kallip_common::protocol::TeamAction::Restore => match restore_action(state, a).await {
+                Err(detail) => {
+                    results.push(row_failed(a, None, detail));
+                    return (results, true);
+                }
+            },
+            TeamAction::Restore => match restore_action(state, a).await {
                 RestoreFallout::Restored { id, notes } => {
                     upsert_mapping(mapping, &a.role, &id, stamped);
                     let mut all = a.notes.clone();
@@ -1010,7 +1052,7 @@ async fn execute_converge(
                     results.push(result_row(
                         a,
                         Some(id.clone()),
-                        kallip_common::protocol::TeamRowOutcome::Applied,
+                        TeamRowOutcome::Applied,
                         format!("restored agent {id} identity-intact"),
                         all,
                     ));
@@ -1023,7 +1065,7 @@ async fn execute_converge(
                     results.push(result_row(
                         a,
                         Some(id.clone()),
-                        kallip_common::protocol::TeamRowOutcome::Applied,
+                        TeamRowOutcome::Applied,
                         format!("restore degraded into a fresh spawn: agent {id}"),
                         all,
                     ));
@@ -1033,7 +1075,7 @@ async fn execute_converge(
                     return (results, true);
                 }
             },
-            kallip_common::protocol::TeamAction::Adopt => {
+            TeamAction::Adopt => {
                 let Some(id) = a.target.clone() else { continue };
                 match align_live(state, a).await {
                     Ok(notes) => {
@@ -1048,7 +1090,7 @@ async fn execute_converge(
                         results.push(result_row(
                             a,
                             Some(id),
-                            kallip_common::protocol::TeamRowOutcome::Applied,
+                            TeamRowOutcome::Applied,
                             detail,
                             all,
                         ));
@@ -1059,7 +1101,7 @@ async fn execute_converge(
                     }
                 }
             }
-            kallip_common::protocol::TeamAction::AlignMetadata => {
+            TeamAction::AlignMetadata => {
                 let Some(id) = a.target.clone() else { continue };
                 match align_live(state, a).await {
                     Ok(notes) => {
@@ -1068,7 +1110,7 @@ async fn execute_converge(
                         results.push(result_row(
                             a,
                             Some(id),
-                            kallip_common::protocol::TeamRowOutcome::Applied,
+                            TeamRowOutcome::Applied,
                             "metadata aligned to the declaration".to_string(),
                             all,
                         ));
@@ -1079,7 +1121,7 @@ async fn execute_converge(
                     }
                 }
             }
-            kallip_common::protocol::TeamAction::Deactivate => {
+            TeamAction::Deactivate => {
                 let Some(id) = a.target.clone() else { continue };
                 match deactivate_action(state, a, force).await {
                     Ok(notes) => {
@@ -1089,7 +1131,7 @@ async fn execute_converge(
                         results.push(result_row(
                             a,
                             Some(id.clone()),
-                            kallip_common::protocol::TeamRowOutcome::Applied,
+                            TeamRowOutcome::Applied,
                             format!("deactivated agent {id} into the inactive area"),
                             all,
                         ));
@@ -1105,43 +1147,23 @@ async fn execute_converge(
     (results, false)
 }
 
-fn row_ok(
-    a: &PlannedAction,
-    id: Option<AgentId>,
-    detail: String,
-) -> kallip_common::protocol::TeamActionResult {
-    result_row(
-        a,
-        id,
-        kallip_common::protocol::TeamRowOutcome::Applied,
-        detail,
-        a.notes.clone(),
-    )
+fn row_ok(a: &PlannedAction, id: Option<AgentId>, detail: String) -> TeamActionResult {
+    result_row(a, id, TeamRowOutcome::Applied, detail, a.notes.clone())
 }
 
-fn row_failed(
-    a: &PlannedAction,
-    id: Option<AgentId>,
-    detail: String,
-) -> kallip_common::protocol::TeamActionResult {
-    result_row(
-        a,
-        id,
-        kallip_common::protocol::TeamRowOutcome::Failed,
-        detail,
-        a.notes.clone(),
-    )
+fn row_failed(a: &PlannedAction, id: Option<AgentId>, detail: String) -> TeamActionResult {
+    result_row(a, id, TeamRowOutcome::Failed, detail, a.notes.clone())
 }
 
 #[allow(clippy::too_many_arguments)]
 fn result_row(
     a: &PlannedAction,
     id: Option<AgentId>,
-    outcome: kallip_common::protocol::TeamRowOutcome,
+    outcome: TeamRowOutcome,
     detail: String,
     notes: Vec<String>,
-) -> kallip_common::protocol::TeamActionResult {
-    kallip_common::protocol::TeamActionResult {
+) -> TeamActionResult {
+    TeamActionResult {
         role: a.role.clone(),
         action: a.action,
         agent_id: id,
@@ -1187,7 +1209,7 @@ async fn spawn_action(
         .map_err(|e| e.to_string())?;
     config.role = a.role.clone();
     config.description = d.description.clone();
-    config.delegation_mode = kallip_common::protocol::DELEGATION_CARVE_OUT
+    config.delegation_mode = DELEGATION_CARVE_OUT
         .parse::<kallip_runtime::config::DelegationMode>()
         .map_err(|e| e.to_string())?;
     config.profile_set = d.profile_set.clone();
@@ -1825,7 +1847,7 @@ mod tests {
             .unwrap_or_else(|| panic!("no plan row for role {role}"))
     }
 
-    fn action_of(plan: &[PlannedAction], role: &str) -> kallip_common::protocol::TeamAction {
+    fn action_of(plan: &[PlannedAction], role: &str) -> TeamAction {
         row_of(plan, role).action
     }
 
@@ -1842,10 +1864,7 @@ mod tests {
         let b = body("dev");
         let lock = vec![lock_pair("dev", &b.id, false)];
         let plan = converge_plan(&declaration, &lock, std::slice::from_ref(&b));
-        assert_eq!(
-            action_of(&plan, "dev"),
-            kallip_common::protocol::TeamAction::Retain
-        );
+        assert_eq!(action_of(&plan, "dev"), TeamAction::Retain);
         assert!(row_of(&plan, "dev").target.is_none());
     }
 
@@ -1858,10 +1877,7 @@ mod tests {
         let lock = vec![lock_pair("dev", &b.id, false)];
         let plan = converge_plan(&declaration, &lock, std::slice::from_ref(&b));
         let row = row_of(&plan, "dev");
-        assert_eq!(
-            row.action,
-            kallip_common::protocol::TeamAction::AlignMetadata
-        );
+        assert_eq!(row.action, TeamAction::AlignMetadata);
         assert_eq!(row.align.description.as_deref(), Some("builds the thing"));
         assert_eq!(
             row.align.permissions_class,
@@ -1886,10 +1902,7 @@ mod tests {
         let declaration = declaration("[[role]]\nname = \"dev\"\n");
         let b = body("dev");
         let plan = converge_plan(&declaration, &[], std::slice::from_ref(&b));
-        assert_eq!(
-            action_of(&plan, "dev"),
-            kallip_common::protocol::TeamAction::Adopt
-        );
+        assert_eq!(action_of(&plan, "dev"), TeamAction::Adopt);
         assert_eq!(target_of(&plan, "dev"), b.id);
     }
 
@@ -1900,10 +1913,7 @@ mod tests {
         let b = body("dev");
         let lock = vec![lock_pair("dev", &parked, true)];
         let plan = converge_plan(&declaration, &lock, std::slice::from_ref(&b));
-        assert_eq!(
-            action_of(&plan, "dev"),
-            kallip_common::protocol::TeamAction::Adopt
-        );
+        assert_eq!(action_of(&plan, "dev"), TeamAction::Adopt);
         assert_eq!(target_of(&plan, "dev"), b.id);
         let row = row_of(&plan, "dev");
         assert!(row.notes.iter().any(|n| n.contains("superseded")));
@@ -1918,15 +1928,9 @@ mod tests {
         let parked = AgentId::random();
         let lock = vec![lock_pair("dev", &parked, true)];
         let plan = converge_plan(&declaration, &lock, &[]);
-        assert_eq!(
-            action_of(&plan, "dev"),
-            kallip_common::protocol::TeamAction::Restore
-        );
+        assert_eq!(action_of(&plan, "dev"), TeamAction::Restore);
         assert_eq!(target_of(&plan, "dev"), parked);
-        assert_eq!(
-            action_of(&plan, "scout"),
-            kallip_common::protocol::TeamAction::Spawn
-        );
+        assert_eq!(action_of(&plan, "scout"), TeamAction::Spawn);
     }
 
     #[test]
@@ -1934,10 +1938,7 @@ mod tests {
         let declaration = declaration("[[role]]\nname = \"dev\"\n");
         let stray = body("stray");
         let plan = converge_plan(&declaration, &[], std::slice::from_ref(&stray));
-        assert_eq!(
-            action_of(&plan, "stray"),
-            kallip_common::protocol::TeamAction::Deactivate
-        );
+        assert_eq!(action_of(&plan, "stray"), TeamAction::Deactivate);
         assert_eq!(target_of(&plan, "stray"), stray.id);
     }
 
@@ -1959,7 +1960,7 @@ mod tests {
         // Archived bodies are never resurrected: spawn a fresh one and
         // drop the record from the mapping.
         let dev = row_of(&plan, "dev");
-        assert_eq!(dev.action, kallip_common::protocol::TeamAction::Spawn);
+        assert_eq!(dev.action, TeamAction::Spawn);
         assert!(dev.discard_record);
         assert!(dev.notes.iter().any(|n| n.contains("archived")));
         // A record whose id is nowhere on disk is discarded too.
@@ -1970,14 +1971,11 @@ mod tests {
 
     // -- converge mapping projection + preflight refusals --
 
-    fn planned(
-        role: &str,
-        action: kallip_common::protocol::TeamAction,
-        target: Option<AgentId>,
-    ) -> PlannedAction {
+    fn planned(role: &str, action: TeamAction, target: Option<AgentId>) -> PlannedAction {
         PlannedAction {
             role: role.to_string(),
             action,
+            disposition: RoleDisposition::Retain,
             target,
             notes: Vec::new(),
             declared: None,
@@ -1993,23 +1991,15 @@ mod tests {
         let adopted = AgentId::random();
         let aligning = AgentId::random();
         let plan = vec![
-            planned(
-                "dev",
-                kallip_common::protocol::TeamAction::Restore,
-                Some(parked.clone()),
-            ),
-            planned(
-                "scout",
-                kallip_common::protocol::TeamAction::Adopt,
-                Some(adopted.clone()),
-            ),
+            planned("dev", TeamAction::Restore, Some(parked.clone())),
+            planned("scout", TeamAction::Adopt, Some(adopted.clone())),
             planned(
                 "reviewer",
-                kallip_common::protocol::TeamAction::AlignMetadata,
+                TeamAction::AlignMetadata,
                 Some(aligning.clone()),
             ),
-            planned("guest1", kallip_common::protocol::TeamAction::Retain, None),
-            planned("pilot", kallip_common::protocol::TeamAction::Spawn, None),
+            planned("guest1", TeamAction::Retain, None),
+            planned("pilot", TeamAction::Spawn, None),
         ];
         let mut mapping = Vec::new();
         // Dry run: no spawned ids exist yet, so the spawn row projects
@@ -2045,7 +2035,8 @@ mod tests {
         assert!(
             rejections
                 .iter()
-                .any(|r| r.contains("both") && r.contains("lock rebuild"))
+                .any(|r| r.kind == TeamRejectionKind::LockAmbiguity
+                    && r.message.contains("lock rebuild"))
         );
     }
 
@@ -2055,7 +2046,11 @@ mod tests {
         let declaration = declaration("[[role]]\nname = \"root\"\n");
         let plan = converge_plan(&declaration, &[], &[]);
         let rejections = preflight_converge(&state, &plan, &None, &[], &[], false);
-        assert!(rejections.iter().any(|r| r.contains("reserved role")));
+        assert!(
+            rejections
+                .iter()
+                .any(|r| r.kind == TeamRejectionKind::RootRole)
+        );
     }
 
     #[test]
@@ -2068,7 +2063,7 @@ mod tests {
         assert!(
             rejections
                 .iter()
-                .any(|r| r.contains("multiple live bodies"))
+                .any(|r| r.kind == TeamRejectionKind::Duplicate)
         );
     }
 
@@ -2083,7 +2078,7 @@ mod tests {
         let bodies = vec![stray];
         let plan = converge_plan(&declaration, &[], &bodies);
         let rejections = preflight_converge(&state, &plan, &None, &[], &bodies, false);
-        assert!(rejections.iter().any(|r| r.contains("is busy")));
+        assert!(rejections.iter().any(|r| r.kind == TeamRejectionKind::Busy));
         // Force is the auditable escape: the same plan passes.
         let rejections = preflight_converge(&state, &plan, &None, &[], &bodies, true);
         assert!(
@@ -2101,7 +2096,11 @@ mod tests {
         let bodies = vec![stray];
         let plan = converge_plan(&declaration, &[], &bodies);
         let rejections = preflight_converge(&state, &plan, &None, &[], &bodies, true);
-        assert!(rejections.iter().any(|r| r.contains("live subagent")));
+        assert!(
+            rejections
+                .iter()
+                .any(|r| r.kind == TeamRejectionKind::LiveChildren)
+        );
     }
 
     #[test]
@@ -2116,9 +2115,13 @@ mod tests {
         assert!(
             rejections
                 .iter()
-                .any(|r| r.contains("names no profile_set"))
+                .any(|r| r.kind == TeamRejectionKind::SpawnProfileSet)
         );
-        assert!(rejections.iter().any(|r| r.contains("unknown profile_set")));
+        assert!(
+            rejections
+                .iter()
+                .any(|r| r.message.contains("unknown profile_set"))
+        );
     }
 
     #[test]
@@ -2133,7 +2136,7 @@ mod tests {
         assert!(
             rejections
                 .iter()
-                .any(|r| r.contains("not a known spelling"))
+                .any(|r| r.kind == TeamRejectionKind::SpawnProfileClass)
         );
     }
 
@@ -2147,7 +2150,11 @@ mod tests {
         );
         let plan = converge_plan(&declaration, &[], &[]);
         let rejections = preflight_converge(&state, &plan, &Some(root), &[], &[], false);
-        assert!(rejections.iter().any(|r| r.contains("exceeds the root")));
+        assert!(
+            rejections
+                .iter()
+                .any(|r| r.message.contains("exceeds the root"))
+        );
     }
 
     #[test]
@@ -2170,11 +2177,29 @@ mod tests {
         );
         let plan = converge_plan(&declaration, &[], &[]);
         let rejections = preflight_converge(&state, &plan, &Some(root), &[], &[], false);
-        assert!(rejections.iter().any(|r| r.contains("over the limit")));
         assert!(
             rejections
                 .iter()
-                .any(|r| r.contains("subagents after converge"))
+                .any(|r| r.kind == TeamRejectionKind::CapacityAgents)
+        );
+        assert!(
+            rejections
+                .iter()
+                .any(|r| r.kind == TeamRejectionKind::CapacityChildren)
+        );
+    }
+    #[test]
+    fn preflight_allows_a_pure_deactivation_plan_at_capacity() {
+        let state = make_state();
+        let root = body("root");
+        let dev = AgentId::random();
+        let plan = vec![planned("dev", TeamAction::Deactivate, Some(dev))];
+        // A shrink-only plan nets negative children; the signed net
+        // must not underflow, and the root reads under its cap after.
+        let rejections = preflight_converge(&state, &plan, &Some(root), &[], &[], false);
+        assert!(
+            rejections.is_empty(),
+            "unexpected rejections: {rejections:?}"
         );
     }
 
@@ -2187,7 +2212,7 @@ mod tests {
         let dev = row_of(&plan, "dev");
         // Nothing live under the role and the recorded id is live
         // elsewhere: spawn fresh, the stale record is dropped.
-        assert_eq!(dev.action, kallip_common::protocol::TeamAction::Spawn);
+        assert_eq!(dev.action, TeamAction::Spawn);
         assert!(dev.discard_record);
         assert!(
             dev.notes
@@ -2203,7 +2228,7 @@ mod tests {
         let lock = vec![lock_pair("dev", &root.id, false)];
         let plan = converge_plan_with_root(&declaration, &lock, &root, &[]);
         let dev = row_of(&plan, "dev");
-        assert_eq!(dev.action, kallip_common::protocol::TeamAction::Spawn);
+        assert_eq!(dev.action, TeamAction::Spawn);
         assert!(dev.discard_record);
         assert!(
             dev.notes
@@ -2225,11 +2250,7 @@ mod tests {
         let dir = kallip_runtime::persistence::inactive_dir(&id).unwrap();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("meta.json"), "not valid meta").unwrap();
-        let row = planned(
-            "dev",
-            kallip_common::protocol::TeamAction::Restore,
-            Some(id),
-        );
+        let row = planned("dev", TeamAction::Restore, Some(id));
         match restore_action(&state, &row).await {
             RestoreFallout::Failed(detail) => {
                 assert!(detail.contains("restore degraded to a fresh spawn"));
@@ -2242,21 +2263,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn window_violation_stops_the_batch_with_applied_rows_reported() {
+    async fn window_violation_stops_the_batch_at_the_failed_deactivate() {
         let state = crate::test_helpers::make_state();
         let aligned = AgentId::random();
         let vanished = AgentId::random();
         let plan = vec![
-            planned(
-                "dev",
-                kallip_common::protocol::TeamAction::AlignMetadata,
-                Some(aligned),
-            ),
-            planned(
-                "scout",
-                kallip_common::protocol::TeamAction::Deactivate,
-                Some(vanished),
-            ),
+            planned("dev", TeamAction::AlignMetadata, Some(aligned)),
+            planned("scout", TeamAction::Deactivate, Some(vanished)),
         ];
         let mut mapping = Vec::new();
         let root: Option<LiveBody> = None;
@@ -2270,17 +2283,12 @@ mod tests {
         )
         .await;
         assert!(aborted);
-        assert_eq!(results.len(), 2);
-        assert_eq!(
-            results[0].outcome,
-            kallip_common::protocol::TeamRowOutcome::Applied
-        );
-        assert_eq!(
-            results[1].outcome,
-            kallip_common::protocol::TeamRowOutcome::Failed
-        );
+        // Deactivates run first, so the vanished deactivate is row 0: it
+        // fails and the fail-fast stop leaves the align row unexecuted.
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].outcome, TeamRowOutcome::Failed);
         assert!(
-            results[1]
+            results[0]
                 .detail
                 .contains("vanished in the plan→execute window")
         );
