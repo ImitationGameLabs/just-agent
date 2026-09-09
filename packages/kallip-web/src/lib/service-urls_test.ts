@@ -63,3 +63,52 @@ Deno.test("explicit service override wins over derivation", () => {
     "http://10.0.0.7:7100",
   );
 });
+
+Deno.test("subdomains carry a non-default page port", () => {
+  assertEquals(
+    serviceUrl(
+      "archeion",
+      {},
+      { protocol: "http:", hostname: "web.localhost", port: "8080" },
+    ),
+    "http://archeion.localhost:8080",
+  );
+  assertEquals(
+    serviceUrl(
+      "instances",
+      {},
+      { protocol: "http:", hostname: "web.localhost", port: "8080" },
+    ),
+    "http://instances.localhost:8080/api/instances",
+  );
+});
+
+Deno.test("protocol-default ports stay off the derived url", () => {
+  assertEquals(
+    serviceUrl(
+      "lesche",
+      {},
+      { protocol: "https:", hostname: "web.kallipai.com", port: "443" },
+    ),
+    "https://lesche.kallipai.com",
+  );
+  assertEquals(
+    serviceUrl(
+      "lesche",
+      {},
+      { protocol: "http:", hostname: "web.kallipai.com", port: "" },
+    ),
+    "http://lesche.kallipai.com",
+  );
+});
+
+Deno.test("explicit config.domain keeps a web. prefix verbatim", () => {
+  assertEquals(
+    serviceUrl(
+      "archeion",
+      { domain: "web.example.com" },
+      { protocol: "https:", hostname: "elsewhere.example.com" },
+    ),
+    "https://archeion.web.example.com",
+  );
+});
