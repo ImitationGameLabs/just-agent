@@ -178,6 +178,15 @@ in
       daemonUnitFile =
         pkgs.writeText "kallip-daemon.service-test"
           aligned.config.systemd.units."kallip-daemon.service".text;
+      # The derived service defaults must reach the process: these two
+      # files carry the archeion unit env for the derived (tls on) and
+      # the tls-off hosts, and the assertions below grep them.
+      webDerivedUnit =
+        pkgs.writeText "kallip-archeion-derived-test"
+          webDerived.config.systemd.units."kallip-archeion.service".text;
+      webTlsOffUnit =
+        pkgs.writeText "kallip-archeion-tls-off-test"
+          webTlsOff.config.systemd.units."kallip-archeion.service".text;
       # The stub only proves module wiring (which attr lands on PATH);
       # the real workspace build must actually ship the binaries the
       # daemon resolves by bare name. Referencing it here puts the real
@@ -235,9 +244,12 @@ in
       webOverride = evalHost {
         services.kallipai = {
           daemon.enable = true;
-          polis.enable = true;
           domain = "kallipai.com";
-          polis.archeion.corsOrigins = "https://custom.example";
+          polis = {
+            enable = true;
+            archeion.corsOrigins = "https://custom.example";
+            archeion.cookieSecure = false;
+          };
         };
       };
       # The baking helper, called directly (no module), writes exactly
@@ -296,6 +308,16 @@ in
       test "${webTlsOff.config.services.kallipai.polis.archeion.corsOrigins}" = "http://web.kallipai.com"
       test "${webTlsOff.config.services.kallipai.polis.archeion.webauthnRpId}" = "kallipai.com"
       test "${webOverride.config.services.kallipai.polis.archeion.corsOrigins}" = "https://custom.example"
+      # The derived defaults must reach the process env: the rp origin
+      # names the web page (the passkey ceremony runs there and the
+      # archeion admits exactly that origin), tls-on leaves the cookie
+      # flag to the code default, and tls-off forces it non-Secure.
+      grep -q 'KALLIP_ARCHEION_WEBAUTHN_RP_ORIGIN=https://web.kallipai.com' '${webDerivedUnit}'
+      grep -q 'KALLIP_ARCHEION_CORS_ORIGINS=https://web.kallipai.com' '${webDerivedUnit}'
+      grep -q 'KALLIP_ARCHEION_OAUTH_REDIRECT_BASE=https://web.kallipai.com' '${webDerivedUnit}'
+      test -z "$(grep KALLIP_ARCHEION_COOKIE_SECURE '${webDerivedUnit}')"
+      grep -q 'KALLIP_ARCHEION_COOKIE_SECURE=false' '${webTlsOffUnit}'
+      test "${lib.boolToString webOverride.config.services.kallipai.polis.archeion.cookieSecure}" = "false"
       derived="${webDerived.config.services.kallipai.web.distWithRuntimeConfig}"
       grep -q '"domain":"kallipai.com"' "$derived/config.js"
       # The baking helper, called directly, writes exactly the payload.

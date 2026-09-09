@@ -78,7 +78,6 @@ let
   platformTls = config.services.kallipai.tls;
   webScheme = if platformTls then "https" else "http";
   webOrigin = "${webScheme}://web.${platformDomain}";
-  archeionOrigin = "${webScheme}://archeion.${platformDomain}";
 in
 {
   options.services.kallipai = {
@@ -908,16 +907,24 @@ in
     # so the whole arm waits for one to be set; each mkDefault keeps an
     # operator-set option in charge.
     (lib.mkIf (platformDomain != null) {
-      services.kallipai.polis.archeion.corsOrigins = lib.mkDefault webOrigin;
-      services.kallipai.polis.archeion.cookieDomain = lib.mkDefault platformDomain;
-      services.kallipai.polis.archeion.webauthnRpId = lib.mkDefault platformDomain;
-      services.kallipai.polis.archeion.webauthnRpOrigin = lib.mkDefault archeionOrigin;
-      services.kallipai.polis.archeion.oauthRedirectBase = lib.mkDefault webOrigin;
-      services.kallipai.polis.lesche.corsOrigins = lib.mkDefault webOrigin;
-      services.kallipai.polis.files.corsOrigins = lib.mkDefault webOrigin;
-      services.kallipai.polis.instances.corsOrigins = lib.mkDefault webOrigin;
-      services.kallipai.polis.instances.allowedHosts = lib.mkDefault "instances.${platformDomain}";
-      services.kallipai.web.runtimeConfig.domain = lib.mkDefault platformDomain;
+      services.kallipai = {
+        polis = {
+          archeion = {
+            corsOrigins = lib.mkDefault webOrigin;
+            cookieDomain = lib.mkDefault platformDomain;
+            webauthnRpId = lib.mkDefault platformDomain;
+            webauthnRpOrigin = lib.mkDefault webOrigin;
+            oauthRedirectBase = lib.mkDefault webOrigin;
+          };
+          lesche.corsOrigins = lib.mkDefault webOrigin;
+          files.corsOrigins = lib.mkDefault webOrigin;
+          instances = {
+            corsOrigins = lib.mkDefault webOrigin;
+            allowedHosts = lib.mkDefault "instances.${platformDomain}";
+          };
+        };
+        web.runtimeConfig.domain = lib.mkDefault platformDomain;
+      };
     })
     # Cookie security tracks the tls knob only downward: https leaves
     # the option null (the code default already sends Secure), plain
