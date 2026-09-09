@@ -229,11 +229,15 @@ mod tests {
         with_env(
             &[("KALLIP_DAEMON_SOCKET", None), ("XDG_RUNTIME_DIR", None)],
             || {
-                // The daemon's chain stops at the state-home leg; if the
-                // system path ever leaked into the bind order this would
-                // return it.
-                let bind = daemon_bind_path();
-                assert_ne!(bind.as_deref(), Some(Path::new(SYSTEM_DAEMON_SOCKET)));
+                // The daemon's chain stops at the state-home leg; the
+                // system path is client-only, so it must not appear at any
+                // position of the bind order.
+                let chain = candidates(&legs_from_env(None));
+                assert!(!chain.is_empty(), "daemon bind chain unexpectedly empty");
+                assert!(
+                    !chain.iter().any(|p| p.as_os_str() == SYSTEM_DAEMON_SOCKET),
+                    "system path must not appear in the daemon bind chain"
+                );
             },
         );
     }

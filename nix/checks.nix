@@ -250,15 +250,20 @@ in
       test "${toString aligned.config.services.kallipai.polis.ports.lesche}" = "7200"
       test "${toString (builtins.length (failedAssertions aligned))}" = "0"
       test "${toString (builtins.length aligned.config.warnings)}" = "0"
-      # The daemon block installs the whole workspace build on PATH.
       test "${toString workspaceOnPath}" = "1"
-      # And the real artifact ships the helpers bare-name resolution
-      # depends on (stub self-verification guard).
+      # The real workspace build must actually ship the helpers; a stub
+      # mistakenly passed here would fail these two lines immediately.
       test -x "${realWorkspace}/bin/kallip-tagma"
       test -x "${realWorkspace}/bin/kallip-daemon-spawn"
       # The daemon unit rides the system path on PATH: bare-name
       # helper resolution depends on it (see daemonUnitFile).
       grep -q "${aligned.config.system.path}/bin" "${daemonUnitFile}"
+      # The daemon socket literal lives in two places: the module
+      # binding (unit env) and the client constant (the probe chain's
+      # last leg). Pin both definition lines: editing either side
+      # alone turns this check red.
+      grep -q 'daemonSocket = "/run/kallipai/daemon.sock";' "${./nixos-modules.nix}"
+      grep -q 'SYSTEM_DAEMON_SOCKET: &str = "/run/kallipai/daemon.sock";' "${../crates/daemon/kallip-daemon-common/src/socket.rs}"
       # A polis-only drifted host stays warning-free: the L1.5 drift
       # warning fires at evaluation time only on hosts with the web
       # enabled (driftedWeb below asserts the firing side).
