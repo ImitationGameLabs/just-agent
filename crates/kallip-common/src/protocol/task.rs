@@ -347,4 +347,71 @@ mod tests {
         assert!(req.summary.is_none());
         assert_eq!(serde_json::to_value(&req).unwrap()["reason"], "not_planned");
     }
+
+    #[test]
+    fn waiting_marker_wire_carries_all_three_states() {
+        // Absent decodes to None (leave untouched) and skips on the way
+        // back out; an explicit boolean survives verbatim both ways, so
+        // set and clear are distinguishable on the wire.
+        let untouched: TaskCheckpointRequest =
+            serde_json::from_str(r#"{"actor":"dev","note":"n"}"#).unwrap();
+        assert_eq!(untouched.waiting, None);
+        assert!(
+            serde_json::to_value(&untouched)
+                .unwrap()
+                .get("waiting")
+                .is_none()
+        );
+
+        let set: TaskCheckpointRequest =
+            serde_json::from_str(r#"{"actor":"dev","note":"n","waiting":true}"#).unwrap();
+        assert_eq!(set.waiting, Some(true));
+        assert_eq!(
+            serde_json::to_value(&set).unwrap()["waiting"],
+            serde_json::json!(true)
+        );
+
+        let clear: TaskCheckpointRequest =
+            serde_json::from_str(r#"{"actor":"dev","note":"n","waiting":false}"#).unwrap();
+        assert_eq!(clear.waiting, Some(false));
+        assert_eq!(
+            serde_json::to_value(&clear).unwrap()["waiting"],
+            serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn chain_op_request_wire_round_trips() {
+        // The full shape and the minimal one: `detail` skips when absent
+        // and `force` defaults to false on decode — the auditable escape
+        // is opt-in on the wire.
+        let full: TaskChainOpRequest = serde_json::from_str(
+            r#"{"actor":"root","op":"rebase","detail":"five commits","force":true}"#,
+        )
+        .unwrap();
+        assert_eq!(full.op, "rebase");
+        assert_eq!(full.detail.as_deref(), Some("five commits"));
+        assert!(full.force);
+
+        let minimal: TaskChainOpRequest =
+            serde_json::from_str(r#"{"actor":"root","op":"commit"}"#).unwrap();
+        assert!(minimal.detail.is_none());
+        assert!(!minimal.force);
+        let wire = serde_json::to_value(&minimal).unwrap();
+        assert!(wire.get("detail").is_none());
+        assert!(wire.get("force").is_none());
+    }
+
+    #[test]
+    fn close_request_rejects_an_unknown_reason() {
+        // The reason vocabulary is closed: an unknown or mis-cased
+        // spelling must fail the decode, not coerce into a default.
+        assert!(
+            serde_json::from_str::<TaskCloseRequest>(r#"{"actor":"dev","reason":"done"}"#).is_err()
+        );
+        assert!(
+            serde_json::from_str::<TaskCloseRequest>(r#"{"actor":"dev","reason":"Completed"}"#)
+                .is_err()
+        );
+    }
 }

@@ -81,6 +81,8 @@ pub fn parse_declaration(input: &str) -> anyhow::Result<TeamDeclaration> {
         // confining it to ASCII letters, digits, hyphen, and underscore
         // keeps `..`, separators, and whitespace out of that path by
         // construction rather than by a downstream starts_with check.
+        // This is a charset, not a Windows-safe name set: reserved device
+        // names (CON, NUL, …) pass on purpose — deployment targets are POSIX.
         if !role
             .name
             .chars()
@@ -186,5 +188,14 @@ unmanaged = false
                 "unexpected error for {bad:?}: {err:#}"
             );
         }
+    }
+
+    #[test]
+    fn windows_reserved_device_names_pass_the_charset_guard() {
+        // Cross-platform semantics note: the guard confines a role to a
+        // charset, not to a Windows-safe name set — CON and friends
+        // parse by design (deployment targets are POSIX). Pins the
+        // documented behavior so a future tighten is a conscious change.
+        parse_declaration("[[role]]\nname = \"con\"").unwrap();
     }
 }

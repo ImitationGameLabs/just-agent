@@ -98,7 +98,7 @@ fn read_lock(path: &Path) -> Result<Option<LockFile>> {
     ))?;
     // A legal document recording no members — only comments, an
     // empty `role` array, or a key serde folds into the default —
-    // reads as "no members" downstream, so refuse it like a blank
+    // would read as "no members" downstream, so refuse it like a blank
     // file.
     if lock.roles.is_empty() {
         return Err(anyhow!(
