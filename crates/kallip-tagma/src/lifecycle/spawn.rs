@@ -605,7 +605,7 @@ impl<'a> Materialize<'a> {
             config.created_by.as_ref(),
             &root_agent_id,
         );
-        let (agent, identity) = match spawn_agent(SpawnArgs {
+        let (agent, identity) = match (state.spawn_fn)(SpawnArgs {
             agent_id: id.clone(),
             root_agent_id: root_agent_id.clone(),
             store,

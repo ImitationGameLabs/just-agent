@@ -25,7 +25,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::lifecycle::{SpawnArgs, spawn_agent};
+use crate::lifecycle::SpawnArgs;
 use crate::state::{AgentEntry, AgentIdentity, FaultedEntry, RegistryEntry, SharedState};
 use crate::token::AGENT;
 
@@ -339,7 +339,7 @@ async fn restore_one(
         crate::lifecycle::establish_workspace_lock(&shared_state, &p.agent_id, &config, &chain_ids)
             .map_err(|e| anyhow::anyhow!("agent {}: {e}; skipping restore", p.agent_id))?;
 
-    let (agent, identity) = spawn_agent(SpawnArgs {
+    let (agent, identity) = (shared_state.spawn_fn)(SpawnArgs {
         agent_id: p.agent_id.clone(),
         root_agent_id: root_agent_id.clone(),
         store,

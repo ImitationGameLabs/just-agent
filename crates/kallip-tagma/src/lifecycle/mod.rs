@@ -16,8 +16,8 @@ pub(crate) use identity::{inject_identity_env, resolve_root_agent};
 pub(crate) use restore::{restore_agents, restore_inactive};
 
 pub(crate) use spawn::{Materialize, SpawnArgs, abort_agent, spawn_agent};
-/// Indirect spawn entry used by delivery's reactivation (slow path); see
-/// [`AppState::spawn_fn`](crate::state::AppState::spawn_fn). An `Arc<dyn Fn>`
+/// The single indirect spawn entry every creation path routes through;
+/// see [`AppState::spawn_fn`](crate::state::AppState::spawn_fn). An `Arc<dyn Fn>`
 /// so test stubs can capture state.
 pub(crate) type SpawnFn = std::sync::Arc<
     dyn Fn(

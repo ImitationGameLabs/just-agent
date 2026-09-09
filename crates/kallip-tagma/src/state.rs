@@ -265,11 +265,10 @@ pub struct AppState {
     /// Content-addressed blob root for closed-task dossiers, handed to
     /// close/extract alongside the store. Installed at startup.
     pub task_blobs: std::sync::OnceLock<std::sync::Arc<dyn kallip_task::BlobStore>>,
-    /// Agent spawn entry used by delivery's reactivation (slow path).
-    /// An indirection so tests can observe/stub the spawn without spinning a
-    /// real runtime; production default is `lifecycle::spawn_agent_boxed`.
-    /// create calls `lifecycle::spawn_agent` directly; restore goes
-    /// through `spawn_subagent` (neither crosses this seam).
+    /// The single agent spawn entry: agent create, boot restore, and
+    /// delivery's reactivation all route through here. An indirection so
+    /// tests can observe/stub the spawn without spinning a real runtime;
+    /// production default is `lifecycle::spawn_agent_boxed`.
     pub spawn_fn: crate::lifecycle::SpawnFn,
     /// Converge mutual exclusion: at most one `POST /team/converge`
     /// run at a time. A second request is refused with `409` rather
