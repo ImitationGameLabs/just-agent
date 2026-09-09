@@ -2,12 +2,12 @@
 //! (token + host guards + proxy + mapping) driven end to end over oneshot,
 //! with the daemon answering on a tempdir UDS socket.
 //!
-//! The spawn leg launches a real tagma binary, so these tests need the
-//! sibling workspace binaries — resolved the same way the daemon's own
-//! lifecycle tests do (KALLIP_BIN_DIR → CARGO_BIN_EXE_* → deps-parent →
-//! PATH). Build the workspace (or at least `cargo build -p kallip-daemon
-//! kallip-instances kallip`) before running, or the resolve chain falls
-//! through to PATH and the tests spuriously fail.
+//! The spawn leg launches a real tagma binary: the daemon resolves its
+//! helpers by bare name (KALLIP_BIN_DIR → PATH), so these tests hand
+//! the daemon a KALLIP_BIN_DIR pinning the workspace build dir that
+//! resolve_bin finds. Build the workspace (or at least `cargo build
+//! -p kallip-daemon kallip-instances kallip`) before running, or the
+//! tests spuriously fail.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -63,6 +63,12 @@ fn start_daemon() -> DaemonProc {
         // isolates the instance trees.
         .env("KALLIP_DAEMON_RECORD_DIR", state_dir.path().join("records"))
         .env("XDG_DATA_HOME", data_dir.path())
+        .env(
+            "KALLIP_BIN_DIR",
+            resolve_bin("kallip-tagma")
+                .parent()
+                .unwrap_or(Path::new("")),
+        )
         .env(
             "KALLIP_DAEMON_SOCKET",
             state_dir.path().join("control.sock"),

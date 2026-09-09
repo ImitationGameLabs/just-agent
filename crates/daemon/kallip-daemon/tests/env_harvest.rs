@@ -16,8 +16,8 @@ use kallip_daemon_client::DaemonClient;
 use kallip_daemon_common::wire::{OkPayload, RequestBody, ResponseBody};
 
 // Same resolution chain as the lifecycle tests: KALLIP_BIN_DIR →
-// CARGO_BIN_EXE_* → deps-parent → PATH. A package-scoped build does not
-// produce the sibling binaries; build the workspace first.
+// CARGO_BIN_EXE_* → target-dir parent → PATH. A package-scoped build
+// does not produce the workspace binaries; build the workspace first.
 fn resolve_bin(name: &str) -> PathBuf {
     if let Ok(dir) = std::env::var("KALLIP_BIN_DIR")
         && let p = Path::new(&dir).join(name)
@@ -61,6 +61,12 @@ fn start_daemon_with_home(home: &Path) -> DaemonProc {
     let bin = resolve_bin("kallip-daemon");
     let mut child = std::process::Command::new(&bin)
         .env("XDG_DATA_HOME", data_dir.path())
+        .env(
+            "KALLIP_BIN_DIR",
+            resolve_bin("kallip-tagma")
+                .parent()
+                .unwrap_or(Path::new("")),
+        )
         // Pin the record area in the state tempdir: the default
         // derivation would follow the fixture HOME (isolated, but the
         // explicit override keeps where records land obvious).

@@ -114,13 +114,6 @@ in
                     echo bundle-shell > $out/config.js
                     echo bundle-page > $out/index.html
                   ''
-                else if name == "workspace" then
-                  # The daemon resolves its helpers as same-directory
-                  # siblings, so the workspace stub ships one.
-                  ''
-                    mkdir -p $out/bin
-                    touch $out/bin/kallip-tagma
-                  ''
                 else
                   "mkdir $out"
               );
@@ -175,6 +168,13 @@ in
       workspaceOnPath =
         builtins.elem stubPackages.${pkgs.stdenv.hostPlatform.system}.workspace
           aligned.config.environment.systemPackages;
+      # The daemon unit's text must carry the system path on PATH: the
+      # daemon resolves its helpers by bare name, and a NixOS unit's
+      # PATH is empty unless the unit lists `path` explicitly. Dropping
+      # the unit's path line loses the Environment line and this red.
+      daemonUnitFile =
+        pkgs.writeText "kallip-daemon.service-test"
+          aligned.config.systemd.units."kallip-daemon.service".text;
       inherit (import ./lib.nix) bakeRuntimeConfig;
       stubDist = stubPackages.${pkgs.stdenv.hostPlatform.system}."kallip-web-dist";
       # No runtime keys: the site root is the bundle itself.
@@ -244,9 +244,9 @@ in
       test "${toString (builtins.length aligned.config.warnings)}" = "0"
       # The daemon block installs the whole workspace build on PATH.
       test "${toString workspaceOnPath}" = "1"
-      # The daemon package resolves its helpers as same-directory
-      # siblings: the stub workspace ships kallip-tagma beside it.
-      test -f "${aligned.config.services.kallipai.daemon.package}/bin/kallip-tagma"
+      # The daemon unit rides the system path on PATH: bare-name
+      # helper resolution depends on it (see daemonUnitFile).
+      grep -q "${aligned.config.system.path}/bin" "${daemonUnitFile}"
       # A polis-only drifted host stays warning-free: the L1.5 drift
       # warning fires at evaluation time only on hosts with the web
       # enabled (driftedWeb below asserts the firing side).

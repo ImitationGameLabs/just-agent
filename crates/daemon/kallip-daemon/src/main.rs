@@ -29,22 +29,6 @@ fn main() -> Result<()> {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    // Deploy-surface observability: log which tagma binary launches will
-    // actually exec. Same resolution chain as spawn's bins::resolve
-    // (KALLIP_BIN_DIR → current-exe dir → PATH), so the log answers exactly
-    // "what will this daemon start". Boot-time snapshot: the PATH branch
-    // stays PATH-shaped (the final hit happens at exec time); every other
-    // branch is stable for the process lifetime.
-    let tagma = bins::resolve("kallip-tagma");
-    if tagma
-        .parent()
-        .is_some_and(|dir| !dir.as_os_str().is_empty())
-    {
-        tracing::info!(path = %tagma.display(), "resolved kallip-tagma");
-    } else {
-        tracing::warn!("kallip-tagma unresolved beside the daemon; launches rely on PATH lookup");
-    }
-
     let record_root = records::record_root()?;
     // The record area is the only tree this daemon owns. It is created
     // lazily by the first registration; the socket parent below is the

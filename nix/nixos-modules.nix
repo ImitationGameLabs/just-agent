@@ -74,12 +74,12 @@ in
         default = hostPackages.workspace;
         description = ''
           The kallipai daemon package, defaulting to this flake's full
-          workspace build (set it explicitly to pin a specific build, at
-          your own risk). The daemon resolves its helpers as siblings of
-          its own binary first, so the package must ship
-          `kallip-daemon-spawn` and `kallip-tagma` beside `kallip-daemon`
-          — which the workspace build guarantees and a per-crate pin
-          must re-provide by hand.
+          workspace build. The daemon resolves its helpers by bare name
+          through its unit PATH, which carries the system path: helpers
+          come from the system path's build. A pin therefore covers the
+          daemon binary only -- a version skew against the on-PATH
+          helpers is possible and yours to manage; the workspace
+          default keeps them aligned.
         '';
       };
 
@@ -115,23 +115,23 @@ in
 
       archeionPackage = lib.mkOption {
         type = lib.types.package;
-        default = hostPackages.kallip-archeion;
-        description = "The kallip-archeion package; defaults to this flake's build.";
+        default = hostPackages.workspace;
+        description = "The kallip-archeion package; defaults to the full workspace build.";
       };
       leschePackage = lib.mkOption {
         type = lib.types.package;
-        default = hostPackages.kallip-lesche;
-        description = "The kallip-lesche package; defaults to this flake's build.";
+        default = hostPackages.workspace;
+        description = "The kallip-lesche package; defaults to the full workspace build.";
       };
       filesPackage = lib.mkOption {
         type = lib.types.package;
-        default = hostPackages.kallip-files;
-        description = "The kallip-files package; defaults to this flake's build.";
+        default = hostPackages.workspace;
+        description = "The kallip-files package; defaults to the full workspace build.";
       };
       instancesPackage = lib.mkOption {
         type = lib.types.package;
-        default = hostPackages.kallip-instances;
-        description = "The kallip-instances package; defaults to this flake's build.";
+        default = hostPackages.workspace;
+        description = "The kallip-instances package; defaults to the full workspace build.";
       };
 
       adminTokenFile = lib.mkOption {
@@ -567,6 +567,12 @@ in
         wantedBy = [ "multi-user.target" ];
         after = [ "network.target" ];
 
+        # A NixOS unit's PATH is empty unless the unit lists `path`
+        # (the system profile is a session-side default only), so the
+        # daemon's bare-name helper lookups would fail inside the unit
+        # even though they succeed in an interactive shell. The system
+        # path is what bare-name resolution rides.
+        path = [ config.system.path ];
         environment = {
           KALLIP_DAEMON_SOCKET = daemonSocket;
           KALLIP_DAEMON_RECORD_DIR = "/var/lib/kallipai/daemon/instances";

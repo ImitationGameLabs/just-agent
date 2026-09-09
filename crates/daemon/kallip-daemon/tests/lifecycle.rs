@@ -1,13 +1,13 @@
 //! End-to-end lifecycle: the daemon spawns a REAL kallip-tagma binary via
 //! the detach helper, health reads the self-written pid/port, stop lands
-//! SIGTERM and the process exits. These tests need the sibling workspace
-//! binaries — resolved like the tagma sandbox harness does (KALLIP_BIN_DIR
-//! → CARGO_BIN_EXE_* → deps-parent → PATH), so they run green both under
-//! `cargo test` and inside the dev container.
-//! A package-scoped
-//! `cargo build -p kallip-daemon` does NOT produce the sibling binaries:
-//! build the workspace first or the resolve chain falls through to PATH
-//! and these tests spuriously fail.
+//! SIGTERM and the process exits. The daemon resolves its helpers by
+//! bare name (KALLIP_BIN_DIR → PATH): these tests hand the daemon a
+//! KALLIP_BIN_DIR pinning the workspace build dir that the test-local
+//! resolve_bin finds (KALLIP_BIN_DIR → CARGO_BIN_EXE_* → target-dir
+//! parent → PATH) — green under `cargo test` and the dev container
+//! alike. A package-scoped `cargo build -p kallip-daemon` does NOT
+//! produce the workspace binaries: build the workspace first or
+//! these tests spuriously fail.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -64,6 +64,12 @@ fn start_daemon() -> DaemonProc {
     let log = std::fs::File::create(&log_path).expect("create daemon log");
     let mut child = std::process::Command::new(&bin)
         .env("XDG_DATA_HOME", data_dir.path())
+        .env(
+            "KALLIP_BIN_DIR",
+            resolve_bin("kallip-tagma")
+                .parent()
+                .unwrap_or(std::path::Path::new("")),
+        )
         // The record root rides the default derivation from the state
         // home, exercising the production resolution path end to end.
         .env("XDG_STATE_HOME", state_dir.path())

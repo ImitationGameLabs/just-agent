@@ -973,7 +973,7 @@ pub(crate) fn launch(
     }
     let helper = bins::resolve("kallip-daemon-spawn");
     // Explicit dev exe wins over the resolved one; the resolver stays
-    // the production path (sibling-of-daemon, then PATH).
+    // the production path (KALLIP_BIN_DIR, then PATH).
     let tagma = match exe {
         Some(exe) => PathBuf::from(exe),
         None => bins::resolve("kallip-tagma"),
