@@ -37,8 +37,8 @@
   // otherwise the URL derives from the browser location: the origin the
   // page is on names the deployment domain (web.<domain> strips to
   // <domain>), and the sibling subdomains follow the page's own
-  // protocol. The edge proxy owns the TLS split, so the app never
-  // branches on it and never names a port.
+  // protocol and port: a page on a non-default port (the dev edge on
+  // :8080) reaches its siblings on that port too.
   const config = window.KALLIP_CONFIG ?? {};
   initArcheion(serviceUrl("archeion", config, location));
   initLesche(serviceUrl("lesche", config, location));
