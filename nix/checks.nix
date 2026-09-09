@@ -114,6 +114,13 @@ in
                     echo bundle-shell > $out/config.js
                     echo bundle-page > $out/index.html
                   ''
+                else if name == "workspace" then
+                  # The daemon resolves its helpers as same-directory
+                  # siblings, so the workspace stub ships one.
+                  ''
+                    mkdir -p $out/bin
+                    touch $out/bin/kallip-tagma
+                  ''
                 else
                   "mkdir $out"
               );
@@ -237,6 +244,9 @@ in
       test "${toString (builtins.length aligned.config.warnings)}" = "0"
       # The daemon block installs the whole workspace build on PATH.
       test "${toString workspaceOnPath}" = "1"
+      # The daemon package resolves its helpers as same-directory
+      # siblings: the stub workspace ships kallip-tagma beside it.
+      test -f "${aligned.config.services.kallipai.daemon.package}/bin/kallip-tagma"
       # A polis-only drifted host stays warning-free: the L1.5 drift
       # warning fires at evaluation time only on hosts with the web
       # enabled (driftedWeb below asserts the firing side).

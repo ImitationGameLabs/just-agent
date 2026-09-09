@@ -121,6 +121,15 @@ instances over a local control socket and is consumed by `kallipctl`
 and the instances proxy. Enabling the daemon also puts every platform
 command on the system PATH, so no separate CLI install step exists.
 
+To drive the daemon with `kallipctl` over SSH, admit the user to the
+daemon's socket group — the control socket lives at
+`/run/kallipai/daemon.sock` and is gated to the `kallipai-daemon`
+group:
+
+```nix
+users.users.alice.extraGroups = [ "kallipai-daemon" ];
+```
+
 The package options default to this flake's build for the host system;
 set one explicitly to pin a specific version. With `adminTokenFile`
 unset, the archeion mints a fresh admin

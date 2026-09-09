@@ -71,13 +71,15 @@ in
 
       package = lib.mkOption {
         type = lib.types.package;
-        default = hostPackages.kallip-daemon;
+        default = hostPackages.workspace;
         description = ''
-          The kallipai daemon package, defaulting to this flake's build
-          (set it explicitly to pin a specific version). It must ship
-          `kallip-daemon` together with `kallip-daemon-spawn`: the
-          daemon resolves the helper as a sibling of its own binary
-          first.
+          The kallipai daemon package, defaulting to this flake's full
+          workspace build (set it explicitly to pin a specific build, at
+          your own risk). The daemon resolves its helpers as siblings of
+          its own binary first, so the package must ship
+          `kallip-daemon-spawn` and `kallip-tagma` beside `kallip-daemon`
+          — which the workspace build guarantees and a per-crate pin
+          must re-provide by hand.
         '';
       };
 
@@ -554,6 +556,11 @@ in
       # full workspace build). The services still run from their own
       # packages -- PATH is for people, not for the systemd units.
       environment.systemPackages = [ hostPackages.workspace ];
+
+      # The daemon's unit environment only covers the daemon itself;
+      # interactive kallipctl sessions resolve the socket through
+      # KALLIP_DAEMON_SOCKET first, so expose it session-wide.
+      environment.sessionVariables.KALLIP_DAEMON_SOCKET = daemonSocket;
 
       systemd.services.kallip-daemon = {
         description = "kallipai instance daemon";
