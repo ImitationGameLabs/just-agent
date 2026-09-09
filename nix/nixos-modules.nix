@@ -648,9 +648,9 @@ in
                 # Consumers ride the platform gate group for the archeion's
                 # 0640 internal-token file. The daemon socket is gated
                 # separately (kallipai-daemon) and none of these users
-                # joins it. The archeion keeps its primary group private
-                # and joins the gate only inside its unit, where it needs
-                # membership to chgrp the token file.
+                # joins it. The archeion user keeps its primary group private;
+                # its unit runs with the gate group as primary instead, so
+                # membership rides the unit, not this user declaration.
                 extraGroups = lib.optionals (name != "kallip-archeion") [ cfg.group ];
               }
             )
@@ -724,7 +724,6 @@ in
             # The internal token is state the archeion owns: generated into
             # its state dir on first boot, read (never rewritten) after.
             KALLIP_ARCHEION_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/archeion/internal-token";
-            KALLIP_ARCHEION_INTERNAL_TOKEN_GROUP = cfg.group;
             # Runtime state: the admin bootstrap token, rewritten every start.
             KALLIP_ARCHEION_ADMIN_TOKEN_OUT_FILE = "/run/kallipai/archeion/admin-token.env";
           }
@@ -751,10 +750,10 @@ in
           serviceConfig = {
             ExecStart = "${polisCfg.archeionPackage}/bin/kallip-archeion";
             User = "kallip-archeion";
-            Group = "kallip-archeion";
-            # Gate-group membership lives on the unit (not the user): only
-            # this unit chgrps the provisioned token file to the gate group.
-            SupplementaryGroups = [ cfg.group ];
+            # The unit runs with the gate group as its primary: systemd
+            # owns the state tree to it (recursively, every start), so the
+            # token is born gate-owned and consumers traverse/read it.
+            Group = cfg.group;
             StateDirectory = "kallipai/archeion";
             # Runtime sibling: the admin bootstrap token lives here --
             # rewritten on every start, gone when the unit stops.
@@ -797,7 +796,6 @@ in
             ExecStart = "${polisCfg.leschePackage}/bin/kallip-lesche";
             User = "kallip-lesche";
             Group = "kallip-lesche";
-            SupplementaryGroups = [ cfg.group ];
             StateDirectory = "kallipai/lesche";
             LogsDirectory = "kallipai/lesche";
             StateDirectoryMode = "0700";

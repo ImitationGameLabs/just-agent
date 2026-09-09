@@ -23,8 +23,10 @@ use crate::token;
 /// and never rewritten, because consumers serve with the value they read at
 /// their own boot — a silent rewrite would split the platform into token
 /// generations that fail each other's checks. Regeneration is a deliberate
-/// act (delete the file, restart the group). Mode 0640: the polis group,
-/// which every consumer joins, must read it; the world must not.
+/// act (delete the file, restart the group). Mode 0640: the group bits
+/// read as whatever group the process runs as -- the deployment runs
+/// the archeion with the gate group as primary (the NixOS module's
+/// Group=), so consumers joining that group can read; the world must not.
 pub(crate) fn provision_internal_token(path: &Path) -> anyhow::Result<String> {
     match std::fs::read_to_string(path) {
         Ok(raw) => {
@@ -46,20 +48,6 @@ pub(crate) fn provision_internal_token(path: &Path) -> anyhow::Result<String> {
                         path.display()
                     )
                 })?;
-            // 0640 is only group-readable if the group is the right one: the
-            // file is born with the process's primary group, so hand it to
-            // the gate group the consumers join. The name comes from the
-            // deployment (the NixOS module passes its gate group); unset
-            // keeps the process group, which is right for root-run dev forms.
-            if let Some(name) = std::env::var_os("KALLIP_ARCHEION_INTERNAL_TOKEN_GROUP") {
-                let name = name.to_string_lossy();
-                let gid = nix::unistd::Group::from_name(&name)
-                    .with_context(|| format!("resolving group {name}"))?
-                    .with_context(|| format!("no such group: {name}"))?
-                    .gid;
-                nix::unistd::chown(path, None, Some(gid))
-                    .with_context(|| format!("chgrping {} to {name}", path.display()))?;
-            }
             Ok(minted.secret().to_owned())
         }
         Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),

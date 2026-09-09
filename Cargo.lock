@@ -2473,7 +2473,6 @@ dependencies = [
  "ipnet",
  "kallip-archeion-common",
  "kallip-common",
- "nix 0.31.3",
  "reqwest",
  "sea-orm",
  "sea-orm-migration",

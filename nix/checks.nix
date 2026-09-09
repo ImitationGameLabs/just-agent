@@ -187,6 +187,15 @@ in
       webTlsOffUnit =
         pkgs.writeText "kallip-archeion-tls-off-test"
           webTlsOff.config.systemd.units."kallip-archeion.service".text;
+      polisLescheUnit =
+        pkgs.writeText "kallip-lesche-test"
+          webDerived.config.systemd.units."kallip-lesche.service".text;
+      polisFilesUnit =
+        pkgs.writeText "kallip-files-test"
+          webDerived.config.systemd.units."kallip-files.service".text;
+      polisInstancesUnit =
+        pkgs.writeText "kallip-instances-test"
+          webDerived.config.systemd.units."kallip-instances.service".text;
       # The stub only proves module wiring (which attr lands on PATH);
       # the real workspace build must actually ship the binaries the
       # daemon resolves by bare name. Referencing it here puts the real
@@ -318,6 +327,18 @@ in
       test -z "$(grep KALLIP_ARCHEION_COOKIE_SECURE '${webDerivedUnit}')"
       grep -q 'KALLIP_ARCHEION_COOKIE_SECURE=false' '${webTlsOffUnit}'
       test "${lib.boolToString webOverride.config.services.kallipai.polis.archeion.cookieSecure}" = "false"
+      # The gate-group handoff is single-tracked: the archeion unit runs
+      # with the gate group as primary (systemd keeps the state tree
+      # group-owned), consumers hold membership at the user layer, and
+      # no unit carries a SupplementaryGroups re-declaration.
+      grep -q 'Group=kallipai-polis' '${webDerivedUnit}'
+      test -z "$(grep SupplementaryGroups '${webDerivedUnit}')"
+      test -z "$(grep SupplementaryGroups '${polisLescheUnit}')"
+      test -z "$(grep SupplementaryGroups '${polisFilesUnit}')"
+      test -z "$(grep SupplementaryGroups '${polisInstancesUnit}')"
+      test "${toString (lib.elem "kallipai-polis" webDerived.config.users.users.kallip-lesche.extraGroups)}" = "1"
+      test "${toString (lib.elem "kallipai-polis" webDerived.config.users.users.kallip-files.extraGroups)}" = "1"
+      test "${toString (lib.elem "kallipai-polis" webDerived.config.users.users.kallip-instances.extraGroups)}" = "1"
       derived="${webDerived.config.services.kallipai.web.distWithRuntimeConfig}"
       grep -q '"domain":"kallipai.com"' "$derived/config.js"
       # The baking helper, called directly, writes exactly the payload.
