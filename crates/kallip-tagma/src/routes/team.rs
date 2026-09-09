@@ -1451,6 +1451,15 @@ async fn align_live(state: &SharedState, a: &PlannedAction) -> Result<Vec<String
     let Some(id) = a.target.clone() else {
         return Err("alignment row without a live target".to_string());
     };
+    // The blind-spot re-read runs even for an empty align list: adopt
+    // rows rebind the lock mapping to this id, so a target that
+    // vanished in the plan→execute window must stop the batch, not
+    // report Applied against a dead agent.
+    if !state.registry.read().await.contains_key(&id) {
+        return Err(format!(
+            "agent {id} vanished in the plan→execute window; batch stopped"
+        ));
+    }
     if a.align.is_empty() {
         return Ok(Vec::new());
     }
@@ -2292,6 +2301,36 @@ mod tests {
                 .detail
                 .contains("vanished in the plan→execute window")
         );
+    }
+
+    #[tokio::test]
+    async fn window_violation_stops_the_batch_at_an_empty_align_row() {
+        let state = crate::test_helpers::make_state();
+        let vanished = AgentId::random();
+        // An adopt row carries no align fields: the empty-align shortcut
+        // must still re-read the target, or a vanished agent reports
+        // Applied and the lock mapping rebinds to a dead id.
+        let plan = vec![planned("dev", TeamAction::Adopt, Some(vanished))];
+        let mut mapping = Vec::new();
+        let root: Option<LiveBody> = None;
+        let (results, aborted) = execute_converge(
+            &state,
+            &plan,
+            &mut mapping,
+            &root,
+            false,
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        assert!(aborted);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].outcome, TeamRowOutcome::Failed);
+        assert!(
+            results[0]
+                .detail
+                .contains("vanished in the plan→execute window")
+        );
+        assert!(mapping.is_empty());
     }
     // ---- execute-layer harness: a counting spawn stub drives the
     // converge spawn/restore paths without a real runtime ----
