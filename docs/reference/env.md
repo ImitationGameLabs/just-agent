@@ -423,10 +423,11 @@ env always win, and a spawn with no relay signal at all gets nothing.
 
 ## Dev stack shape
 
-Two variables drive the dev compose (`compose/dev/polis.nix`) and the web dev
+Three variables drive the dev compose (`compose/dev/polis.nix`) and the web dev
 server together (both flow from the root `.env` via direnv):
 
 | Variable        | Default                                     | Purpose                                                                                                                         |
 | --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `KALLIP_TLS`    | `on`                                        | Stack shape: `on` = Caddy-fronted https+domain topology; `off` = plain http (no Caddy/cert/DNS; see docs/development.md).       |
+| `KALLIP_EDGE_TLS` | `on` | Edge shape: `on` = Caddy-fronted https+domain topology with the mkcert cert; `off` = plain http (no cert/DNS trust setup; see docs/development.md). |
+| `KALLIP_EDGE_PORT` | `443` | Dev edge listener port (compose caddy + the web dev server when non-default); the browser-facing web origin carries it and CORS/oauth derive from it verbatim. |
 | `KALLIP_DOMAIN` | `kallipai.com` (`on`) / `localhost` (`off`) | The domain (https shape) or plain host (http shape) the dev server and compose topology derive from; the web app's URLs derive in the browser at runtime. Formerly `KALLIP_DEV_DOMAIN` (renamed 2026-08-27). |

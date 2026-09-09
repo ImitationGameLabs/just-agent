@@ -70,19 +70,42 @@ generation.
 
 A minimal full-platform configuration — the daemon, the four polis
 services, and the web site behind Caddy. One module function is the
-whole `configuration.nix`: copy it once and the platform is up. The
-web site serves `config.services.kallipai.web.distWithRuntimeConfig` —
-the bundle as-is while `runtimeConfig` is empty, or the bundle with a
+whole `configuration.nix`: copy it once and the platform is up.
+`services.kallipai.domain` is the knob the rest derives from: the
+services' CORS allow-lists, the session cookie domain, webauthn, and
+the baked runtime config all follow it, and `tls = false` keeps every
+derived origin on `http` to match the plain-http serving. The web site
+serves `config.services.kallipai.web.distWithRuntimeConfig` — the
+bundle as-is while `runtimeConfig` is empty, or the bundle with a
 runtime config baked into `config.js` once keys are set. The site
-addresses are plain
-`http://` on purpose: ACME cannot issue for a `.lan` domain, so plain
-http runs with zero browser setup — the HTTPS section below shows the
-two upgrade paths.
+addresses are plain `http://` on purpose: ACME cannot issue for a
+`.lan` domain, so plain http runs with zero browser setup — the HTTPS
+section below shows the two upgrade paths.
 
 ```nix
-{ config, ... }:
+{ config, lib, ... }:
+let
+  domain = "kallipai.lan";
+  # The lesche streams event payloads, so its proxy disables response
+  # buffering; the other backends proxy bare.
+  backendExtra = {
+    lesche = ''
+      reverse_proxy 127.0.0.1:${toString config.services.kallipai.polis.ports.lesche} {
+        flush_interval -1
+      }
+    '';
+  };
+  backendVhost = svc: {
+    name = "http://${svc}.${domain}";
+    value.extraConfig = backendExtra.${svc} or ''
+      reverse_proxy 127.0.0.1:${toString config.services.kallipai.polis.ports.${svc}}
+    '';
+  };
+in
 {
   services.kallipai = {
+    inherit domain;
+    tls = false; # plain http: ACME cannot issue for a .lan domain
     daemon.enable = true;
     polis.enable = true;
     web.enable = true;
@@ -90,26 +113,17 @@ two upgrade paths.
   services.caddy = {
     enable = true;
     virtualHosts = {
-      "http://archeion.kallipai.lan".extraConfig = ''
-        reverse_proxy 127.0.0.1:7100
-      '';
-      "http://lesche.kallipai.lan".extraConfig = ''
-        reverse_proxy 127.0.0.1:7200 {
-          flush_interval -1
-        }
-      '';
-      "http://files.kallipai.lan".extraConfig = ''
-        reverse_proxy 127.0.0.1:7400
-      '';
-      "http://instances.kallipai.lan".extraConfig = ''
-        reverse_proxy 127.0.0.1:7300
-      '';
-      "http://web.kallipai.lan".extraConfig = ''
+      "http://web.${domain}".extraConfig = ''
         root * ${config.services.kallipai.web.distWithRuntimeConfig}
         try_files {path} /index.html
         file_server
       '';
-    };
+    } // builtins.listToAttrs (map backendVhost [
+      "archeion"
+      "lesche"
+      "files"
+      "instances"
+    ]);
   };
 }
 ```
@@ -169,12 +183,14 @@ one static site for the web app. What each piece does:
   `domain` when the app cannot derive it); unset keys fall back to the
   app-side derivation, and an unknown key fails evaluation, so typos
   surface at build time.
-Two upgrades from the plain-http block above, both by editing the
-site-block addresses:
-- Keep `kallipai.lan` and want https: drop the `http://` prefixes and
-  add `tls internal` to each site block (internal CA certificates —
-  see the HTTPS section below for trusting its root).
-- Move to a public domain: drop the `http://` prefixes and set
+Two upgrades from the plain-http block above:
+- Keep `kallipai.lan` and want https: set `services.kallipai.tls = true`
+  (or drop the line — it is the default) so the derived origins speak
+  https, drop the `http://` prefixes from the site-block addresses, and
+  add `tls internal` to each block (internal CA certificates — see the
+  HTTPS section below for trusting its root).
+- Move to a public domain: change the `domain` binding to the public
+  name, drop the `http://` prefixes the same way, and set
   `services.caddy.email`; with ports 80 and 443 reachable, Caddy
   obtains real certificates automatically.
 
@@ -184,17 +200,16 @@ The four listeners bind localhost on 7100 (archeion), 7200 (lesche),
 7400 (files), and 7300 (instances). Override any of them under
 `services.kallipai.polis.ports.<service>` (1024-65535; the four values
 must be distinct — the module fails evaluation otherwise). The proxy
-blocks above target these ports; if you change one, update the
-matching site block.
+blocks above read these ports from the module, so a changed port
+re-targets its site block on the next rebuild.
 
 Serving the web app direct-connect instead — browsers reaching the
 polis services by plain port rather than through same-domain
-subdomains — is a valid shape, but nothing pins it for you: a changed
-port or a non-sibling domain needs the app's `tlsOff` / `services`
-runtime keys set in `services.kallipai.web.runtimeConfig`, and the
-archeion's CORS
-allow-list (`corsOrigins`) widened to the origins the browser actually
-uses. Prefer the proxy shape unless you have a reason not to.
+subdomains — is a valid shape, but nothing pins it for you: pin each
+service URL under `services.kallipai.web.runtimeConfig.services`, and
+set the archeion's CORS allow-list (`corsOrigins`) to the origins the
+browser actually uses. Prefer the proxy shape unless you have a reason
+not to.
 
 ## HTTPS on a LAN or home network
 
@@ -254,7 +269,7 @@ systemctl status kallip-daemon kallip-archeion kallip-lesche \
   kallip-files kallip-instances
 ```
 
-Then confirm each subdomain answers over https — `archeion.kallipai.lan`
+Then confirm each subdomain answers — `archeion.kallipai.lan`
 for sign-up and login, `web.kallipai.lan` for the app, and the lesche,
 files, and instances subdomains through the same proxy. A healthy
 deployment: the app loads, you can sign up and sign in, and you can
