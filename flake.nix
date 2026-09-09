@@ -40,16 +40,19 @@
         "aarch64-darwin"
       ];
 
-      # NixOS module exposing the daemon as a system service. Flake-level
-      # output, not perSystem: NixOS modules
+      # Flake-level output: the NixOS module exposing the services as
+      # system services. It is flake-level, not perSystem: NixOS modules
       # are system-agnostic. 'default' follows the flake convention. The
       # module receives the whole packages set and resolves its defaults
-      # per host system (packages.${pkgs.stdenv.hostPlatform.system});
-      # the reference stays lazy and the export system-agnostic.
-      flake.nixosModules.kallipai = import ./nix/nixos-modules.nix {
-        inherit (self) packages;
+      # per host system
+      # (packages.${pkgs.stdenv.hostPlatform.system}); the reference
+      # stays lazy and the export system-agnostic.
+      flake = {
+        nixosModules.kallipai = import ./nix/nixos-modules.nix {
+          inherit (self) packages;
+        };
+        nixosModules.default = self.nixosModules.kallipai;
       };
-      flake.nixosModules.default = self.nixosModules.kallipai;
 
       perSystem =
         { system, lib, ... }:
@@ -81,6 +84,7 @@
           checks = import ./nix/checks.nix {
             inherit pkgs common;
             inherit (inputs) advisory-db;
+            inherit (inputs.nixpkgs) lib;
           };
 
           # Shared devShell concerns (repo-wide tooling + opt-in sccache)
@@ -184,9 +188,12 @@
                   workspace
                   ;
               };
-              # The kallip-web static site (SPA bundle for caddy to serve;
-              # see the services.kallipai.web NixOS module). Linux-only: the
-              # node_modules dependency tree carries platform binaries.
+              # The kallip-web static site (SPA bundle for a static file
+              # server to serve; the NixOS module derives the site root,
+              # services.kallipai.web.distWithRuntimeConfig, from it).
+              # Linux-only:
+              # the node_modules
+              # dependency tree carries platform binaries.
               kallip-web-dist = import ./nix/packages/kallip-web.nix {
                 inherit pkgs;
                 src = self;

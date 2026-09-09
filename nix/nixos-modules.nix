@@ -29,18 +29,11 @@ let
   polisCfg = config.services.kallipai.polis;
   webCfg = config.services.kallipai.web;
 
-  topDomain = config.services.kallipai.domain;
-
-  # One base domain, two consumers: the proxy derives its service
-  # subdomains from it and the web app serves on web.<domain>. The
-  # per-service domain options are overrides, not second sources.
-  proxyDomain = if polisCfg.proxy.domain != null then polisCfg.proxy.domain else topDomain;
-  webDomain = if webCfg.domain != null then webCfg.domain else topDomain;
-
   # The flake's own build for this host: the package options default to
   # it, so enabling a service needs no package reference; setting an
   # option explicitly pins a specific build.
   hostPackages = packages.${pkgs.stdenv.hostPlatform.system};
+  inherit (import ./lib.nix) bakeRuntimeConfig;
 
   # Single source of truth for the polis port defaults: the option
   # defaults and the direct-connect warning both read this one
@@ -68,22 +61,11 @@ let
       ${name} = if lib.isBool value then lib.boolToString value else toString value;
     };
   # The polis listeners' localhost ports, configured per service under
-  # services.kallipai.polis.ports and shared by the env and caddy routes.
+  # services.kallipai.polis.ports and shared by the env and the edge
   polisPorts = polisCfg.ports;
 in
 {
   options.services.kallipai = {
-    domain = lib.mkOption {
-      type = lib.types.str;
-      description = ''
-        The base domain the platform serves on: the proxy derives its
-        service subdomains (<service>.<domain>) from it and the web app
-        serves on web.<domain>. The polis.proxy.domain and web.domain
-        options default to inheriting this value; set them explicitly to
-        override it per service.
-      '';
-    };
-
     daemon = {
       enable = lib.mkEnableOption "the kallipai daemon as a system service";
 
@@ -222,29 +204,6 @@ in
             pick a port outside the system's ephemeral range and unused by
             other services on this host — a conflict surfaces at service
             start as an address-in-use error.
-          '';
-        };
-      };
-
-      proxy = {
-        enable = lib.mkEnableOption "caddy virtual hosts exposing the polis services on their subdomains";
-
-        domain = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-          description = ''
-            Override for the proxy's virtual-host base domain; null
-            (default) inherits services.kallipai.domain.
-          '';
-        };
-
-        acmeEmail = lib.mkOption {
-          type = lib.types.nullOr lib.types.str;
-          default = null;
-          description = ''
-            ACME account email, forwarded to services.caddy.email. Default
-            null: Caddy then registers with Let's Encrypt without a
-            recovery address, which small deployments accept.
           '';
         };
       };
@@ -425,9 +384,8 @@ in
         };
       };
     };
-
     web = {
-      enable = lib.mkEnableOption "the kallip-web static site behind caddy";
+      enable = lib.mkEnableOption "the kallip-web site root artifact (the bundle, or the bundle with the runtime config baked in)";
 
       package = lib.mkOption {
         type = lib.types.package;
@@ -439,60 +397,65 @@ in
         '';
       };
 
-      domain = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = ''
-          Override for the web app's virtual-host domain; null (default)
-          inherits services.kallipai.domain.
-        '';
-      };
-
       runtimeConfig = lib.mkOption {
-        type = lib.types.attrsOf lib.types.anything;
-        default = {
-          offlineLogin = true;
+        type = lib.types.submodule {
+          options = {
+            domain = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Sibling-subdomain root (archeion.<domain> ...).";
+            };
+            tlsOff = lib.mkOption {
+              type = lib.types.nullOr lib.types.bool;
+              default = null;
+              description = "True = plain-http direct ports instead of https subdomains.";
+            };
+            offlineLogin = lib.mkOption {
+              type = lib.types.nullOr lib.types.bool;
+              default = null;
+              description = "True = show the operator-key login branch.";
+            };
+            services = lib.mkOption {
+              type = lib.types.nullOr (lib.types.attrsOf lib.types.str);
+              default = null;
+              description = "Full URL overrides, one per backend service.";
+            };
+          };
         };
+        default = { };
         description = ''
-          Payload for the web app's runtime config (/config.js), serialized
-          as JSON into a window.KALLIP_CONFIG assignment. Keys mirror the
-          app's Window.KALLIP_CONFIG type: domain, tlsOff, offlineLogin,
-          services. The default keeps the self-hosted default behavior:
-          the operator-key login branch shows because the operator is the
-          owner. Set offlineLogin = false to hide it (a cloud-facing
-          deployment), or add domain/tlsOff/services to pin values the
-          app would otherwise derive from the browser location.
-          The file is served publicly by Caddy, so anything placed here is
-          readable by anyone who can reach the site — keep it to values the
-          browser is meant to see; secrets belong in environment files or
-          credential stores, never in this option.
+          Values for the web app's runtime config (/config.js), baked
+          into the site root as a window.KALLIP_CONFIG assignment. Keys
+          mirror the app's Window.KALLIP_CONFIG type: domain, tlsOff,
+          offlineLogin, services; an unknown key fails evaluation. The
+          empty default keeps the shipped config.js defaults. Set
+          offlineLogin = false to hide the operator-key login branch (a
+          cloud-facing deployment), or add domain/tlsOff/services to pin
+          values the app would otherwise derive from the browser
+          location. The file is baked into the site root and served
+          publicly, so anything placed here is readable by anyone who
+          can reach the site — keep it to values the browser is meant
+          to see; secrets belong in environment files or credential
+          stores, never in this option.
         '';
       };
 
-      acmeEmail = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
+      distWithRuntimeConfig = lib.mkOption {
+        type = lib.types.package;
         description = ''
-          ACME account email, forwarded to services.caddy.email. Default
-          null: Caddy then registers with Let's Encrypt without a
-          recovery address, which small deployments accept.
+          The site root an edge server serves: the bundle as-is when
+          runtimeConfig is empty (the shipped config.js stands), or the
+          bundle with a config.js baked from runtimeConfig. Derived by
+          default; set it to pin a custom-built root. See
+          docs/nixos-deployment.md for the serving example.
         '';
       };
     };
+
   };
   config = lib.mkMerge [
     {
-      assertions = [
-        {
-          assertion = polisCfg.proxy.enable -> proxyDomain != null;
-          message = "services.kallipai.domain must be set when the proxy is enabled (or set polis.proxy.domain).";
-        }
-        {
-          assertion = webCfg.enable -> webDomain != null;
-          message = "services.kallipai.domain must be set when services.kallipai.web is enabled (or set web.domain).";
-        }
-      ]
-      ++ lib.optionals polisCfg.enable (
+      assertions = lib.optionals polisCfg.enable (
         # The four listeners must not collide: a shared port is always a
         # misconfiguration, so fail at eval time with the pair and value.
         (map
@@ -880,72 +843,41 @@ in
         };
       };
     })
-    (lib.mkIf (polisCfg.proxy.enable && proxyDomain != null) {
-      # The public edge: bring up caddy and route the four polis
-      # subdomains to their localhost listeners, the NixOS form of the
-      # dev Caddyfile's host routing. The lesche route flushes
-      # immediately (the event stream must not buffer); the other three
-      # are plain request/response.
-      services.caddy = {
-        enable = true;
-        email = lib.mkIf (polisCfg.proxy.acmeEmail != null) polisCfg.proxy.acmeEmail;
-        virtualHosts = {
-          "archeion.${proxyDomain}".extraConfig = ''
-            reverse_proxy 127.0.0.1:${toString polisPorts.archeion}
-          '';
-          "lesche.${proxyDomain}".extraConfig = ''
-            reverse_proxy 127.0.0.1:${toString polisPorts.lesche} {
-              flush_interval -1
-            }
-          '';
-          "files.${proxyDomain}".extraConfig = ''
-            reverse_proxy 127.0.0.1:${toString polisPorts.files}
-          '';
-          "instances.${proxyDomain}".extraConfig = ''
-            reverse_proxy 127.0.0.1:${toString polisPorts.instances}
-          '';
-        };
-      };
-    })
-    (lib.mkIf (webCfg.enable && webDomain != null) {
-      # The SPA's virtual host: serve the bundle's files, falling back
-      # to index.html so client-side routes resolve on hard reload. The
-      # runtimeConfig payload (offline-login branch on by default) is
-      # served instead of the bundle's empty config.js shell (handle
-      # blocks are mutually exclusive and take precedence over the
-      # catch-all file serving).
-      services.caddy = {
-        enable = true;
-        email = lib.mkIf (webCfg.acmeEmail != null) webCfg.acmeEmail;
-        virtualHosts."web.${webDomain}".extraConfig = ''
-            handle /config.js {
-              root * ${pkgs.writeTextDir "config.js" "window.KALLIP_CONFIG = ${builtins.toJSON webCfg.runtimeConfig};"}
-              file_server
-            }
-          handle {
-            root * ${webCfg.package}
-            try_files {path} /index.html
-            file_server
+    (lib.mkIf webCfg.enable {
+      # The site root: straight-through when no runtime key is set (the
+      # shipped config.js already carries the factory default), the
+      # bundle with a baked config.js otherwise. mkDefault keeps a
+      # user-set site root in charge.
+      services.kallipai.web.distWithRuntimeConfig = lib.mkDefault (
+        let
+          userKeys = lib.filterAttrs (_: v: v != null) webCfg.runtimeConfig;
+        in
+        if userKeys == { } then
+          webCfg.package
+        else
+          bakeRuntimeConfig {
+            inherit pkgs;
+            inherit (webCfg) package;
+            runtimeConfig = userKeys;
           }
-        '';
-      };
+      );
     })
-    (lib.mkIf (webCfg.enable && webDomain != null && polisCfg.enable) {
+    (lib.mkIf (webCfg.enable && polisCfg.enable) {
       # L1.5 direct-connect drift warning: the module can only see an
-      # explicit runtimeConfig.tlsOff — a browser that derives tlsOff from
-      # an http location is outside this module's visibility, so the
-      # warning is best-effort by design (documented gap until the
+      # explicit runtimeConfig.tlsOff — a browser that derives tlsOff
+      # from an http location is outside this module's visibility, so
+      # the warning is best-effort by design (documented gap until the
       # config.ports schema lands).
       warnings =
         let
-          userServices = webCfg.runtimeConfig.services or { };
+          userServices = if webCfg.runtimeConfig.services == null then { } else webCfg.runtimeConfig.services;
           unpinnedChanged =
             builtins.filter
               (
                 svc:
-                (webCfg.runtimeConfig.tlsOff or false) == true
+                webCfg.runtimeConfig.tlsOff == true
                 && polisCfg.ports.${svc} != defaultPolisPorts.${svc}
-                && !(builtins.isAttrs userServices && userServices ? ${svc})
+                && !(userServices ? ${svc})
               )
               [
                 "archeion"

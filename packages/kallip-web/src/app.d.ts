@@ -11,12 +11,13 @@ declare global {
   interface Window {
     /**
      * Runtime deployment config, loaded from /config.js before the app
-     * bundle (see static/config.js for the empty-shell default; the
-     * NixOS module rewrites the path per deployment). Every field is
+     * bundle (see static/config.js for the factory default; the NixOS
+     * module bakes over it from runtimeConfig). Every field is
      * optional, and each layers differently: services.* URLs fall
      * through to the build-time VITE_*_URL overrides and then to
      * location-based derivation; domain and tlsOff fall through to
-     * location derivation only; offlineLogin has no fallback.
+     * location derivation only; offlineLogin defaults to true when
+     * unset (the factory file ships it as true).
      */
     KALLIP_CONFIG?: {
       /** Sibling-subdomain root (archeion.<domain> ...). */

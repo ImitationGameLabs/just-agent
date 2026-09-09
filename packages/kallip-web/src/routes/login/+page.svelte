@@ -6,11 +6,11 @@
   const returnPath = $derived(
     new URLSearchParams(page.url.search).get("next") ?? undefined,
   );
-  // Runtime deployment flag from /config.js (see app.d.ts): a self-hosted
-  // deployment sets offlineLogin in its rewritten config.js and shows the
-  // operator-key branch, a cloud deployment never does (two-way
-  // information hiding). The universal dist defaults to hidden.
-  const offlineLogin = window.KALLIP_CONFIG?.offlineLogin === true;
+  // Runtime deployment flag from /config.js (see app.d.ts): the factory
+  // config.js ships offlineLogin = true (the self-hosted posture), and a
+  // cloud-facing deployment hides the operator-key branch by setting it
+  // to false explicitly — in runtimeConfig or in the file itself.
+  const offlineLogin = window.KALLIP_CONFIG?.offlineLogin ?? true;
 </script>
 
 <LoginPage {returnPath} {offlineLogin} />

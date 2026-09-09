@@ -31,8 +31,8 @@
   // setters; the root layout has a single instance so this runs once at boot.
   initShell(goto);
   // Service URLs resolve at runtime, in three layers: the deployment
-  // config from /config.js (window.KALLIP_CONFIG, rewritten per
-  // deployment by the NixOS module; empty shell by default), then the
+  // config from /config.js (window.KALLIP_CONFIG — the factory file by
+  // default, or baked from runtimeConfig by the NixOS module), then the
   // build-time VITE_*_URL overrides, then derivation from the browser
   // location — the origin it is on names the deployment domain, so a
   // same-origin deployment (web.<domain> sibling subdomains, or the

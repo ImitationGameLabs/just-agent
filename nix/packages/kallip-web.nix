@@ -15,7 +15,7 @@
   src,
   # One universal dist: deployment values (domain, TLS shape, offline
   # login) are runtime config — see the web app's /config.js and the
-  # services.kallipai.web module's runtimeConfig option.
+  # NixOS module's services.kallipai.web.runtimeConfig option.
 }:
 let
   # The web build's read closure as a single-level allowlist: the root
