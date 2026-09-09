@@ -77,6 +77,20 @@ pub fn parse_declaration(input: &str) -> anyhow::Result<TeamDeclaration> {
                 role.name
             );
         }
+        // The role becomes a path component (<root workspace>/team/<role>):
+        // confining it to ASCII letters, digits, hyphen, and underscore
+        // keeps `..`, separators, and whitespace out of that path by
+        // construction rather than by a downstream starts_with check.
+        if !role
+            .name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            bail!(
+                "declaration role name {:?} must use only ASCII letters, digits, '-', or '_'",
+                role.name
+            );
+        }
         if !seen.insert(role.name.as_str()) {
             bail!("declaration contains duplicate role name '{}'", role.name);
         }
@@ -160,5 +174,17 @@ unmanaged = false
     fn a_padded_role_name_is_rejected_rather_than_trimmed() {
         let err = parse_declaration("[[role]]\nname = \" dev \"\n").unwrap_err();
         assert!(err.to_string().contains("leading or trailing whitespace"));
+    }
+
+    #[test]
+    fn role_names_cannot_escape_the_workspace_path_component() {
+        for bad in ["../etc", "a/b", "a\\b", "a.b", "a b", "résumé"] {
+            let src = format!("[[role]]\nname = \"{bad}\"\n");
+            let err = parse_declaration(&src).unwrap_err();
+            assert!(
+                err.to_string().contains("must use only ASCII letters"),
+                "unexpected error for {bad:?}: {err:#}"
+            );
+        }
     }
 }

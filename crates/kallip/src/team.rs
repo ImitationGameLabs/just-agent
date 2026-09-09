@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use kallip_client::TagmaClient;
 use kallip_common::declaration::parse_declaration;
 use kallip_common::protocol::{
@@ -80,12 +80,33 @@ fn read_lock(path: &Path) -> Result<Option<LockFile>> {
             )))
         }
     };
-    toml::from_str(&raw)
-        .map(Some)
-        .context(format!(
-            "the lock archive {} is invalid; run `kallip team lock rebuild` — converging with a lost mapping would re-spawn every member as fresh agents",
+    // An existing but blank archive (zero bytes or whitespace) is
+    // refused exactly like a corrupt one: an archive that once held
+    // records must not silently read as "no members". A legal
+    // document with zero records is caught after the parse below.
+    // Clearing the team is an operator decision: delete the file and
+    // the next converge is a legitimate first converge.
+    if raw.trim().is_empty() {
+        return Err(anyhow!(
+            "the lock archive {} is empty; run `kallip team lock rebuild` — converging with a lost mapping would re-spawn every member as fresh agents",
             path.display()
-        ))
+        ));
+    }
+    let lock: LockFile = toml::from_str(&raw).context(format!(
+        "the lock archive {} is invalid; run `kallip team lock rebuild` — converging with a lost mapping would re-spawn every member as fresh agents",
+        path.display()
+    ))?;
+    // A legal document recording no members — only comments, an
+    // empty `role` array, or a key serde folds into the default —
+    // reads as "no members" downstream, so refuse it like a blank
+    // file.
+    if lock.roles.is_empty() {
+        return Err(anyhow!(
+            "the lock archive {} holds no role records; run `kallip team lock rebuild` — converging with a lost mapping would re-spawn every member as fresh agents",
+            path.display()
+        ));
+    }
+    Ok(Some(lock))
 }
 
 /// Distinct temp name per call: two writers of the same archive never
@@ -236,7 +257,7 @@ async fn run_converge(client: &TagmaClient, args: &TeamConvergeArgs) -> Result<(
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             continue;
         }
-        render_converge(args, &outcome, &resp, &lock_path)?;
+        render_converge(args, &outcome, &resp, &lock_path, &declaration)?;
         return Ok(());
     }
 }
@@ -285,26 +306,40 @@ fn count_results(
 /// declaration: name them loudly at lock-write time, so invisibility
 /// never masquerades as convergence. Best-effort — a scan failure
 /// warns, it never fails the converge.
-fn warn_orphaned_parked(
-    args: &TeamConvergeArgs,
-    mapping: &[kallip_common::protocol::TeamLockEntry],
-) {
-    let Some(file) = args.common.file.as_deref() else {
-        return;
+fn warn_orphaned_parked(declaration: &str, mapping: &[kallip_common::protocol::TeamLockEntry]) {
+    // Converge just read and parsed this same file; a failure here is
+    // still warned loudly instead of silently skipping the check, the
+    // same treatment a scan failure gets below.
+    let declared: std::collections::HashSet<String> = match std::fs::read_to_string(declaration) {
+        Ok(raw) => match parse_declaration(&raw) {
+            Ok(d) => d.roles.into_iter().map(|r| r.name).collect(),
+            Err(e) => {
+                eprintln!("warning: cannot parse the declaration for the orphan check: {e:#}");
+                return;
+            }
+        },
+        Err(e) => {
+            eprintln!("warning: cannot read the declaration for the orphan check: {e}");
+            return;
+        }
     };
-    let declared: std::collections::HashSet<String> = match std::fs::read_to_string(file)
-        .ok()
-        .map(|raw| parse_declaration(&raw).map(|d| d.roles.into_iter().map(|r| r.name).collect()))
-    {
-        Some(Ok(names)) => names,
-        _ => return,
-    };
-    let locked: std::collections::HashSet<String> =
-        mapping.iter().map(|e| e.id.to_string()).collect();
     match kallip_runtime::persistence::scan_inactive() {
         Ok(parked) => {
             for (id, meta) in parked {
-                if !locked.contains(&id.to_string()) && !declared.contains(&meta.role) {
+                if mapping.iter().any(|e| e.id.to_string() == id.to_string()) {
+                    continue;
+                }
+                if let Some(entry) = mapping.iter().find(|e| e.role == meta.role) {
+                    eprintln!(
+                        "warning: parked agent {id} (role {:?}) is superseded by {} in the new lock — it stays parked, untouched",
+                        meta.role, entry.id
+                    );
+                } else if declared.contains(&meta.role) {
+                    eprintln!(
+                        "warning: parked agent {id} (role {:?}) is declared but absent from the new lock — it stays parked, untouched",
+                        meta.role
+                    );
+                } else {
                     eprintln!(
                         "warning: parked agent {id} (role {:?}) is referenced by neither the new lock nor the declaration — it stays parked, untouched",
                         meta.role
@@ -338,6 +373,7 @@ fn render_converge(
     outcome: &TeamConvergeOutcome,
     resp: &kallip_common::protocol::TeamConvergeResponse,
     lock_path: &Path,
+    declaration: &str,
 ) -> Result<()> {
     if args.common.json {
         println!("{}", serde_json::to_string_pretty(resp)?);
@@ -397,13 +433,13 @@ fn render_converge(
         }
         TeamConvergeOutcome::Applied => {
             write_lock_from(resp, lock_path)?;
-            warn_orphaned_parked(args, &resp.lock);
+            warn_orphaned_parked(declaration, &resp.lock);
             println!("lock written: {}", lock_path.display());
             Ok(())
         }
         TeamConvergeOutcome::Aborted => {
             write_lock_from(resp, lock_path)?;
-            warn_orphaned_parked(args, &resp.lock);
+            warn_orphaned_parked(declaration, &resp.lock);
             anyhow::bail!(
                 "converge aborted mid-execution; the written lock keeps the surviving records and the rows that landed — re-run to converge the rest"
             )
@@ -523,6 +559,13 @@ mod tests {
         assert!(read_lock(&dir.join("absent.lock")).unwrap().is_none());
         // Corrupt: refused with the rebuild guidance, never empty.
         let bad = dir.join("bad.lock");
+        // Empty (zero bytes): refused exactly like corrupt — an archive
+        // that went silently empty would re-spawn every member.
+        let empty = dir.join("empty.lock");
+        std::fs::write(&empty, "").unwrap();
+        let err = read_lock(&empty).unwrap_err().to_string();
+        assert!(err.contains("is empty"));
+        assert!(err.contains("lock rebuild"));
         std::fs::write(&bad, "not valid toml at all").unwrap();
         let err = read_lock(&bad).unwrap_err().to_string();
         assert!(err.contains("lock rebuild"));
@@ -538,6 +581,30 @@ mod tests {
         assert_eq!(lock.roles.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn read_lock_refuses_zero_record_documents() {
+        let dir =
+            std::env::temp_dir().join(format!("kallip-read-lock-zero-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Three legal TOML documents that record no members: a pure
+        // comment, an explicit empty array, and a key serde folds
+        // into the default. Each refuses, never reads as "no members".
+        let cases = [
+            ("comment.lock", "# only a comment\n"),
+            ("empty-array.lock", "role = []\n"),
+            ("mistyped.lock", "rols = []\n"),
+        ];
+        for (name, body) in cases {
+            let path = dir.join(name);
+            std::fs::write(&path, body).unwrap();
+            let err = read_lock(&path).unwrap_err().to_string();
+            assert!(err.contains("holds no role records"), "{name}: {err}");
+            assert!(err.contains("lock rebuild"));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn archive(role: &str, id: &str) -> LockFile {
         LockFile {
             roles: vec![LockRole {
@@ -635,10 +702,12 @@ mod tests {
 
     #[test]
     fn lock_temp_names_are_unique_across_many_calls() {
-        let base = Path::new("/tmp/kallip-team-tests/tagma.lock");
+        let base = std::env::temp_dir().join("kallip-team-tests/tagma.lock");
+        // Pure string shaping, no IO: the archive writers must never
+        // collide on one temp name, clock skew included.
         let mut seen = std::collections::BTreeSet::new();
         for _ in 0..100 {
-            assert!(seen.insert(lock_tmp_path(base)));
+            assert!(seen.insert(lock_tmp_path(&base)));
         }
     }
 }

@@ -268,8 +268,8 @@ pub struct AppState {
     /// Agent spawn entry used by delivery's reactivation (slow path).
     /// An indirection so tests can observe/stub the spawn without spinning a
     /// real runtime; production default is `lifecycle::spawn_agent_boxed`.
-    /// create/restore call `lifecycle::spawn_agent` directly (no test seam
-    /// needed there).
+    /// create calls `lifecycle::spawn_agent` directly; restore goes
+    /// through `spawn_subagent` (neither crosses this seam).
     pub spawn_fn: crate::lifecycle::SpawnFn,
     /// Converge mutual exclusion: at most one `POST /team/converge`
     /// run at a time. A second request is refused with `409` rather
