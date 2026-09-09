@@ -195,39 +195,34 @@ event push). All service tuning options are nullable and default to the
 binaries' own defaults — see the option descriptions in
 `nix/nixos-modules.nix`.
 
-One switch fronts all four services with the host's caddy: it routes
-`archeion.<domain>`, `lesche.<domain>`, `files.<domain>`, and `instances.<domain>` to the
-localhost listeners (the lesche route flushes immediately so the event
-stream never buffers behind the proxy):
+The module binds every service to localhost; routing their public
+names is the deployment's own edge configuration — see the reverse
+proxy section in [nixos-deployment.md](../nixos-deployment.md) for a
+copy-paste `services.caddy` example (the lesche route should flush
+immediately so the event stream never buffers behind the proxy).
 
-```nix
-services.kallipai.polis.proxy = {
-  enable = true;
-  domain = "example.com";
-  acmeEmail = "acme@example.com";  # optional
-};
-```
+### web — the site root
 
-### web — the NixOS module
-
-`services.kallipai.web` serves the static kallip-web bundle on
-`web.<domain>`: caddy serves the bundle's files and falls back to its
-`index.html`, so client-side routes resolve on hard reload.
+On NixOS, `config.services.kallipai.web.distWithRuntimeConfig` is the
+site root your edge serves with a plain `file_server` block: the
+kallip-web bundle as-is while `services.kallipai.web.runtimeConfig` is
+empty, or with a runtime config payload baked into `config.js` once
+keys are set:
 
 ```nix
 services.kallipai.web = {
   enable = true;
-  package = inputs.self.packages.x86_64-linux.kallip-web-dist;
-  domain = "example.com";
-  acmeEmail = "acme@example.com";  # optional
+  runtimeConfig = {
+    domain = "kallipai.lan";
+  };
 };
 ```
 
-The bundle bakes the deployment domain and the operator-key login flag at
-build time (the flake's `packages.kallip-web-dist`, built in two
-derivations: a networked deps build and an offline vite build). The dev
-form of the same site is the host vite server behind the dev Caddyfile
-(see the dev section above).
+Unset keys of `runtimeConfig` fall back to the app-side derivation; the
+bundle itself is deployment-independent (the flake's
+`packages.kallip-web-dist`, built in two derivations: a networked deps
+build and an offline vite build). The dev form of the same site is the
+host vite server behind the dev Caddyfile (see the dev section above).
 
 ## Relay bootstrap
 

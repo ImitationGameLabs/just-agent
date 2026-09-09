@@ -16,7 +16,7 @@ the authoritative reference for everything this guide summarizes.
   `lesche.`, `files.`, `instances.`, and optionally `web.`) at the host.
   On a public domain with ports 80 and 443 reachable, Caddy obtains
   certificates automatically; on a private domain like the `kallipai.lan`
-  example below, ACME cannot issue and Caddy falls back to its local CA
+  example below, ACME cannot issue — use `tls internal` in your site
   (see the TLS section).
 - Root access (to rebuild the host and to read the generated admin
   token at first login).
@@ -69,31 +69,51 @@ generation.
 ## Minimal configuration
 
 A minimal full-platform configuration — the daemon, the four polis
-services, the reverse proxy on one domain, and the web app. This is
-the `configuration.nix` the flake above imports:
+services, and the web site behind Caddy. One module function is the
+whole `configuration.nix`: copy it once and the platform is up. The
+web site serves `config.services.kallipai.web.distWithRuntimeConfig` —
+the bundle as-is while `runtimeConfig` is empty, or the bundle with a
+runtime config baked into `config.js` once keys are set. The site
+addresses are plain
+`http://` on purpose: ACME cannot issue for a `.lan` domain, so plain
+http runs with zero browser setup — the HTTPS section below shows the
+two upgrade paths.
 
 ```nix
+{ config, ... }:
 {
   services.kallipai = {
-    domain = "kallipai.lan";
     daemon.enable = true;
-    polis = {
-      enable = true;
-      proxy.enable = true;
-      # acmeEmail = "you@example.org";  # optional: ACME recovery address,
-      # only meaningful on a public domain (a .lan domain uses the local CA)
+    polis.enable = true;
+  };
+  services.caddy = {
+    enable = true;
+    virtualHosts = {
+      "http://archeion.kallipai.lan".extraConfig = ''
+        reverse_proxy 127.0.0.1:7100
+      '';
+      "http://lesche.kallipai.lan".extraConfig = ''
+        reverse_proxy 127.0.0.1:7200 {
+          flush_interval -1
+        }
+      '';
+      "http://files.kallipai.lan".extraConfig = ''
+        reverse_proxy 127.0.0.1:7400
+      '';
+      "http://instances.kallipai.lan".extraConfig = ''
+        reverse_proxy 127.0.0.1:7300
+      '';
+      "http://web.kallipai.lan".extraConfig = ''
+        root * ${config.services.kallipai.web.distWithRuntimeConfig}
+        try_files {path} /index.html
+        file_server
+      '';
     };
-    web.enable = true;
   };
 }
 ```
 
-`services.kallipai.domain` is the base domain: the proxy derives the
-four service subdomains (`archeion.`, `lesche.`, `files.`,
-`instances.`) from it, and the web app serves on `web.<domain>`. The
-per-service `domain` options override it when a deployment needs
-different domains. The
-module provisions its own PostgreSQL — one database per stateful
+The module provisions its own PostgreSQL — one database per stateful
 service (archeion, lesche, files), peer-authenticated over the unix
 socket — so no database setup is needed. The daemon supervises tagma
 instances over a local control socket and is consumed by `kallipctl`
@@ -118,17 +138,52 @@ file instead (the `adminTokenFile` option description covers the file
 format and the OAuth client secrets it can carry) — pin for a stable
 token, leave unset to accept a short-lived one.
 
+## The reverse proxy (your edge)
+
+The Minimal configuration block above is the complete edge: one Caddy
+site per public name reverse-proxying to the localhost listeners, plus
+one static site for the web app. What each piece does:
+
+- The four polis subdomains proxy to the localhost ports listed in the
+  Ports section below. The lesche route flushes immediately
+  (`flush_interval -1`) so the event stream does not buffer behind the
+  proxy; the other three are plain request/response.
+- The web block serves the root from
+  `config.services.kallipai.web.distWithRuntimeConfig` — the bundle
+  as-is when `runtimeConfig` is empty, or the bundle with your runtime
+  config baked into `config.js` — with an `index.html` fallback so
+  client-side routes resolve on hard reload. Set keys under
+  `services.kallipai.web.runtimeConfig` to override or add values (for
+  example `offlineLogin = false` on a cloud-facing deployment, or
+  `domain` when the app cannot derive it); unset keys fall back to the
+  app-side derivation, and an unknown key fails evaluation, so typos
+  surface at build time.
+Two upgrades from the plain-http block above, both by editing the
+site-block addresses:
+- Keep `kallipai.lan` and want https: drop the `http://` prefixes and
+  add `tls internal` to each site block (internal CA certificates —
+  see the HTTPS section below for trusting its root).
+- Move to a public domain: drop the `http://` prefixes and set
+  `services.caddy.email`; with ports 80 and 443 reachable, Caddy
+  obtains real certificates automatically.
+
 ## Ports
 
 The four listeners bind localhost on 7100 (archeion), 7200 (lesche),
 7400 (files), and 7300 (instances). Override any of them under
 `services.kallipai.polis.ports.<service>` (1024-65535; the four values
-must be distinct — the module fails evaluation otherwise). If you
-change a port and serve the web app in its direct-connect form —
-browsers reach the polis services directly instead of through the
-proxy, the other of the app's two serving shapes (see the
-`runtimeConfig` option description) — pin the new port for the UI with
-`services.kallipai.web.runtimeConfig.services.<service>`.
+must be distinct — the module fails evaluation otherwise). The proxy
+blocks above target these ports; if you change one, update the
+matching site block.
+
+Serving the web app direct-connect instead — browsers reaching the
+polis services by plain port rather than through same-domain
+subdomains — is a valid shape, but nothing pins it for you: a changed
+port or a non-sibling domain needs the app's `tlsOff` / `services`
+runtime keys set in `services.kallipai.web.runtimeConfig`, and the
+archeion's CORS
+allow-list (`corsOrigins`) widened to the origins the browser actually
+uses. Prefer the proxy shape unless you have a reason not to.
 
 ## HTTPS on a LAN or home network
 
@@ -137,13 +192,12 @@ a private network, Caddy's `tls internal` directive issues certificates
 from Caddy's own local CA instead; browsers show a warning until the
 host trusts that CA.
 
-The module writes each virtual host's site block. Append the directive
-by setting `extraConfig` for the same host in your own configuration —
-the option is a `types.lines` value, so both definitions concatenate
-into one site block:
+Add `tls internal` to each site block in the Minimal configuration —
+a host's block then reads, for example:
 
 ```nix
 services.caddy.virtualHosts."archeion.kallipai.lan".extraConfig = ''
+  reverse_proxy 127.0.0.1:7100
   tls internal
 '';
 ```
@@ -205,8 +259,8 @@ re-provision rather than editing it by hand.
 
 ## Further options
 
-The full option surface — per-service tuning, the web `runtimeConfig`,
-`adminTokenFile` and `notifyTokenFile` — is described in the option
-declarations in `nix/nixos-modules.nix`, with an option-level summary in
-the polis and web NixOS module sections of
-[container.md](reference/container.md).
+The full option surface — per-service tuning, `adminTokenFile` and
+`notifyTokenFile` — is described in the option declarations in
+`nix/nixos-modules.nix`, with an option-level summary in the polis
+NixOS module section of [container.md](reference/container.md). The
+web site root helper is `nix/lib.nix`.

@@ -29,6 +29,6 @@ project.inlang directory, so three levels up reaches the repo root).
 
 - **Dev**: the host vite dev server behind the dev Caddyfile (`web.<domain>`).
 - **NixOS**: the flake's `packages.kallip-web-dist` builds the bundle (two
-  derivations: a networked deps build and an offline vite build), and
-  `services.kallipai.web` serves it through caddy with an index.html fallback.
-  See `docs/reference/container.md`.
+  derivations: a networked deps build and an offline vite build), and the
+  module's `web.distWithRuntimeConfig` option derives the site root that
+  the deployment's own edge serves. See `docs/reference/container.md`.

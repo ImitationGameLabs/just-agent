@@ -367,11 +367,12 @@ UDS socket. Platform mode: the archeion's internal face
 verifies the SPA's `sk-admin-` key (the operator-key login). The SPA
 itself is served by the host vite dev server (Caddy routes
 `web.<devDomain>` to `:5173`) and calls the API cross-origin from the
-web origin. The operator-key login branch is runtime-config gated: a
-self-hosted deployment sets `offlineLogin = true` in its
-`/config.js` (the NixOS module's `services.kallipai.web.runtimeConfig`
-option rewrites it), while the universal dist's empty shell keeps the
-branch hidden — cloud deployments configure nothing.
+web origin. The operator-key login branch is runtime-config gated: the
+shipped `config.js` factory default is `offlineLogin = true` (the
+self-hosted posture), and a cloud-facing deployment hides the branch by
+setting `services.kallipai.web.runtimeConfig.offlineLogin = false` —
+baked into the served site root — or by editing the file directly on a
+non-NixOS deployment.
 
 ## Iterating
 
