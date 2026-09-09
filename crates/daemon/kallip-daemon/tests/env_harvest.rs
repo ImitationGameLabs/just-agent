@@ -65,6 +65,8 @@ fn start_daemon_with_home(home: &Path) -> DaemonProc {
             "KALLIP_BIN_DIR",
             resolve_bin("kallip-tagma")
                 .parent()
+                // &Path has no Default; the empty path falls through to bare-name
+                // PATH lookup.
                 .unwrap_or(Path::new("")),
         )
         // Pin the record area in the state tempdir: the default

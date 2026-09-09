@@ -81,8 +81,18 @@
               ;
           };
 
+          # Shared derivations, defined once at the per-system level so
+          # checks and packages reference the bit-identical workspace.
+          sharedSkills = import ./nix/packages/shared-skills.nix {
+            inherit pkgs;
+          };
+          builds = import ./nix/packages/workspace.nix {
+            inherit common pkgs sharedSkills;
+          };
+          inherit (builds) workspace;
+
           checks = import ./nix/checks.nix {
-            inherit pkgs common;
+            inherit pkgs common workspace;
             inherit (inputs) advisory-db;
             inherit (inputs.nixpkgs) lib;
           };
@@ -94,119 +104,100 @@
             inherit pkgs lib;
           };
 
-          packages =
-            let
-              # Curated shared-skill tree (read-only bundled defaults). The
-              # tagma wrapper in workspace.nix carries it as KALLIP_SKILLS_SEED's
-              # nix default (container-shared.nix imports the same file, so
-              # deployments reference a bit-identical store path).
-              sharedSkills = import ./nix/packages/shared-skills.nix {
-                inherit pkgs;
-              };
-              # Crane binary builds (full workspace + per-crate subsets for the
-              # purpose-built images), all on the shared deps cache. See
-              # nix/packages/workspace.nix.
-              builds = import ./nix/packages/workspace.nix {
-                inherit common pkgs sharedSkills;
-              };
-              # The full-workspace build, passed to the tarball + integration
-              # tests (they take a single `workspace` derivation).
-              inherit (builds) workspace;
-            in
-            {
-              inherit workspace;
-              default = workspace;
-              # Per-crate binaries (archeion; lesche; files; tagma). Cross-platform:
-              # plain Rust builds. Their docker images are Linux-only (see
-              # kallip-archeion-image / kallip-lesche-image / kallip-files-image /
-              # kallip-tagma-image below).
-              kallip-archeion = builds.archeion;
-              kallip-admin = builds.admin;
-              kallip-lesche = builds.lesche;
-              kallip-files = builds.files;
-              kallip-tagma = builds.tagma;
-              kallip-cron-daemon = builds.cron-daemon;
-              kallip-cron = builds.cron;
-              kallip-daemon = builds.daemon;
-              kallipctl = builds.ctl;
-              kallip-daemon-spawn = builds.daemon-spawn;
-              kallip-instances = builds.instances;
-              kallip-tarball = import ./nix/packages/tarball.nix {
-                inherit
-                  pkgs
-                  common
-                  workspace
-                  ;
-              };
-              # Re-export the let-level sharedSkills derivation (defined next
-              # to the builds import above) as a package so deployments can
-              # reference the bit-identical store path directly.
-              kallip-shared-skills = sharedSkills;
-            }
-            # Container images: scratch + nix closure via dockerTools. Linux-only
-            # (the buildImage closure is Linux-native). See
-            # nix/packages/docker-images/.
-            // (lib.optionalAttrs pkgs.stdenv.isLinux {
-              # Purpose-built prod images for the split deploy
-              # (compose/prod/polis.nix / tagma.nix): archeion, lesche, and
-              # files are the server-side services (co-located, independent images);
-              # carries no tagma-specific baked env.
-              kallip-archeion-image = import ./nix/packages/docker-images/archeion.nix {
-                inherit
-                  pkgs
-                  common
-                  ;
-                inherit (builds) archeion admin;
-              };
-              kallip-lesche-image = import ./nix/packages/docker-images/lesche.nix {
-                inherit
-                  pkgs
-                  common
-                  ;
-                inherit (builds) lesche;
-              };
-              kallip-files-image = import ./nix/packages/docker-images/files.nix {
-                inherit
-                  pkgs
-                  common
-                  ;
-                inherit (builds) files;
-              };
-              kallip-tagma-image = import ./nix/packages/docker-images/tagma.nix {
-                inherit
-                  pkgs
-                  common
-                  ;
-                inherit (builds) tagma;
-              };
-              # Pre-built integration-test binaries + the agent binaries, for
-              # running the suite in a container (see compose/dev/test.nix).
-              # Linux-only like the image.
-              kallip-integration-tests = import ./nix/packages/integration-tests.nix {
-                inherit
-                  pkgs
-                  common
-                  workspace
-                  ;
-              };
-              # The kallip-web static site (SPA bundle for a static file
-              # server to serve; the NixOS module derives the site root,
-              # services.kallipai.web.distWithRuntimeConfig, from it).
-              # Linux-only:
-              # the node_modules
-              # dependency tree carries platform binaries.
-              kallip-web-dist = import ./nix/packages/kallip-web.nix {
-                inherit pkgs;
-                src = self;
-                inherit (pkgs) deno;
-              };
-            })
-            # Re-export aifed's FHS tarball so the benchmark pins both in one lock.
-            # Gate on aifed's actual availability: the pinned rev ships aifed-tarball
-            # on x86_64-linux only (aarch64-linux once aifed adds it) — auto-adapts.
-            // (lib.optionalAttrs (inputs.aifed.packages.${system} ? aifed-tarball) {
-              inherit (inputs.aifed.packages.${system}) aifed-tarball;
-            });
+          packages = {
+            inherit workspace;
+            default = workspace;
+            # Per-crate binaries (archeion; lesche; files; tagma). Cross-platform:
+            # plain Rust builds. Their docker images are Linux-only (see
+            # kallip-archeion-image / kallip-lesche-image / kallip-files-image /
+            # kallip-tagma-image below).
+            kallip-archeion = builds.archeion;
+            kallip-admin = builds.admin;
+            kallip-lesche = builds.lesche;
+            kallip-files = builds.files;
+            kallip-tagma = builds.tagma;
+            kallip-cron-daemon = builds.cron-daemon;
+            kallip-cron = builds.cron;
+            kallip-daemon = builds.daemon;
+            kallipctl = builds.ctl;
+            kallip-daemon-spawn = builds.daemon-spawn;
+            kallip-instances = builds.instances;
+            kallip-tarball = import ./nix/packages/tarball.nix {
+              inherit
+                pkgs
+                common
+                workspace
+                ;
+            };
+            # Re-export the per-system-level sharedSkills derivation as a
+            # package so deployments can reference the bit-identical store
+            # path directly.
+            kallip-shared-skills = sharedSkills;
+          }
+          # Container images: scratch + nix closure via dockerTools. Linux-only
+          # (the buildImage closure is Linux-native). See
+          # nix/packages/docker-images/.
+          // (lib.optionalAttrs pkgs.stdenv.isLinux {
+            # Purpose-built prod images for the split deploy
+            # (compose/prod/polis.nix / tagma.nix): archeion, lesche, and
+            # files are the server-side services (co-located, independent images);
+            # carries no tagma-specific baked env.
+            kallip-archeion-image = import ./nix/packages/docker-images/archeion.nix {
+              inherit
+                pkgs
+                common
+                ;
+              inherit (builds) archeion admin;
+            };
+            kallip-lesche-image = import ./nix/packages/docker-images/lesche.nix {
+              inherit
+                pkgs
+                common
+                ;
+              inherit (builds) lesche;
+            };
+            kallip-files-image = import ./nix/packages/docker-images/files.nix {
+              inherit
+                pkgs
+                common
+                ;
+              inherit (builds) files;
+            };
+            kallip-tagma-image = import ./nix/packages/docker-images/tagma.nix {
+              inherit
+                pkgs
+                common
+                ;
+              inherit (builds) tagma;
+            };
+            # Pre-built integration-test binaries + the agent binaries, for
+            # running the suite in a container (see compose/dev/test.nix).
+            # Linux-only like the image.
+            kallip-integration-tests = import ./nix/packages/integration-tests.nix {
+              inherit
+                pkgs
+                common
+                workspace
+                ;
+            };
+            # The kallip-web static site (SPA bundle for a static file
+            # server to serve; the NixOS module derives the site root,
+            # services.kallipai.web.distWithRuntimeConfig, from it).
+            # Linux-only:
+            # the node_modules
+            # dependency tree carries platform binaries.
+            kallip-web-dist = import ./nix/packages/kallip-web.nix {
+              inherit pkgs;
+              src = self;
+              inherit (pkgs) deno;
+            };
+          })
+          # Re-export aifed's FHS tarball so the benchmark pins both in one lock.
+          # Gate on aifed's actual availability: the pinned rev ships aifed-tarball
+          # on x86_64-linux only (aarch64-linux once aifed adds it) — auto-adapts.
+          // (lib.optionalAttrs (inputs.aifed.packages.${system} ? aifed-tarball) {
+            inherit (inputs.aifed.packages.${system}) aifed-tarball;
+          });
 
           # Opt-in devShell for the kallip-app Android (Tauri mobile) target.
           # The app's Rust is a standalone Cargo project (not a root-workspace

@@ -35,10 +35,12 @@ in
   # The full workspace: every kallip binary. This is `packages.default` and the
   # single source of truth consumed by the tarball + dev compose; the flake
   # also exposes it by name (`packages.workspace`), which is the form the
-  # NixOS module installs by. It is also the only install shape where the
-  # daemon resolves the tagma as a same-directory sibling
-  # (kallip-daemon/src/bins.rs), so the skills-seed wrapper lives here
-  # rather than on the per-crate tagma build.
+  # NixOS module installs by -- its daemon unit rides the system path, so
+  # bare-name helper resolution reaches every binary in this build's
+  # bin/. The skills-seed wrapper lives here rather than on the per-crate
+  # tagma build because this is the install shape the module actually
+  # puts on PATH; a wrapper on a standalone crate build would never be
+  # invoked.
   workspace = (buildCrate "cargo build --release").overrideAttrs (old: {
     nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
       pkgs.makeWrapper

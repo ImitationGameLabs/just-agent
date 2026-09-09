@@ -67,6 +67,8 @@ fn start_daemon() -> DaemonProc {
             "KALLIP_BIN_DIR",
             resolve_bin("kallip-tagma")
                 .parent()
+                // &Path has no Default; the empty path falls through to bare-name
+                // PATH lookup.
                 .unwrap_or(Path::new("")),
         )
         .env(

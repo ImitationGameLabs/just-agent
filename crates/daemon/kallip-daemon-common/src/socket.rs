@@ -8,14 +8,20 @@
 //! 3. `$XDG_RUNTIME_DIR/kallipai/daemon/control.sock`, when the runtime
 //!    directory is set and usable
 //! 4. the platform state home's `kallipai/daemon/control.sock`
+//! 5. `/run/kallipai/daemon.sock` - clients only; the NixOS system
+//!    daemon's well-known path
 //!
 //! The daemon binds the FIRST candidate and never falls through on bind
 //! failure - binding leg N while clients probe from the top would split
-//! the control plane. Clients probe the candidates in order and connect
-//! to the first that answers. Identical ordering plus sequential probing
-//! keeps the sides converged: a login-session client probes the RUNTIME
-//! leg, finds nothing there, and lands on the daemon's state-home
-//! socket.
+//! the control plane - and its chain stops at leg 4: a user-process
+//! daemon must not grab the system path. Clients probe the candidates
+//! in order and connect to the first that answers. Identical ordering
+//! plus sequential probing keeps the sides converged: a login-session
+//! client probes the RUNTIME leg, finds nothing there, and lands on the
+//! daemon's state-home socket. Leg 5 is pure client fallback - on a
+//! NixOS host the module exports `KALLIP_DAEMON_SOCKET` (leg 2) already,
+//! so the env leg still wins first and leg 5 only serves a bare,
+//! zero-config client reaching the system daemon.
 use std::path::{Path, PathBuf};
 
 /// One resolution leg's raw inputs, collected so the pure ordering can be
@@ -31,6 +37,13 @@ pub struct SocketLegs<'a> {
     /// state home can be determined.
     pub state_default: Option<PathBuf>,
 }
+
+/// The NixOS system daemon's well-known socket: the last client leg, so
+/// a zero-config client can reach a system-installed daemon. Clients
+/// only - `daemon_bind_path` never returns it, because a user-process
+/// daemon must not bind the system path. Must stay in sync with the
+/// `daemonSocket` binding in `nix/nixos-modules.nix`.
+pub const SYSTEM_DAEMON_SOCKET: &str = "/run/kallipai/daemon.sock";
 
 /// Collect the legs from the process environment (and an optional
 /// client-side explicit socket).
@@ -74,7 +87,12 @@ pub fn candidates(legs: &SocketLegs) -> Vec<PathBuf> {
 /// The candidates a client probes: environment chain plus the explicit
 /// socket first.
 pub fn candidates_from_env(explicit: Option<&Path>) -> Vec<PathBuf> {
-    candidates(&legs_from_env(explicit))
+    let mut out = candidates(&legs_from_env(explicit));
+    let system = PathBuf::from(SYSTEM_DAEMON_SOCKET);
+    if !out.contains(&system) {
+        out.push(system);
+    }
+    out
 }
 
 /// The daemon's bind path: the first candidate of the environment chain
@@ -169,6 +187,54 @@ mod tests {
         assert_eq!(
             candidates(&legs),
             vec![PathBuf::from("/state-home/kallipai/daemon/control.sock")]
+        );
+    }
+
+    #[test]
+    fn client_chain_ends_with_the_system_leg() {
+        with_env(
+            &[("KALLIP_DAEMON_SOCKET", None), ("XDG_RUNTIME_DIR", None)],
+            || {
+                let chain = candidates_from_env(None);
+                assert_eq!(
+                    chain.last().map(|p| p.as_path()),
+                    Some(Path::new(SYSTEM_DAEMON_SOCKET))
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn system_leg_appears_once_even_when_env_points_at_it() {
+        with_env(
+            &[
+                ("KALLIP_DAEMON_SOCKET", Some(SYSTEM_DAEMON_SOCKET)),
+                ("XDG_RUNTIME_DIR", None),
+            ],
+            || {
+                let chain = candidates_from_env(None);
+                let count = chain
+                    .iter()
+                    .filter(|p| p.as_os_str() == SYSTEM_DAEMON_SOCKET)
+                    .count();
+                // The env leg already answers at its own position (which
+                // probes first); the appended system leg must not repeat it.
+                assert_eq!(count, 1, "env leg and system leg collapse to one");
+            },
+        );
+    }
+
+    #[test]
+    fn daemon_bind_chain_excludes_the_system_leg() {
+        with_env(
+            &[("KALLIP_DAEMON_SOCKET", None), ("XDG_RUNTIME_DIR", None)],
+            || {
+                // The daemon's chain stops at the state-home leg; if the
+                // system path ever leaked into the bind order this would
+                // return it.
+                let bind = daemon_bind_path();
+                assert_ne!(bind.as_deref(), Some(Path::new(SYSTEM_DAEMON_SOCKET)));
+            },
         );
     }
 

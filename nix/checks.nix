@@ -1,6 +1,7 @@
 {
   pkgs,
   common,
+  workspace,
   advisory-db,
   lib,
 }:
@@ -92,11 +93,12 @@ in
     }
   );
 
-  # Evaluate the NixOS module (pure eval, no builds): a stub host with
+  # Evaluate the NixOS module (pure eval): a stub host with
   # every switch on must typecheck, pass its assertions, and stay
   # warning-free; a drifted port must fire the L1.5 direct-connect
   # warning; and the merged site root must carry the baked runtime
-  # config (the only build here: a stub bundle, seconds).
+  # config. Builds here: a stub bundle plus the real workspace (pulled
+  # in by the bin/ assertion, seconds on a warm store).
   "${project}-nixos-module-eval" =
     let
       stubPackages = {
@@ -171,10 +173,16 @@ in
       # The daemon unit's text must carry the system path on PATH: the
       # daemon resolves its helpers by bare name, and a NixOS unit's
       # PATH is empty unless the unit lists `path` explicitly. Dropping
-      # the unit's path line loses the Environment line and this red.
+      # the unit's path line loses the Environment line and this check
+      # goes red.
       daemonUnitFile =
         pkgs.writeText "kallip-daemon.service-test"
           aligned.config.systemd.units."kallip-daemon.service".text;
+      # The stub only proves module wiring (which attr lands on PATH);
+      # the real workspace build must actually ship the binaries the
+      # daemon resolves by bare name. Referencing it here puts the real
+      # build in this check's closure - the one heavyweight artifact.
+      realWorkspace = workspace;
       inherit (import ./lib.nix) bakeRuntimeConfig;
       stubDist = stubPackages.${pkgs.stdenv.hostPlatform.system}."kallip-web-dist";
       # No runtime keys: the site root is the bundle itself.
@@ -244,6 +252,10 @@ in
       test "${toString (builtins.length aligned.config.warnings)}" = "0"
       # The daemon block installs the whole workspace build on PATH.
       test "${toString workspaceOnPath}" = "1"
+      # And the real artifact ships the helpers bare-name resolution
+      # depends on (stub self-verification guard).
+      test -x "${realWorkspace}/bin/kallip-tagma"
+      test -x "${realWorkspace}/bin/kallip-daemon-spawn"
       # The daemon unit rides the system path on PATH: bare-name
       # helper resolution depends on it (see daemonUnitFile).
       grep -q "${aligned.config.system.path}/bin" "${daemonUnitFile}"

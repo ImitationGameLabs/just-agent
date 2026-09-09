@@ -49,6 +49,9 @@ let
 
   # The daemon's control socket: the daemon unit sets it and the
   # instances proxy reads it back, so the path lives in one binding.
+  # Keep in sync with SYSTEM_DAEMON_SOCKET in
+  # crates/daemon/kallip-daemon-common/src/socket.rs (the client probe
+  # chain's last-resort leg).
   daemonSocket = "/run/kallipai/daemon.sock";
 
   # Inject an environment key only when the option carries a value: null

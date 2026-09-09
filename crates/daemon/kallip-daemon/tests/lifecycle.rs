@@ -68,6 +68,8 @@ fn start_daemon() -> DaemonProc {
             "KALLIP_BIN_DIR",
             resolve_bin("kallip-tagma")
                 .parent()
+                // &Path has no Default; the empty path falls through to bare-name
+                // PATH lookup.
                 .unwrap_or(std::path::Path::new("")),
         )
         // The record root rides the default derivation from the state
