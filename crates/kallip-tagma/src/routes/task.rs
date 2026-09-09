@@ -13,7 +13,8 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use kallip_common::protocol::ApiError;
-use kallip_task::{CheckpointSpec, ClosedReason, CreateSpec, TaskFilter, TaskStore};
+use kallip_common::protocol::{TaskCheckpointRequest, TaskCreateRequest};
+use kallip_task::{ClosedReason, TaskFilter, TaskStore};
 use serde::Deserialize;
 
 use crate::bus::TaskChanged;
@@ -185,7 +186,7 @@ async fn create(
     State(state): State<SharedState>,
     Json(body): Json<CreateTaskBody>,
 ) -> TaskResult<kallip_task::TaskExport> {
-    let spec = CreateSpec {
+    let spec = TaskCreateRequest {
         title: body.title,
         creator: body.creator,
         assignee: body.assignee,
@@ -263,15 +264,17 @@ async fn checkpoint(
     Path(id): Path<i64>,
     Json(body): Json<CheckpointBody>,
 ) -> TaskResult<kallip_task::TaskExport> {
-    let spec = CheckpointSpec {
-        id,
+    let spec = TaskCheckpointRequest {
         actor: body.actor,
         note: body.note,
         receipt: body.receipt,
         review: body.review,
         waiting: body.waiting,
     };
-    store(&state)?.checkpoint(spec).await.map_err(api_error)?;
+    store(&state)?
+        .checkpoint(id, spec)
+        .await
+        .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
     notify(&state, "checkpoint", &export);
     Ok(Json(export))

@@ -3,18 +3,17 @@
 use std::sync::Arc;
 
 use kallip_blob_store::LocalBackend;
-use kallip_task::store::{CheckpointSpec, CreateSpec, TaskFilter};
+use kallip_common::protocol::{TaskCheckpointRequest, TaskCreateRequest};
+use kallip_task::store::TaskFilter;
 use kallip_task::{ClosedReason, Error, TaskStatus, TaskStore};
 
 fn checkpoint(
-    id: i64,
     actor: &str,
     note: Option<&str>,
     receipt: bool,
     review: bool,
-) -> CheckpointSpec {
-    CheckpointSpec {
-        id,
+) -> TaskCheckpointRequest {
+    TaskCheckpointRequest {
         actor: actor.to_string(),
         note: note.map(str::to_string),
         receipt,
@@ -23,8 +22,8 @@ fn checkpoint(
     }
 }
 
-fn spec(title: &str, assignee: &str, seats: &[&str]) -> CreateSpec {
-    CreateSpec {
+fn spec(title: &str, assignee: &str, seats: &[&str]) -> TaskCreateRequest {
+    TaskCreateRequest {
         title: title.to_string(),
         creator: "root".to_string(),
         assignee: Some(assignee.to_string()),
@@ -51,7 +50,7 @@ async fn lifecycle_with_review_and_receipts() {
     let t = store.dispatch(t.id, "root", None).await.unwrap();
 
     let t = store
-        .checkpoint(checkpoint(t.id, "dev", Some("wip"), false, false))
+        .checkpoint(t.id, checkpoint("dev", Some("wip"), false, false))
         .await
         .unwrap();
     assert_eq!(t.status, "in_progress");
@@ -66,14 +65,14 @@ async fn lifecycle_with_review_and_receipts() {
     );
 
     let t = store
-        .checkpoint(checkpoint(t.id, "dev", None, false, true))
+        .checkpoint(t.id, checkpoint("dev", None, false, true))
         .await
         .unwrap();
     assert_eq!(t.status, "review");
 
     // One receipt is still not enough.
     store
-        .checkpoint(checkpoint(t.id, "r1", None, true, false))
+        .checkpoint(t.id, checkpoint("r1", None, true, false))
         .await
         .unwrap();
     let err = store
@@ -83,7 +82,7 @@ async fn lifecycle_with_review_and_receipts() {
     assert!(matches!(err, Error::ReceiptGate { ref missing } if missing == "r2"));
 
     store
-        .checkpoint(checkpoint(t.id, "r2", None, true, false))
+        .checkpoint(t.id, checkpoint("r2", None, true, false))
         .await
         .unwrap();
     let t = store
@@ -139,7 +138,7 @@ async fn checkpoint_on_queued_is_an_invalid_transition() {
     let store = TaskStore::open_in_memory().await;
     let t = store.create(spec("x", "dev", &[])).await.unwrap();
     let err = store
-        .checkpoint(checkpoint(t.id, "dev", Some("wip"), false, false))
+        .checkpoint(t.id, checkpoint("dev", Some("wip"), false, false))
         .await
         .unwrap_err();
     assert!(matches!(err, Error::InvalidTransition { .. }));
@@ -151,16 +150,16 @@ async fn waiting_marker_is_not_a_state() {
     let t = store.create(spec("x", "dev", &[])).await.unwrap();
     store.start(t.id, "dev", false).await.unwrap();
 
-    let mut op = checkpoint(t.id, "dev", None, false, false);
+    let mut op = checkpoint("dev", None, false, false);
     op.waiting = Some(true);
-    let t = store.checkpoint(op).await.unwrap();
+    let t = store.checkpoint(t.id, op).await.unwrap();
     assert_eq!(t.status, "in_progress", "waiting must not move the machine");
     assert_eq!(t.waiting, 1);
     assert!(t.waiting_since.is_some());
 
-    let mut op = checkpoint(t.id, "dev", None, false, false);
+    let mut op = checkpoint("dev", None, false, false);
     op.waiting = Some(false);
-    let t = store.checkpoint(op).await.unwrap();
+    let t = store.checkpoint(t.id, op).await.unwrap();
     assert_eq!(t.waiting, 0);
     assert!(t.waiting_since.is_none());
 
@@ -179,7 +178,7 @@ async fn export_json_shape_is_stable() {
     store.start(t.id, "dev", false).await.unwrap();
     store.dispatch(t.id, "root", None).await.unwrap();
     store
-        .checkpoint(checkpoint(t.id, "r1", None, true, false))
+        .checkpoint(t.id, checkpoint("r1", None, true, false))
         .await
         .unwrap();
     store
@@ -226,7 +225,7 @@ async fn close_archives_dossier_content_addressed() {
     std::fs::write(dossier.join("notes/a.md"), "a").unwrap();
 
     let t = store
-        .create(CreateSpec {
+        .create(TaskCreateRequest {
             dossier_path: Some(dossier.display().to_string()),
             ..spec("archived", "dev", &[])
         })
@@ -305,7 +304,7 @@ async fn reopen_invalidates_prior_cycle_receipts() {
     store.start(t.id, "dev", false).await.unwrap();
     store.dispatch(t.id, "root", None).await.unwrap();
     store
-        .checkpoint(checkpoint(t.id, "r1", None, true, false))
+        .checkpoint(t.id, checkpoint("r1", None, true, false))
         .await
         .unwrap();
     store
@@ -331,7 +330,7 @@ async fn reopen_invalidates_prior_cycle_receipts() {
 
     // A fresh receipt satisfies the gate again.
     store
-        .checkpoint(checkpoint(t.id, "r1", None, true, false))
+        .checkpoint(t.id, checkpoint("r1", None, true, false))
         .await
         .unwrap();
     let t = store
@@ -347,10 +346,13 @@ async fn close_clears_the_waiting_marker() {
     let t = store.create(spec("waiting", "dev", &[])).await.unwrap();
     store.start(t.id, "dev", false).await.unwrap();
     let t = store
-        .checkpoint(CheckpointSpec {
-            waiting: Some(true),
-            ..checkpoint(t.id, "dev", None, false, false)
-        })
+        .checkpoint(
+            t.id,
+            TaskCheckpointRequest {
+                waiting: Some(true),
+                ..checkpoint("dev", None, false, false)
+            },
+        )
         .await
         .unwrap();
     assert_eq!(t.waiting, 1);
@@ -368,7 +370,7 @@ async fn close_clears_the_waiting_marker() {
 async fn close_with_a_registered_dossier_but_no_blob_store_is_an_error() {
     let store = TaskStore::open_in_memory().await;
     let t = store
-        .create(CreateSpec {
+        .create(TaskCreateRequest {
             dossier_path: Some("/tmp/does-not-matter".to_string()),
             ..spec("dossier", "dev", &[])
         })
@@ -420,7 +422,7 @@ async fn association_windows_are_validated() {
     let store = TaskStore::open_in_memory().await;
 
     let err = store
-        .create(CreateSpec {
+        .create(TaskCreateRequest {
             inbox_id_start: Some(9),
             inbox_id_end: Some(3),
             ..spec("inverted", "dev", &[])
@@ -430,7 +432,7 @@ async fn association_windows_are_validated() {
     assert!(matches!(err, Error::AssociationInvalid { .. }));
 
     let err = store
-        .create(CreateSpec {
+        .create(TaskCreateRequest {
             inbox_id_start: Some(3),
             inbox_id_end: None,
             ..spec("one-sided", "dev", &[])
@@ -440,7 +442,7 @@ async fn association_windows_are_validated() {
     assert!(matches!(err, Error::AssociationInvalid { .. }));
 
     let err = store
-        .create(CreateSpec {
+        .create(TaskCreateRequest {
             room_seq_start: Some(1),
             room_seq_end: Some(2),
             ..spec("seq-without-room", "dev", &[])
@@ -455,7 +457,7 @@ async fn association_accepts_a_legal_window() {
     let store = TaskStore::open_in_memory().await;
 
     let task = store
-        .create(CreateSpec {
+        .create(TaskCreateRequest {
             inbox_id_start: Some(3),
             inbox_id_end: Some(9),
             ..spec("legal-window", "dev", &[])
@@ -592,7 +594,7 @@ async fn close_requires_a_dispatch_in_the_cycle() {
 
     store.dispatch(t.id, "root", None).await.unwrap();
     store
-        .checkpoint(checkpoint(t.id, "r1", None, true, false))
+        .checkpoint(t.id, checkpoint("r1", None, true, false))
         .await
         .unwrap();
     let t = store
@@ -609,7 +611,7 @@ async fn dispatch_rebases_the_receipt_boundary() {
     store.start(t.id, "dev", false).await.unwrap();
     store.dispatch(t.id, "root", None).await.unwrap();
     store
-        .checkpoint(checkpoint(t.id, "r1", None, true, false))
+        .checkpoint(t.id, checkpoint("r1", None, true, false))
         .await
         .unwrap();
 
@@ -706,7 +708,7 @@ async fn dispatch_status_gate_accepts_only_active_states() {
 
     // Review (moved by checkpoint) is equally dispatchable.
     store
-        .checkpoint(checkpoint(t.id, "dev", None, false, true))
+        .checkpoint(t.id, checkpoint("dev", None, false, true))
         .await
         .unwrap();
     store.dispatch(t.id, "root", None).await.unwrap();
@@ -728,11 +730,11 @@ async fn export_all_groups_events_under_the_right_task() {
     store.start(a.id, "dev", false).await.unwrap();
     store.start(b.id, "ops", false).await.unwrap();
     store
-        .checkpoint(checkpoint(a.id, "dev", Some("note on a"), false, false))
+        .checkpoint(a.id, checkpoint("dev", Some("note on a"), false, false))
         .await
         .unwrap();
     store
-        .checkpoint(checkpoint(b.id, "ops", Some("note on b"), false, false))
+        .checkpoint(b.id, checkpoint("ops", Some("note on b"), false, false))
         .await
         .unwrap();
 

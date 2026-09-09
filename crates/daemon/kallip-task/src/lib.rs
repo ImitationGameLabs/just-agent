@@ -18,8 +18,9 @@ pub mod store;
 pub use entities::task::Model as Task;
 pub use entities::task_event::Model as TaskEvent;
 pub use kallip_blob_store::BlobStore;
+pub use kallip_common::protocol::TaskExport;
 pub use model::{ClosedReason, EventKind, TaskStatus, Transition};
-pub use store::{CheckpointSpec, CreateSpec, TaskExport, TaskFilter, TaskStore};
+pub use store::{TaskFilter, TaskStore};
 
 use thiserror::Error;
 

@@ -11,13 +11,15 @@ use std::path::Path;
 
 use crate::{Task, TaskEvent};
 use kallip_blob_store::{BlobId, BlobStore};
+use kallip_common::protocol::{
+    AssociationExport, EventExport, TaskCheckpointRequest, TaskCreateRequest, TaskExport,
+};
 use sea_orm::entity::prelude::*;
 use sea_orm::{
     ActiveValue::Set, ConnectOptions, Database, DatabaseBackend, DatabaseConnection,
     DatabaseTransaction, QueryOrder, Statement, TransactionError, TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait as _;
-use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::entities::task::{ActiveModel, Column as TaskColumn, Entity as TaskEntity};
@@ -26,87 +28,6 @@ use crate::entities::{task, task_event};
 use crate::gates;
 use crate::model::{ClosedReason, TaskStatus, Transition};
 use crate::{Error, archive};
-
-/// One task plus its event trail, shaped for the machine face (export).
-#[derive(Serialize, Deserialize)]
-pub struct TaskExport {
-    pub id: i64,
-    pub title: String,
-    pub status: String,
-    pub creator: Option<String>,
-    pub assignee: Option<String>,
-    pub seats: Vec<String>,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-    pub started_at: Option<String>,
-    pub ended_at: Option<String>,
-    pub waiting: bool,
-    pub waiting_since: Option<String>,
-    /// The archive partition marker (a query partition, not a state).
-    pub archived: bool,
-    pub archived_at: Option<String>,
-    pub closed_reason: Option<String>,
-    pub close_summary: Option<String>,
-    pub association: Option<AssociationExport>,
-    /// Two-phase pointer: live path while open; after close, the content
-    /// address (`archive_hash`) is the frozen truth. Both are exported.
-    pub dossier_path: Option<String>,
-    pub archive_hash: Option<String>,
-    pub events: Vec<EventExport>,
-}
-
-/// Association keys (K8s involvedObject shape): message windows the
-/// task lives in — an inbox id range and/or a lesche room + seq range.
-#[derive(Serialize, Deserialize)]
-pub struct AssociationExport {
-    pub inbox_id_start: Option<i64>,
-    pub inbox_id_end: Option<i64>,
-    pub room_id: Option<String>,
-    pub room_seq_start: Option<i64>,
-    pub room_seq_end: Option<i64>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct EventExport {
-    pub id: i64,
-    pub kind: String,
-    pub name: String,
-    pub actor: Option<String>,
-    pub assignee: Option<String>,
-    pub from_status: Option<String>,
-    pub to_status: Option<String>,
-    pub payload: Option<serde_json::Value>,
-    pub created_at: Option<String>,
-}
-
-/// Registration spec for a new task (dispatch-time metadata).
-#[derive(Debug, Clone, Default)]
-pub struct CreateSpec {
-    pub title: String,
-    pub creator: String,
-    pub assignee: Option<String>,
-    pub seats: Vec<String>,
-    pub dossier_path: Option<String>,
-    pub inbox_id_start: Option<i64>,
-    pub inbox_id_end: Option<i64>,
-    pub room_id: Option<String>,
-    pub room_seq_start: Option<i64>,
-    pub room_seq_end: Option<i64>,
-}
-
-/// One checkpoint call: a work-log action, optionally filing a review
-/// receipt, optionally moving the machine to `review`, optionally toggling
-/// the `waiting` timing marker.
-#[derive(Debug, Clone, Default)]
-pub struct CheckpointSpec {
-    pub id: i64,
-    pub actor: String,
-    pub note: Option<String>,
-    pub receipt: bool,
-    pub review: bool,
-    /// Some(true) = set the marker, Some(false) = clear it, None = leave it.
-    pub waiting: Option<bool>,
-}
 
 /// The seat roster recorded in a `dispatch` action event's payload —
 /// the roster the close gate counts receipts against.
@@ -168,13 +89,13 @@ impl TaskStore {
     /// the row now, so the close gate can hold it accountable later. The
     /// row and its `create` event land in one transaction, so the event
     /// trail can always derive the flat table.
-    pub async fn create(&self, spec: CreateSpec) -> Result<Task, Error> {
-        validate_association(&spec)?;
+    pub async fn create(&self, req: TaskCreateRequest) -> Result<Task, Error> {
+        validate_association(&req)?;
         let now = now();
-        let seats = serde_json::to_string(&spec.seats)?;
-        let actor = spec.creator.clone();
+        let seats = serde_json::to_string(&req.seats)?;
+        let actor = req.creator.clone();
         for attempt in 0..=BUSY_RETRIES {
-            let spec = spec.clone();
+            let req = req.clone();
             let seats = seats.clone();
             let actor = actor.clone();
             match self
@@ -183,19 +104,19 @@ impl TaskStore {
                     Box::pin(async move {
                         take_write_lock(tx).await?;
                         let row = ActiveModel {
-                            title: Set(spec.title),
+                            title: Set(req.title),
                             status: Set(TaskStatus::Queued.as_str().to_string()),
                             creator: Set(Some(actor.clone())),
-                            assignee: Set(spec.assignee.clone()),
+                            assignee: Set(req.assignee.clone()),
                             seats: Set(seats),
                             created_at: Set(now),
                             updated_at: Set(now),
-                            dossier_path: Set(spec.dossier_path),
-                            inbox_id_start: Set(spec.inbox_id_start),
-                            inbox_id_end: Set(spec.inbox_id_end),
-                            room_id: Set(spec.room_id),
-                            room_seq_start: Set(spec.room_seq_start),
-                            room_seq_end: Set(spec.room_seq_end),
+                            dossier_path: Set(req.dossier_path),
+                            inbox_id_start: Set(req.inbox_id_start),
+                            inbox_id_end: Set(req.inbox_id_end),
+                            room_id: Set(req.room_id),
+                            room_seq_start: Set(req.room_seq_start),
+                            room_seq_end: Set(req.room_seq_end),
                             ..Default::default()
                         };
                         let inserted = TaskEntity::insert(row).exec(tx).await?;
@@ -205,7 +126,7 @@ impl TaskStore {
                             "action",
                             "create",
                             Some(actor),
-                            spec.assignee,
+                            req.assignee,
                             None,
                             None,
                             None,
@@ -328,7 +249,7 @@ impl TaskStore {
     /// Records a checkpoint action; `--receipt` files a review receipt;
     /// `--review` moves the machine `in_progress -> review`; `--waiting` /
     /// `--no-waiting` toggle the timing marker (a marker, never a state).
-    pub async fn checkpoint(&self, op: CheckpointSpec) -> Result<Task, Error> {
+    pub async fn checkpoint(&self, id: i64, op: TaskCheckpointRequest) -> Result<Task, Error> {
         for attempt in 0..=BUSY_RETRIES {
             let op = op.clone();
             match self
@@ -336,7 +257,7 @@ impl TaskStore {
                 .transaction(|tx| {
                     Box::pin(async move {
                         take_write_lock(tx).await?;
-                        let row = load(tx, op.id).await?;
+                        let row = load(tx, id).await?;
                         let status = parse_status(&row)?;
                         match status {
                             TaskStatus::InProgress | TaskStatus::Review => {}
@@ -447,7 +368,7 @@ impl TaskStore {
                             )
                             .await?;
                         }
-                        load(tx, op.id).await
+                        load(tx, id).await
                     })
                 })
                 .await
@@ -1343,7 +1264,7 @@ fn is_busy_conn(e: &sea_orm::DbErr) -> bool {
 /// needs the room it belongs to. One-sided or inverted windows would
 /// silently narrow the trail the task claims (`show` hides one-sided
 /// windows outright).
-fn validate_association(spec: &CreateSpec) -> Result<(), Error> {
+fn validate_association(req: &TaskCreateRequest) -> Result<(), Error> {
     fn window(start: Option<i64>, end: Option<i64>, what: &str) -> Result<(), Error> {
         match (start, end) {
             (None, None) => Ok(()),
@@ -1356,9 +1277,9 @@ fn validate_association(spec: &CreateSpec) -> Result<(), Error> {
             }),
         }
     }
-    window(spec.inbox_id_start, spec.inbox_id_end, "inbox id")?;
-    window(spec.room_seq_start, spec.room_seq_end, "room seq")?;
-    if spec.room_id.is_none() && spec.room_seq_start.is_some() {
+    window(req.inbox_id_start, req.inbox_id_end, "inbox id")?;
+    window(req.room_seq_start, req.room_seq_end, "room seq")?;
+    if req.room_id.is_none() && req.room_seq_start.is_some() {
         return Err(Error::AssociationInvalid {
             detail: "room seq window needs the room id it belongs to".to_string(),
         });

@@ -2961,6 +2961,7 @@ name = "kallip-task"
 version = "0.1.0"
 dependencies = [
  "kallip-blob-store",
+ "kallip-common",
  "sea-orm",
  "sea-orm-migration",
  "serde",

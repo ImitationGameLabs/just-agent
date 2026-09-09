@@ -6,64 +6,9 @@
 //! is not a state transition). The terminal state is two-level (GitHub CLI
 //! precedent): `closed` carries a reason.
 
-use serde::{Deserialize, Serialize};
-
-/// The four coarse states. Serialized lowercase on the wire and in SQLite.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TaskStatus {
-    Queued,
-    InProgress,
-    Review,
-    Closed,
-}
-
-impl TaskStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TaskStatus::Queued => "queued",
-            TaskStatus::InProgress => "in_progress",
-            TaskStatus::Review => "review",
-            TaskStatus::Closed => "closed",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "queued" => Some(TaskStatus::Queued),
-            "in_progress" => Some(TaskStatus::InProgress),
-            "review" => Some(TaskStatus::Review),
-            "closed" => Some(TaskStatus::Closed),
-            _ => None,
-        }
-    }
-}
-
-/// Why a task was closed. An attribute of `closed`, not a state of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ClosedReason {
-    Completed,
-    NotPlanned,
-    Duplicate,
-}
-
-impl ClosedReason {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ClosedReason::Completed => "completed",
-            ClosedReason::NotPlanned => "not_planned",
-            ClosedReason::Duplicate => "duplicate",
-        }
-    }
-
-    pub fn parse(raw: &str) -> Option<Self> {
-        match raw {
-            "completed" => Some(ClosedReason::Completed),
-            "not_planned" => Some(ClosedReason::NotPlanned),
-            "duplicate" => Some(ClosedReason::Duplicate),
-            _ => None,
-        }
-    }
-}
+// The state vocabulary is part of the wire face: defined once in
+// kallip-common::protocol::task and re-exported here for the crate.
+pub use kallip_common::protocol::{ClosedReason, TaskStatus};
 
 /// Every legal transition, named by the verb that drives it. `checkpoint` is
 /// deliberately absent: checkpoint/receipt/waiting are `kind=action` events
@@ -165,24 +110,6 @@ pub fn iso8601_utc(secs: i64) -> Result<String, time::error::ComponentRange> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn status_round_trips() {
-        for raw in ["queued", "in_progress", "review", "closed"] {
-            let parsed = TaskStatus::parse(raw).expect("parse");
-            assert_eq!(parsed.as_str(), raw);
-        }
-        assert_eq!(TaskStatus::parse("active"), None);
-    }
-
-    #[test]
-    fn closed_reason_round_trips() {
-        for raw in ["completed", "not_planned", "duplicate"] {
-            let parsed = ClosedReason::parse(raw).expect("parse");
-            assert_eq!(parsed.as_str(), raw);
-        }
-        assert_eq!(ClosedReason::parse("reopened"), None);
-    }
 
     #[test]
     fn transitions_have_expected_endpoints() {
