@@ -16,50 +16,57 @@ For the NixOS host deployment, see
 ## Prerequisites
 
 - Arion + a Docker (or Podman with the docker socket) daemon. Under rootless
-  docker, the Caddy service uses host networking and binds `:80`/`:443` on the
-  host, which requires `sysctl net.ipv4.ip_unprivileged_port_start=80` (or
-  running the daemon as root).
-- [mkcert](https://github.com/FiloSottile/mkcert) for the dev TLS certificate.
+  docker, the Caddy service uses host networking and binds the edge port
+  (`KALLIP_EDGE_PORT`, default 443) on the host, which requires
+  `sysctl net.ipv4.ip_unprivileged_port_start=80` (or
+  running the daemon as root) when that port is below 1024.
+- [mkcert](https://github.com/FiloSottile/mkcert) for the dev TLS
+  certificate (https edge only).
 - Copy `.env.example` to `.env` and fill in the LLM provider credentials. Arion
   reads `.env` via `service.env_file`.
 
-### Plain-http quick start (KALLIP_TLS=off)
+### Plain-http quick start (KALLIP_EDGE_TLS=off)
 
-Set `KALLIP_TLS=off` in `.env` for a plain-http stack with no Caddy, no
-mkcert, and no DNS setup: `arion up -d` + `deno task dev`, then open
-`http://localhost:5173`. Login surface: admin key + GitHub oauth; passkeys
-work on localhost out of the box (a browser secure-context exemption --
-the compose already derives the localhost RP pair). For multi-machine access set
-`KALLIP_DOMAIN` to the LAN host (passkey/Google then stay browser-blocked;
-the instances port opens to the LAN -- treat it as a trusted surface).
+Set `KALLIP_EDGE_TLS=off` in `.env` for a plain-http edge with no mkcert
+and no DNS-trust setup. Keep `KALLIP_DOMAIN=localhost` (the default is
+the prod domain; the quick start pins localhost) and move the edge off
+the privileged default port: `KALLIP_EDGE_PORT=8080`. Then `arion up -d`
++ `deno task dev` and open `http://web.localhost:8080` — browsers
+resolve every `*.localhost` name to the loopback interface, so no
+hosts-file entry is needed. Login surface: admin key + GitHub oauth;
+passkeys work on localhost out of the box (a browser secure-context
+exemption). For multi-machine access set `KALLIP_DOMAIN` to the LAN
+host and resolve `*.<domain>` on your LAN DNS (passkey/Google then
+stay browser-blocked on plain http).
 
 Gotchas on this shape:
 
 - A browser that has visited the same hostname over https keeps the old
   `Secure`-flagged `kallip_session` cookie and then refuses to store the
   new non-`Secure` one: delete the old cookie first.
-- After editing `.env`, restart `deno task dev`: vite reads the env at
-  startup, not per request.
-- The host you browse must match `KALLIP_DOMAIN` (`localhost` by default
-  here); any other host is rejected.
+- After editing `.env`, restart `deno task dev` and `arion up`: both
+  read the env at startup, not per request.
+- The host you browse must match `KALLIP_DOMAIN` (`localhost` here);
+  any other host is rejected.
 
-### TLS + DNS setup (opt-in, one-time)
+### TLS + DNS setup (the default https edge, one-time)
 
-The dev stack is fronted by Caddy, which terminates TLS for `*.<devDomain>` so
-the stack is reachable cross-machine on the LAN (browsers only allow WebAuthn
-in a secure context, so plain HTTP + a raw LAN IP cannot work). This is a
-one-time setup.
+The dev edge terminates TLS for `*.<devDomain>` so the stack is reachable
+cross-machine on the LAN (browsers only allow WebAuthn in a secure
+context, so plain HTTP + a raw LAN IP cannot work). This is a
+one-time setup, and the https edge is the default shape.
 
 The dev domain is `kallipai.lan`. The code default for `KALLIP_DOMAIN` is
-the production domain (`kallipai.com`); `.env.example` sets it to `kallipai.lan`
-for local dev (so dev DNS/certs never clash with production), and you get that
-when you copy `.env.example` to `.env`. direnv's `dotenv` loads `.env` into the
-shell, so arion eval, `mkcert`, and vite all see it. Override further
-by editing `.env` or exporting `KALLIP_DOMAIN` in your shell. The whole
-stack — the archeion/lesche env, the Caddyfile, and vite's dev-server
-shaping (allowedHosts, HMR websocket) — derives from this one variable.
-The web app's own API URLs no longer read it: they derive at runtime
-from the browser location (see the offline-login notes below).
+the production domain (`kallipai.com`); `.env.example` sets it to
+`kallipai.lan` for local dev (so dev DNS/certs never clash with
+production), and you get that when you copy `.env.example` to `.env`.
+direnv's `dotenv` loads `.env` into the shell, so arion eval, `mkcert`,
+and vite all see it. The whole stack — the archeion/lesche env, the
+Caddyfile, and vite's dev-server shaping (allowedHosts, HMR websocket)
+— derives from `KALLIP_DOMAIN` plus the two edge knobs
+(`KALLIP_EDGE_TLS`, `KALLIP_EDGE_PORT`). The web app's own API URLs
+read none of them: they derive at runtime from the browser location
+(see the offline-login notes below).
 
 1. Generate the leaf cert with `mkcert` (provided by the nix devShell). Run this
    from the repo root — `$KALLIP_DOMAIN` comes from `.env` (`kallipai.lan`):

@@ -60,10 +60,9 @@ in
     # Files: the content-transfer service. Content-addressed blobs (local
     # volume) + record metadata in its own Postgres; identity and enrollment
     # facts stay in the archeion, reached through the /internal ControlPlane
-    # surface over the compose network. Reached by the `kallip file` CLI and,
-    # since the files page landed, by the browser: published on all host
-    # interfaces (the lesche pattern); the Caddy files.<devDomain> route in
-    # the TLS shape fronts the same port.
+    # surface over the compose network. Reached by the `kallip file` CLI
+    # (loopback publish) and, since the files page landed, by the
+    # browser through the edge's files.<devDomain> vhost.
     services.files = {
       service.depends_on = [
         "archeion"
@@ -71,10 +70,9 @@ in
       ];
       service.useHostStore = true;
       service.command = [ "${workspace}/bin/kallip-files" ];
-      # Open publish in both TLS shapes (the lesche pattern -- a platform
-      # microservice the browser reaches directly); the https shape's
-      # Caddy route fronts the same port from the host network namespace.
-      service.ports = [ "${filesHostPort}:7400" ];
+      # Loopback-tight publish: the browser path rides the edge vhost;
+      # the loopback publish serves the `kallip file` CLI.
+      service.ports = [ "127.0.0.1:${filesHostPort}:7400" ];
       service.env_file = [ ".env" ];
       image.contents = [
         workspace

@@ -11,12 +11,13 @@ const here = import.meta.dirname;
 // Dev-server shaping only (allowedHosts/HMR ws): the KALLIP_* env is no
 // longer baked into the client bundle — service URLs derive at runtime
 // in +layout.svelte from the browser location (config.js overrides).
-// The same env var drives the archeion/lesche containers and the
-// Caddyfile so the whole dev stack agrees on one name; override it in
-// `.env`.
-const tlsOff = process.env.KALLIP_TLS === "off";
-const devDomain =
-  process.env.KALLIP_DOMAIN ?? (tlsOff ? "localhost" : "kallipai.com");
+// The dev stack is fronted by the compose caddy edge (always on), and
+// these bindings name that edge so `deno task dev` points at the same
+// entry the containers do; they live in `.env` (direnv puts it in the
+// shell, and vite reads process.env from there).
+const devDomain = process.env.KALLIP_DOMAIN ?? "kallipai.com";
+const edgeTls = (process.env.KALLIP_EDGE_TLS ?? "on") === "on";
+const edgePort = Number(process.env.KALLIP_EDGE_PORT ?? "443");
 const webHost = `web.${devDomain}`;
 
 export default defineConfig({
@@ -80,13 +81,13 @@ export default defineConfig({
     // Caddy forwards the incoming Host header unchanged, and vite is plain HTTP
     // here (so the HTTPS host-check exemption does NOT apply). Without an
     // explicit allow entry for the proxied hostname, vite rejects the request.
-    allowedHosts: tlsOff ? [devDomain] : [webHost],
-    // HMR rides the https origin in the Caddy shape: the browser reconnects
-    // over wss on 443 (Caddy's face, which proxies the upgrade), while
-    // vite's own websocket stays on 5173. The http shape serves the browser
-    // directly, so the default same-origin ws applies.
-    ...(tlsOff
-      ? {}
-      : { ws: { protocol: "wss" as const, host: webHost, clientPort: 443 } }),
+    allowedHosts: [webHost],
+    // HMR rides the edge: the browser reconnects to web.<devDomain> on
+    // the edge port (wss behind the https edge, ws behind the plain one;
+    // caddy proxies the upgrade either way), while vite's own websocket
+    // stays on 5173.
+    ...(edgeTls
+      ? { ws: { protocol: "wss" as const, host: webHost, clientPort: edgePort } }
+      : { ws: { host: webHost, clientPort: edgePort } }),
   },
 });

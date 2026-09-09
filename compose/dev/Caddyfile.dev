@@ -1,14 +1,20 @@
-# Dev edge proxy (see arion-compose.nix services.caddy). Terminates TLS with
-# the mkcert leaf cert mounted at /certs and host-routes the dev subdomains to
-# the dev services on 127.0.0.1 (caddy runs on the host network). The explicit
-# `tls` directive disables Caddy's internal CA / ACME: the dev domain is a
+# Dev edge proxy (see arion-compose.nix services.caddy). The one entry
+# point for the dev stack: host-routes the *.{$KALLIP_DOMAIN} subdomains
+# to the dev services on 127.0.0.1 (caddy runs on the host network). The
+# same vhosts serve both edge shapes: https (default) terminates TLS with
+# the mkcert leaf cert mounted at /certs; KALLIP_EDGE_TLS=off serves the
+# identical routes plain http -- the {$KALLIP_EDGE_SCHEME} prefix on the
+# site address (set to http://) keeps Caddy's auto-https out of a
+# non-public TLD, and the mounted tls.caddy snippet beside this file
+# `tls` directive only for the https shape. The explicit `tls` directive
+# otherwise disables Caddy's internal CA / ACME: the dev domain is a
 # non-public TLD, so automatic issuance cannot succeed and is not wanted.
 #
-# The domain comes from {$KALLIP_DOMAIN} (Caddy's native env substitution),
-# set on the caddy service by arion-compose.nix from the same var the archeion/
-# lesche env and the web app use (code default kallipai.com; .env sets
-# kallipai.lan for dev). See docs/development.md for the one-time host setup
-# (mkcert cert into <repo>/dev-certs, host trust, LAN DNS).
+# The substitutions come from the caddy service environment, sourced from
+# the same nix bindings the archeion/lesche env use (code default
+# kallipai.com; .env sets kallipai.lan for dev). See docs/development.md
+# for the one-time host setup (mkcert cert into <repo>/compose/dev/.certs,
+# host trust, LAN DNS).
 #
 # Global options: HTTP/3 is disabled in dev. Caddy advertises `alt-svc: h3`
 # otherwise, and Firefox upgrades the cross-subdomain SSE (`/v1/me/events`) to
@@ -22,8 +28,8 @@
 	}
 }
 
-*.{$KALLIP_DOMAIN} {
-	tls /certs/cert.pem /certs/key.pem
+{$KALLIP_EDGE_SCHEME}*.{$KALLIP_DOMAIN}:{$KALLIP_EDGE_PORT} {
+	import tls.caddy
 
 	@web host web.{$KALLIP_DOMAIN}
 	handle @web {

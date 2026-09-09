@@ -35,40 +35,61 @@ let
     skillsSeed
     ;
 
-  # Dev topology note: a Caddy edge proxy (services.caddy) terminates TLS for
-  # `*.<devDomain>` (default `*.kallipai.com`) with an mkcert certificate and
-  # host-routes web/archeion/lesche subdomains to vite (on the host) / archeion /
-  # lesche. This makes the dev stack reachable cross-machine on the LAN
-  # (browsers only allow WebAuthn in a secure context, so plain-HTTP + raw LAN
-  # IP cannot work). The session cookie carries `Domain=<devDomain>` (see the
-  # archeion service env) so it is shared across the archeion/lesche subdomains. archeion
-  # and lesche still publish 7100/7200 for host-side tooling (kallip-admin,
-  # curl) AND for the dev tagma (compose/dev/tagma.nix, host network), which
-  # reaches them at 127.0.0.1:7100 / :7200 rather than via compose DNS. files
-  # publishes on all host interfaces (:7400; host port overridable via
-  # KALLIP_ARION_FILES_PORT) since the files page -- the same shape the
-  # browser uses; the kallip file CLI keeps using the loopback side.
+  # Dev topology note: a Caddy edge proxy (services.caddy) is the one
+  # entry point -- always on, routing the same `*.<devDomain>` vhosts
+  # (default domain kallipai.com; .env sets kallipai.lan) to vite (on
+  # the host) / archeion / lesche / files / instances. The edge speaks
+  # https with an mkcert certificate by default, or plain http when
+  # KALLIP_EDGE_TLS=off; KALLIP_EDGE_PORT moves its listen port (a
+  # deployed system caddy keeps the host's real 443). The session
+  # cookie carries `Domain=<devDomain>` (see the archeion service env)
+  # so it is shared across the sibling subdomains. archeion and lesche
+  # still publish 7100/7200 for host-side tooling (kallip-admin, curl)
+  # AND for the dev tagma (compose/dev/tagma.nix, host network), which
+  # reaches them at 127.0.0.1:7100 / :7200 rather than via compose DNS.
+  # files publishes 7400 and instances 7300 on the loopback interface
+  # for the same host-side tooling; the browser path for both rides
+  # the edge.
 
-  # The stack shape switch: KALLIP_TLS=on (default) keeps the Caddy-fronted
-  # https+domain topology below; KALLIP_TLS=off is the plain-http direct
-  # shape -- no Caddy, host defaults to localhost (set KALLIP_DOMAIN to a
-  # LAN host for multi-machine access; see docs/development.md).
-  tlsOff = envOrDefault "KALLIP_TLS" "on" == "off";
-  # The dev domain (registrable domain + subdomain parent, or the plain
-  # host when TLS is off). The code default is the prod domain
-  # (kallipai.com) with TLS on, localhost with TLS off; .env overrides
-  # (kallipai.lan for the https dev shape) -- direnv's dotenv puts .env in
+  # The edge owns the entry: caddy is always on and always routes the
+  # same subdomain vhosts. KALLIP_EDGE_TLS decides whether the edge
+  # speaks https (mkcert leaf cert) or plain http; KALLIP_EDGE_PORT is
+  # its listen port (default 443; .env overrides it so a deployed
+  # system caddy can keep the host's real 443).
+  edgeTls = envOrDefault "KALLIP_EDGE_TLS" "on" == "on";
+  edgePort = envOrDefault "KALLIP_EDGE_PORT" "443";
+  # The dev domain (registrable domain + subdomain parent). The code
+  # default is the prod domain (kallipai.com); .env overrides
+  # (kallipai.lan for the dev shape) -- direnv's dotenv puts .env in
   # the shell, so this builtins.getEnv sees it at eval time. Everything
-  # below (WebAuthn RP id/origin, CORS, cookie domain, Caddyfile, the web
-  # app's API URLs) derives from these bindings.
+  # below (WebAuthn RP id/origin, CORS, cookie domain, Caddyfile, the
+  # web app's API URLs) derives from these bindings.
   devDomain =
     let
       v = builtins.getEnv "KALLIP_DOMAIN";
     in
-    if v == "" then (if tlsOff then "localhost" else "kallipai.com") else v;
-  # The browser-facing web origin: the Caddy subdomain face when TLS is
-  # on, the plain vite origin (:5173) when off.
-  webOrigin = if tlsOff then "http://${devDomain}:5173" else "https://web.${devDomain}";
+    if v == "" then "kallipai.com" else v;
+  # The browser-facing web origin: the edge's web.<devDomain> face.
+  # The port rides along except on its protocol's default (443 for
+  # https, 80 for http), matching what the browser's address bar
+  # shows -- CORS and OAuth origins compare verbatim.
+  webOrigin =
+    let
+      scheme = if edgeTls then "https" else "http";
+      defaultPort = if edgeTls then "443" else "80";
+      port = if edgePort == defaultPort then "" else ":${edgePort}";
+    in
+    "${scheme}://web.${devDomain}${port}";
+  # The site-address scheme the Caddyfile sees: empty for the https
+  # edge (the tls snippet carries the certificate), http:// for the
+  # plain edge (keeps caddy's auto-https out of a non-public TLD).
+  edgeScheme = if edgeTls then "" else "http://";
+  # The https edge imports its mkcert pair; the plain edge imports an
+  # empty snippet, and the http:// site scheme keeps caddy's
+  # auto-https out of a non-public TLD.
+  edgeTlsSnippet = pkgs.writeText "kallip-edge-tls.caddy" (
+    if edgeTls then "tls /certs/cert.pem /certs/key.pem" else ""
+  );
   # An IPv4 literal host cannot back a WebAuthn RP id (the builder needs
   # a registrable domain), and passkeys are browser-blocked on plain-http
   # LAN anyway -- so the RP trio degrades to the code defaults there
@@ -199,20 +220,25 @@ in
       };
     };
 
-    # Caddy edge proxy: terminates TLS for *.<devDomain> (default
-    # *.kallipai.com) with the mkcert leaf cert and host-routes the three
-    # subdomains to 127.0.0.1: web.<devDomain> -> the host vite dev server
-    # (:5173); archeion/lesche -> their host-published ports (:7100/:7200).
+    # Caddy edge proxy: the one entry point, always on, routing the same
+    # subdomain vhosts in both shapes. https (default) terminates TLS
+    # with the mkcert leaf cert; plain http drops the cert mount and
+    # serves the same routes scheme-less. Host-routes the subdomains to
+    # 127.0.0.1: web.<devDomain> -> the host vite dev server (:5173);
+    # archeion/lesche -> their host-published ports (:7100/:7200).
     # Runs on the host network (`network_mode: host`) so it can reach the
     # host's vite directly -- under rootless docker the bridge cannot reach
     # host services (host-gateway resolves to a non-routable IP and the host
-    # firewall drops the LAN IP). With the host netns, caddy binds :80/:443
-    # straight on the host (requires net.ipv4.ip_unprivileged_port_start<=80
-    # under rootless), so no `ports:` mapping (ignored under host net anyway)
+    # firewall drops the LAN IP). With the host netns, caddy binds the
+    # edge port straight on the host (requires
+    # net.ipv4.ip_unprivileged_port_start<=80 for port 80 under rootless),
+    # so no `ports:` mapping (ignored under host net anyway)
     # and no extra_hosts. The Caddyfile (mounted below) uses
-    # {$KALLIP_DOMAIN} substitution; see it for the routing + the
-    # streaming flush on lesche.
-    services.caddy = lib.mkIf (!tlsOff) {
+    # {$KALLIP_DOMAIN} / {$KALLIP_EDGE_PORT} substitution; see it for the
+    # routing + the streaming flush on lesche.
+
+    # Caddyfile substitutions live on service.environment below.
+    services.caddy = {
       service.image = "caddy:2.8";
       service.depends_on = [
         "archeion"
@@ -222,12 +248,19 @@ in
       service.network_mode = "host";
       service.volumes = [
         "${./Caddyfile.dev}:/etc/caddy/Caddyfile:ro"
+        "${edgeTlsSnippet}:/etc/caddy/tls.caddy:ro"
+      ]
+      ++ lib.optionals edgeTls [
         "${certDir}:/certs:ro"
       ];
-      # The domain for Caddyfile {$KALLIP_DOMAIN} substitution. Sourced
-      # from the same nix `devDomain` as the archeion/lesche env below so the
-      # whole stack agrees on one name.
-      service.environment.KALLIP_DOMAIN = devDomain;
+      # The substitutions the Caddyfile reads, all sourced from the same
+      # nix bindings as the archeion/lesche env below so the whole stack
+      # agrees on one name, scheme, and port.
+      service.environment = {
+        KALLIP_DOMAIN = devDomain;
+        KALLIP_EDGE_PORT = edgePort;
+        KALLIP_EDGE_SCHEME = edgeScheme;
+      };
       service.command = [
         "caddy"
         "run"
@@ -262,25 +295,24 @@ in
         PATH = "${workspace}/bin";
         KALLIP_ARCHEION_ADDR = "0.0.0.0:7100";
         KALLIP_ARCHEION_DATABASE_URL = "postgres://kallip:kallip@archeion-postgres:5432/kallip";
-        # WebAuthn RP: the id is the registrable domain <devDomain> (the
-        # plain host in the http shape; an IPv4 literal host degrades to
-        # the code-default prod pair -- the builder rejects IP RP ids and
-        # passkeys are browser-blocked on plain-http LAN regardless). The
-        # origin is webOrigin (its explicit :5173 port matches exactly;
-        # ALLOW_ANY_PORT stays false in both shapes).
-        KALLIP_ARCHEION_WEBAUTHN_RP_ID = if tlsOff && isIpHost then "kallipai.com" else devDomain;
-        KALLIP_ARCHEION_WEBAUTHN_RP_ORIGIN =
-          if tlsOff && isIpHost then "https://web.kallipai.com" else webOrigin;
+        # WebAuthn RP: the id is the registrable domain <devDomain> (an
+        # IPv4 literal host degrades to the code-default prod pair --
+        # the builder rejects IP RP ids). The origin is webOrigin (the
+        # edge's web face, port and all when non-default; ALLOW_ANY_PORT
+        # stays false).
+        KALLIP_ARCHEION_WEBAUTHN_RP_ID = if isIpHost then "kallipai.com" else devDomain;
+        KALLIP_ARCHEION_WEBAUTHN_RP_ORIGIN = if isIpHost then "https://web.kallipai.com" else webOrigin;
         KALLIP_ARCHEION_WEBAUTHN_RP_NAME = "kallipai";
         KALLIP_ARCHEION_WEBAUTHN_ALLOW_ANY_PORT = "false";
-        # Behind Caddy's TLS the session cookie is Secure; the plain-http
-        # shape needs it off.
-        KALLIP_ARCHEION_COOKIE_SECURE = if tlsOff then "false" else "true";
+        # The session cookie is Secure behind the https edge; the plain
+        # http edge needs it off.
+        KALLIP_ARCHEION_COOKIE_SECURE = if edgeTls then "true" else "false";
         KALLIP_ARCHEION_CORS_ORIGINS = webOrigin;
         # Share the session cookie across archeion.<devDomain> and
-        # lesche.<devDomain> (the per-subdomain topology). Single-origin
-        # deploys -- and the http shape's host-only vite origin -- leave
-        # this unset (host-only cookie); the merge below does.
+        # lesche.<devDomain>: the edge topology serves every service on a
+        # sibling subdomain in both shapes, so the Domain attribute is
+        # what stitches the session across them.
+        KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN = devDomain;
         # Caddy runs on the host network and proxies to archeion at 127.0.0.1,
         # so trust loopback for X-Forwarded-For. archeion binds 0.0.0.0:7100
         # (non-loopback), so the boot guard would otherwise clear the trusted
@@ -302,9 +334,10 @@ in
         # fixture, paired with the compliant token above; prod leaves it off.
         KALLIP_ARCHEION_ADMIN_USER_LOGIN = "true";
         RUST_LOG = "info";
-      }
-      // lib.optionalAttrs (!tlsOff) { KALLIP_ARCHEION_SESSION_COOKIE_DOMAIN = devDomain; }
-      // lib.optionalAttrs tlsOff { KALLIP_ARCHEION_OAUTH_REDIRECT_BASE = webOrigin; };
+        # OAuth callback URLs build from the browser-facing web origin;
+        # explicit so the value matches CORS verbatim.
+        KALLIP_ARCHEION_OAUTH_REDIRECT_BASE = webOrigin;
+      };
     };
 
     # Lesche: the data-plane relay. Owns the chat domain in its own Postgres
@@ -364,13 +397,10 @@ in
     services.instances = {
       service.useHostStore = true;
       service.command = [ "${workspace}/bin/kallip-instances" ];
-      # Loopback-tight publish in the https shape (the browser path is
-      # Caddy); the http shape opens 7300 to the LAN so browsers on other
-      # machines reach the instances API directly (token-gated +
-      # host-allowlisted; treat the LAN as a trusted surface).
-      service.ports = [
-        (if tlsOff then "${instancesHostPort}:7300" else "127.0.0.1:${instancesHostPort}:7300")
-      ];
+      # Loopback-tight publish: browsers ride the edge's
+      # instances.<devDomain> vhost in both shapes; the loopback publish
+      # serves host-side tooling (kallipctl, curl) only.
+      service.ports = [ "127.0.0.1:${instancesHostPort}:7300" ];
       service.env_file = [ ".env" ];
       # The archeion provisions the internal secret this service reads.
       service.depends_on = [ "archeion" ];
@@ -394,7 +424,7 @@ in
         # internal token (shared volume, read-only here).
         KALLIP_INSTANCES_ARCHEION_URL = "http://archeion:7100";
         KALLIP_POLIS_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/internal/internal-token";
-        KALLIP_INSTANCES_ALLOWED_HOSTS = if tlsOff then devDomain else "instances.${devDomain}";
+        KALLIP_INSTANCES_ALLOWED_HOSTS = "instances.${devDomain}";
         KALLIP_INSTANCES_CORS_ORIGINS = webOrigin;
         RUST_LOG = "info";
       };
