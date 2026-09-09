@@ -118,7 +118,8 @@ The module provisions its own PostgreSQL — one database per stateful
 service (archeion, lesche, files), peer-authenticated over the unix
 socket — so no database setup is needed. The daemon supervises tagma
 instances over a local control socket and is consumed by `kallipctl`
-and the instances proxy.
+and the instances proxy. Enabling the daemon also puts every platform
+command on the system PATH, so no separate CLI install step exists.
 
 The package options default to this flake's build for the host system;
 set one explicitly to pin a specific version. With `adminTokenFile`

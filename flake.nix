@@ -114,6 +114,7 @@
               inherit (builds) workspace;
             in
             {
+              inherit workspace;
               default = workspace;
               # Per-crate binaries (archeion; lesche; files; tagma). Cross-platform:
               # plain Rust builds. Their docker images are Linux-only (see

@@ -550,6 +550,11 @@ in
       # in tagmaUsers, not in a competing declaration.
       nix.settings.allowed-users = lib.mkForce (lib.unique (cfg.tagmaUsers ++ [ "@${cfg.group}" ]));
 
+      # Enabling the daemon puts every platform command on PATH (the
+      # full workspace build). The services still run from their own
+      # packages -- PATH is for people, not for the systemd units.
+      environment.systemPackages = [ hostPackages.workspace ];
+
       systemd.services.kallip-daemon = {
         description = "kallipai instance daemon";
         wantedBy = [ "multi-user.target" ];

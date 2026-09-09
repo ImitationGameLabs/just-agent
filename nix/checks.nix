@@ -125,6 +125,7 @@ in
               "kallip-files"
               "kallip-instances"
               "kallip-web-dist"
+              "workspace"
             ]
         );
       };
@@ -163,6 +164,10 @@ in
         };
       };
       failedAssertions = attrs: builtins.filter (a: !a.assertion) attrs.config.assertions;
+      # The daemon block installs the whole workspace build on PATH.
+      workspaceOnPath =
+        builtins.elem stubPackages.${pkgs.stdenv.hostPlatform.system}.workspace
+          aligned.config.environment.systemPackages;
       inherit (import ./lib.nix) bakeRuntimeConfig;
       stubDist = stubPackages.${pkgs.stdenv.hostPlatform.system}."kallip-web-dist";
       # No runtime keys: the site root is the bundle itself.
@@ -230,6 +235,8 @@ in
       test "${toString aligned.config.services.kallipai.polis.ports.lesche}" = "7200"
       test "${toString (builtins.length (failedAssertions aligned))}" = "0"
       test "${toString (builtins.length aligned.config.warnings)}" = "0"
+      # The daemon block installs the whole workspace build on PATH.
+      test "${toString workspaceOnPath}" = "1"
       # A polis-only drifted host stays warning-free: the L1.5 drift
       # warning fires at evaluation time only on hosts with the web
       # enabled (driftedWeb below asserts the firing side).
