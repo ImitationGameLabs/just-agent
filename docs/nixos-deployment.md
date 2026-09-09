@@ -85,6 +85,7 @@ two upgrade paths.
   services.kallipai = {
     daemon.enable = true;
     polis.enable = true;
+    web.enable = true;
   };
   services.caddy = {
     enable = true;
