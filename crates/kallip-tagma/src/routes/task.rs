@@ -12,119 +12,15 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use kallip_common::protocol::ApiError;
-use kallip_common::protocol::{TaskCheckpointRequest, TaskCreateRequest};
-use kallip_task::{ClosedReason, TaskFilter, TaskStore};
-use serde::Deserialize;
+use kallip_common::protocol::{
+    ApiError, TaskChainOpRequest, TaskCheckpointRequest, TaskCloseRequest, TaskCreateRequest,
+    TaskDispatchRequest, TaskForceRequest, TaskListQuery, TaskNoteRequest,
+};
+use kallip_task::{TaskFilter, TaskStore};
 
 use crate::bus::TaskChanged;
 use crate::state::SharedState;
 use tracing::warn;
-
-#[derive(Deserialize)]
-pub(crate) struct CreateTaskBody {
-    pub title: String,
-    pub creator: String,
-    #[serde(default)]
-    pub assignee: Option<String>,
-    #[serde(default)]
-    pub seats: Vec<String>,
-    #[serde(default)]
-    pub dossier_path: Option<String>,
-    #[serde(default)]
-    pub inbox_id_start: Option<i64>,
-    #[serde(default)]
-    pub inbox_id_end: Option<i64>,
-    #[serde(default)]
-    pub room_id: Option<String>,
-    #[serde(default)]
-    pub room_seq_start: Option<i64>,
-    #[serde(default)]
-    pub room_seq_end: Option<i64>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct StartBody {
-    pub actor: String,
-    #[serde(default)]
-    pub force: bool,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct CheckpointBody {
-    pub actor: String,
-    #[serde(default)]
-    pub note: Option<String>,
-    #[serde(default)]
-    pub receipt: bool,
-    #[serde(default)]
-    pub review: bool,
-    #[serde(default)]
-    pub waiting: Option<bool>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct AnnotateBody {
-    pub actor: String,
-    pub note: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct GateReportBody {
-    pub actor: String,
-    pub note: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct DispatchBody {
-    pub actor: String,
-    #[serde(default)]
-    pub seats: Option<Vec<String>>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct ChainOpBody {
-    pub actor: String,
-    pub op: String,
-    #[serde(default)]
-    pub detail: Option<String>,
-    #[serde(default)]
-    pub force: bool,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct CloseBody {
-    pub actor: String,
-    pub reason: ClosedReason,
-    #[serde(default)]
-    pub summary: Option<String>,
-    #[serde(default)]
-    pub force: bool,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct ReopenBody {
-    pub actor: String,
-    #[serde(default)]
-    pub force: bool,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct ArchiveBody {
-    pub actor: String,
-    #[serde(default)]
-    pub force: bool,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct ListQuery {
-    #[serde(default)]
-    pub status: Option<kallip_task::TaskStatus>,
-    #[serde(default)]
-    pub assignee: Option<String>,
-    #[serde(default)]
-    pub archived: bool,
-}
 
 /// The store lives behind a OnceLock installed at boot; a route seeing
 /// None means the tagma booted without it, which is an operator-facing
@@ -184,21 +80,9 @@ fn notify(state: &SharedState, verb: &str, export: &kallip_task::TaskExport) {
 }
 async fn create(
     State(state): State<SharedState>,
-    Json(body): Json<CreateTaskBody>,
+    Json(body): Json<TaskCreateRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
-    let spec = TaskCreateRequest {
-        title: body.title,
-        creator: body.creator,
-        assignee: body.assignee,
-        seats: body.seats,
-        dossier_path: body.dossier_path,
-        inbox_id_start: body.inbox_id_start,
-        inbox_id_end: body.inbox_id_end,
-        room_id: body.room_id,
-        room_seq_start: body.room_seq_start,
-        room_seq_end: body.room_seq_end,
-    };
-    let task = store(&state)?.create(spec).await.map_err(api_error)?;
+    let task = store(&state)?.create(body).await.map_err(api_error)?;
     let id = task.id;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
     notify(&state, "create", &export);
@@ -208,7 +92,7 @@ async fn create(
 async fn start(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<StartBody>,
+    Json(body): Json<TaskForceRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
     store(&state)?
         .start(id, &body.actor, body.force)
@@ -223,7 +107,7 @@ async fn start(
 /// the per-task detail. List first, then export what you need.
 async fn list(
     State(state): State<SharedState>,
-    Query(query): Query<ListQuery>,
+    Query(query): Query<TaskListQuery>,
 ) -> TaskResult<Vec<kallip_task::TaskExport>> {
     let filter = TaskFilter {
         status: query.status,
@@ -262,17 +146,10 @@ async fn export_all(State(state): State<SharedState>) -> TaskResult<Vec<kallip_t
 async fn checkpoint(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<CheckpointBody>,
+    Json(body): Json<TaskCheckpointRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
-    let spec = TaskCheckpointRequest {
-        actor: body.actor,
-        note: body.note,
-        receipt: body.receipt,
-        review: body.review,
-        waiting: body.waiting,
-    };
     store(&state)?
-        .checkpoint(id, spec)
+        .checkpoint(id, body)
         .await
         .map_err(api_error)?;
     let export = store(&state)?.export(id).await.map_err(api_error)?;
@@ -283,7 +160,7 @@ async fn checkpoint(
 async fn annotate(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<AnnotateBody>,
+    Json(body): Json<TaskNoteRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
     store(&state)?
         .annotate(id, &body.actor, body.note)
@@ -297,7 +174,7 @@ async fn annotate(
 async fn gate_report(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<GateReportBody>,
+    Json(body): Json<TaskNoteRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
     store(&state)?
         .gate_report(id, &body.actor, body.note)
@@ -311,7 +188,7 @@ async fn gate_report(
 async fn dispatch(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<DispatchBody>,
+    Json(body): Json<TaskDispatchRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
     store(&state)?
         .dispatch(id, &body.actor, body.seats)
@@ -325,7 +202,7 @@ async fn dispatch(
 async fn chain_op(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<ChainOpBody>,
+    Json(body): Json<TaskChainOpRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
     store(&state)?
         .chain_op(id, &body.actor, &body.op, body.detail, body.force)
@@ -339,7 +216,7 @@ async fn chain_op(
 async fn close(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<CloseBody>,
+    Json(body): Json<TaskCloseRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
     store(&state)?
         .close(
@@ -360,7 +237,7 @@ async fn close(
 async fn reopen(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<ReopenBody>,
+    Json(body): Json<TaskForceRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
     store(&state)?
         .reopen(id, &body.actor, body.force)
@@ -374,7 +251,7 @@ async fn reopen(
 async fn archive(
     State(state): State<SharedState>,
     Path(id): Path<i64>,
-    Json(body): Json<ArchiveBody>,
+    Json(body): Json<TaskForceRequest>,
 ) -> TaskResult<kallip_task::TaskExport> {
     store(&state)?
         .archive_task(id, &body.actor, body.force)

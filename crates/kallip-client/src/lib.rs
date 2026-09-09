@@ -1,10 +1,7 @@
 pub mod client;
 pub mod types;
 
-pub use client::{
-    ChainOpRequest, CheckpointRequest, CloseRequest, CreateTaskRequest, DispatchRequest,
-    ForceRequest, NoteRequest, TagmaClient, TagmaClientBuilder, TaskExport, TaskListQuery,
-};
+pub use client::{TagmaClient, TagmaClientBuilder};
 pub use kallip_common::agentid::AgentId;
 pub use kallip_common::approval::{ApprovalStatus, ToolCallContent};
 pub use kallip_common::policy::{ExecDecision, ExecOverride, ExecPolicy, PolicyPreset};
@@ -14,6 +11,9 @@ pub use kallip_common::protocol::{
     ListApprovalsResponse, MessageResponse, TokenBudgetResponse, TokenBudgetUpdateRequest,
     UpdateActivityRequest, UpdateAgentMetadataRequest,
 };
+pub use kallip_common::protocol::{
+    ClosedReason, TaskChainOpRequest, TaskCheckpointRequest, TaskCloseRequest, TaskCreateRequest,
+    TaskDispatchRequest, TaskExport, TaskForceRequest, TaskListQuery, TaskNoteRequest,
+};
 pub use kallip_common::protocol::{InboxEntry, InboxSummary};
-pub use kallip_task::ClosedReason;
 pub use types::ListApprovalsParams;

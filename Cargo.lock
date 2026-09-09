@@ -2547,7 +2547,6 @@ dependencies = [
  "futures-util",
  "just-llm-client",
  "kallip-common",
- "kallip-task",
  "reqwest",
  "serde",
  "serde_json",

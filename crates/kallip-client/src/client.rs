@@ -11,11 +11,7 @@ mod lesche;
 mod status;
 mod task;
 mod team;
-pub use kallip_task::TaskExport;
-pub use task::{
-    ChainOpRequest, CheckpointRequest, CloseRequest, CreateTaskRequest, DispatchRequest,
-    ForceRequest, NoteRequest, TaskListQuery,
-};
+pub use kallip_common::protocol::TaskExport;
 
 struct Inner {
     base_url: String,

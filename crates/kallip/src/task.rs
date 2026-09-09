@@ -7,9 +7,10 @@
 use std::io::Cursor;
 
 use anyhow::{Result, anyhow};
-use kallip_client::{
-    ChainOpRequest, CheckpointRequest, CloseRequest, ClosedReason, CreateTaskRequest,
-    DispatchRequest, ForceRequest, NoteRequest, TagmaClient, TaskExport, TaskListQuery,
+use kallip_client::TagmaClient;
+use kallip_common::protocol::{
+    ClosedReason, TaskChainOpRequest, TaskCheckpointRequest, TaskCloseRequest, TaskCreateRequest,
+    TaskDispatchRequest, TaskExport, TaskForceRequest, TaskListQuery, TaskNoteRequest, TaskStatus,
 };
 
 use crate::args::{TaskChainOpType, TaskCloseReason, TaskCommand, TaskStartArgs};
@@ -29,7 +30,7 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
                     client
                         .task_start(
                             id,
-                            &ForceRequest {
+                            &TaskForceRequest {
                                 actor,
                                 force: args.force,
                             },
@@ -41,11 +42,11 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
                         anyhow!("give a task id to pick up, or --title to register a new task")
                     })?;
                     client
-                        .task_create(&CreateTaskRequest {
+                        .task_create(&TaskCreateRequest {
                             title: title.to_string(),
                             creator: args.creator.clone().unwrap_or_else(|| actor.clone()),
                             assignee: args.assignee.clone(),
-                            seats: (!args.seats.is_empty()).then(|| args.seats.clone()),
+                            seats: args.seats.clone(),
                             dossier_path: args.dossier.as_ref().map(|p| p.display().to_string()),
                             inbox_id_start: args.inbox_start,
                             inbox_id_end: args.inbox_end,
@@ -64,7 +65,7 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
             let task = client
                 .task_checkpoint(
                     args.id,
-                    &CheckpointRequest {
+                    &TaskCheckpointRequest {
                         actor,
                         note: args.note.clone(),
                         receipt: args.receipt,
@@ -80,7 +81,7 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
             let task = client
                 .task_close(
                     args.id,
-                    &CloseRequest {
+                    &TaskCloseRequest {
                         actor,
                         reason: close_reason(args.reason),
                         summary: args.summary.clone(),
@@ -101,7 +102,7 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
             let task = client
                 .task_reopen(
                     args.id,
-                    &ForceRequest {
+                    &TaskForceRequest {
                         actor,
                         force: args.force,
                     },
@@ -115,7 +116,7 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
             let task = client
                 .task_annotate(
                     args.id,
-                    &NoteRequest {
+                    &TaskNoteRequest {
                         actor,
                         note: args.note.clone(),
                     },
@@ -135,7 +136,7 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
                     .collect::<Vec<String>>()
             });
             let task = client
-                .task_dispatch(args.id, &DispatchRequest { actor, seats })
+                .task_dispatch(args.id, &TaskDispatchRequest { actor, seats })
                 .await?;
             print_state_line(&task);
         }
@@ -144,7 +145,7 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
             let task = client
                 .task_gate_report(
                     args.id,
-                    &NoteRequest {
+                    &TaskNoteRequest {
                         actor,
                         note: args.note.clone(),
                     },
@@ -157,7 +158,7 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
             let task = client
                 .task_chain_op(
                     args.id,
-                    &ChainOpRequest {
+                    &TaskChainOpRequest {
                         actor,
                         op: chain_op_name(args.op).to_string(),
                         detail: args.detail.clone(),
@@ -172,7 +173,7 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
             let task = client
                 .task_archive(
                     args.id,
-                    &ForceRequest {
+                    &TaskForceRequest {
                         actor,
                         force: args.force,
                     },
@@ -184,11 +185,10 @@ pub async fn run_task(client: &TagmaClient, cmd: &TaskCommand) -> Result<()> {
             let status = args
                 .status
                 .as_deref()
-                .map(|s| match s {
-                    "queued" | "in_progress" | "review" | "closed" => Ok(s.to_string()),
-                    _ => Err(anyhow!(
-                        "unknown status '{s}' (queued|in_progress|review|closed)"
-                    )),
+                .map(|s| {
+                    TaskStatus::parse(s).ok_or_else(|| {
+                        anyhow!("unknown status '{s}' (queued|in_progress|review|closed)")
+                    })
                 })
                 .transpose()?;
             let query = TaskListQuery {

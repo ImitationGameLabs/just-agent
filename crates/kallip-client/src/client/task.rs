@@ -4,96 +4,13 @@
 
 use super::TagmaClient;
 use anyhow::{Context, Result};
-use kallip_task::TaskExport;
-use serde::Serialize;
-
-#[derive(Debug, Serialize)]
-pub struct CreateTaskRequest {
-    pub title: String,
-    pub creator: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assignee: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seats: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dossier_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inbox_id_start: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inbox_id_end: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub room_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub room_seq_start: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub room_seq_end: Option<i64>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ForceRequest {
-    pub actor: String,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub force: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CheckpointRequest {
-    pub actor: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub receipt: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub review: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub waiting: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct NoteRequest {
-    pub actor: String,
-    pub note: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DispatchRequest {
-    pub actor: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seats: Option<Vec<String>>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ChainOpRequest {
-    pub actor: String,
-    pub op: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub force: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CloseRequest {
-    pub actor: String,
-    pub reason: kallip_task::ClosedReason,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub force: bool,
-}
-
-#[derive(Debug, Default, Serialize)]
-pub struct TaskListQuery {
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub archived: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assignee: Option<String>,
-}
+use kallip_common::protocol::{
+    TaskChainOpRequest, TaskCheckpointRequest, TaskCloseRequest, TaskCreateRequest,
+    TaskDispatchRequest, TaskExport, TaskForceRequest, TaskListQuery, TaskNoteRequest,
+};
 
 impl TagmaClient {
-    pub async fn task_create(&self, req: &CreateTaskRequest) -> Result<TaskExport> {
+    pub async fn task_create(&self, req: &TaskCreateRequest) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(self.inner.http.post(self.url("/tasks")).json(&req))
                 .send()
@@ -104,7 +21,7 @@ impl TagmaClient {
         .await
     }
 
-    pub async fn task_start(&self, id: i64, req: &ForceRequest) -> Result<TaskExport> {
+    pub async fn task_start(&self, id: i64, req: &TaskForceRequest) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(
                 self.inner
@@ -152,7 +69,11 @@ impl TagmaClient {
         .await
     }
 
-    pub async fn task_checkpoint(&self, id: i64, req: &CheckpointRequest) -> Result<TaskExport> {
+    pub async fn task_checkpoint(
+        &self,
+        id: i64,
+        req: &TaskCheckpointRequest,
+    ) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(
                 self.inner
@@ -168,7 +89,7 @@ impl TagmaClient {
         .await
     }
 
-    pub async fn task_annotate(&self, id: i64, req: &NoteRequest) -> Result<TaskExport> {
+    pub async fn task_annotate(&self, id: i64, req: &TaskNoteRequest) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(
                 self.inner
@@ -184,7 +105,7 @@ impl TagmaClient {
         .await
     }
 
-    pub async fn task_gate_report(&self, id: i64, req: &NoteRequest) -> Result<TaskExport> {
+    pub async fn task_gate_report(&self, id: i64, req: &TaskNoteRequest) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(
                 self.inner
@@ -200,7 +121,7 @@ impl TagmaClient {
         .await
     }
 
-    pub async fn task_dispatch(&self, id: i64, req: &DispatchRequest) -> Result<TaskExport> {
+    pub async fn task_dispatch(&self, id: i64, req: &TaskDispatchRequest) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(
                 self.inner
@@ -216,7 +137,7 @@ impl TagmaClient {
         .await
     }
 
-    pub async fn task_chain_op(&self, id: i64, req: &ChainOpRequest) -> Result<TaskExport> {
+    pub async fn task_chain_op(&self, id: i64, req: &TaskChainOpRequest) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(
                 self.inner
@@ -232,7 +153,7 @@ impl TagmaClient {
         .await
     }
 
-    pub async fn task_close(&self, id: i64, req: &CloseRequest) -> Result<TaskExport> {
+    pub async fn task_close(&self, id: i64, req: &TaskCloseRequest) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(
                 self.inner
@@ -248,7 +169,7 @@ impl TagmaClient {
         .await
     }
 
-    pub async fn task_reopen(&self, id: i64, req: &ForceRequest) -> Result<TaskExport> {
+    pub async fn task_reopen(&self, id: i64, req: &TaskForceRequest) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(
                 self.inner
@@ -264,7 +185,7 @@ impl TagmaClient {
         .await
     }
 
-    pub async fn task_archive(&self, id: i64, req: &ForceRequest) -> Result<TaskExport> {
+    pub async fn task_archive(&self, id: i64, req: &TaskForceRequest) -> Result<TaskExport> {
         self.handle_response(
             self.with_auth(
                 self.inner
