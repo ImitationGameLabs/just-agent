@@ -74,6 +74,8 @@ pub enum Error {
 
     #[error("invalid association keys: {detail}")]
     AssociationInvalid { detail: String },
+    #[error("task {id}: stored {field} is corrupt")]
+    CorruptRecord { id: i64, field: &'static str },
 
     #[error(transparent)]
     Db(#[from] sea_orm::DbErr),

@@ -6,6 +6,7 @@ use kallip_blob_store::LocalBackend;
 use kallip_common::protocol::{TaskCheckpointRequest, TaskCreateRequest};
 use kallip_task::store::TaskFilter;
 use kallip_task::{ClosedReason, Error, TaskStatus, TaskStore};
+use sea_orm::ConnectionTrait;
 
 fn checkpoint(
     actor: &str,
@@ -692,6 +693,38 @@ async fn zero_seat_dispatch_closes_without_receipts() {
         .await
         .unwrap();
     assert_eq!(t.status, "closed");
+}
+
+#[tokio::test]
+async fn dispatch_with_corrupt_stored_seats_fails_loudly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("tasks.db");
+    let store = TaskStore::open(&db_path).await.unwrap();
+    let t = store
+        .create(spec("corrupt seats", "dev", &["r1"]))
+        .await
+        .unwrap();
+    store.start(t.id, "dev", false).await.unwrap();
+
+    // Damage the stored roster out-of-band: dispatch(None) re-reads it and
+    // must refuse loudly instead of folding the damaged record to zero seats.
+    let raw = sea_orm::Database::connect(format!("sqlite://{}?mode=rw", db_path.display()))
+        .await
+        .unwrap();
+    raw.execute_unprepared(&format!(
+        "UPDATE tasks SET seats = '{{oops' WHERE id = {}",
+        t.id
+    ))
+    .await
+    .unwrap();
+
+    let err = store.dispatch(t.id, "root", None).await.unwrap_err();
+    match err {
+        Error::CorruptRecord { id, field } => {
+            assert_eq!((id, field), (t.id, "seats"));
+        }
+        other => panic!("expected CorruptRecord, got {other}"),
+    }
 }
 
 #[tokio::test]

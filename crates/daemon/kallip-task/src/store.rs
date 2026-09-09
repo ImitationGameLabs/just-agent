@@ -780,9 +780,17 @@ impl TaskStore {
                                 });
                             }
                         }
-                        let roster = seats.unwrap_or_else(|| {
-                            serde_json::from_str::<Vec<String>>(&row.seats).unwrap_or_default()
-                        });
+                        // A damaged stored roster must not fold to zero seats.
+                        let roster =
+                            match seats {
+                                Some(roster) => roster,
+                                None => serde_json::from_str::<Vec<String>>(&row.seats).map_err(
+                                    |_| Error::CorruptRecord {
+                                        id: row.id,
+                                        field: "seats",
+                                    },
+                                )?,
+                            };
                         let payload = serde_json::json!({ "seats": roster });
                         append_event_tx(
                             tx,

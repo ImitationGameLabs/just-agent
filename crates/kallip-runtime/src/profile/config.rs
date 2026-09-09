@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
 use just_llm_client::family;
@@ -175,6 +176,13 @@ fn load_file(path: &Path) -> Result<ProfileConfig> {
         parking: file.parking,
     })
 }
+/// Distinct temp name per call: two saves of the same config never race
+/// on one temp file; the counter makes this clock-independent.
+fn toml_tmp_path(path: &Path) -> PathBuf {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    path.with_extension(format!("toml.tmp.{}.{}", std::process::id(), seq))
+}
 
 /// Persist the auto-marked default by inserting a `default` key into the
 /// original file text, ahead of the first table header. Working on the text
@@ -222,7 +230,7 @@ fn write_back_default(raw: &str, default: &str, path: &Path) -> Result<()> {
         .context("profiles config path has no parent directory")?;
     std::fs::create_dir_all(parent)
         .with_context(|| format!("failed to create config dir {}", parent.display()))?;
-    let tmp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
+    let tmp = toml_tmp_path(path);
     std::fs::write(&tmp, &text)
         .with_context(|| format!("failed to write profiles config to {}", tmp.display()))?;
     #[cfg(unix)]
@@ -290,7 +298,7 @@ pub fn save(config: &ProfileConfig, path: &Path) -> Result<()> {
     std::fs::create_dir_all(parent)
         .with_context(|| format!("failed to create config dir {}", parent.display()))?;
     // Write to a temp file in the same directory, then rename for atomicity.
-    let tmp = path.with_extension(format!("toml.tmp.{}", std::process::id()));
+    let tmp = toml_tmp_path(path);
     std::fs::write(&tmp, &toml)
         .with_context(|| format!("failed to write profiles config to {}", tmp.display()))?;
     #[cfg(unix)]
