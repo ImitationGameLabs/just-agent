@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use kallip_client::TagmaClient;
@@ -88,13 +89,11 @@ fn read_lock(path: &Path) -> Result<Option<LockFile>> {
 }
 
 /// Distinct temp name per call: two writers of the same archive never
-/// race on one temp file (the loser's rename would publish a mix).
+/// race on one temp file; the counter makes this clock-independent.
 fn lock_tmp_path(path: &Path) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    path.with_extension(format!("lock.tmp.{}.{}", std::process::id(), nanos))
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    path.with_extension(format!("lock.tmp.{}.{}", std::process::id(), seq))
 }
 
 fn write_lock_atomic(path: &Path, lock: &LockFile) -> Result<()> {
@@ -538,5 +537,108 @@ mod tests {
         let lock = read_lock(&good).unwrap().expect("valid lock parses");
         assert_eq!(lock.roles.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    fn archive(role: &str, id: &str) -> LockFile {
+        LockFile {
+            roles: vec![LockRole {
+                name: role.to_string(),
+                id: id.to_string(),
+                converged_at: "2026-01-01T00:00:00+00:00".to_string(),
+            }],
+        }
+    }
+
+    fn write_scratch_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("kallip-lock-write-{}-{}", std::process::id(), name));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn fresh_write_publishes_the_archive_whole() {
+        let dir = write_scratch_dir("fresh");
+        let path = dir.join("team.lock");
+        assert!(read_lock(&path).unwrap().is_none());
+        write_lock_atomic(
+            &path,
+            &archive("dev", "11111111-1111-4111-8111-111111111111"),
+        )
+        .unwrap();
+        let lock = read_lock(&path).unwrap().expect("published archive parses");
+        assert_eq!(lock.roles.len(), 1);
+        assert_eq!(lock.roles[0].name, "dev");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn overwrite_publishes_the_new_archive_whole() {
+        let dir = write_scratch_dir("overwrite");
+        let path = dir.join("team.lock");
+        write_lock_atomic(
+            &path,
+            &archive("dev", "11111111-1111-4111-8111-111111111111"),
+        )
+        .unwrap();
+        write_lock_atomic(
+            &path,
+            &archive("ops", "22222222-2222-4222-8222-222222222222"),
+        )
+        .unwrap();
+        let lock = read_lock(&path).unwrap().expect("published archive parses");
+        assert_eq!(lock.roles.len(), 1);
+        assert_eq!(lock.roles[0].name, "ops");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn orphan_temp_from_a_crash_does_not_disturb_the_publish() {
+        let dir = write_scratch_dir("orphan");
+        let path = dir.join("team.lock");
+        write_lock_atomic(
+            &path,
+            &archive("dev", "11111111-1111-4111-8111-111111111111"),
+        )
+        .unwrap();
+        let orphan = lock_tmp_path(&path);
+        std::fs::write(&orphan, "half-written garbage from a crashed writer").unwrap();
+        write_lock_atomic(
+            &path,
+            &archive("ops", "22222222-2222-4222-8222-222222222222"),
+        )
+        .unwrap();
+        let lock = read_lock(&path).unwrap().expect("published archive parses");
+        assert_eq!(lock.roles.len(), 1);
+        assert_eq!(lock.roles[0].name, "ops");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn racing_writers_publish_one_whole_archive() {
+        let dir = write_scratch_dir("race");
+        let path = dir.join("team.lock");
+        let p1 = path.clone();
+        let p2 = path.clone();
+        let h1 = std::thread::spawn(move || {
+            write_lock_atomic(&p1, &archive("dev", "11111111-1111-4111-8111-111111111111"))
+        });
+        let h2 = std::thread::spawn(move || {
+            write_lock_atomic(&p2, &archive("ops", "22222222-2222-4222-8222-222222222222"))
+        });
+        h1.join().unwrap().unwrap();
+        h2.join().unwrap().unwrap();
+        let lock = read_lock(&path).unwrap().expect("published archive parses");
+        assert_eq!(lock.roles.len(), 1);
+        assert!(lock.roles[0].name == "dev" || lock.roles[0].name == "ops");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lock_temp_names_are_unique_across_many_calls() {
+        let base = Path::new("/tmp/kallip-team-tests/tagma.lock");
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..100 {
+            assert!(seen.insert(lock_tmp_path(base)));
+        }
     }
 }
