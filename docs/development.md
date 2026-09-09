@@ -31,7 +31,8 @@ Set `KALLIP_EDGE_TLS=off` in `.env` for a plain-http edge with no mkcert
 and no DNS-trust setup. Keep `KALLIP_DOMAIN=localhost` (the default is
 the prod domain; the quick start pins localhost) and move the edge off
 the privileged default port: `KALLIP_EDGE_PORT=8080`. Then `arion up -d`
-+ `deno task dev` and open `http://web.localhost:8080` — browsers
+
+- `deno task dev` and open `http://web.localhost:8080` — browsers
 resolve every `*.localhost` name to the loopback interface, so no
 hosts-file entry is needed. Login surface: admin key + GitHub oauth;
 passkeys work on localhost out of the box (a browser secure-context

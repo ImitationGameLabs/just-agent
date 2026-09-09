@@ -87,7 +87,9 @@ export default defineConfig({
     // caddy proxies the upgrade either way), while vite's own websocket
     // stays on 5173.
     ...(edgeTls
-      ? { ws: { protocol: "wss" as const, host: webHost, clientPort: edgePort } }
+      ? {
+          ws: { protocol: "wss" as const, host: webHost, clientPort: edgePort },
+        }
       : { ws: { host: webHost, clientPort: edgePort } }),
   },
 });
