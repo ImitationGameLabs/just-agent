@@ -62,6 +62,11 @@ fn start_daemon() -> DaemonProc {
         // derivation would follow the host HOME); the XDG data anchor
         // isolates the instance trees.
         .env("KALLIP_DAEMON_RECORD_DIR", state_dir.path().join("records"))
+        // The daemon owns the relay-URL defaults now (the instances-side
+        // fill is retired): the unit env would carry these, so the
+        // relay-intent e2e exercises the daemon-side fill against them.
+        .env("KALLIP_DAEMON_RELAY_ARCHEION_URL", "http://localhost:7100")
+        .env("KALLIP_DAEMON_RELAY_LESCHE_URL", "http://localhost:7200")
         .env("XDG_DATA_HOME", data_dir.path())
         .env(
             "KALLIP_BIN_DIR",
@@ -317,11 +322,7 @@ async fn relay_intent_spawn_persists_filled_urls() {
         .call(kallip_daemon_common::wire::RequestBody::List)
         .await;
 
-    let backend = kallip_instances::backend::UdsBackend::arc_with_relays(
-        DaemonClient::new(&daemon.socket),
-        "http://localhost:7100".into(),
-        "http://localhost:7200".into(),
-    );
+    let backend = kallip_instances::backend::UdsBackend::arc(DaemonClient::new(&daemon.socket));
     let workspace = tempfile::tempdir().expect("workspace tempdir");
     let spawned = backend
         .spawn(
@@ -380,11 +381,7 @@ async fn local_spawn_meta_stays_free_of_relay_keys() {
         .call(kallip_daemon_common::wire::RequestBody::List)
         .await;
 
-    let backend = kallip_instances::backend::UdsBackend::arc_with_relays(
-        DaemonClient::new(&daemon.socket),
-        "http://localhost:7100".into(),
-        "http://localhost:7200".into(),
-    );
+    let backend = kallip_instances::backend::UdsBackend::arc(DaemonClient::new(&daemon.socket));
     let workspace = tempfile::tempdir().expect("workspace tempdir");
     let spawned = backend
         .spawn(
@@ -697,8 +694,6 @@ fn refuses_to_start_unauthenticated_on_non_loopback() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
-        relay_archeion_url: String::new(),
-        relay_lesche_url: String::new(),
         archeion_internal_url: None,
         archeion_internal_token: None,
         archeion_internal_token_file: None,
@@ -716,8 +711,6 @@ fn open_mode_allowed_on_loopback() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
-        relay_archeion_url: String::new(),
-        relay_lesche_url: String::new(),
         archeion_internal_url: None,
         archeion_internal_token: None,
         archeion_internal_token_file: None,
@@ -738,8 +731,6 @@ fn half_configured_archeion_url_refuses_to_start() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
-        relay_archeion_url: String::new(),
-        relay_lesche_url: String::new(),
         archeion_internal_url: Some("http://127.0.0.1:7100".into()),
         archeion_internal_token: None,
         archeion_internal_token_file: None,
@@ -762,8 +753,6 @@ fn half_configured_archeion_token_refuses_to_start() {
         daemon_socket: None,
         token: None,
         backend: "daemon".into(),
-        relay_archeion_url: String::new(),
-        relay_lesche_url: String::new(),
         archeion_internal_url: None,
         archeion_internal_token: Some("internal-secret".into()),
         archeion_internal_token_file: None,

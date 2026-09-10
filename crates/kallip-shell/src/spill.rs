@@ -1,10 +1,10 @@
-//! Spill families under temp_dir()/kallipai/<uid>/.
+//! Spill families under `temp_dir()/kallipai/<uid>/`.
 //!
 //! The shared `kallipai/` top root is world-traversable (0755) so every user
 //! can materialize their own `<uid>/` subtree; everything below the uid dir
 //! is owner-only (0700). Families: the message-entry spill (message/, called
 //! from the agent runtime), the shell capture spill (bash-exec/, content-
-//! addressed hash names), and background task output dirs (bg/<task-id>/,
+//! addressed hash names), and background task output dirs (`bg/<task-id>/`,
 //! per-task directories rather than content-addressed files).
 //!
 //! One safe-write implementation serves every family
@@ -57,13 +57,13 @@ pub struct SpillLayout {
     pub hash_hex_chars: usize,
 }
 
-/// The message-entry spill family: kallipai/<uid>/message/{2 hex}/{14 hex}.txt.
+/// The message-entry spill family: `kallipai/<uid>/message/{2 hex}/{14 hex}.txt`.
 pub const MESSAGE_SPILL: SpillLayout = SpillLayout {
     subdir: "message",
     prefix: "",
     hash_hex_chars: 16,
 };
-/// The bash-exec capture spill family: kallipai/<uid>/bash-exec/{2 hex}/{14 hex}.txt.
+/// The bash-exec capture spill family: `kallipai/<uid>/bash-exec/{2 hex}/{14 hex}.txt`.
 pub const BASH_EXEC_SPILL: SpillLayout = SpillLayout {
     subdir: "bash-exec",
     prefix: "",
@@ -111,7 +111,7 @@ pub fn bg_task_dir(task_id: &str) -> std::io::Result<PathBuf> {
 /// `O_CREAT | O_EXCL | O_NOFOLLOW`: the leaf must not pre-exist and a
 /// symlink swapped in at the leaf is refused — the same leaf discipline as
 /// `spill_content`, for output files that live in a family dir without
-/// being content-addressed (bg/<task-id>/out.log). The name is spliced
+/// being content-addressed (`bg/<task-id>/out.log`). The name is spliced
 /// into the path verbatim: callers must pass a single safe path
 /// component (no separators, no `..`).
 pub fn create_private_file(dir: &Path, name: &str) -> std::io::Result<File> {

@@ -144,6 +144,26 @@ in
         '';
       };
 
+      relayArchUrl = lib.mkOption {
+        type = lib.types.str;
+        default = "http://127.0.0.1:${toString polisPorts.archeion}";
+        description = ''
+          Archeion URL the daemon fills into relay-intent spawns that
+          omit it (KALLIP_DAEMON_RELAY_ARCHEION_URL). The default
+          follows the configured polis port, not the binary's
+          compiled-in 7100 (the files NOTIFY_URL pattern).
+        '';
+      };
+
+      relayLescheUrl = lib.mkOption {
+        type = lib.types.str;
+        default = "http://127.0.0.1:${toString polisPorts.lesche}";
+        description = ''
+          Lesche counterpart of `relayArchUrl`
+          (KALLIP_DAEMON_RELAY_LESCHE_URL; tunnel + envelopes).
+        '';
+      };
+
       tagmaUsers = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [ ];
@@ -630,6 +650,11 @@ in
           # NixOS has no /bin/bash; the login-environment harvest needs a
           # fixed administrative bash, never the caller's shell.
           KALLIP_HARVEST_BASH = "${pkgs.bash}/bin/bash";
+          # Relay defaults the daemon fills into relay-intent spawns that
+          # omit them (before the record snapshot is written, so restarts
+          # replay the filled env).
+          KALLIP_DAEMON_RELAY_ARCHEION_URL = cfg.relayArchUrl;
+          KALLIP_DAEMON_RELAY_LESCHE_URL = cfg.relayLescheUrl;
         };
 
         serviceConfig = {
@@ -888,10 +913,6 @@ in
             KALLIP_DAEMON_SOCKET = daemonSocket;
             KALLIP_INSTANCES_ARCHEION_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
             KALLIP_POLIS_INTERNAL_TOKEN_FILE = "/var/lib/kallipai/archeion/internal-token";
-            # Relay defaults must follow the configured polis ports, not the
-            # binary's compiled-in 7100/7200 (the files NOTIFY_URL pattern).
-            KALLIP_INSTANCES_RELAY_ARCHEION_URL = "http://127.0.0.1:${toString polisPorts.archeion}";
-            KALLIP_INSTANCES_RELAY_LESCHE_URL = "http://127.0.0.1:${toString polisPorts.lesche}";
           }
           // envOpt "KALLIP_INSTANCES_CORS_ORIGINS" polisCfg.instances.corsOrigins
           // envOpt "KALLIP_INSTANCES_ALLOWED_HOSTS" polisCfg.instances.allowedHosts;

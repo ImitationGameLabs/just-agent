@@ -757,6 +757,22 @@ pub fn spawn(
     owner_uid: u32,
     request_user: Option<&str>,
 ) -> Result<(u32, u16), SpawnError> {
+    // Relay-intent default injection (the daemon-side fill): a request
+    // env signaling relay intent (any `KALLIP_TAGMA_RELAY_*` entry) gets
+    // missing URL filled from the daemon's own environment; explicit
+    // values pass through; an unset -- or empty (the kallip-runtime's
+    // persistence.rs `filter(!is_empty)` precedent) -- daemon value
+    // means unconfigured:
+    // nothing is filled for that URL. This runs before the record
+    // snapshot is written, so the record stores the filled env: a restart
+    // replays relay-complete env, and the fill cannot be lost between a
+    // successful spawn and the first restart (the local-only detection
+    // only covers the request moment).
+    let user_env = fill_relay_defaults(
+        user_env,
+        daemon_relay_url("KALLIP_DAEMON_RELAY_ARCHEION_URL").as_deref(),
+        daemon_relay_url("KALLIP_DAEMON_RELAY_LESCHE_URL").as_deref(),
+    );
     // --- validate ---------------------------------------------------------
     if !valid_slug(slug) {
         return Err(SpawnError::Invalid(format!(
@@ -832,7 +848,7 @@ pub fn spawn(
         }
     }
 
-    validate_user_env(user_env)?;
+    validate_user_env(&user_env)?;
 
     // --- register ---------------------------------------------------------
     let record = records::InstanceRecord {
@@ -860,7 +876,7 @@ pub fn spawn(
         &data_dir,
         slug,
         &workspace_canon,
-        user_env,
+        &user_env,
         exe,
         timeout,
         &identity,
@@ -892,6 +908,75 @@ pub fn spawn(
 /// Non-canonical `b` still compares correctly when it is a prefix/suffix
 /// match of the canonical `a` only in pathological trees; existing
 /// workspaces were canonicalized when written.
+/// The daemon-side relay-URL defaults (read once per spawn from this
+/// process's environment; the unit env carries them). An unset -- or
+/// empty, aligned with the kallip-runtime's persistence.rs
+/// `filter(!is_empty)` precedent
+/// so a stray empty value cannot silently switch the fill off -- value
+/// counts as unconfigured.
+fn daemon_relay_url(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|v| !v.is_empty())
+}
+
+/// Fill the relay-URL entries for a relay-intent request env.
+///
+/// Fires only when the env signals relay intent (any
+/// `KALLIP_TAGMA_RELAY_*` entry): each URL key survives exactly
+/// once, with its explicit value or -- when absent and the daemon has
+/// one configured -- the default. A URL the daemon has not configured
+/// is left untouched (an explicit empty entry then dies in
+/// `validate_user_env`, the same fail-loud end an empty default
+/// reached before the fill moved here); no relay signal at all
+/// returns the env unchanged -- local-only spawns must not carry a
+/// URL the tagma boot would fail on.
+fn fill_relay_defaults(
+    env: &[String],
+    archeion: Option<&str>,
+    lesche: Option<&str>,
+) -> Vec<String> {
+    let mut env = env.to_vec();
+    if !env.iter().any(|e| e.starts_with("KALLIP_TAGMA_RELAY_")) {
+        return env;
+    }
+    fill_one(&mut env, "KALLIP_TAGMA_RELAY_ARCHEION_URL=", archeion);
+    fill_one(&mut env, "KALLIP_TAGMA_RELAY_LESCHE_URL=", lesche);
+    env
+}
+
+/// One entry per key survives: the first explicit value wins
+/// outright, an empty or absent key is filled with the configured
+/// default (None: left as-is), and every duplicate is dropped.
+/// Ordering must stay irrelevant downstream -- the spawn helper passes
+/// duplicate pairs straight to execve, and the daemon's env validation
+/// rejects empty values -- so collapsing here is the one place that
+/// keeps both properties airtight.
+fn fill_one(env: &mut Vec<String>, prefix: &str, default: Option<&str>) {
+    let explicit = env
+        .iter()
+        .any(|e| e.strip_prefix(prefix).is_some_and(|v| !v.is_empty()));
+    let mut kept = false;
+    env.retain(|e| {
+        let Some(v) = e.strip_prefix(prefix) else {
+            return true;
+        };
+        if kept || (explicit && v.is_empty()) {
+            return false;
+        }
+        kept = true;
+        true
+    });
+    if explicit {
+        return;
+    }
+    let Some(default) = default else {
+        return;
+    };
+    match env.iter_mut().find(|e| e.starts_with(prefix)) {
+        Some(slot) => *slot = format!("{prefix}{default}"),
+        None => env.push(format!("{prefix}{default}")),
+    }
+}
+
 fn overlaps(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
@@ -2001,6 +2086,158 @@ mod tests {
         let error = validate_user_env(&["KALLIP_TAGMA_ADDR=not-an-addr".into()])
             .expect_err("a bad addr shape dies at request time");
         assert!(error.to_string().contains("SocketAddr"), "{error}");
+    }
+
+    // --- fill_relay_defaults --------------------------------------------
+    // The daemon's own URL env is a parameter here, so the branches
+    // test without process-global env mutation.
+
+    const ARCHEION: &str = "http://localhost:7100";
+    const LESCHE: &str = "http://localhost:7200";
+
+    fn has(env: &[String], prefix: &str) -> bool {
+        env.iter().any(|e| e.starts_with(prefix))
+    }
+
+    /// Relay intent without URLs -- both configured defaults are filled.
+    #[test]
+    fn relay_intent_code_only_fills_both_urls() {
+        let out = fill_relay_defaults(
+            &["KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-x".into()],
+            Some(ARCHEION),
+            Some(LESCHE),
+        );
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_ARCHEION_URL=http://localhost:7100"
+        ));
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_LESCHE_URL=http://localhost:7200"
+        ));
+    }
+
+    /// No relay signal -- nothing is injected.
+    #[test]
+    fn local_only_env_stays_untouched() {
+        let out = fill_relay_defaults(
+            &["KALLIP_LLM_PROVIDER=deepseek".into()],
+            Some(ARCHEION),
+            Some(LESCHE),
+        );
+        assert!(!has(&out, "KALLIP_TAGMA_RELAY_"));
+        assert_eq!(out.len(), 1);
+    }
+
+    /// Explicit values win; empty entries count as missing and are
+    /// replaced in place (no duplicate keys).
+    #[test]
+    fn explicit_values_win_and_empty_is_filled_in_place() {
+        let out = fill_relay_defaults(
+            &[
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=https://archeion.example.com".into(),
+                "KALLIP_TAGMA_RELAY_LESCHE_URL=".into(),
+            ],
+            Some(ARCHEION),
+            Some(LESCHE),
+        );
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_ARCHEION_URL=https://archeion.example.com"
+        ));
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_LESCHE_URL=http://localhost:7200"
+        ));
+        assert_eq!(out.len(), 2);
+    }
+
+    /// Duplicate entries collapse to the single explicit value
+    /// regardless of order: an empty duplicate must neither gain
+    /// the default (an order-sensitive consumer could let it
+    /// win) nor survive (the daemon's env validation rejects
+    /// empty values).
+    #[test]
+    fn duplicate_keys_collapse_to_the_explicit_value() {
+        let out = fill_relay_defaults(
+            &[
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=".into(),
+                "KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-x".into(),
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=https://archeion.example.com".into(),
+            ],
+            Some(ARCHEION),
+            Some(LESCHE),
+        );
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_ARCHEION_URL=https://archeion.example.com"
+        ));
+        assert_eq!(
+            out.iter()
+                .filter(|e| e.starts_with("KALLIP_TAGMA_RELAY_ARCHEION_URL"))
+                .count(),
+            1
+        );
+        // Reversed order: an empty duplicate ahead of the explicit one.
+        let out = fill_relay_defaults(
+            &[
+                "KALLIP_TAGMA_RELAY_LESCHE_URL=".into(),
+                "KALLIP_TAGMA_RELAY_LESCHE_URL=https://lesche.example.com".into(),
+            ],
+            Some(ARCHEION),
+            Some(LESCHE),
+        );
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_LESCHE_URL=https://lesche.example.com"
+        ));
+        assert_eq!(
+            out.iter()
+                .filter(|e| e.starts_with("KALLIP_TAGMA_RELAY_LESCHE_URL"))
+                .count(),
+            1
+        );
+        // Two empties fill once, never duplicate.
+        let out = fill_relay_defaults(
+            &[
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=".into(),
+                "KALLIP_TAGMA_RELAY_ARCHEION_URL=".into(),
+            ],
+            Some(ARCHEION),
+            Some(LESCHE),
+        );
+        assert_eq!(out.len(), 2, "archeion collapsed plus the lesche default");
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_ARCHEION_URL=http://localhost:7100"
+        ));
+    }
+
+    /// An unconfigured daemon URL (unset, or empty -- the
+    /// kallip-runtime's persistence.rs `filter(!is_empty)` precedent)
+    /// means nothing is
+    /// filled for it: an absent key stays absent, and an empty request
+    /// entry stays as-is to fail env validation downstream -- the same
+    /// fail-loud end an empty configured default reached before the
+    /// fill moved to the daemon.
+    #[test]
+    fn unconfigured_daemon_url_fills_nothing() {
+        let out = fill_relay_defaults(
+            &["KALLIP_TAGMA_RELAY_ENROLLMENT_CODE=sk-x".into()],
+            None,
+            Some(LESCHE),
+        );
+        assert!(!has(&out, "KALLIP_TAGMA_RELAY_ARCHEION_URL"));
+        assert!(has(
+            &out,
+            "KALLIP_TAGMA_RELAY_LESCHE_URL=http://localhost:7200"
+        ));
+        let out = fill_relay_defaults(&["KALLIP_TAGMA_RELAY_ARCHEION_URL=".into()], None, None);
+        assert_eq!(
+            out,
+            vec!["KALLIP_TAGMA_RELAY_ARCHEION_URL=".to_string()],
+            "an empty entry stays for env validation to reject"
+        );
     }
 
     #[test]

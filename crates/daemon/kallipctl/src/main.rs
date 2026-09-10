@@ -43,7 +43,7 @@ enum Command {
         workspace: String,
         /// Extra env for the instance, KEY=VALUE (repeatable); only
         /// KALLIP_* keys plus RUST_LOG and PATH are accepted by the daemon.
-        /// KALLIP_TAGMA_ADDR=<addr> pins the tagma's listen address
+        /// `KALLIP_TAGMA_ADDR=<addr>` pins the tagma's listen address
         /// (default 127.0.0.1:0); prefer a concrete interface or the
         /// polis proxy over 0.0.0.0 — the API is Bearer-gated but plain
         /// HTTP on the LAN.

@@ -42,24 +42,6 @@ pub struct Config {
     /// The loaded secret value (from the file above); not a CLI arg.
     #[arg(skip)]
     pub archeion_internal_token: Option<String>,
-    /// Server-side default relay URLs for spawned tagmata that signal
-    /// relay intent (any KALLIP_TAGMA_RELAY_* env) but omit a URL; local-
-    /// backend scope only (the daemon and its tagmata run on this host,
-    /// so localhost always reaches the local stack).
-    #[arg(
-        long,
-        env = "KALLIP_INSTANCES_RELAY_ARCHEION_URL",
-        default_value = "http://localhost:7100"
-    )]
-    pub relay_archeion_url: String,
-    /// Lesche counterpart of `relay_archeion_url` (tunnel + envelopes).
-    #[arg(
-        long,
-        env = "KALLIP_INSTANCES_RELAY_LESCHE_URL",
-        default_value = "http://localhost:7200"
-    )]
-    pub relay_lesche_url: String,
-
     /// Extra Host values allowed through the host guard (comma separated;
     /// a reverse-proxied deployment names its public domain here).
     #[arg(long, env = "KALLIP_INSTANCES_ALLOWED_HOSTS", default_value = "")]
@@ -152,8 +134,6 @@ mod tests {
                     daemon_socket: Some(flag_path.clone()),
                     token: None,
                     backend: "daemon".into(),
-                    relay_archeion_url: String::new(),
-                    relay_lesche_url: String::new(),
                     archeion_internal_url: None,
                     archeion_internal_token: None,
                     archeion_internal_token_file: None,
@@ -183,8 +163,6 @@ mod tests {
                     daemon_socket: None,
                     token: None,
                     backend: "daemon".into(),
-                    relay_archeion_url: String::new(),
-                    relay_lesche_url: String::new(),
                     archeion_internal_url: None,
                     archeion_internal_token: None,
                     archeion_internal_token_file: None,
@@ -221,8 +199,6 @@ mod tests {
             daemon_socket: None,
             token: None,
             backend: "daemon".into(),
-            relay_archeion_url: String::new(),
-            relay_lesche_url: String::new(),
             archeion_internal_url: None,
             archeion_internal_token: None,
             archeion_internal_token_file: None,

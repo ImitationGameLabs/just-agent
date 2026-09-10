@@ -409,17 +409,19 @@ re-anchors.
 Source:
 [`crates/daemon/kallip-daemon/src/main.rs`](../../crates/daemon/kallip-daemon/src/main.rs).
 
-## Instances service
+## Daemon relay fill
 
-The web instances service (daemon backend) fills these server-side defaults
-into a spawned tagma's env when the spawn signals relay intent (any
-`KALLIP_TAGMA_RELAY_*` entry) but omits the URL; explicit values in the spawn
-env always win, and a spawn with no relay signal at all gets nothing.
+The daemon fills these defaults into a spawned tagma's env when the spawn
+signals relay intent (any `KALLIP_TAGMA_RELAY_*` entry) but omits the URL;
+explicit values in the spawn env always win, a spawn with no relay signal at
+all gets nothing, and a variable left unset (or empty) means that URL is not
+filled. The fill happens before the record snapshot is written, so a restart
+replays the filled env.
 
-| Variable                           | Default                  | Purpose                                                        |
-| ---------------------------------- | ------------------------ | -------------------------------------------------------------- |
-| `KALLIP_INSTANCES_RELAY_ARCHEION_URL` | `http://localhost:7100`  | Archeion URL filled into relay-intent spawns that omit it.        |
-| `KALLIP_INSTANCES_RELAY_LESCHE_URL`| `http://localhost:7200`  | Lesche counterpart (tunnel + envelopes).                       |
+| Variable                             | Default                                     | Purpose                                                   |
+| ------------------------------------ | ------------------------------------------- | --------------------------------------------------------- |
+| `KALLIP_DAEMON_RELAY_ARCHEION_URL`   | `services.kallipai.daemon.relayArchUrl`     | Archeion URL filled into relay-intent spawns that omit it. |
+| `KALLIP_DAEMON_RELAY_LESCHE_URL`     | `services.kallipai.daemon.relayLescheUrl`   | Lesche counterpart (tunnel + envelopes).                   |
 
 ## Dev stack shape
 
