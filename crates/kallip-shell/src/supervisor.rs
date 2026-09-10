@@ -9,6 +9,7 @@
 //! two-phase kill on cancel. Modeled on the tagma's agent registry
 //! (`state.rs`).
 
+use crate::builder::DEFAULT_DISK_CAP;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -21,11 +22,12 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use regex::Regex;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::CaptureMode;
-use crate::capture::BoundedCapture;
+use crate::capture::{self, BoundedCapture};
 use crate::error::ShellError;
 use crate::pgroup;
 
@@ -117,6 +119,9 @@ struct BackgroundTask {
     exit_code: Arc<AtomicI32>,
     stalled: Arc<AtomicBool>,
     bytes: Arc<AtomicUsize>,
+    /// Reason slot for the capped-sink pump (disk cap / poison degrade);
+    /// surfaced in the read body.
+    cap_reason: Arc<Mutex<Option<String>>>,
     cancel: CancellationToken,
     handle: Option<tokio::task::JoinHandle<()>>,
     /// A spawned task's auto-cleaned output dir (`out.log` lives here);
@@ -191,7 +196,8 @@ struct WatchArgs {
     /// Held for the watcher's whole life; the single short line fits the
     /// kernel pipe buffer, so the trap never blocks either. A grandchild
     /// flooding the marker fd keeps writing into the buffer (it blocks once
-    /// full) until the task is killed — no SIGPIPE, no lost exit code.
+    /// full) until the task is killed — no lost exit code. (The capture
+    /// mechanism's SIGPIPE reset makes this marker discipline load-bearing.)
     marker_read: Option<OwnedFd>,
 }
 
@@ -216,6 +222,8 @@ pub(super) struct BackgroundRegistry {
     tasks: HashMap<TaskId, BackgroundTask>,
     shell: OsString,
     max_bg_bytes: usize,
+    /// Task-wide captured-output disk cap; the out.log pump enforces it.
+    disk_cap: usize,
     env: HashMap<OsString, OsString>,
     on_terminal: Option<OnTaskTerminal>,
     /// When set (Linux + `landlock` feature), each background `bash` is
@@ -239,6 +247,7 @@ impl BackgroundRegistry {
             tasks: HashMap::new(),
             shell,
             max_bg_bytes,
+            disk_cap: DEFAULT_DISK_CAP,
             env,
             on_terminal,
             #[cfg(all(target_os = "linux", feature = "landlock"))]
@@ -262,6 +271,12 @@ impl BackgroundRegistry {
         self
     }
 
+    /// Overrides the task-wide captured-output disk cap (from the builder).
+    pub(super) fn with_disk_cap(mut self, disk_cap: usize) -> Self {
+        self.disk_cap = disk_cap;
+        self
+    }
+
     /// Spawn `command` as a background task; returns its id.
     pub(super) async fn spawn(&mut self, command: &str) -> Result<TaskId, ShellError> {
         let id = uuid::Uuid::new_v4().to_string();
@@ -281,8 +296,8 @@ impl BackgroundRegistry {
         cmd.arg("-c")
             .arg(command)
             .stdin(Stdio::null())
-            .stdout(Stdio::from(output.try_clone()?))
-            .stderr(Stdio::from(output))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .process_group(0)
             .kill_on_drop(true);
         // Apply builder env (parity with foreground exec) + color suppression.
@@ -306,8 +321,70 @@ impl BackgroundRegistry {
         if let Some(source) = &self.access_source {
             crate::landlock::apply(&mut cmd, &source.access_with_scratch(tmpdir.path())?)?;
         }
-        let child = cmd.spawn()?;
+        #[cfg(unix)]
+        // Restore the child tree's default SIGPIPE disposition: when the
+        // capture pump closes the pipes at the disk cap, the writer dies at
+        // its next write instead of spinning on EPIPE.
+        crate::pgroup::reset_sigpipe(&mut cmd);
+        let mut child = cmd.spawn()?;
         let pid = child.id();
+        // Capped-sink pump: both streams are pipes now. One task serializes
+        // them into out.log and enforces the task-wide disk cap with a
+        // pre-write check — out.log never exceeds the cap. At the cap (or on
+        // a log write failure) the pump drops the read ends: the child's
+        // next write dies on SIGPIPE (default disposition restored above) or
+        // fails with EPIPE, and the reason rides to read/finish through
+        // `cap_reason`.
+        let cap_reason: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let quota = capture::DiskQuota::new(self.disk_cap);
+        let log = tokio::fs::File::from_std(output);
+        let mut out_read = child.stdout.take();
+        let mut err_read = child.stderr.take();
+        let pump_reason = cap_reason.clone();
+        let _log_pump = tokio::spawn(async move {
+            let mut log = log;
+            let mut out_buf = [0u8; 8 * 1024];
+            let mut err_buf = [0u8; 8 * 1024];
+            let mut out_open = out_read.is_some();
+            let mut err_open = err_read.is_some();
+            let mut flowing = true;
+            while flowing && (out_open || err_open) {
+                tokio::select! {
+                    read = async {
+                        match out_read.as_mut() {
+                            Some(r) => r.read(&mut out_buf).await,
+                            None => std::future::pending().await,
+                        }
+                    }, if out_open => match read {
+                        Ok(0) | Err(_) => out_open = false,
+                        Ok(n) => {
+                            flowing = pump_log_chunk(&mut log, &quota, &pump_reason, &out_buf[..n]).await;
+                            if !flowing {
+                                out_open = false;
+                                err_open = false;
+                            }
+                        }
+                    },
+                    read = async {
+                        match err_read.as_mut() {
+                            Some(r) => r.read(&mut err_buf).await,
+                            None => std::future::pending().await,
+                        }
+                    }, if err_open => match read {
+                        Ok(0) | Err(_) => err_open = false,
+                        Ok(n) => {
+                            flowing = pump_log_chunk(&mut log, &quota, &pump_reason, &err_buf[..n]).await;
+                            if !flowing {
+                                out_open = false;
+                                err_open = false;
+                            }
+                        }
+                    },
+                }
+            }
+            // Dropping out_read/err_read here closes the pipe read ends: a
+            // live child's next write dies on SIGPIPE / fails with EPIPE.
+        });
         // Bump the running-bg tally WHILE the READ permit is still held and
         // BEFORE the watcher is spawned. Two races this closes:
         //  - Dropping the permit before inc would leave a window where a
@@ -368,6 +445,7 @@ impl BackgroundRegistry {
                 exit_code,
                 stalled,
                 bytes,
+                cap_reason,
                 cancel,
                 handle: Some(handle),
                 tmpdir: Some(tmpdir),
@@ -460,6 +538,7 @@ impl BackgroundRegistry {
                 exit_code,
                 stalled,
                 bytes,
+                cap_reason: Arc::new(Mutex::new(None)),
                 cancel,
                 handle: Some(handle),
                 tmpdir: None,
@@ -480,6 +559,27 @@ impl BackgroundRegistry {
             TaskOutput::Pipes { out, err, mode } => {
                 read_pipes_tail(out, err.as_ref(), *mode, tail_bytes)
             }
+        };
+        // Disk-cap and poison reasons ride the read body: a tail window may
+        // not include the on-disk truncation marker, so the text itself
+        // carries why the stream stopped. An Exited+reason (cap) stays
+        // distinct from Killed (watchdog) via `state`.
+        let mut reasons: Vec<String> = Vec::new();
+        if let Some(r) = task.cap_reason.lock().ok().and_then(|g| g.clone()) {
+            reasons.push(r);
+        }
+        if let TaskOutput::Pipes { out, err, .. } = &task.output {
+            for cap in Some(out).into_iter().chain(err.as_ref()) {
+                let r = cap.lock().ok().and_then(|c| c.peek().killed_reason);
+                if let Some(r) = r {
+                    reasons.push(r);
+                }
+            }
+        }
+        let output = if reasons.is_empty() {
+            output
+        } else {
+            format!("{}\n{output}", reasons.join("\n"))
         };
         let code = task.exit_code.load(Ordering::Relaxed);
         Ok(BgReadOutput {
@@ -589,6 +689,41 @@ fn mark_terminal(state: &AtomicU8, terminal: u8, gate: Option<&Arc<super::gate::
     }
 }
 
+/// Write one pumped chunk to a background task's out.log under the
+/// task-wide disk cap: the chunk is appended only if the total stays
+/// within the cap, so out.log is strictly bounded — the on-disk size can
+/// never overshoot by a partial chunk. Returns `false` when the pump must
+/// stop: cap reached, or the log write failed (poison degrade — the
+/// failure is surfaced, never silently swallowed). The caller then closes
+/// the read ends; the child's next write dies on SIGPIPE or fails with
+/// EPIPE, and the reason reaches read/finish via the shared slot. A
+/// pathological child that ignores SIGPIPE and never exits stays Running
+/// with zero further inflow; only a manual kill() terminates it.
+async fn pump_log_chunk(
+    log: &mut tokio::fs::File,
+    quota: &capture::DiskQuota,
+    cap_reason: &Arc<Mutex<Option<String>>>,
+    chunk: &[u8],
+) -> bool {
+    if !quota.try_reserve(chunk.len()) {
+        let reason = capture::disk_cap_reason(quota);
+        *cap_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reason);
+        return false;
+    }
+    if log.write_all(chunk).await.is_err() {
+        // Poison degrade: hand the reservation back and surface the
+        // failure — an unbounded task never hides behind a dead log.
+        quota.release(chunk.len());
+        *cap_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some("out.log write failed; captured output degraded (poison)".to_owned());
+        return false;
+    }
+    true
+}
 /// Watcher loop: detect exit, run the size + stall watchdogs, and drive a
 /// two-phase kill on cancel. Branches per output source ([`TaskOutput`]):
 /// spawned tasks stat their log file, adopted tasks total their live
@@ -782,8 +917,11 @@ fn tail_matches_prompt(path: &Path) -> bool {
     };
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
     let _ = file.seek(SeekFrom::Start(len.saturating_sub(STALL_TAIL)));
-    let mut buf = Vec::new();
-    let _ = file.read_to_end(&mut buf);
+    // take() bounds the read even while the file is being appended to:
+    // read_to_end would pull the live appends into memory without bound
+    // for as long as the writer keeps running.
+    let mut buf = Vec::with_capacity(STALL_TAIL as usize);
+    let _ = (&mut file).take(STALL_TAIL).read_to_end(&mut buf);
     stall_regex().is_match(&String::from_utf8_lossy(&buf))
 }
 
@@ -791,8 +929,11 @@ fn read_tail(path: &Path, tail_bytes: usize) -> Result<String, ShellError> {
     let mut file = File::open(path)?;
     let len = file.metadata()?.len();
     let _ = file.seek(SeekFrom::Start(len.saturating_sub(tail_bytes as u64)));
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
+    // take() bounds the read even if the file GROWS during the read: a live
+    // task's appends after the seek point must never be pulled into memory.
+    // Never read_to_end a task output file.
+    let mut buf = Vec::with_capacity(tail_bytes);
+    (&mut file).take(tail_bytes as u64).read_to_end(&mut buf)?;
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
@@ -969,6 +1110,86 @@ mod tests {
         assert!(matches!(err, ShellError::TaskNotFound { .. }));
     }
 
+    /// Pump-first cap path (the watchdog's twin): with the disk cap below
+    /// the default aligned watchdog threshold, the pump's pre-write check
+    /// fires first — the reason rides the read body and the task settles on
+    /// Exited (the cap final state), not the watchdog's Killed.
+    #[tokio::test]
+    async fn background_cap_stops_pump_and_surfaces_reason() {
+        let mut reg = registry().with_disk_cap(4096);
+        let id = reg
+            .spawn("for i in {1..1000000}; do echo hello; done")
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            let out = reg.read(&id, 1024).unwrap();
+            if out.output.contains("disk cap") {
+                assert!(
+                    out.output.contains("written to disk"),
+                    "reason carries the disk volume: {}",
+                    out.output
+                );
+                assert!(
+                    out.output.contains("narrow the command or redirect"),
+                    "recovery guidance rides the reason: {}",
+                    out.output
+                );
+                for _ in 0..50 {
+                    if reg.read(&id, 1024).unwrap().state != TaskState::Running {
+                        break;
+                    }
+                    tokio::time::sleep(WATCH_POLL).await;
+                }
+                assert_eq!(
+                    reg.read(&id, 1024).unwrap().state,
+                    TaskState::Exited,
+                    "cap is the Exited final state, not watchdog Killed"
+                );
+                return;
+            }
+            tokio::time::sleep(WATCH_POLL).await;
+        }
+        panic!("disk-cap reason never surfaced on the background read path");
+    }
+
+    /// The read-path bound: a windowed read against a file that is growing
+    /// while it is read must stay bounded — bytes returned within the
+    /// window and bounded latency. An unbounded read (plain read_to_end)
+    /// fails this test: it keeps draining the appends until the writer
+    /// stops.
+    #[tokio::test]
+    async fn read_tail_never_drains_a_growing_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("out.log");
+        std::fs::write(&path, b"x").unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer_stop = stop.clone();
+        let writer_path = path.clone();
+        let writer = std::thread::spawn(move || {
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&writer_path)
+                .unwrap();
+            let chunk = [b'a'; 256 * 1024];
+            while !writer_stop.load(Ordering::Relaxed) {
+                let _ = std::io::Write::write_all(&mut f, &chunk);
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let started = std::time::Instant::now();
+        for _ in 0..10 {
+            let out = read_tail(&path, 4096).unwrap();
+            assert!(out.len() <= 4096, "window respected: {}", out.len());
+        }
+        let elapsed = started.elapsed();
+        stop.store(true, Ordering::Relaxed);
+        let _ = writer.join();
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "windowed reads must not drain the growing file: {elapsed:?}"
+        );
+    }
+
     #[tokio::test]
     async fn size_watchdog_kills_overflow() {
         let mut reg = BackgroundRegistry::new(
@@ -977,7 +1198,10 @@ mod tests {
             HashMap::new(),
             None,
         );
-        let id = reg.spawn("yes hello").await.unwrap();
+        let id = reg
+            .spawn("for i in {1..1000000}; do echo hello; done")
+            .await
+            .unwrap();
         for _ in 0..100 {
             let out = reg.read(&id, 1024).unwrap();
             if out.state == TaskState::Killed {
@@ -1031,7 +1255,10 @@ mod tests {
     async fn on_terminal_fires_on_size_watchdog() {
         // tiny cap → the size watchdog kills quickly.
         let (mut reg, received) = tracking_registry(4096);
-        let id = reg.spawn("yes hello").await.unwrap();
+        let id = reg
+            .spawn("for i in {1..1000000}; do echo hello; done")
+            .await
+            .unwrap();
         for _ in 0..100 {
             if received.lock().unwrap().is_some() {
                 break;

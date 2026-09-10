@@ -37,10 +37,11 @@ impl DiskQuota {
     }
 
     /// Pre-write reservation: succeed only if the total stays within cap.
-    /// The CAS loop keeps the bound exact even when two stream pumps race;
-    /// a refused reservation writes nothing, and the pump stops on
-    /// the first refusal.
-    fn try_reserve(&self, n: usize) -> bool {
+    /// The CAS loop keeps the bound exact no matter how many pumps race
+    /// (both streams of one exec, or a converted task's capture pump
+    /// alongside its log pump); a refused reservation writes nothing, and
+    /// the pump stops on the first refusal.
+    pub(super) fn try_reserve(&self, n: usize) -> bool {
         let mut seen = self.used.load(Ordering::Relaxed);
         loop {
             if seen.saturating_add(n) > self.cap {
@@ -60,17 +61,17 @@ impl DiskQuota {
 
     /// Hand reserved bytes back after a failed spill open or write, so a
     /// sibling stream is not short-changed by a dead consumer.
-    fn release(&self, n: usize) {
+    pub(super) fn release(&self, n: usize) {
         self.used.fetch_sub(n, Ordering::Relaxed);
     }
 
-    fn cap(&self) -> usize {
+    pub(super) fn cap(&self) -> usize {
         self.cap
     }
 
     /// Bytes currently reserved against the pool: the volume actually
     /// written to disk across both streams.
-    fn used(&self) -> usize {
+    pub(super) fn used(&self) -> usize {
         self.used.load(Ordering::Relaxed)
     }
 }
@@ -166,14 +167,39 @@ pub(super) struct CaptureResult {
     pub killed_reason: Option<String>,
 }
 
+/// Render a byte budget for the reason line: whole MiB/KiB when exact,
+/// plain bytes otherwise, so a sub-MiB cap never reads as "0 MiB".
+pub(super) fn fmt_cap(cap: usize) -> String {
+    const MIB: usize = 1024 * 1024;
+    const KIB: usize = 1024;
+    if cap >= MIB && cap.is_multiple_of(MIB) {
+        format!("{} MiB", cap / MIB)
+    } else if cap >= KIB && cap.is_multiple_of(KIB) {
+        format!("{} KiB", cap / KIB)
+    } else {
+        format!("{cap} bytes")
+    }
+}
+
+/// Termination reason for a refused write, shared by the foreground capture
+/// and the background log pump so both faces carry identical wording: the
+/// cap, the bytes that reached disk, and the recovery path.
+pub(super) fn disk_cap_reason(quota: &DiskQuota) -> String {
+    format!(
+        "output exceeded the {} disk cap after {} bytes written to disk; writes terminated (SIGPIPE/EPIPE) — narrow the command or redirect its output to a file",
+        fmt_cap(quota.cap()),
+        quota.used()
+    )
+}
+
 impl BoundedCapture {
     /// Creates a collector that retains a head of `max_bytes/2` and a tail of
     /// the remainder, spilling the full stream to `spill_dir` on overflow.
     ///
-    /// `quota` is the task-wide disk budget: both streams of one exec (and a
-    /// converted task's continued pumping) share one pool, so the combined
-    /// spilled bytes stay within the cap no matter how the two captures are
-    /// constructed.
+    /// `quota` is the per-task disk budget (one pool per task, never shared
+    /// across tasks): both streams of one exec (and a converted task's
+    /// continued pumping) draw from it, so the combined spilled bytes stay
+    /// within the cap no matter how the captures are constructed.
     pub(super) fn new(
         max_bytes: usize,
         nonce: &str,
@@ -369,32 +395,11 @@ impl BoundedCapture {
         }
     }
 
-    /// Render a byte budget for the reason line: whole MiB/KiB when exact,
-    /// plain bytes otherwise, so a sub-MiB cap never reads as "0 MiB".
-    fn fmt_cap(cap: usize) -> String {
-        const MIB: usize = 1024 * 1024;
-        const KIB: usize = 1024;
-        if cap >= MIB && cap.is_multiple_of(MIB) {
-            format!("{} MiB", cap / MIB)
-        } else if cap >= KIB && cap.is_multiple_of(KIB) {
-            format!("{} KiB", cap / KIB)
-        } else {
-            format!("{cap} bytes")
-        }
-    }
-
     /// The termination reason when the disk cap refused a write: names the
     /// cap, the captured volume, and the recovery path (narrow the command
     /// or redirect to a file). `None` while the capture flowed freely.
     fn cap_reason(&self) -> Option<String> {
-        self.capped.then(|| {
-            let head = format!(
-                "output exceeded the {} disk cap after {} bytes written to disk;",
-                Self::fmt_cap(self.quota.cap()),
-                self.quota.used()
-            );
-            format!("{head} writes terminated (SIGPIPE/EPIPE) — narrow the command or redirect its output to a file")
-        })
+        self.capped.then(|| disk_cap_reason(&self.quota))
     }
 
     /// Path of the live spill file when this capture has overflowed and the

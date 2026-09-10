@@ -534,6 +534,56 @@ async fn converted_pipes_size_watchdog_kills_overflow() {
     }
 }
 
+/// Adopted-task cap path: a converted task keeps its capture pumps, so the
+/// disk cap continues to bind after adoption and the reason (disk volume +
+/// recovery guidance) rides the background read body.
+#[tokio::test]
+async fn converted_task_surfaces_disk_cap_reason() {
+    let spill = tempfile::TempDir::new().unwrap();
+    let mut backend = ShellBuilder::new()
+        .max_output_bytes(2048)
+        .disk_cap(1024)
+        .max_bg_bytes(20 * 1024 * 1024)
+        .spill_dir(spill.path().join("spill"))
+        .build()
+        .await
+        .unwrap();
+    // Slow producer: the foreground phase stays under the cap so the
+    // timeout conversion still finds a live child; the cap then fires on
+    // the adopted side.
+    let out = backend
+        .exec(
+            "for i in $(seq 1 1000000); do echo hello; sleep 0.01; done",
+            Duration::from_millis(400),
+            CaptureMode::Merged,
+        )
+        .await
+        .unwrap();
+    let id = out.task_id.expect("converted to background");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let read = backend.read_background(&id, 4096).await.unwrap();
+        if read.output.contains("disk cap") {
+            assert!(
+                read.output.contains("written to disk"),
+                "reason carries the disk volume: {}",
+                read.output
+            );
+            assert!(
+                read.output.contains("narrow the command or redirect"),
+                "recovery guidance rides the reason: {}",
+                read.output
+            );
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "cap reason never surfaced on the adopted read path"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 /// drain_pumps recovery: a grandchild the command backgrounded keeps the
 /// pipe write-end open after the child exits; the drain deadline aborts
 /// the stuck pump, the watcher still reaches Exited with the real code,

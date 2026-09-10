@@ -13,6 +13,10 @@ use crate::supervisor::TaskState;
 
 /// Default number of recent lines to return.
 const DEFAULT_LINES: usize = 200;
+/// Upper bound on `lines`: the tail read is bounded by lines x
+/// BYTES_PER_LINE, so an unsanitized caller value cannot request an
+/// unbounded window.
+const MAX_LINES: usize = 4096;
 /// Rough bytes-per-line budget for the tail read.
 const BYTES_PER_LINE: usize = 256;
 
@@ -87,7 +91,7 @@ impl<B: ShellBackend + Send + Sync + 'static> LlmTool for BgRead<B> {
 
     async fn call(&self, args_json: &str) -> anyhow::Result<String> {
         let args: BgReadArgs = serde_json::from_str(args_json)?;
-        let lines = args.lines.unwrap_or(DEFAULT_LINES);
+        let lines = args.lines.unwrap_or(DEFAULT_LINES).min(MAX_LINES);
         let tail_bytes = lines.saturating_mul(BYTES_PER_LINE);
 
         let backend = self.backend.lock().await;

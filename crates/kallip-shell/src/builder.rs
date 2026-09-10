@@ -16,9 +16,10 @@ const DEFAULT_FALLBACK_CWD: &str = "/tmp";
 /// In-memory tail retained per stream (stdout/stderr) before clipping.
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024; // 1 MiB
 /// Output cap for a background task before the size watchdog kills it.
-const DEFAULT_MAX_BG_BYTES: usize = 100 * 1024 * 1024; // 100 MiB
-/// Task-wide disk cap for captured foreground-exec output (both
-/// streams' spill combined): the hard bound the capture pumps enforce.
+const DEFAULT_MAX_BG_BYTES: usize = 20 * 1024 * 1024; // 20 MiB
+/// Task-wide disk cap for captured output — one pool per task (never
+/// shared across tasks): both exec streams' spill and a background task's
+/// out.log draw from it; this is the hard bound pumps enforce.
 pub(super) const DEFAULT_DISK_CAP: usize = 20 * 1024 * 1024; // 20 MiB
 
 /// The closure type inside [`AccessSource`]: a per-spawn snapshot of the
@@ -84,8 +85,8 @@ impl AccessSource {
 /// | `shell`            | `"bash"`    | Program spawned per call                                      |
 /// | `fallback_cwd`     | `"/tmp"`   | cwd when `current_dir()` fails or a cached cwd was deleted     |
 /// | `max_output_bytes` | 1 MiB       | Per-stream in-memory head+tail before output is clipped        |
-/// | `max_bg_bytes`     | 100 MiB     | Background-task output cap before the size watchdog kills it   |
-/// | `disk_cap`         | 20 MiB      | Foreground captured-output disk cap (both streams combined)  |
+/// | `max_bg_bytes`     | 20 MiB      | Background-task output cap before the size watchdog kills it    |
+/// | `disk_cap`         | 20 MiB      | Task-wide captured-output disk cap (spill + out.log combined)  |
 /// | `spill_dir`        | `$TMPDIR/kallipai/spill` | Where overflow spill files are written (overflow only)    |
 #[derive(Clone, Debug)]
 pub struct ShellBuilder {
@@ -171,8 +172,9 @@ impl ShellBuilder {
     }
 
     /// Overrides the task-wide captured-output disk cap (bytes). Default:
-    /// 20 MiB. Both streams of one exec share the pool (combined cap).
-    /// Background tasks are bounded by `max_bg_bytes`, not by this knob.
+    /// 20 MiB. One pool per task (never shared across tasks): both exec
+    /// streams and a background task's out.log draw from it (one combined
+    /// cap).
     pub fn disk_cap(mut self, bytes: usize) -> Self {
         self.disk_cap = bytes;
         self
@@ -314,6 +316,7 @@ impl ShellBuilder {
             self.env.clone(),
             self.on_terminal.clone().map(|o| o.0),
         );
+        let background = background.with_disk_cap(self.disk_cap);
         // Share the access-decision snapshot source with the background registry
         // (cloned before `self` moves into `ProcessBackend.config`).
         #[cfg(all(target_os = "linux", feature = "landlock"))]
