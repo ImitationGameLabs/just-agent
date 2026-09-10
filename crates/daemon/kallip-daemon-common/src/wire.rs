@@ -31,7 +31,7 @@ pub struct Request {
     pub body: RequestBody,
 }
 
-/// The five management verbs.
+/// The management verbs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RequestBody {
@@ -95,6 +95,23 @@ pub enum RequestBody {
         #[serde(default)]
         accept_local_only: bool,
     },
+    /// Tail an instance's log files — a read-only diagnostic: no
+    /// state change, works on stopped instances too. `lines` is the
+    /// request intent (the daemon clamps and may return fewer to
+    /// stay inside its payload budget); `file` picks one file from
+    /// the log directory instead of the merged tail; `cursor`
+    /// continues a previous pull (the `--follow` contract). New
+    /// fields must stay `#[serde(default)]` (the additive-evolution
+    /// rule).
+    Log {
+        slug: String,
+        #[serde(default)]
+        lines: Option<u32>,
+        #[serde(default)]
+        file: Option<String>,
+        #[serde(default)]
+        cursor: Option<LogCursor>,
+    },
     /// List all managed instances (directory scan).
     List,
     /// One instance's health, or omit `slug` for the daemon itself.
@@ -139,6 +156,14 @@ pub enum OkPayload {
         slug: String,
         state: InstanceState,
     },
+    /// The log tail as one text payload plus the cursor a follow
+    /// client resumes from. `next_cursor` is `None` when the log
+    /// directory is missing or empty — nothing to follow yet.
+    Log {
+        text: String,
+        #[serde(default)]
+        next_cursor: Option<LogCursor>,
+    },
     Stop {
         slug: String,
     },
@@ -148,6 +173,17 @@ pub enum OkPayload {
     Health {
         report: HealthReport,
     },
+}
+
+/// A position in an instance's log stream: the file name within the
+/// instance's log directory plus the byte offset reached in it.
+/// Clients echo it back to pull only new lines; the daemon clamps
+/// or resets it when files rotated underneath (the follow contract
+/// of the log verb).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogCursor {
+    pub file: String,
+    pub byte: u64,
 }
 
 /// The daemon's liveness word. Clients match on this, never
@@ -324,6 +360,66 @@ pub fn err(code: ErrorCode, message: impl Into<String>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_request_round_trips_with_all_fields() {
+        let body = RequestBody::Log {
+            slug: "team-a".into(),
+            lines: Some(50),
+            file: Some("instance.2026-09-10.log".into()),
+            cursor: Some(LogCursor {
+                file: "instance.2026-09-09.log".into(),
+                byte: 2048,
+            }),
+        };
+        let line = encode_request(&request(body.clone())).expect("encode");
+        let back = decode_request(&line).expect("decode");
+        assert_eq!(back.body, body);
+    }
+
+    #[test]
+    fn log_request_defaults_every_optional_field() {
+        // Same additive rule as Start's env: a slug-only payload
+        // decodes — defaults mean the merged tail, daemon-chosen
+        // line count, no follow cursor.
+        let line = r#"{"v":1,"type":"log","slug":"team-a"}"#;
+        let back = decode_request(line).expect("decode");
+        match back.body {
+            RequestBody::Log {
+                slug,
+                lines,
+                file,
+                cursor,
+            } => {
+                assert_eq!(slug, "team-a");
+                assert_eq!(lines, None);
+                assert_eq!(file, None);
+                assert_eq!(cursor, None);
+            }
+            other => panic!("expected log, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_payload_round_trips_with_and_without_cursor() {
+        let with = OkPayload::Log {
+            text: "first\nsecond\n".into(),
+            next_cursor: Some(LogCursor {
+                file: "instance.2026-09-10.log".into(),
+                byte: 14,
+            }),
+        };
+        let line = encode_response(&ok(with.clone())).expect("encode");
+        let back = decode_response(&line).expect("decode");
+        assert_eq!(back.body, ResponseBody::Ok { payload: with });
+        let without = OkPayload::Log {
+            text: String::new(),
+            next_cursor: None,
+        };
+        let line = encode_response(&ok(without.clone())).expect("encode");
+        let back = decode_response(&line).expect("decode");
+        assert_eq!(back.body, ResponseBody::Ok { payload: without });
+    }
 
     #[test]
     fn request_round_trips_through_json() {

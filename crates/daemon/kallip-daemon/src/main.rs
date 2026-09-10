@@ -14,6 +14,7 @@
 
 mod adopt;
 mod bins;
+mod log;
 mod reconcile;
 mod records;
 mod scan;

@@ -251,6 +251,44 @@ impl Daemon {
                     }
                 }
             }
+            RequestBody::Log {
+                slug,
+                lines,
+                file,
+                cursor,
+            } => {
+                // Read-only, but still file I/O plus the passwd read
+                // behind authorization: same blocking profile as the
+                // other verbs.
+                match tokio::task::spawn_blocking({
+                    let record_root = self.record_root.clone();
+                    move || {
+                        let logs_dir =
+                            crate::reconcile::logs_pointer(dirs::state_dir().as_deref(), &slug);
+                        crate::log::tail(
+                            &record_root,
+                            &logs_dir,
+                            &slug,
+                            lines,
+                            file.as_deref(),
+                            cursor.as_ref(),
+                            peer_uid,
+                        )
+                    }
+                })
+                .await
+                {
+                    Ok(Ok(outcome)) => ok(OkPayload::Log {
+                        text: outcome.text,
+                        next_cursor: outcome.next_cursor,
+                    }),
+                    Ok(Err(error)) => {
+                        let code = kallip_daemon_common::wire::ErrorCode::from(&error);
+                        err(code, error.to_string())
+                    }
+                    Err(join_error) => err(ErrorCode::Internal, format!("log task: {join_error}")),
+                }
+            }
         }
     }
 }

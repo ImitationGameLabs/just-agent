@@ -55,8 +55,11 @@ pub async fn run(record_root: PathBuf) {
 /// instance data tree and the slug names the tree on both sides. The
 /// `None` arm is defensive only — the daemon's own startup already
 /// requires the platform state dir, so it never fires in practice; the
-/// pointer stays total so the warn line always renders.
-fn logs_pointer(state_home: Option<&Path>, slug: &str) -> PathBuf {
+/// pointer stays total so the warn line always renders. The log verb
+/// (`log.rs`) reads through this same pointer, and the tagma side
+/// mirrors it with `logs_target` in kallip-tagma — the three shapes
+/// move together by hand.
+pub(crate) fn logs_pointer(state_home: Option<&Path>, slug: &str) -> PathBuf {
     match state_home {
         Some(home) => home
             .join("kallipai")

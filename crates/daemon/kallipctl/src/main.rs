@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 use kallip_daemon_client::DaemonClient;
 use kallip_daemon_common::wire::{
-    ErrorCode, InstanceState, OkPayload, RequestBody, Response, ResponseBody,
+    ErrorCode, InstanceState, LogCursor, OkPayload, RequestBody, Response, ResponseBody,
 };
 
 #[derive(Parser)]
@@ -97,6 +97,23 @@ enum Command {
         #[arg(long)]
         accept_local_only: bool,
     },
+    /// Tail an instance's log files (read-only diagnostic): the
+    /// merged tail across retained daily files, one file with
+    /// --file, or live with --follow.
+    Log {
+        /// Instance slug: same grammar as spawn's.
+        slug: String,
+        /// Lines from the tail (default 20, capped at 1000).
+        #[arg(short = 'n', long = "lines")]
+        lines: Option<u32>,
+        /// Read this single file from the log directory instead of
+        /// the merged tail.
+        #[arg(long)]
+        file: Option<String>,
+        /// Keep polling for new lines (~500 ms beats) until Ctrl-C.
+        #[arg(short = 'f', long = "follow")]
+        follow: bool,
+    },
 }
 
 #[tokio::main]
@@ -121,6 +138,7 @@ async fn main() -> Result<()> {
         Command::Spawn { slug, .. }
         | Command::Start { slug, .. }
         | Command::Adopt { slug, .. }
+        | Command::Log { slug, .. }
         | Command::Stop { slug } => Some(slug),
         _ => None,
     };
@@ -175,6 +193,14 @@ async fn main() -> Result<()> {
         },
         Command::List => RequestBody::List,
         Command::Health { slug } => RequestBody::Health { slug },
+        Command::Log {
+            slug,
+            lines,
+            file,
+            follow,
+        } => {
+            return run_log(&client, &slug, lines, file.as_deref(), follow).await;
+        }
     };
     let response = client
         .call(body)
@@ -187,6 +213,95 @@ async fn main() -> Result<()> {
 /// the registration fact a script greps for.
 fn adopt_line(slug: &str, state: InstanceState) -> String {
     format!("adopted {slug} ({})", state.as_str())
+}
+
+/// Client-side mirrors of the daemon's line-count defaults: the CLI
+/// always sends a concrete count; the daemon clamps its copy too.
+const DEFAULT_LINES: u32 = 20;
+const MAX_LINES: u32 = 1000;
+
+/// The log verb's own loop: one request per beat (the wire has no
+/// streaming), printing each increment. The first beat carries the
+/// tail (the `--lines` first screen); later beats carry only what
+/// the cursor has not seen. A rotated or emptied log set comes back
+/// with a changed file name, a regressed offset, or no next cursor
+/// at all — warn and adopt the daemon's rebased cursor instead of
+/// silently stalling at a dead position.
+async fn run_log(
+    client: &DaemonClient,
+    slug: &str,
+    lines: Option<u32>,
+    file: Option<&str>,
+    follow: bool,
+) -> Result<()> {
+    let lines = Some(lines.unwrap_or(DEFAULT_LINES).min(MAX_LINES));
+    let mut cursor: Option<LogCursor> = None;
+    loop {
+        let body = RequestBody::Log {
+            slug: slug.to_string(),
+            lines,
+            file: file.map(str::to_string),
+            cursor: cursor.clone(),
+        };
+        let response = client
+            .call(body)
+            .await
+            .context("talking to the kallip daemon")?;
+        match response.body {
+            ResponseBody::Ok {
+                payload: OkPayload::Log { text, next_cursor },
+            } => {
+                let baseline_lost = match (&cursor, &next_cursor) {
+                    (Some(sent), Some(next)) => next.file != sent.file || next.byte < sent.byte,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                if baseline_lost {
+                    eprintln!("log cursor regressed or the log set changed; re-baselining");
+                }
+                match (text.is_empty(), follow) {
+                    (true, false) => println!("(no logs)"),
+                    (true, true) => {}
+                    (false, _) => print_log_text(&text),
+                }
+                cursor = next_cursor;
+            }
+            ResponseBody::Err { code, message } => {
+                anyhow::bail!("{}: {message}", error_prefix(code));
+            }
+            other => anyhow::bail!("unexpected response: {other:?}"),
+        }
+        if !follow {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
+/// Print a log chunk as-is with exactly one trailing newline.
+fn print_log_text(text: &str) {
+    if text.ends_with('\n') {
+        print!("{text}");
+    } else {
+        println!("{text}");
+    }
+}
+
+/// The stable error vocabulary scripts match on, shared by the
+/// plain verbs and the log loop.
+fn error_prefix(code: ErrorCode) -> &'static str {
+    match code {
+        ErrorCode::SlugTaken => "instance conflict",
+        ErrorCode::Denied => "not authorized",
+        ErrorCode::WorkspaceOverlap => "workspace overlaps an existing instance",
+        ErrorCode::InvalidSpawnInput => "invalid spawn input",
+        ErrorCode::SpawnTimeout => "spawn timed out (rolled back)",
+        ErrorCode::NotFound => "no such instance",
+        ErrorCode::NotRunning => "not running",
+        ErrorCode::BadRequest => "bad request",
+        ErrorCode::Internal => "internal error",
+        ErrorCode::Unknown => "unknown error code from daemon",
+    }
 }
 
 fn print(response: Response, started: bool) -> Result<()> {
@@ -235,24 +350,20 @@ fn print(response: Response, started: bool) -> Result<()> {
                 OkPayload::Adopt { slug, state } => {
                     println!("{}", adopt_line(&slug, state));
                 }
+                OkPayload::Log { text, .. } => {
+                    if text.is_empty() {
+                        println!("(no logs)");
+                    } else {
+                        print_log_text(&text);
+                    }
+                }
             }
             Ok(())
         }
         ResponseBody::Err { code, message } => {
             // Errors exit non-zero with a human line; stable codes are the
             // machine interface for scripting.
-            let prefix = match code {
-                ErrorCode::SlugTaken => "instance conflict",
-                ErrorCode::Denied => "not authorized",
-                ErrorCode::WorkspaceOverlap => "workspace overlaps an existing instance",
-                ErrorCode::InvalidSpawnInput => "invalid spawn input",
-                ErrorCode::SpawnTimeout => "spawn timed out (rolled back)",
-                ErrorCode::NotFound => "no such instance",
-                ErrorCode::NotRunning => "not running",
-                ErrorCode::BadRequest => "bad request",
-                ErrorCode::Internal => "internal error",
-                ErrorCode::Unknown => "unknown error code from daemon",
-            };
+            let prefix = error_prefix(code);
             anyhow::bail!("{prefix}: {message}");
         }
     }
@@ -273,4 +384,10 @@ mod tests {
             "adopted team-b (stopped)"
         );
     }
+}
+
+#[test]
+fn error_prefix_is_the_scripting_vocabulary() {
+    assert_eq!(error_prefix(ErrorCode::NotFound), "no such instance");
+    assert_eq!(error_prefix(ErrorCode::Denied), "not authorized");
 }
