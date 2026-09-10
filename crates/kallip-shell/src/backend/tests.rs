@@ -1052,6 +1052,165 @@ async fn exec_separate_overflow_spills_each_stream() {
     assert_ne!(spills[0], spills[1], "distinct hashes: {spills:?}");
 }
 
+/// A foreground exec whose output crosses the disk cap: the pump stops at
+/// the cap and drops the pipe read end, so the writer dies by SIGPIPE —
+/// the 128+13 exit encoding proves the disposition reset landed — and the
+/// capture leads with its termination reason.
+#[tokio::test]
+async fn foreground_over_cap_kills_writer_by_sigpipe_and_reports_reason() {
+    let scratch = tempfile::TempDir::new().unwrap();
+    let status = scratch.path().join("status");
+    let mut backend = ShellBuilder::new()
+        .max_output_bytes(64)
+        .disk_cap(64 * 1024)
+        .spill_dir(scratch.path().join("spill"))
+        .build()
+        .await
+        .unwrap();
+    let out = backend
+        .exec(
+            &format!("yes & p=$!; wait $p; echo $? > {}", status.display()),
+            Duration::from_secs(10),
+            CaptureMode::Merged,
+        )
+        .await
+        .unwrap();
+    // bash itself exits cleanly; the SIGPIPE death is yes's, reported
+    // through $?: 128 + SIGPIPE(13).
+    assert_eq!(out.exit_code, Some(0));
+    assert_eq!(std::fs::read_to_string(&status).unwrap().trim(), "141");
+    // The reason leads the captured stream; the spill stays within the cap.
+    let text = out.output.as_deref().unwrap();
+    assert!(text.starts_with('['), "reason leads: {text}");
+    assert!(text.contains("disk cap reached"), "{text}");
+    assert!(
+        text.contains("64 KiB disk cap"),
+        "sub-MiB cap renders: {text}"
+    );
+    assert!(
+        text.contains("written to disk"),
+        "reason reports disk volume: {text}"
+    );
+    assert!(
+        text.contains("narrow the command or redirect"),
+        "recovery guidance present: {text}"
+    );
+    let spills = finalized_spills(scratch.path());
+    assert_eq!(spills.len(), 1);
+    assert!(std::fs::read(&spills[0]).unwrap().len() <= 64 * 1024);
+}
+
+/// A writer that opts out of SIGPIPE (`trap "" PIPE`) still terminates: the
+/// dropped read end surfaces as an EPIPE write error and the command exits
+/// through its own error path — the second disposition the cap can produce,
+/// beside the signal death.
+#[tokio::test]
+async fn capped_writer_with_sigpipe_ignored_dies_by_epipe() {
+    let scratch = tempfile::TempDir::new().unwrap();
+    let status = scratch.path().join("status");
+    let mut backend = ShellBuilder::new()
+        .max_output_bytes(64)
+        .disk_cap(64 * 1024)
+        .spill_dir(scratch.path().join("spill"))
+        .build()
+        .await
+        .unwrap();
+    let out = backend
+        .exec(
+            &format!(
+                "trap \"\" PIPE; yes & p=$!; wait $p; echo $? > {}",
+                status.display()
+            ),
+            Duration::from_secs(10),
+            CaptureMode::Merged,
+        )
+        .await
+        .unwrap();
+    // yes inherits SIGPIPE=ignore, so the dropped read end shows up as an
+    // EPIPE write failure and yes exits with its own code (1), not by a
+    // signal — the exit encoding distinguishes the two deaths.
+    assert_eq!(out.exit_code, Some(0));
+    assert_eq!(std::fs::read_to_string(&status).unwrap().trim(), "1");
+    let text = out.output.as_deref().unwrap();
+    assert!(text.contains("disk cap reached"), "{text}");
+    assert!(
+        std::fs::read(finalized_spills(scratch.path()).first().unwrap())
+            .unwrap()
+            .len()
+            <= 64 * 1024
+    );
+}
+
+/// A task writing a legitimately large file of its own is untouched: the
+/// cap bounds captured output only, so a 64 MiB file lands complete while
+/// the tiny captured stream flows — even under a deliberately small cap.
+#[tokio::test]
+async fn legit_large_self_file_is_unaffected_by_disk_cap() {
+    let scratch = tempfile::TempDir::new().unwrap();
+    let big = scratch.path().join("big.bin");
+    let mut backend = ShellBuilder::new()
+        .max_output_bytes(512)
+        .disk_cap(1024 * 1024)
+        .spill_dir(scratch.path().join("spill"))
+        .build()
+        .await
+        .unwrap();
+    let out = backend
+        .exec(
+            &format!(
+                "dd if=/dev/zero of={} bs=1M count=64 2>/dev/null && ls -l {}",
+                big.display(),
+                big.display()
+            ),
+            Duration::from_secs(30),
+            CaptureMode::Merged,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.exit_code, Some(0));
+    assert!(!out.truncated);
+    assert_eq!(std::fs::metadata(&big).unwrap().len(), 64 * 1024 * 1024);
+    let text = out.output.as_deref().unwrap();
+    assert!(text.contains("67108864"), "ls -l shows the size: {text}");
+    assert!(!text.contains("disk cap"), "no cap banner: {text}");
+    assert!(finalized_spills(scratch.path()).is_empty());
+}
+
+/// A cap event poisons nothing beyond its own exec: the next exec on the
+/// same backend captures cleanly — normal exit, no stale reason — because
+/// quota and pumps are per-exec and the SIGPIPE reset is per-spawn.
+#[tokio::test]
+async fn exec_after_cap_event_recovers_to_clean_capture() {
+    let scratch = tempfile::TempDir::new().unwrap();
+    let mut backend = ShellBuilder::new()
+        .max_output_bytes(64)
+        .disk_cap(64 * 1024)
+        .spill_dir(scratch.path().join("spill"))
+        .build()
+        .await
+        .unwrap();
+    let capped = backend
+        .exec("yes", Duration::from_secs(10), CaptureMode::Merged)
+        .await
+        .unwrap();
+    assert!(
+        capped
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("disk cap reached")
+    );
+    let recovered = backend
+        .exec("echo hello", Duration::from_secs(10), CaptureMode::Merged)
+        .await
+        .unwrap();
+    assert_eq!(recovered.exit_code, Some(0));
+    assert!(!recovered.truncated);
+    let text = recovered.output.as_deref().unwrap();
+    assert!(text.contains("hello"), "{text}");
+    assert!(!text.contains("disk cap"), "no stale reason: {text}");
+}
+
 // -- CwdProbe / script-shape / spill-security tests -----------------------
 
 /// The trap script redirects to the bare-integer fd (`>&63`), not the

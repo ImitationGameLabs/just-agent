@@ -27,6 +27,33 @@ use crate::error::ShellError;
 /// `Agent::shutdown` two-phase shape.
 const KILL_GRACE: Duration = Duration::from_secs(2);
 
+/// Reset SIGPIPE to its default disposition in the child about to be exec'd.
+///
+/// The host's Rust std installs SIGPIPE=SIG_IGN at startup and children
+/// inherit it across fork+exec — so a capped capture stream's writer would
+/// get EPIPE errors instead of the classic silent death, command-internal
+/// pipelines lose standard semantics, and a program that spins on write
+/// errors never terminates. Restoring SIG_DFL in the `pre_exec` closure (it
+/// runs in the child, after fork, before exec) gives the child tree the
+/// Unix-default behavior: a write to a pipe whose read end closed kills the
+/// writer. A command that wants the signal ignored can still reset it
+/// itself; the disk-cap bound does not depend on this disposition either
+/// way.
+///
+/// cfg(unix): SIGPIPE is a Unix signal. Windows has no equivalent (a broken
+/// pipe surfaces as a write error there), so the call sites gate on unix.
+#[cfg(unix)]
+pub(super) fn reset_sigpipe(cmd: &mut tokio::process::Command) {
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::signal(libc::SIGPIPE, libc::SIG_DFL) == libc::SIG_ERR {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
 /// Kill an entire process group, then reap the leader.
 ///
 /// Step 1: SIGTERM the group, wait up to [`KILL_GRACE`] for the child to exit.

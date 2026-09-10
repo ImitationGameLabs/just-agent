@@ -15,6 +15,82 @@
 use std::path::PathBuf;
 
 use crate::spill::{BASH_EXEC_SPILL, StreamingSpill};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// The disk-budget pool shared across a task's streams, plus the outcome of
+/// feeding one chunk to a capture.
+
+#[derive(Clone)]
+pub(super) struct DiskQuota {
+    used: Arc<AtomicUsize>,
+    cap: usize,
+}
+
+impl DiskQuota {
+    /// A fresh pool with a `cap`-byte total disk budget.
+    pub(super) fn new(cap: usize) -> Self {
+        Self {
+            used: Arc::new(AtomicUsize::new(0)),
+            cap,
+        }
+    }
+
+    /// Pre-write reservation: succeed only if the total stays within cap.
+    /// The CAS loop keeps the bound exact even when two stream pumps race;
+    /// a refused reservation writes nothing, and the pump stops on
+    /// the first refusal.
+    fn try_reserve(&self, n: usize) -> bool {
+        let mut seen = self.used.load(Ordering::Relaxed);
+        loop {
+            if seen.saturating_add(n) > self.cap {
+                return false;
+            }
+            match self.used.compare_exchange_weak(
+                seen,
+                seen + n,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(now) => seen = now,
+            }
+        }
+    }
+
+    /// Hand reserved bytes back after a failed spill open or write, so a
+    /// sibling stream is not short-changed by a dead consumer.
+    fn release(&self, n: usize) {
+        self.used.fetch_sub(n, Ordering::Relaxed);
+    }
+
+    fn cap(&self) -> usize {
+        self.cap
+    }
+
+    /// Bytes currently reserved against the pool: the volume actually
+    /// written to disk across both streams.
+    fn used(&self) -> usize {
+        self.used.load(Ordering::Relaxed)
+    }
+}
+
+impl Default for DiskQuota {
+    /// Placeholder pool for `mem::take` on a finalized capture; the budget
+    /// of a taken capture is never consulted again.
+    fn default() -> Self {
+        Self::new(usize::MAX)
+    }
+}
+
+/// Outcome of appending one chunk to a capture.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PushOutcome {
+    /// Chunk fully recorded; keep pumping.
+    Flowing,
+    /// Disk cap reached: stop reading and close the pipe read end.
+    Capped,
+}
 
 /// A bounded head+tail collector for one stream.
 ///
@@ -45,6 +121,13 @@ pub(super) struct BoundedCapture {
     /// Root of the bash-exec spill family the temp file is created under
     /// (a landlocked-readable directory).
     spill_dir: PathBuf,
+    /// Task-wide disk budget shared with the sibling stream: the accounting
+    /// pool spans both captures of one exec, so the combined spill stays
+    /// within the cap regardless of per-stream construction.
+    quota: DiskQuota,
+    /// Set once the pool refused a write; the pump closes the pipe read end
+    /// and the reason is composed at finish/peek time.
+    capped: bool,
 }
 
 /// Spill-file lifecycle for [`BoundedCapture::spill`].
@@ -77,16 +160,26 @@ pub(super) struct CaptureResult {
     /// safely unlink: unlinking the content name would pull the file out
     /// from under every other banner that resolved to the same bytes.
     pub tmp_twin: Option<PathBuf>,
+    /// Present when the task-wide disk cap refused a write: the human-facing
+    /// termination reason (original byte count + recovery guidance), carried
+    /// through read/finish so the agent sees why the stream stopped.
+    pub killed_reason: Option<String>,
 }
 
 impl BoundedCapture {
     /// Creates a collector that retains a head of `max_bytes/2` and a tail of
     /// the remainder, spilling the full stream to `spill_dir` on overflow.
+    ///
+    /// `quota` is the task-wide disk budget: both streams of one exec (and a
+    /// converted task's continued pumping) share one pool, so the combined
+    /// spilled bytes stay within the cap no matter how the two captures are
+    /// constructed.
     pub(super) fn new(
         max_bytes: usize,
         nonce: &str,
         stream_label: &'static str,
         spill_dir: PathBuf,
+        quota: DiskQuota,
     ) -> Self {
         let head_budget = max_bytes / 2;
         let tail_budget = max_bytes - head_budget;
@@ -101,6 +194,8 @@ impl BoundedCapture {
             nonce: nonce.to_owned(),
             stream_label,
             spill_dir,
+            quota,
+            capped: false,
         }
     }
 
@@ -109,26 +204,51 @@ impl BoundedCapture {
     /// tail. The spill-flush ordering is load-bearing: the head+tail prefix is
     /// flushed *before* the overflowing chunk is appended, so the file ends up
     /// byte-identical to the true stream.
-    pub(super) fn push(&mut self, chunk: &[u8]) {
+    ///
+    /// Returns [`PushOutcome::Capped`] when the task-wide disk budget refused
+    /// a write: the refused chunk is neither added to the in-memory view nor
+    /// spilled (it counts toward the running total only), and the caller must
+    /// stop reading and close the pipe read end — the child's next write then
+    /// dies on SIGPIPE (or fails with EPIPE), so the on-disk total stays
+    /// strictly within the cap (pre-write check).
+    pub(super) fn push(&mut self, chunk: &[u8]) -> PushOutcome {
         self.total += chunk.len();
         let will_overflow = self.total > self.max_bytes;
 
         // Lazy spill: open on the FIRST overflow, flushing the in-memory view
         // (head + tail = the complete prefix so far, <= max_bytes) so the file
-        // ultimately holds the entire stream.
+        // ultimately holds the entire stream. The flush itself spends the
+        // shared disk budget; a refusal here means the disk cap is sized below
+        // the memory budget — degrade to capped without ever opening a file.
         if will_overflow && matches!(self.spill, SpillState::Closed) {
+            let prefix = self.head.len() + self.tail.len();
+            if !self.quota.try_reserve(prefix) {
+                self.capped = true;
+                return PushOutcome::Capped;
+            }
             match self.open_streaming_spill() {
                 Ok(handle) => self.spill = SpillState::Open(handle),
-                Err(_) => self.spill = SpillState::Poisoned,
+                // Open failure after a successful reservation: hand the bytes
+                // back so a sibling stream is not short-changed.
+                Err(_) => {
+                    self.quota.release(prefix);
+                    self.spill = SpillState::Poisoned;
+                }
             }
         }
         // Every chunk after the spill opens is appended, so the file is complete.
-        if let SpillState::Open(handle) = &mut self.spill
-            && handle.append(chunk).is_err()
-        {
-            // Mid-stream write failure: stop spilling and keep what we have;
-            // surface no path so the caller never points at a partial file.
-            self.spill = SpillState::Poisoned;
+        if let SpillState::Open(handle) = &mut self.spill {
+            if !self.quota.try_reserve(chunk.len()) {
+                self.capped = true;
+                return PushOutcome::Capped;
+            }
+            if handle.append(chunk).is_err() {
+                // Mid-stream write failure: stop spilling and keep what we
+                // have; surface no path so the caller never points at a
+                // partial file. The reservation goes back to the pool.
+                self.quota.release(chunk.len());
+                self.spill = SpillState::Poisoned;
+            }
         }
 
         // In-memory: fill the (frozen once full) head, then the rolling tail.
@@ -145,6 +265,7 @@ impl BoundedCapture {
                 self.tail.drain(0..start);
             }
         }
+        PushOutcome::Flowing
     }
 
     /// Open the streaming spill, writing the current head+tail prefix
@@ -225,6 +346,7 @@ impl BoundedCapture {
             truncated,
             spill,
             tmp_twin,
+            killed_reason: self.cap_reason(),
         }
     }
 
@@ -243,7 +365,36 @@ impl BoundedCapture {
             truncated,
             spill,
             tmp_twin,
+            killed_reason: self.cap_reason(),
         }
+    }
+
+    /// Render a byte budget for the reason line: whole MiB/KiB when exact,
+    /// plain bytes otherwise, so a sub-MiB cap never reads as "0 MiB".
+    fn fmt_cap(cap: usize) -> String {
+        const MIB: usize = 1024 * 1024;
+        const KIB: usize = 1024;
+        if cap >= MIB && cap.is_multiple_of(MIB) {
+            format!("{} MiB", cap / MIB)
+        } else if cap >= KIB && cap.is_multiple_of(KIB) {
+            format!("{} KiB", cap / KIB)
+        } else {
+            format!("{cap} bytes")
+        }
+    }
+
+    /// The termination reason when the disk cap refused a write: names the
+    /// cap, the captured volume, and the recovery path (narrow the command
+    /// or redirect to a file). `None` while the capture flowed freely.
+    fn cap_reason(&self) -> Option<String> {
+        self.capped.then(|| {
+            let head = format!(
+                "output exceeded the {} disk cap after {} bytes written to disk;",
+                Self::fmt_cap(self.quota.cap()),
+                self.quota.used()
+            );
+            format!("{head} writes terminated (SIGPIPE/EPIPE) — narrow the command or redirect its output to a file")
+        })
     }
 
     /// Path of the live spill file when this capture has overflowed and the
@@ -286,7 +437,13 @@ mod tests {
     }
 
     fn cap(budget: usize, dir: &tempfile::TempDir) -> BoundedCapture {
-        BoundedCapture::new(budget, "nonce", "out", dir.path().join("spill"))
+        BoundedCapture::new(
+            budget,
+            "nonce",
+            "out",
+            dir.path().join("spill"),
+            DiskQuota::new(usize::MAX),
+        )
     }
 
     #[test]
@@ -357,6 +514,7 @@ mod tests {
             "nonce",
             "out",
             PathBuf::from("/nonexistent-kallip-test-dir-xyz"),
+            DiskQuota::default(),
         );
         c.push(b"ab");
         c.push(b"cdefgh"); // overflow: open fails -> Poisoned; later bytes still buffered
@@ -481,7 +639,13 @@ mod tests {
         let path1 = first.finish().spill.expect("first final");
         let ino1 = path1.metadata().unwrap().ino();
 
-        let mut second = BoundedCapture::new(8, "nonce-2", "out", dir.path().join("spill"));
+        let mut second = BoundedCapture::new(
+            8,
+            "nonce-2",
+            "out",
+            dir.path().join("spill"),
+            DiskQuota::default(),
+        );
         second.push(b"shared stream bytes");
         let path2 = second.finish().spill.expect("second final");
         assert_eq!(path1, path2, "content addressing: same name");
@@ -508,5 +672,30 @@ mod tests {
         let r = c.finish();
         assert!(r.spill.is_none(), "mismatch poisons: no path surfaced");
         assert!(r.text.contains("bytes omitted"));
+    }
+
+    /// The task-wide disk cap is shared across both streams (per-task, not
+    /// per-spill): two captures on one quota flow up to the combined total
+    /// and cap the moment either would exceed it.
+    #[test]
+    fn two_captures_share_one_quota_and_cap_at_combined_total() {
+        let dir = scratch();
+        let quota = DiskQuota::new(24);
+        let mut out =
+            BoundedCapture::new(4, "nonce-a", "out", dir.path().join("spill"), quota.clone());
+        let mut err =
+            BoundedCapture::new(4, "nonce-b", "err", dir.path().join("spill"), quota.clone());
+        // 12 + 12 = exactly the cap: strictly-at-cap still flows.
+        assert_eq!(out.push(b"aaaaaaaaaaaa"), PushOutcome::Flowing);
+        assert_eq!(err.push(b"bbbbbbbbbbbb"), PushOutcome::Flowing);
+        // One byte past the combined total caps both streams.
+        assert_eq!(out.push(b"c"), PushOutcome::Capped);
+        assert_eq!(err.push(b"c"), PushOutcome::Capped);
+        // Spilled bytes stay strictly within the cap: 12 + 12, no more.
+        let out_spilled = std::fs::read(out.finish().spill.unwrap()).unwrap();
+        let err_spilled = std::fs::read(err.finish().spill.unwrap()).unwrap();
+        assert_eq!(out_spilled.len() + err_spilled.len(), 24);
+        assert_eq!(out_spilled, b"aaaaaaaaaaaa".as_slice());
+        assert_eq!(err_spilled, b"bbbbbbbbbbbb".as_slice());
     }
 }

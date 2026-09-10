@@ -280,6 +280,12 @@ impl ShellBackend for ProcessBackend {
             crate::landlock::apply(&mut cmd, &source.access()?)?;
         }
 
+        #[cfg(unix)]
+        // Restore the child tree's default SIGPIPE disposition (the host's
+        // std SIG_IGN would otherwise be inherited): a capped stream's
+        // writer dies at its next write instead of spinning on EPIPE.
+        crate::pgroup::reset_sigpipe(&mut cmd);
+
         let mut child = cmd.spawn()?;
         // Epoch at fork (still under the READ permit): the conversion path
         // compares this against the gate's current carve epoch under a
@@ -314,17 +320,23 @@ impl ShellBackend for ProcessBackend {
         };
         // Shared captures so partial output survives even if a pump is stuck
         // (a grandchild holding the pipe write-end) and has to be aborted.
+        // One disk pool across the task's streams: the combined spill of
+        // stdout+stderr stays within config.disk_cap no matter which stream
+        // overflows first.
+        let quota = capture::DiskQuota::new(self.config.disk_cap);
         let out_cap = Arc::new(Mutex::new(capture::BoundedCapture::new(
             max,
             &nonce,
             out_label,
             self.config.spill_dir.clone(),
+            quota.clone(),
         )));
         let err_cap = Arc::new(Mutex::new(capture::BoundedCapture::new(
             max,
             &nonce,
             "stderr",
             self.config.spill_dir.clone(),
+            quota,
         )));
         let out_task = tokio::spawn(pump(child.stdout.take(), out_cap.clone()));
         // In Merged mode the script's `exec 2>&1` points fd 2 at the stdout
@@ -586,8 +598,14 @@ async fn pump(reader: Option<impl AsyncRead + Unpin>, cap: Arc<Mutex<capture::Bo
             match r.read(&mut buf).await {
                 Ok(0) => break,
                 Ok(n) => {
-                    if let Ok(mut c) = cap.lock() {
-                        c.push(&buf[..n]);
+                    if let Ok(mut c) = cap.lock()
+                        && c.push(&buf[..n]) == capture::PushOutcome::Capped
+                    {
+                        // Disk cap reached: stop reading and drop the read
+                        // end — the child's next write dies on SIGPIPE
+                        // or fails with EPIPE. The reason text is
+                        // composed by the capture at finish/peek time.
+                        break;
                     }
                 }
                 Err(_) => break,
@@ -734,16 +752,30 @@ impl CwdProbe {
 /// the spill file once and the `cat` affordance so the model can read the full
 /// output back; `stream` matches the JSON field name the model sees.
 pub(super) fn with_banner(stream: &str, cap: &capture::CaptureResult) -> String {
-    match &cap.spill {
-        Some(path) => {
-            let banner = format!(
-                "[{stream} was clipped (middle omitted); read the full output with: cat {}]\n",
-                path.display()
-            );
-            format!("{}{}", banner, cap.text)
-        }
-        None => cap.text.clone(),
+    // A disk-capped stream leads with its termination reason, then any
+    // spill banner, then the output — the agent must see why the stream
+    // stopped and how to recover before anything else.
+    let reason = cap
+        .killed_reason
+        .as_deref()
+        .map(|r| format!("[{stream} disk cap reached: {r}]"));
+    let banner = match (&cap.spill, &cap.killed_reason) {
+        (Some(path), _) => Some(format!(
+            "[{stream} was clipped (middle omitted); read the full output with: cat {}]\n",
+            path.display()
+        )),
+        (None, _) => None,
+    };
+    let mut text = String::new();
+    if let Some(r) = &reason {
+        text.push_str(r);
+        text.push('\n');
     }
+    if let Some(b) = &banner {
+        text.push_str(b);
+    }
+    text.push_str(&cap.text);
+    text
 }
 
 /// Best-effort unlink of a discarded capture's spill twin so the spill

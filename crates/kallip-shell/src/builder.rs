@@ -17,6 +17,9 @@ const DEFAULT_FALLBACK_CWD: &str = "/tmp";
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024; // 1 MiB
 /// Output cap for a background task before the size watchdog kills it.
 const DEFAULT_MAX_BG_BYTES: usize = 100 * 1024 * 1024; // 100 MiB
+/// Task-wide disk cap for captured foreground-exec output (both
+/// streams' spill combined): the hard bound the capture pumps enforce.
+pub(super) const DEFAULT_DISK_CAP: usize = 20 * 1024 * 1024; // 20 MiB
 
 /// The closure type inside [`AccessSource`]: a per-spawn snapshot of the
 /// owning agent's [`AccessDecision`]. Aliased so the newtype signature stays on
@@ -82,6 +85,7 @@ impl AccessSource {
 /// | `fallback_cwd`     | `"/tmp"`   | cwd when `current_dir()` fails or a cached cwd was deleted     |
 /// | `max_output_bytes` | 1 MiB       | Per-stream in-memory head+tail before output is clipped        |
 /// | `max_bg_bytes`     | 100 MiB     | Background-task output cap before the size watchdog kills it   |
+/// | `disk_cap`         | 20 MiB      | Foreground captured-output disk cap (both streams combined)  |
 /// | `spill_dir`        | `$TMPDIR/kallipai/spill` | Where overflow spill files are written (overflow only)    |
 #[derive(Clone, Debug)]
 pub struct ShellBuilder {
@@ -91,6 +95,7 @@ pub struct ShellBuilder {
     pub(super) env: HashMap<OsString, OsString>,
     pub(super) max_output_bytes: usize,
     pub(super) max_bg_bytes: usize,
+    pub(super) disk_cap: usize,
     /// Directory where overflow spill files are written (only when a captured
     /// stream exceeds `max_output_bytes`). Defaults to `temp_dir()/kallip`.
     /// Spill files persist until the system temp cleaner reaps them; cwd
@@ -126,6 +131,7 @@ impl ShellBuilder {
             env: HashMap::new(),
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             max_bg_bytes: DEFAULT_MAX_BG_BYTES,
+            disk_cap: DEFAULT_DISK_CAP,
             spill_dir: spill::spill_root(),
             on_terminal: None,
             #[cfg(all(target_os = "linux", feature = "landlock"))]
@@ -161,6 +167,14 @@ impl ShellBuilder {
     /// Overrides the background-task output cap (bytes). Default: 100 MiB.
     pub fn max_bg_bytes(mut self, bytes: usize) -> Self {
         self.max_bg_bytes = bytes;
+        self
+    }
+
+    /// Overrides the task-wide captured-output disk cap (bytes). Default:
+    /// 20 MiB. Both streams of one exec share the pool (combined cap).
+    /// Background tasks are bounded by `max_bg_bytes`, not by this knob.
+    pub fn disk_cap(mut self, bytes: usize) -> Self {
+        self.disk_cap = bytes;
         self
     }
 
@@ -237,6 +251,9 @@ impl ShellBuilder {
         }
         if self.max_bg_bytes == 0 {
             return Err(ShellError::backend("max_bg_bytes must be > 0"));
+        }
+        if self.disk_cap == 0 {
+            return Err(ShellError::backend("disk_cap must be > 0"));
         }
         if self.max_output_bytes > self.max_bg_bytes {
             return Err(ShellError::backend(format!(
