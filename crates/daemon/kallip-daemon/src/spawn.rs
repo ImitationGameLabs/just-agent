@@ -95,14 +95,14 @@ pub(crate) struct ResolvedUser {
 }
 
 impl LaunchIdentity {
-    fn uid(&self) -> u32 {
+    pub(crate) fn uid(&self) -> u32 {
         match self {
             LaunchIdentity::InPlace { uid, .. } => *uid,
             LaunchIdentity::DropTo(user) => user.uid,
         }
     }
 
-    fn username(&self) -> Option<String> {
+    pub(crate) fn username(&self) -> Option<String> {
         match self {
             LaunchIdentity::InPlace { username, .. } => username.clone(),
             LaunchIdentity::DropTo(user) => Some(user.username.clone()),
@@ -117,7 +117,7 @@ impl LaunchIdentity {
 /// historical single-user path stays unchanged. Authorization (against
 /// the resolved target) is the caller's next step and stays ahead of
 /// every state change.
-fn resolve_launch_identity(
+pub(crate) fn resolve_launch_identity(
     request_user: Option<&str>,
     peer_uid: u32,
 ) -> Result<LaunchIdentity, SpawnError> {
@@ -309,7 +309,10 @@ fn resolved_from_passwd(pw: Option<&libc::passwd>) -> Option<ResolvedUser> {
 /// launches from the target user's passwd home. The exact path is
 /// handed to the tagma at launch (`KALLIP_TAGMA_DATA_DIR`), replacing
 /// the old shared-root assumption with an explicit contract.
-fn instance_data_dir(identity: &LaunchIdentity, slug: &str) -> Result<PathBuf, SpawnError> {
+pub(crate) fn instance_data_dir(
+    identity: &LaunchIdentity,
+    slug: &str,
+) -> Result<PathBuf, SpawnError> {
     let home = match identity {
         LaunchIdentity::InPlace { .. } => {
             dirs::data_dir().context("could not determine platform data directory")?
@@ -977,7 +980,7 @@ fn fill_one(env: &mut Vec<String>, prefix: &str, default: Option<&str>) {
     }
 }
 
-fn overlaps(a: &Path, b: &Path) -> bool {
+pub(crate) fn overlaps(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
 
@@ -1244,7 +1247,7 @@ fn anchor_identity(record_root: &Path, slug: &str, pid: u32) -> bool {
 
 /// Seconds since the Unix epoch, saturating at 0 on clock skew;
 /// diagnostic stamp only.
-fn now_unix() -> u64 {
+pub(crate) fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

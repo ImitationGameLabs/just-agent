@@ -12,6 +12,7 @@
 //!
 //! The control socket is 0600: filesystem permission is the only auth.
 
+mod adopt;
 mod bins;
 mod reconcile;
 mod records;

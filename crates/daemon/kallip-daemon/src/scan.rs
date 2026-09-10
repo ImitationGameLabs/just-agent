@@ -10,7 +10,7 @@
 //! own spawn wrote into the record (state `running`). An instance the
 //! daemon has no record for is not the daemon's business.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kallip_daemon_common::wire::{HealthReport, InstanceInfo, InstanceState};
 
@@ -39,6 +39,10 @@ pub struct ScannedInstance {
     /// claimed as. `None` when the claim point could not pin one —
     /// classification then falls back to the exe/comm name chain.
     pub anchored: Option<Identity>,
+    /// The record's data-directory pointer, surfaced verbatim so the
+    /// adopt path can check tree disjointness against every
+    /// registered instance's data dir, not just its workspace.
+    pub data_dir: PathBuf,
 }
 
 impl ScannedInstance {
@@ -211,7 +215,7 @@ pub fn observe_identity(pid: u32) -> ProcFacts {
 /// denial (a live second claimant must not pass while the anchored
 /// incarnation is still up), then the name chain for a launch whose
 /// claim point could not pin an anchor.
-fn classify_identity(
+pub(crate) fn classify_identity(
     anchored: Option<&Identity>,
     pid: u32,
     facts: &ProcFacts,
@@ -365,6 +369,7 @@ pub fn scan_instances(record_root: &Path) -> Vec<ScannedInstance> {
             owner: Some(record.owner_uid),
             tagma_id: read_tagma_id(&record.data_dir),
             anchored: record.identity,
+            data_dir: record.data_dir,
         });
     }
     out.sort_by(|a, b| a.slug.cmp(&b.slug));

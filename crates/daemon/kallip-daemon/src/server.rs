@@ -213,6 +213,44 @@ impl Daemon {
                     }
                 }
             }
+            RequestBody::Adopt {
+                slug,
+                workspace,
+                data_dir,
+                env,
+                user,
+                accept_local_only,
+            } => {
+                let slug_out = slug.clone();
+                // Pure registration still touches the passwd db, the
+                // record area, and /proc: same blocking profile as spawn.
+                match tokio::task::spawn_blocking({
+                    let record_root = self.record_root.clone();
+                    move || {
+                        crate::adopt::adopt(
+                            &record_root,
+                            &slug,
+                            &workspace,
+                            &data_dir,
+                            &env,
+                            peer_uid,
+                            user.as_deref(),
+                            accept_local_only,
+                        )
+                    }
+                })
+                .await
+                {
+                    Ok(Ok(state)) => ok(OkPayload::Adopt {
+                        slug: slug_out,
+                        state,
+                    }),
+                    Ok(Err(error)) => spawn_error_response(&error),
+                    Err(join_error) => {
+                        err(ErrorCode::Internal, format!("adopt task: {join_error}"))
+                    }
+                }
+            }
         }
     }
 }

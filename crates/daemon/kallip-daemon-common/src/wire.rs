@@ -73,6 +73,28 @@ pub enum RequestBody {
         #[serde(default)]
         exe: Option<String>,
     },
+    /// Register an existing instance (running or stopped) under this
+    /// daemon without touching any process: the adopt verb for
+    /// instances the daemon did not spawn. `data_dir` is the
+    /// instance's own data directory (runtime.json, credentials/);
+    /// the daemon validates shape and overlap, observes the live
+    /// state, and never launches or signals anything. `env` is the
+    /// persistent snapshot replayed by later starts, exactly like
+    /// spawn's env. New fields must stay `#[serde(default)]` (the
+    /// additive-evolution rule behind Start's env and exe).
+    Adopt {
+        slug: String,
+        workspace: String,
+        data_dir: String,
+        #[serde(default)]
+        env: Vec<String>,
+        #[serde(default)]
+        user: Option<String>,
+        /// The caller's assertion that the instance is meant to run
+        /// local-only; the escape hatch for the adopt-time relay probe.
+        #[serde(default)]
+        accept_local_only: bool,
+    },
     /// List all managed instances (directory scan).
     List,
     /// One instance's health, or omit `slug` for the daemon itself.
@@ -104,10 +126,28 @@ pub enum ResponseBody {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OkPayload {
-    Spawn { slug: String, pid: u32, port: u16 },
-    Stop { slug: String },
-    List { instances: Vec<InstanceInfo> },
-    Health { report: HealthReport },
+    Spawn {
+        slug: String,
+        pid: u32,
+        port: u16,
+    },
+    /// The adopt outcome: the registration fact plus the observed
+    /// state at adoption time. Deliberately no pid/port — those are
+    /// spawn/start products; list and health carry them for an
+    /// adopted instance like any other.
+    Adopt {
+        slug: String,
+        state: InstanceState,
+    },
+    Stop {
+        slug: String,
+    },
+    List {
+        instances: Vec<InstanceInfo>,
+    },
+    Health {
+        report: HealthReport,
+    },
 }
 
 /// The daemon's liveness word. Clients match on this, never
@@ -398,6 +438,56 @@ mod tests {
             slug: "team-a".into(),
             pid: 4242,
             port: 39999,
+        };
+        let line = encode_response(&ok(payload.clone())).expect("encode");
+        let back = decode_response(&line).expect("decode");
+        assert_eq!(back.body, ResponseBody::Ok { payload });
+    }
+
+    #[test]
+    fn adopt_request_round_trips_with_all_fields() {
+        let body = RequestBody::Adopt {
+            slug: "team-a".into(),
+            workspace: "/home/u/work/a".into(),
+            data_dir: "/home/u/.local/share/kallipai/tagmata/team-a".into(),
+            env: vec!["KALLIP_TAGMA_ADDR=127.0.0.1:4711".into()],
+            user: Some("alice".into()),
+            accept_local_only: true,
+        };
+        let line = encode_request(&request(body.clone())).expect("encode");
+        let back = decode_request(&line).expect("decode");
+        assert_eq!(back.body, body);
+    }
+
+    #[test]
+    fn adopt_request_without_optional_fields_parses() {
+        // Same additive rule as Start's env and Spawn's exe: a
+        // minimal adopt payload decodes with the defaults — empty
+        // env, same-uid form, probe active.
+        let line = r#"{"v":1,"type":"adopt","slug":"team-a","workspace":"/w","data_dir":"/d"}"#;
+        let back = decode_request(line).expect("decode");
+        match back.body {
+            RequestBody::Adopt {
+                slug,
+                env,
+                user,
+                accept_local_only,
+                ..
+            } => {
+                assert_eq!(slug, "team-a");
+                assert!(env.is_empty());
+                assert!(user.is_none());
+                assert!(!accept_local_only);
+            }
+            other => panic!("expected adopt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn adopt_payload_round_trips() {
+        let payload = OkPayload::Adopt {
+            slug: "team-a".into(),
+            state: InstanceState::Stopped,
         };
         let line = encode_response(&ok(payload.clone())).expect("encode");
         let back = decode_response(&line).expect("decode");

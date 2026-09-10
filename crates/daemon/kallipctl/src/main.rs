@@ -8,7 +8,9 @@
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 use kallip_daemon_client::DaemonClient;
-use kallip_daemon_common::wire::{ErrorCode, OkPayload, RequestBody, Response, ResponseBody};
+use kallip_daemon_common::wire::{
+    ErrorCode, InstanceState, OkPayload, RequestBody, Response, ResponseBody,
+};
 
 #[derive(Parser)]
 #[command(
@@ -71,6 +73,30 @@ enum Command {
     List,
     /// Daemon health, or one instance's health by slug.
     Health { slug: Option<String> },
+    /// Register an existing instance (running or stopped) under this
+    /// daemon: pure registration, no process is launched or signaled.
+    Adopt {
+        /// Instance slug: same grammar as spawn's.
+        slug: String,
+        /// Absolute path of the instance workspace.
+        #[arg(long)]
+        workspace: String,
+        /// Absolute path of the instance's data directory (runtime.json,
+        /// credentials/). Must carry at least one of the two.
+        #[arg(long)]
+        data_dir: String,
+        /// Persistent env snapshot, KEY=VALUE (repeatable); same
+        /// allowlist as spawn's env, replayed by later starts.
+        #[arg(short = 'e', long = "env")]
+        env: Vec<String>,
+        /// Dedicated-user form (requires the daemon to run as root).
+        #[arg(long)]
+        user: Option<String>,
+        /// Assert the instance is meant to run local-only; skips the
+        /// adopt-time relay probe.
+        #[arg(long)]
+        accept_local_only: bool,
+    },
 }
 
 #[tokio::main]
@@ -92,9 +118,10 @@ async fn main() -> Result<()> {
     // enforces (shape and the 64-char cap), caught before a
     // round-trip.
     let slug = match &cli.command {
-        Command::Spawn { slug, .. } | Command::Start { slug, .. } | Command::Stop { slug } => {
-            Some(slug)
-        }
+        Command::Spawn { slug, .. }
+        | Command::Start { slug, .. }
+        | Command::Adopt { slug, .. }
+        | Command::Stop { slug } => Some(slug),
         _ => None,
     };
     if let Some(slug) = slug
@@ -131,6 +158,21 @@ async fn main() -> Result<()> {
             env,
             exe: cli.bin,
         },
+        Command::Adopt {
+            slug,
+            workspace,
+            data_dir,
+            env,
+            user,
+            accept_local_only,
+        } => RequestBody::Adopt {
+            slug,
+            workspace,
+            data_dir,
+            env,
+            user,
+            accept_local_only,
+        },
         Command::List => RequestBody::List,
         Command::Health { slug } => RequestBody::Health { slug },
     };
@@ -139,6 +181,12 @@ async fn main() -> Result<()> {
         .await
         .context("talking to the kallip daemon")?;
     print(response, started)
+}
+
+/// The one-line adopt outcome: verb, slug, and the observed state —
+/// the registration fact a script greps for.
+fn adopt_line(slug: &str, state: InstanceState) -> String {
+    format!("adopted {slug} ({})", state.as_str())
 }
 
 fn print(response: Response, started: bool) -> Result<()> {
@@ -184,6 +232,9 @@ fn print(response: Response, started: bool) -> Result<()> {
                         );
                     }
                 },
+                OkPayload::Adopt { slug, state } => {
+                    println!("{}", adopt_line(&slug, state));
+                }
             }
             Ok(())
         }
@@ -204,5 +255,22 @@ fn print(response: Response, started: bool) -> Result<()> {
             };
             anyhow::bail!("{prefix}: {message}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adopt_line_renders_the_registration_fact() {
+        assert_eq!(
+            adopt_line("team-a", InstanceState::Running),
+            "adopted team-a (running)"
+        );
+        assert_eq!(
+            adopt_line("team-b", InstanceState::Stopped),
+            "adopted team-b (stopped)"
+        );
     }
 }
