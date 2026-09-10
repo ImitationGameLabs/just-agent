@@ -102,13 +102,80 @@ pub fn daemon_bind_path() -> Option<PathBuf> {
     candidates(&legs_from_env(None)).into_iter().next()
 }
 
-/// The first candidate that accepts a connection. A local unix-socket
-/// connect either answers immediately or fails; no timeout is needed.
-pub fn probe(candidates: &[PathBuf]) -> Option<PathBuf> {
-    candidates
+/// One candidate's failed connect, kept in probe order so an exhausted
+/// chain can be reported candidate by candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeAttempt {
+    /// The candidate that was tried.
+    pub path: PathBuf,
+    /// Why the connect failed.
+    pub kind: std::io::ErrorKind,
+}
+
+/// Why no candidate answered the probe: every attempt with its failure
+/// kind, in probe order. A permission denial is the interesting case -
+/// the socket exists but this user may not connect (the daemon
+/// socket's group-admission design) - and `describe_probe_failure`
+/// turns that into an actionable message instead of a bare "not found".
+#[derive(Debug, Clone)]
+pub struct ProbeError {
+    /// One entry per candidate, in probe order.
+    pub attempted: Vec<ProbeAttempt>,
+}
+
+/// The first candidate that accepts a connection; every failure is
+/// recorded and the chain keeps walking, so a live daemon wins wherever
+/// it sits while the report keeps the per-candidate reasons. A local
+/// unix-socket connect either answers immediately or fails; no timeout
+/// is needed.
+pub fn probe(candidates: &[PathBuf]) -> Result<PathBuf, ProbeError> {
+    let mut attempted = Vec::new();
+    for path in candidates {
+        match std::os::unix::net::UnixStream::connect(path) {
+            Ok(_) => return Ok(path.clone()),
+            Err(err) => attempted.push(ProbeAttempt {
+                path: path.clone(),
+                kind: err.kind(),
+            }),
+        }
+    }
+    Err(ProbeError { attempted })
+}
+
+/// The user-facing report for an exhausted probe chain: a one-line
+/// verdict, then every candidate on its own line with the reason it
+/// did not answer. A permission denial changes only the verdict -
+/// the socket exists but this user may not connect (the daemon
+/// socket's group-admission design); the tried list reads the same.
+pub fn describe_probe_failure(err: &ProbeError) -> String {
+    let verdict = if err
+        .attempted
         .iter()
-        .find(|path| std::os::unix::net::UnixStream::connect(path).is_ok())
-        .cloned()
+        .any(|attempt| attempt.kind == std::io::ErrorKind::PermissionDenied)
+    {
+        "daemon socket exists but access is denied for the current user"
+    } else {
+        "no reachable daemon socket"
+    };
+    let mut report = format!("{verdict}\ntried, in order:");
+    for attempt in &err.attempted {
+        report.push_str(&format!(
+            "\n  {} ({})",
+            attempt.path.display(),
+            failure_phrase(attempt.kind)
+        ));
+    }
+    report
+}
+
+/// A short human phrase for one connect failure kind.
+fn failure_phrase(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        std::io::ErrorKind::NotFound => "no such file or directory",
+        std::io::ErrorKind::PermissionDenied => "permission denied",
+        std::io::ErrorKind::ConnectionRefused => "connection refused (stale socket file)",
+        _ => "connect failed",
+    }
 }
 
 #[cfg(test)]
@@ -264,9 +331,166 @@ mod tests {
         let listener = std::os::unix::net::UnixListener::bind(&live).unwrap();
         let dead = dir.join("dead.sock");
 
-        let found = probe(&[dead.clone(), live.clone()]);
+        let found = probe(&[dead.clone(), live.clone()]).ok();
         assert_eq!(found, Some(live), "dead candidate skipped, live answered");
         drop(listener);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Euid 0 bypasses the permission bits the denial tests rely on;
+    /// /proc/self carries the euid as its file owner on Linux.
+    fn running_as_root() -> bool {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata("/proc/self").is_ok_and(|meta| meta.uid() == 0)
+    }
+
+    #[test]
+    fn exhausted_chain_without_a_denial_keeps_the_not_found_report() {
+        let err = probe(&[PathBuf::from("/kp-probe-absent/altogether.sock")]).unwrap_err();
+        assert_eq!(err.attempted.len(), 1);
+        assert_eq!(err.attempted[0].kind, std::io::ErrorKind::NotFound);
+
+        let report = describe_probe_failure(&err);
+        assert!(
+            report.contains("no reachable daemon socket"),
+            "absence stays reported as absence: {report}"
+        );
+        assert!(
+            report.contains("/kp-probe-absent/altogether.sock"),
+            "the tried path stays in the report: {report}"
+        );
+
+        assert!(
+            report.contains(
+                "\ntried, in order:\n  /kp-probe-absent/altogether.sock (no such file or directory)"
+            ),
+            "the absence report ends with a line per candidate: {report}"
+        );
+    }
+
+    #[test]
+    fn denied_socket_is_reported_as_denial_with_its_path() {
+        if running_as_root() {
+            // Root bypasses the permission bits this test is built on.
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("kp-sock-denied-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let guarded = dir.join("guarded.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&guarded).unwrap();
+        std::fs::set_permissions(&guarded, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let denied_path = guarded.to_str().unwrap().to_owned();
+
+        let err = probe(&[guarded]).unwrap_err();
+        assert_eq!(
+            err.attempted[0].kind,
+            std::io::ErrorKind::PermissionDenied,
+            "mode 000 must deny a non-root connect on this kernel"
+        );
+        let report = describe_probe_failure(&err);
+        assert!(
+            report.contains(denied_path.as_str()),
+            "the denied path is named: {report}"
+        );
+        assert!(
+            report.contains("access is denied"),
+            "a denial is not reported as absence: {report}"
+        );
+
+        assert!(
+            report.contains(
+                format!("\ntried, in order:\n  {denied_path} (permission denied)").as_str()
+            ),
+            "the denial is the bare verdict plus a line per candidate: {report}"
+        );
+
+        drop(listener);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn probe_keeps_walking_after_a_denial_and_reports_every_attempt() {
+        if running_as_root() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("kp-sock-mixed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let guarded = dir.join("guarded.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&guarded).unwrap();
+        std::fs::set_permissions(&guarded, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let missing = dir.join("absent.sock");
+
+        let err = probe(&[missing.clone(), guarded.clone()]).unwrap_err();
+        let kinds = err
+            .attempted
+            .iter()
+            .map(|attempt| attempt.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                std::io::ErrorKind::NotFound,
+                std::io::ErrorKind::PermissionDenied
+            ],
+            "the chain walks past a denial and records both attempts"
+        );
+        let report = describe_probe_failure(&err);
+        assert!(report.contains(missing.to_str().unwrap()));
+        assert!(report.contains(guarded.to_str().unwrap()));
+        assert!(report.contains("permission denied"));
+        drop(listener);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_denial_does_not_end_the_chain_and_a_live_candidate_wins() {
+        if running_as_root() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("kp-sock-denied-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let guarded = dir.join("guarded.sock");
+        let denied_listener = std::os::unix::net::UnixListener::bind(&guarded).unwrap();
+        std::fs::set_permissions(&guarded, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let live = dir.join("live.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&live).unwrap();
+
+        let found = probe(&[guarded, live.clone()]).ok();
+        assert_eq!(
+            found,
+            Some(live),
+            "the chain walks past the denial; the live candidate answers"
+        );
+        drop(denied_listener);
+        drop(listener);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn connection_refused_is_reported_with_the_stale_file_hint() {
+        let err = ProbeError {
+            attempted: vec![ProbeAttempt {
+                path: PathBuf::from("/kp-stale/stale.sock"),
+                kind: std::io::ErrorKind::ConnectionRefused,
+            }],
+        };
+
+        let report = describe_probe_failure(&err);
+        assert!(
+            report.contains("connection refused"),
+            "the refusal is named: {report}"
+        );
+        assert!(
+            report.contains("stale socket file"),
+            "the hint points at the likely cause: {report}"
+        );
+        assert!(
+            report.contains("no reachable daemon socket"),
+            "no denial keeps the absence phrasing: {report}"
+        );
     }
 }

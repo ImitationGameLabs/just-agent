@@ -80,15 +80,8 @@ impl Config {
         let candidates = kallip_daemon_common::socket::candidates_from_env(
             self.daemon_socket.as_deref().map(std::path::Path::new),
         );
-        kallip_daemon_common::socket::probe(&candidates).ok_or_else(|| {
-            anyhow::anyhow!(
-                "no reachable daemon socket; tried: {}",
-                candidates
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+        kallip_daemon_common::socket::probe(&candidates).map_err(|err| {
+            anyhow::anyhow!(kallip_daemon_common::socket::describe_probe_failure(&err))
         })
     }
 
@@ -199,9 +192,23 @@ mod tests {
                     cors_origins: String::new(),
                 };
                 let err = config.resolve_socket().unwrap_err();
+                let message = err.to_string();
+                for leg in [
+                    runtime.path().join("kallipai/daemon/control.sock"),
+                    state.path().join("kallipai/daemon/control.sock"),
+                ] {
+                    assert!(
+                        message.contains(&format!("{} (no such file or directory)", leg.display())),
+                        "{message}"
+                    );
+                }
+                // The host may carry its own system-leg socket that this
+                // user cannot connect to; both exhaustion shapes name the
+                // tried candidates, only the leading phrase differs.
                 assert!(
-                    err.to_string().contains("no reachable daemon socket"),
-                    "{err}"
+                    message.contains("no reachable daemon socket")
+                        || message.contains("access is denied"),
+                    "{message}"
                 );
             },
         );

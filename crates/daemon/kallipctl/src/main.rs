@@ -78,15 +78,8 @@ async fn main() -> Result<()> {
     let candidates = kallip_daemon_common::socket::candidates_from_env(
         cli.socket.as_deref().map(std::path::Path::new),
     );
-    let socket = kallip_daemon_common::socket::probe(&candidates).with_context(|| {
-        format!(
-            "no reachable daemon socket; tried: {}",
-            candidates
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+    let socket = kallip_daemon_common::socket::probe(&candidates).map_err(|err| {
+        anyhow::anyhow!(kallip_daemon_common::socket::describe_probe_failure(&err))
     })?;
     let client = DaemonClient::new(socket);
 
