@@ -19,7 +19,6 @@ nix = { workspace = true }
 uuid = { workspace = true }
 regex = { workspace = true }
 sha2 = { workspace = true }
-tempfile = { workspace = true }
 unicode-normalization = { workspace = true }
 tracing = { workspace = true }
 
@@ -53,6 +52,7 @@ landlock = ["dep:libsandbox", "libsandbox/landlock"]
 seccomp = ["landlock"]
 
 [dev-dependencies]
+tempfile = { workspace = true }
 # Dev-only: the `spawn` benchmark measures per-command spawn cost for the shell
 # backend against a bare `bash -c` floor. Not pulled by runtime/tagma
 # (dev-dependencies are non-transitive).

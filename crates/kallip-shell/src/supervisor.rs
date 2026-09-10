@@ -12,7 +12,7 @@
 use crate::builder::DEFAULT_DISK_CAP;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
@@ -30,6 +30,7 @@ use crate::backend::CaptureMode;
 use crate::capture::{self, BoundedCapture};
 use crate::error::ShellError;
 use crate::pgroup;
+use crate::spill;
 
 /// LLM-facing identifier for a background task (UUID v4 string).
 pub(super) type TaskId = String;
@@ -76,11 +77,14 @@ impl TaskState {
 }
 
 /// Observer invoked when a background task reaches a terminal state. Receives
-/// `(task_id, state, exit_code)`; `exit_code` is `None` for killed / watcher-error
-/// cases. Best-effort: may not fire on registry `Drop` — the runtime may be
-/// shutting down and the watcher cannot be awaited synchronously, so callers must
-/// tolerate a missed notification (equivalent to the task being reclaimed).
-pub type OnTaskTerminal = Arc<dyn Fn(&str, TaskState, Option<i32>) + Send + Sync>;
+/// `(task_id, state, exit_code, reason)`; `exit_code` is `None` for killed /
+/// watcher-error cases, and `reason` carries the termination story when there
+/// is one (disk cap, poison degrade) — `None` for a plain exit or a watchdog
+/// kill, whose story the `Killed` state already tells. Best-effort: may not
+/// fire on registry `Drop` — the runtime may be shutting down and the watcher
+/// cannot be awaited synchronously, so callers must tolerate a missed
+/// notification (equivalent to the task being reclaimed).
+pub type OnTaskTerminal = Arc<dyn Fn(&str, TaskState, Option<i32>, Option<&str>) + Send + Sync>;
 
 /// Owned terminal-state observer with a `Debug` impl (trait objects have none),
 /// so it can live in a `#[derive(Debug)]` struct like `ShellBuilder`.
@@ -107,6 +111,10 @@ pub struct BgReadOutput {
     pub stalled: bool,
     /// Total bytes written so far.
     pub bytes: usize,
+    /// Termination story when there is one (disk cap, poison degrade) —
+    /// the same text that prefixes the read body, exposed structurally so
+    /// field-level consumers need not parse the output text.
+    pub reason: Option<String>,
 }
 
 struct BackgroundTask {
@@ -124,17 +132,6 @@ struct BackgroundTask {
     cap_reason: Arc<Mutex<Option<String>>>,
     cancel: CancellationToken,
     handle: Option<tokio::task::JoinHandle<()>>,
-    /// A spawned task's auto-cleaned output dir (`out.log` lives here);
-    /// `None` for converted tasks, whose spill files are unlinked on
-    /// kill/drop instead (see `remove_pipes_spill`). Held for its `Drop`
-    /// side-effect (the dir is removed when the task is dropped), never read
-    /// directly. The watcher task itself is a separate tokio task that may
-    /// outlive this struct, but its `out.log` reads are already fallible
-    /// (`unwrap_or(0)`/`read_tail`), so a dir removed mid-poll is tolerated —
-    /// identical to the old manual `remove_dir_all` cleanup, no new
-    /// dangling-read path. Drop order is irrelevant to that safety.
-    #[allow(dead_code)]
-    tmpdir: Option<tempfile::TempDir>,
 }
 
 /// Shared mutable state observed by both the watcher task and read/kill.
@@ -147,8 +144,9 @@ struct Watched {
 
 /// Where a background task's output lives.
 ///
-/// `File` (spawned tasks): both pipes were redirected into one `out.log` in
-/// the task's auto-cleaned tmpdir before the fork. `Pipes` (adopted tasks —
+/// `File` (spawned tasks): both pipes were redirected into one `out.log`
+/// under the task's private `bg/<task-id>/` spill-tree dir before the fork.
+/// `Pipes` (adopted tasks —
 /// a timed-out foreground exec converted to background): the original pipe
 /// pumps and their bounded captures keep running, so the partial output
 /// survives the conversion and keeps growing. Cloned into the watcher (the
@@ -188,6 +186,9 @@ struct WatchArgs {
     on_terminal: Option<OnTaskTerminal>,
     exec_gate: Option<Arc<super::gate::ExecGate>>,
     output: TaskOutput,
+    /// The spawned task's pump/cap reason slot; `None` for adopted tasks,
+    /// whose reasons live in the captures (resolved via `output` instead).
+    cap_reason: Option<Arc<Mutex<Option<String>>>>,
     pumps: Option<Pumps>,
     /// Read end of an adopted task's cwd-marker pipe. Must outlive the
     /// child: the exec script's EXIT trap writes `pwd -P` to the inherited
@@ -280,17 +281,16 @@ impl BackgroundRegistry {
     /// Spawn `command` as a background task; returns its id.
     pub(super) async fn spawn(&mut self, command: &str) -> Result<TaskId, ShellError> {
         let id = uuid::Uuid::new_v4().to_string();
-        // Each task owns an auto-cleaned tmpdir holding its merged `out.log`.
+        // Each task owns a private output dir under the spill tree —
+        // `spill_root()/bg/<task-id>/out.log`. No in-process cleanup: the
+        // system /tmp mechanisms own the lifecycle, like every spill file.
         // No cwd EXIT trap: background must not touch the shared sticky cwd.
-        let tmpdir = tempfile::TempDir::new()?;
-        let output_path = tmpdir.path().join("out.log");
+        let task_dir = spill::bg_task_dir(&id)?;
+        let output_path = task_dir.join("out.log");
 
-        // Create the output file so the redirect target exists before spawn.
-        let output = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&output_path)?;
+        // Create the output file (0600 via `O_EXCL | O_NOFOLLOW` dirfd) so
+        // the redirect target exists before spawn.
+        let output = spill::create_private_file(&task_dir, "out.log")?;
 
         let mut cmd = Command::new(&self.shell);
         cmd.arg("-c")
@@ -314,12 +314,12 @@ impl BackgroundRegistry {
         let _bg_gate = super::gate::ExecGate::read(&self.exec_gate).await;
         // Landlock-restrict the background bash to the agent's access decision
         // (Linux + landlock). Compose the decision (lock-manager-backed snapshot
-        // + this task's own tmpdir as scratch) via `AccessSource`; `apply` is
+        // + this task's own bg/<task-id> dir as scratch) via `AccessSource`; `apply` is
         // pure mechanism — it moves the prepared landlock/mount-hole state into
         // the `pre_exec` closure held by `cmd` until `spawn()` consumes it.
         #[cfg(all(target_os = "linux", feature = "landlock"))]
         if let Some(source) = &self.access_source {
-            crate::landlock::apply(&mut cmd, &source.access_with_scratch(tmpdir.path())?)?;
+            crate::landlock::apply(&mut cmd, &source.access_with_scratch(&task_dir)?)?;
         }
         #[cfg(unix)]
         // Restore the child tree's default SIGPIPE disposition: when the
@@ -427,6 +427,7 @@ impl BackgroundRegistry {
             on_terminal: self.on_terminal.clone(),
             exec_gate: self.exec_gate.clone(),
             output: output.clone(),
+            cap_reason: Some(cap_reason.clone()),
             pumps: None,
             marker_read: None,
         }));
@@ -448,7 +449,6 @@ impl BackgroundRegistry {
                 cap_reason,
                 cancel,
                 handle: Some(handle),
-                tmpdir: Some(tmpdir),
             },
         );
         Ok(id)
@@ -523,6 +523,7 @@ impl BackgroundRegistry {
             on_terminal: self.on_terminal.clone(),
             exec_gate: self.exec_gate.clone(),
             output: output.clone(),
+            cap_reason: None,
             pumps: Some(pumps),
             marker_read,
         }));
@@ -541,7 +542,6 @@ impl BackgroundRegistry {
                 cap_reason: Arc::new(Mutex::new(None)),
                 cancel,
                 handle: Some(handle),
-                tmpdir: None,
             },
         );
         AdoptOutcome::Adopted(id)
@@ -563,19 +563,9 @@ impl BackgroundRegistry {
         // Disk-cap and poison reasons ride the read body: a tail window may
         // not include the on-disk truncation marker, so the text itself
         // carries why the stream stopped. An Exited+reason (cap) stays
-        // distinct from Killed (watchdog) via `state`.
-        let mut reasons: Vec<String> = Vec::new();
-        if let Some(r) = task.cap_reason.lock().ok().and_then(|g| g.clone()) {
-            reasons.push(r);
-        }
-        if let TaskOutput::Pipes { out, err, .. } = &task.output {
-            for cap in Some(out).into_iter().chain(err.as_ref()) {
-                let r = cap.lock().ok().and_then(|c| c.peek().killed_reason);
-                if let Some(r) = r {
-                    reasons.push(r);
-                }
-            }
-        }
+        // distinct from Killed (watchdog) via `state`. The same reasons are
+        // exposed structurally on `reason` for field-level consumers.
+        let reasons = task_reasons(&task.output, Some(&task.cap_reason));
         let output = if reasons.is_empty() {
             output
         } else {
@@ -588,11 +578,13 @@ impl BackgroundRegistry {
             exit_code: (code != EXIT_NONE).then_some(code),
             stalled: task.stalled.load(Ordering::Relaxed),
             bytes,
+            reason: reasons.first().cloned(),
         })
     }
 
-    /// Cancel and reap a background task. Its `TempDir` (holding `out.log`) is
-    /// removed when the removed task drops, after the watcher has finished.
+    /// Cancel and reap a background task. Its output dir under the spill
+    /// tree is NOT removed — the system /tmp cleanup owns the tree's
+    /// lifecycle; post-kill `out.log` reads stay fallible as before.
     pub(super) async fn kill(&mut self, id: &str) -> Result<(), ShellError> {
         let mut task = self
             .tasks
@@ -610,9 +602,10 @@ impl BackgroundRegistry {
         // watcher already reported terminal.
         mark_terminal(&task.state, STATE_KILLED, self.exec_gate.as_ref());
         remove_pipes_spill(&task.output);
-        // `task` drops here: its `TempDir` removes the output dir. The watcher
-        // has already finished (we awaited the handle above), so `out.log` is
-        // not read after removal.
+        // `task` drops here: nothing is removed — `out.log` persists under
+        // `bg/<task-id>/` for the system cleanup. The watcher has already
+        // finished (we awaited the handle above), so nothing reads it again
+        // through the registry.
         Ok(())
     }
 }
@@ -620,11 +613,11 @@ impl BackgroundRegistry {
 impl Drop for BackgroundRegistry {
     fn drop(&mut self) {
         // For each task: force-kill the whole process group (sync — `Drop`
-        // can't await the watcher); the task's `TempDir` removes its output dir
-        // when drained. `kill_on_drop` alone would only signal the leader,
-        // orphaning its children. The orphaned watcher's `out.log` reads are
-        // already fallible, so a dir removed mid-poll is tolerated (same as the
-        // old manual cleanup).
+        // can't await the watcher); the output dirs stay in place for the
+        // system /tmp cleanup. `kill_on_drop` alone would only signal the
+        // leader, orphaning its children. The orphaned watcher's `out.log`
+        // reads are already fallible, so a mid-poll disappearance is
+        // tolerated.
         //
         // Also settle the running-bg tally for any task still STATE_RUNNING
         // (a watcher that never reported — e.g. runtime shutting down before it
@@ -696,9 +689,11 @@ fn mark_terminal(state: &AtomicU8, terminal: u8, gate: Option<&Arc<super::gate::
 /// stop: cap reached, or the log write failed (poison degrade — the
 /// failure is surfaced, never silently swallowed). The caller then closes
 /// the read ends; the child's next write dies on SIGPIPE or fails with
-/// EPIPE, and the reason reaches read/finish via the shared slot. A
-/// pathological child that ignores SIGPIPE and never exits stays Running
-/// with zero further inflow; only a manual kill() terminates it.
+/// EPIPE, and the reason reaches read/finish via the shared slot; a single
+/// truncation marker is appended to out.log so tail-window reads carry the
+/// cut point in-file. A pathological child that ignores SIGPIPE and never
+/// exits stays Running with zero further inflow; only a manual kill()
+/// terminates it.
 async fn pump_log_chunk(
     log: &mut tokio::fs::File,
     quota: &capture::DiskQuota,
@@ -710,6 +705,15 @@ async fn pump_log_chunk(
         *cap_reason
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(reason);
+        // Single truncation marker at EOF: tail-window reads carry the cut
+        // point in-file, while the reason (read body prefix / `reason`
+        // field / terminal notice) carries the recovery guidance. The file
+        // stays pure bytes + marker, readable with head/tail as-is.
+        // Best-effort: the cap reason is already set, so a failed marker
+        // write must not overwrite it with a poison story.
+        let _ = log
+            .write_all(b"\n[output truncated: task disk cap reached]\n")
+            .await;
         return false;
     }
     if log.write_all(chunk).await.is_err() {
@@ -738,6 +742,7 @@ async fn watch(args: WatchArgs) {
         on_terminal,
         exec_gate,
         output,
+        cap_reason,
         mut pumps,
         marker_read,
     } = args;
@@ -760,7 +765,8 @@ async fn watch(args: WatchArgs) {
                 let _ = pgroup::kill_tree(&mut child).await;
                 drain_pumps(&mut pumps).await;
                 mark_terminal(&state, STATE_KILLED, exec_gate.as_ref());
-                fire_terminal(&on_terminal, &id, TaskState::Killed, None);
+                let reason = task_reasons(&output, cap_reason.as_ref()).into_iter().next();
+                fire_terminal(&on_terminal, &id, TaskState::Killed, None, reason.as_deref());
                 return;
             }
             _ = tokio::time::sleep(WATCH_POLL) => {}
@@ -779,7 +785,16 @@ async fn watch(args: WatchArgs) {
             let _ = pgroup::kill_tree(&mut child).await;
             drain_pumps(&mut pumps).await;
             mark_terminal(&state, STATE_KILLED, exec_gate.as_ref());
-            fire_terminal(&on_terminal, &id, TaskState::Killed, None);
+            let reason = task_reasons(&output, cap_reason.as_ref())
+                .into_iter()
+                .next();
+            fire_terminal(
+                &on_terminal,
+                &id,
+                TaskState::Killed,
+                None,
+                reason.as_deref(),
+            );
             return;
         }
 
@@ -792,14 +807,32 @@ async fn watch(args: WatchArgs) {
                 // the captures — post-exit reads must still see every byte.
                 drain_pumps(&mut pumps).await;
                 mark_terminal(&state, STATE_EXITED, exec_gate.as_ref());
-                fire_terminal(&on_terminal, &id, TaskState::Exited, code);
+                let reason = task_reasons(&output, cap_reason.as_ref())
+                    .into_iter()
+                    .next();
+                fire_terminal(
+                    &on_terminal,
+                    &id,
+                    TaskState::Exited,
+                    code,
+                    reason.as_deref(),
+                );
                 return;
             }
             Ok(None) => {}
             Err(_) => {
                 drain_pumps(&mut pumps).await;
                 mark_terminal(&state, STATE_EXITED, exec_gate.as_ref());
-                fire_terminal(&on_terminal, &id, TaskState::Exited, None);
+                let reason = task_reasons(&output, cap_reason.as_ref())
+                    .into_iter()
+                    .next();
+                fire_terminal(
+                    &on_terminal,
+                    &id,
+                    TaskState::Exited,
+                    None,
+                    reason.as_deref(),
+                );
                 return;
             }
         }
@@ -897,10 +930,35 @@ fn fire_terminal(
     id: &str,
     state: TaskState,
     exit_code: Option<i32>,
+    reason: Option<&str>,
 ) {
     if let Some(cb) = on_terminal {
-        cb(id, state, exit_code);
+        cb(id, state, exit_code, reason);
     }
+}
+
+/// Reasons worth surfacing for a task, in read-body order: the pump/cap
+/// slot first, then the adopted captures' peeks. Empty when the task ended
+/// with no cap/poison story (a plain exit, or a watchdog kill whose story
+/// the `Killed` state already tells). Shared by `read` (body prefix +
+/// `reason` field) and the terminal notice (finish face), so all three
+/// surfaces carry identical wording from the same source.
+fn task_reasons(
+    output: &TaskOutput,
+    cap_reason: Option<&Arc<Mutex<Option<String>>>>,
+) -> Vec<String> {
+    let mut reasons: Vec<String> = Vec::new();
+    if let Some(r) = cap_reason.and_then(|slot| slot.lock().ok().and_then(|g| g.clone())) {
+        reasons.push(r);
+    }
+    if let TaskOutput::Pipes { out, err, .. } = output {
+        for cap in Some(out).into_iter().chain(err.as_ref()) {
+            if let Some(r) = lock_cap(cap).peek().killed_reason {
+                reasons.push(r);
+            }
+        }
+    }
+    reasons
 }
 
 /// Interactive-prompt lockup patterns (kept conservative to avoid false positives).
@@ -1001,7 +1059,7 @@ mod tests {
     use super::*;
 
     /// Recorded terminal event `(task_id, state, exit_code)` for the on_terminal tests.
-    type CapturedTerminal = Option<(String, TaskState, Option<i32>)>;
+    type CapturedTerminal = Option<(String, TaskState, Option<i32>, Option<String>)>;
 
     fn registry() -> BackgroundRegistry {
         BackgroundRegistry::new(
@@ -1213,7 +1271,7 @@ mod tests {
     }
 
     /// Build a registry whose terminal-state observer records the last
-    /// `(task_id, state, exit_code)` into the returned shared slot.
+    /// `(task_id, state, exit_code, reason)` into the returned shared slot.
     fn tracking_registry(
         max_bg_bytes: usize,
     ) -> (BackgroundRegistry, Arc<std::sync::Mutex<CapturedTerminal>>) {
@@ -1224,8 +1282,9 @@ mod tests {
             OsString::from("bash"),
             max_bg_bytes,
             HashMap::new(),
-            Some(Arc::new(move |id, state, code| {
-                *captured.lock().unwrap() = Some((id.to_string(), state, code));
+            Some(Arc::new(move |id, state, code, reason| {
+                *captured.lock().unwrap() =
+                    Some((id.to_string(), state, code, reason.map(str::to_owned)));
             })),
         );
         (reg, received)
@@ -1241,7 +1300,7 @@ mod tests {
             }
             tokio::time::sleep(WATCH_POLL).await;
         }
-        let (cb_id, cb_state, cb_code) = received
+        let (cb_id, cb_state, cb_code, cb_reason) = received
             .lock()
             .unwrap()
             .clone()
@@ -1249,6 +1308,63 @@ mod tests {
         assert_eq!(cb_id, id);
         assert_eq!(cb_state, TaskState::Exited);
         assert_eq!(cb_code, Some(7));
+        assert_eq!(cb_reason, None, "a plain exit carries no reason");
+    }
+
+    /// The finish face carries the termination story: a pump-capped task
+    /// fires `Exited` with the disk-cap reason (distinct from the watchdog's
+    /// reason-less `Killed`), and the read surface agrees — the reason field
+    /// is `Some` and the in-file truncation marker rides the tail window.
+    /// A kill afterwards must not reclaim the spill: out.log stays on disk.
+    #[tokio::test]
+    async fn terminal_notice_and_read_carry_cap_reason() {
+        let (reg, received) = tracking_registry(10 * 1024 * 1024);
+        // Tiny disk cap so the pump's pre-write check fires long before the
+        // (never-reached) size watchdog: ~2.2 MB of bounded output vs 4 KiB.
+        let mut reg = reg.with_disk_cap(4096);
+        let id = reg
+            .spawn("for i in {1..200000}; do echo line-$i; done")
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if received.lock().unwrap().is_some() {
+                break;
+            }
+            tokio::time::sleep(WATCH_POLL).await;
+        }
+        let (cb_id, cb_state, _cb_code, cb_reason) = received
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("on_terminal did not fire on cap");
+        assert_eq!(cb_id, id);
+        assert_eq!(
+            cb_state,
+            TaskState::Exited,
+            "cap is the Exited+reason state"
+        );
+        let reason = cb_reason.expect("capped task fires with a reason");
+        assert!(reason.contains("disk cap"), "{reason}");
+
+        let out = reg.read(&id, 4096).unwrap();
+        assert_eq!(out.reason.as_deref(), Some(reason.as_str()));
+        assert!(
+            out.output
+                .contains("[output truncated: task disk cap reached]"),
+            "in-file marker must ride the tail window: {}",
+            out.output
+        );
+
+        // Regression pin: kill must not reclaim the spill — out.log stays
+        // on disk after kill (the system /tmp policy owns cleanup). An
+        // in-process cleanup that reclaims the file at kill fails this
+        // assertion.
+        reg.kill(&id).await.unwrap();
+        let log = crate::spill::spill_root()
+            .join("bg")
+            .join(&id)
+            .join("out.log");
+        assert!(log.exists(), "out.log must survive kill: {}", log.display());
     }
 
     #[tokio::test]
@@ -1265,11 +1381,12 @@ mod tests {
             }
             tokio::time::sleep(WATCH_POLL).await;
         }
-        let (cb_id, cb_state, _cb_code) = received
+        let (cb_id, cb_state, _cb_code, cb_reason) = received
             .lock()
             .unwrap()
             .clone()
             .expect("on_terminal did not fire on size-watchdog kill");
+        assert_eq!(cb_reason, None, "a watchdog kill carries no pump reason");
         assert_eq!(cb_id, id);
         assert_eq!(cb_state, TaskState::Killed);
     }

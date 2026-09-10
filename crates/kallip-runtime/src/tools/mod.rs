@@ -73,11 +73,20 @@ pub async fn build_tool_dispatch(inputs: ToolDispatchInputs<'_>) -> Result<ToolD
         .initial_cwd(config.workspace_root.clone())
         .envs(env)
         .exec_gate(exec_gate)
-        // The exit code is intentionally omitted from the notice — the agent reads it
-        // (and the output) via `bash_background_read`. Keeping the notice minimal avoids
-        // duplicating state the agent will fetch anyway.
-        .on_terminal(move |id, state, _code| {
-            notice_sink(format!("[Background task {id} {}]", state.as_str()));
+        // The notice carries the exit code and the termination reason when
+        // there is one (disk cap, poison degrade): a capped task reads as
+        // "exited" and without the reason the agent cannot tell why it died
+        // without a probe. The full output still goes through
+        // `bash_background_read` — the notice stays one line.
+        .on_terminal(move |id, state, code, reason| {
+            let mut notice = format!("[Background task {id} {}]", state.as_str());
+            if let Some(code) = code {
+                notice.push_str(&format!(" code {code}"));
+            }
+            if let Some(reason) = reason {
+                notice.push_str(&format!(": {reason}"));
+            }
+            notice_sink(notice);
         });
     // Landlock-enforce this agent's bash against its current access decision
     // (Linux + `landlock`). The closure composes the decision fresh per spawn.

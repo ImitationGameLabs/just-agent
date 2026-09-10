@@ -87,7 +87,7 @@ impl AccessSource {
 /// | `max_output_bytes` | 1 MiB       | Per-stream in-memory head+tail before output is clipped        |
 /// | `max_bg_bytes`     | 20 MiB      | Background-task output cap before the size watchdog kills it    |
 /// | `disk_cap`         | 20 MiB      | Task-wide captured-output disk cap (spill + out.log combined)  |
-/// | `spill_dir`        | `$TMPDIR/kallipai/spill` | Where overflow spill files are written (overflow only)    |
+/// | `spill_dir`        | `$TMPDIR/kallipai/<uid>` | Where overflow spill files are written (overflow only)    |
 #[derive(Clone, Debug)]
 pub struct ShellBuilder {
     pub(super) shell: OsString,
@@ -98,7 +98,7 @@ pub struct ShellBuilder {
     pub(super) max_bg_bytes: usize,
     pub(super) disk_cap: usize,
     /// Directory where overflow spill files are written (only when a captured
-    /// stream exceeds `max_output_bytes`). Defaults to `temp_dir()/kallip`.
+    /// stream exceeds `max_output_bytes`). Defaults to `temp_dir()/kallipai/<uid>`.
     /// Spill files persist until the system temp cleaner reaps them; cwd
     /// recovery is file-free (a private fd channel), so this holds only the
     /// spill files. Must match the landlocked child's notion of the temp dir
@@ -181,21 +181,23 @@ impl ShellBuilder {
     }
 
     /// Overrides the spill directory for overflow output files. Default:
-    /// `temp_dir()/kallip`. Useful in tests to point at a `tempfile::TempDir`
-    /// for hermetic cleanup.
+    /// `temp_dir()/kallipai/<uid>`. Useful in tests to point at a
+    /// `tempfile::TempDir` for hermetic cleanup.
     pub fn spill_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.spill_dir = dir.into();
         self
     }
 
     /// Registers an observer invoked when a background task reaches a terminal
-    /// state (exited/killed). Called as `(task_id, state, exit_code)`; `exit_code`
-    /// is `None` for killed / watcher-error cases. Best-effort: may not fire on
-    /// registry `Drop` (the runtime may be shutting down and the watcher cannot
-    /// be awaited synchronously).
+    /// state (exited/killed). Called as
+    /// `(task_id, state, exit_code, reason)`; `exit_code` is `None` for
+    /// killed / watcher-error cases, and `reason` carries the termination
+    /// story when there is one (disk cap, poison degrade). Best-effort: may
+    /// not fire on registry `Drop` (the runtime may be shutting down and the
+    /// watcher cannot be awaited synchronously).
     pub fn on_terminal<F>(mut self, cb: F) -> Self
     where
-        F: Fn(&str, TaskState, Option<i32>) + Send + Sync + 'static,
+        F: Fn(&str, TaskState, Option<i32>, Option<&str>) + Send + Sync + 'static,
     {
         self.on_terminal = Some(TerminalObserver(Arc::new(cb)));
         self

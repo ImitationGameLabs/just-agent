@@ -146,6 +146,7 @@ impl ShellBackend for MockShellBackend {
             exit_code: None,
             stalled: false,
             bytes: 0,
+            reason: None,
         })
     }
 

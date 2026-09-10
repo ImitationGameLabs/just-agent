@@ -73,7 +73,7 @@ async-stream = "0.3.6"
 # RFC 5321/5322 email validation for archeion login ids; pure-Rust, no heavy deps.
 email_address = "0.2.9"
 # `signal` transitively enables `process` (for `nix::unistd::Pid`).
-nix = { version = "0.31", features = ["fs", "signal"] }
+nix = { version = "0.31", features = ["fs", "signal", "user"] }
 # Linux-first sandbox toolbox (landlock ruleset + mount-ns composable
 # `prepare_*`/`install_*` primitives). Used only behind the `landlock` feature of
 # kallip-shell, which is Linux-only. `default-features = false` drops its

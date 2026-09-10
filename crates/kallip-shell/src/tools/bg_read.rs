@@ -45,6 +45,11 @@ pub struct BgReadOutput {
     pub stalled: bool,
     /// Total bytes written so far.
     pub bytes: usize,
+    /// Termination story when there is one (disk cap, poison degrade);
+    /// `None` for a plain exit or a watchdog kill. Also prefixes the
+    /// `output` text, so text-level consumers see it either way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Tool that reads a background task's accumulated output.
@@ -103,6 +108,7 @@ impl<B: ShellBackend + Send + Sync + 'static> LlmTool for BgRead<B> {
             exit_code: result.exit_code,
             stalled: result.stalled,
             bytes: result.bytes,
+            reason: result.reason,
         };
         Ok(serde_json::to_string(&output)?)
     }
@@ -140,10 +146,30 @@ mod tests {
             exit_code: Some(0),
             stalled: false,
             bytes: 4,
+            reason: Some("fixture-reason (not a real termination story)".into()),
         };
         let wire = serde_json::to_value(&out).unwrap();
         assert_eq!(wire["state"], "exited");
         assert_eq!(wire["task_id"], "t-1");
         assert_eq!(wire["exit_code"], 0);
+        assert_eq!(
+            wire["reason"],
+            "fixture-reason (not a real termination story)"
+        );
+    }
+
+    #[test]
+    fn bg_read_output_omits_absent_reason() {
+        let out = BgReadOutput {
+            task_id: "t-2".into(),
+            output: String::new(),
+            state: TaskState::Running,
+            exit_code: None,
+            stalled: false,
+            bytes: 0,
+            reason: None,
+        };
+        let wire = serde_json::to_value(&out).unwrap();
+        assert!(wire.get("reason").is_none());
     }
 }
