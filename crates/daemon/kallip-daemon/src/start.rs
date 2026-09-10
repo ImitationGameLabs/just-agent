@@ -426,7 +426,7 @@ mod tests {
         let error = start(
             std::path::Path::new("."),
             "instance-1",
-            &["KALLIP_TAGMA_ADDR=127.0.0.1:1".to_string()],
+            &["KALLIP_TAGMA_SLUG=elsewhere".to_string()],
             None,
             Duration::from_secs(1),
             &|_| false,
@@ -436,6 +436,38 @@ mod tests {
         assert!(
             error.to_string().contains("cannot be overridden"),
             "{error}"
+        );
+        let error = start(
+            std::path::Path::new("."),
+            "instance-1",
+            &["KALLIP_WORKSPACE_ROOT=/elsewhere".to_string()],
+            None,
+            Duration::from_secs(1),
+            &|_| false,
+            unsafe { libc::getuid() },
+        )
+        .expect_err("reserved overlay key");
+        assert!(
+            error.to_string().contains("cannot be overridden"),
+            "{error}"
+        );
+    }
+    #[test]
+    fn start_replay_keeps_a_pinned_addr_key() {
+        // A pinned listen address is a persisted user key: the
+        // stable-listening promise is that the recorded pair survives
+        // re-validation and the replay verbatim.
+        let root = tempfile::tempdir().expect("record root");
+        let value = record(&["KALLIP_TAGMA_ADDR=127.0.0.1:4711"], root.path());
+        write_record_at(root.path(), &value);
+        let stored = records::read_record(root.path(), "instance-1").expect("record persists");
+        validate_user_env(&stored.env).expect("the pinned addr re-validates");
+        let replay = replay_env(root.path(), "instance-1", &stored);
+        assert!(
+            replay
+                .iter()
+                .any(|pair| pair == "KALLIP_TAGMA_ADDR=127.0.0.1:4711"),
+            "the pinned listen address survives the start replay"
         );
     }
 }

@@ -43,6 +43,10 @@ enum Command {
         workspace: String,
         /// Extra env for the instance, KEY=VALUE (repeatable); only
         /// KALLIP_* keys plus RUST_LOG and PATH are accepted by the daemon.
+        /// KALLIP_TAGMA_ADDR=<addr> pins the tagma's listen address
+        /// (default 127.0.0.1:0); prefer a concrete interface or the
+        /// polis proxy over 0.0.0.0 — the API is Bearer-gated but plain
+        /// HTTP on the LAN.
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
         /// Run the instance as this pre-declared system user (the
@@ -97,6 +101,16 @@ async fn main() -> Result<()> {
         && !kallip_daemon_common::wire::valid_slug(slug)
     {
         anyhow::bail!("slug {slug:?} does not match [a-z0-9][a-z0-9-]* (max 64 chars)");
+    }
+    // Client-side advisory only: an explicitly pinned listen address
+    // means the port in the reply is the actual bind result, not a
+    // daemon-chosen ephemeral port.
+    if let Command::Spawn { env, .. } | Command::Start { env, .. } = &cli.command
+        && env
+            .iter()
+            .any(|pair| pair.starts_with("KALLIP_TAGMA_ADDR="))
+    {
+        eprintln!("listening address explicitly set; the reported port is the actual bind result");
     }
     let body = match cli.command {
         Command::Spawn {

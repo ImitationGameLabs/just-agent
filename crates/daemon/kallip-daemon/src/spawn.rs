@@ -50,10 +50,12 @@ pub enum SpawnError {
 }
 
 /// Env keys the daemon owns; a request may not override them.
-const RESERVED_KEYS: [&str; 4] = [
+/// (`KALLIP_TAGMA_ADDR` is deliberately absent — it is the one user-set
+/// listen knob: the daemon defaults it, a request pair wins, and the
+/// value is shape-checked at validation.)
+const RESERVED_KEYS: [&str; 3] = [
     "KALLIP_TAGMA_SLUG",
     "KALLIP_WORKSPACE_ROOT",
-    "KALLIP_TAGMA_ADDR",
     "KALLIP_TAGMA_DATA_DIR",
 ];
 
@@ -652,6 +654,8 @@ fn degrade_to_fallback(fallback_bin_dir: Option<&Path>) -> Vec<(String, String)>
 ///   cannot smuggle them in;
 /// * `RUST_LOG=info` appears only when neither base nor explicit pair
 ///   supplied one (map composition ends duplicate-key shadowing);
+/// * `KALLIP_TAGMA_ADDR` defaults to `127.0.0.1:0` when neither base nor
+///   explicit pair supplies one — the one user-set listen knob;
 /// * the data-dir handoff and the state anchor land last — daemon-owned
 ///   like the slug, they pin where the instance's data root and logs
 ///   resolve. The dedicated form additionally pins the whole XDG tree
@@ -685,7 +689,8 @@ fn compose_launch_env(
         "KALLIP_WORKSPACE_ROOT",
         workspace_canon.display().to_string(),
     );
-    env.insert("KALLIP_TAGMA_ADDR", "127.0.0.1:0".to_owned());
+    env.entry("KALLIP_TAGMA_ADDR")
+        .or_insert_with(|| "127.0.0.1:0".to_owned());
     env.insert("KALLIP_TAGMA_DATA_DIR", data_dir.display().to_string());
     if let Some(state) = state_home {
         env.insert("XDG_STATE_HOME", state.display().to_string());
@@ -716,6 +721,23 @@ fn compose_launch_env(
     }
     env.entry("RUST_LOG").or_insert_with(|| "info".to_owned());
     env.into_iter().map(|(k, v)| format!("{k}={v}")).collect()
+}
+
+/// The addr key is user-set, and the base (harvest) channel can carry it
+/// past request validation (`validate_user_env` never sees the base): the
+/// composed launch env is the last choke point, so a malformed pin from
+/// any channel dies here instead of at tagma bind time.
+fn ensure_addr_parses(env: &[String]) -> Result<(), SpawnError> {
+    let Some(pair) = env.iter().find(|p| p.starts_with("KALLIP_TAGMA_ADDR=")) else {
+        return Ok(());
+    };
+    let value = pair.split_once('=').map(|(_, v)| v).unwrap_or_default();
+    if value.parse::<std::net::SocketAddr>().is_err() {
+        return Err(SpawnError::Invalid(format!(
+            "env key \"KALLIP_TAGMA_ADDR\" must be a SocketAddr (got {value:?})"
+        )));
+    }
+    Ok(())
 }
 
 /// Register and launch one instance. Blocking — the server runs it on
@@ -896,6 +918,13 @@ pub(crate) fn validate_user_env(user_env: &[String]) -> Result<(), SpawnError> {
                 "env key {key:?} is not allowlisted (KALLIP_*, RUST_LOG, or PATH)"
             )));
         }
+        // The addr key is user-set: shape-check it here
+        // so a bad value dies at request time, not at tagma bind time.
+        if key == "KALLIP_TAGMA_ADDR" && value.parse::<std::net::SocketAddr>().is_err() {
+            return Err(SpawnError::Invalid(format!(
+                "env key {key:?} must be a SocketAddr (got {value:?})"
+            )));
+        }
         if value.is_empty() {
             return Err(SpawnError::Invalid(format!(
                 "env arg {pair:?} has an empty value"
@@ -992,6 +1021,9 @@ pub(crate) fn launch(
         state_home.as_deref(),
         target_user,
     );
+    // Guard every channel at the composed boundary: request pairs were
+    // validated, but a harvested base value slips past that check.
+    ensure_addr_parses(&env)?;
     // The helper drops privilege in the grandchild (initgroups → setgid
     // → setuid, in that order: initgroups needs privilege, and once
     // setuid has fired there is no way back). Flags are sent only for a
@@ -1713,8 +1745,71 @@ mod tests {
         );
         assert_eq!(get(&env, "KALLIP_TAGMA_SLUG"), Some("i1"));
         assert_eq!(get(&env, "KALLIP_WORKSPACE_ROOT"), Some("/ws"));
-        assert_eq!(get(&env, "KALLIP_TAGMA_ADDR"), Some("127.0.0.1:0"));
         assert_eq!(get(&env, "KALLIP_TAGMA_DATA_DIR"), Some("/data/i1"));
+    }
+
+    #[test]
+    fn compose_addr_key_is_first_writer() {
+        let explicit = compose_launch_env(
+            &base_env(),
+            &["KALLIP_TAGMA_ADDR=127.0.0.1:7".into()],
+            "d",
+            Path::new("/w"),
+            Path::new("/data/d"),
+            None,
+            None,
+        );
+        assert_eq!(get(&explicit, "KALLIP_TAGMA_ADDR"), Some("127.0.0.1:7"));
+        let default = compose_launch_env(
+            &base_env(),
+            &[],
+            "d",
+            Path::new("/w"),
+            Path::new("/data/d"),
+            None,
+            None,
+        );
+        assert_eq!(get(&default, "KALLIP_TAGMA_ADDR"), Some("127.0.0.1:0"));
+        let from_base = compose_launch_env(
+            &[("KALLIP_TAGMA_ADDR".into(), "127.0.0.1:9".into())],
+            &[],
+            "d",
+            Path::new("/w"),
+            Path::new("/data/d"),
+            None,
+            None,
+        );
+        assert_eq!(
+            get(&from_base, "KALLIP_TAGMA_ADDR"),
+            Some("127.0.0.1:9"),
+            "first writer wins: a base-resident addr beats the daemon default"
+        );
+    }
+
+    #[test]
+    fn addr_guard_rejects_a_malformed_base_value() {
+        let env = compose_launch_env(
+            &[("KALLIP_TAGMA_ADDR".into(), "not-an-addr".into())],
+            &[],
+            "d",
+            Path::new("/w"),
+            Path::new("/data/d"),
+            None,
+            None,
+        );
+        let error = ensure_addr_parses(&env)
+            .expect_err("a malformed pin from any channel dies at the guard");
+        assert!(error.to_string().contains("SocketAddr"), "{error}");
+        let good = compose_launch_env(
+            &[("KALLIP_TAGMA_ADDR".into(), "127.0.0.1:9".into())],
+            &[],
+            "d",
+            Path::new("/w"),
+            Path::new("/data/d"),
+            None,
+            None,
+        );
+        ensure_addr_parses(&good).expect("a well-formed base pin passes");
     }
 
     #[test]
@@ -1893,6 +1988,19 @@ mod tests {
             validate_user_env(&["KALLIP_TAGMA_DATA_DIR=/x".into()]).is_err(),
             "the data-dir handoff is daemon-owned"
         );
+        assert!(
+            validate_user_env(&["KALLIP_WORKSPACE_ROOT=/x".into()]).is_err(),
+            "the workspace handoff is daemon-owned"
+        );
+    }
+
+    #[test]
+    fn validate_addr_is_user_key_shape_checked() {
+        validate_user_env(&["KALLIP_TAGMA_ADDR=127.0.0.1:1".into()])
+            .expect("the addr key is user-set");
+        let error = validate_user_env(&["KALLIP_TAGMA_ADDR=not-an-addr".into()])
+            .expect_err("a bad addr shape dies at request time");
+        assert!(error.to_string().contains("SocketAddr"), "{error}");
     }
 
     #[test]

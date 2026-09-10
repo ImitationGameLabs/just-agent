@@ -353,7 +353,14 @@ launch anchor, and the pointer at the data directory
 every boot. Env
 pairs must start with `KALLIP_` or be `RUST_LOG`; the reserved
 keys (`KALLIP_TAGMA_SLUG`,
-`KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_ADDR`, `KALLIP_TAGMA_DATA_DIR`) are daemon-owned.
+`KALLIP_WORKSPACE_ROOT`, `KALLIP_TAGMA_DATA_DIR`) are daemon-owned.
+`KALLIP_TAGMA_ADDR` is the one user-set listen knob: the daemon injects
+`127.0.0.1:0` unless any channel carries the key — a request pair,
+the harvested base, or the persisted record replayed on start; every
+channel is shape-checked as a `SocketAddr`,
+and a pinned port already in use only surfaces at bind time — spawn
+times out and rolls the record back; start keeps the record and
+reports the timeout pointing at the logs.
 A `start` relaunch drops `KALLIP_TAGMA_RELAY_ENROLLMENT_CODE` from the
 replayed env once the instance holds stored relay credentials
 (`credentials/default/`) and scrubs it from the record in the same stroke:
