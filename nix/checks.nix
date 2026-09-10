@@ -3,6 +3,7 @@
   common,
   workspace,
   advisory-db,
+  aifed,
   lib,
 }:
 let
@@ -131,7 +132,10 @@ in
             ]
         );
       };
-      kallipaiModule = import ./nixos-modules.nix { packages = stubPackages; };
+      kallipaiModule = import ./nixos-modules.nix {
+        packages = stubPackages;
+        aifedOverlay = aifed.overlays.default;
+      };
       evalHost =
         extraModules:
         lib.nixosSystem {
@@ -170,6 +174,11 @@ in
       workspaceOnPath =
         builtins.elem stubPackages.${pkgs.stdenv.hostPlatform.system}.workspace
           aligned.config.environment.systemPackages;
+
+      # The daemon block also installs the aifed tool on PATH, from
+      # the option's default (the aifed input's own build). Asserting
+      # the config's own value keeps the check self-contained.
+      aifedOnPath = builtins.elem aligned.config.services.kallipai.aifedPackage aligned.config.environment.systemPackages;
       # The daemon unit's text must carry the system path on PATH: the
       # daemon resolves its helpers by bare name, and a NixOS unit's
       # PATH is empty unless the unit lists `path` explicitly. Dropping
@@ -279,6 +288,7 @@ in
       test "${toString (builtins.length (failedAssertions aligned))}" = "0"
       test "${toString (builtins.length aligned.config.warnings)}" = "0"
       test "${toString workspaceOnPath}" = "1"
+      test "${toString aifedOnPath}" = "1"
       # The real workspace build must actually ship the helpers; a stub
       # mistakenly passed here would fail these two lines immediately.
       test -x "${realWorkspace}/bin/kallip-tagma"

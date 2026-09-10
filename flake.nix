@@ -16,10 +16,11 @@
       flake = false;
     };
 
-    # aifed: intended process-level dep (shell-out, not a Cargo dep); runtime
-    # adoption pending. Consumed via overlays.default, so pkgs.aifed is the
-    # single source of truth (identical store path to `nix build .#aifed`).
-    # packages re-exports aifed-tarball where aifed provides it.
+    # aifed: process-level dependency (shell-out, not a Cargo dep). The
+    # NixOS module installs it from here via overlays.default, so
+    # pkgs.aifed is the single source of truth (identical store path to
+    # `nix build .#aifed`). packages re-exports aifed-tarball where aifed
+    # provides it.
     aifed = {
       url = "github:ImitationGameLabs/aifed";
       inputs = {
@@ -50,6 +51,7 @@
       flake = {
         nixosModules.kallipai = import ./nix/nixos-modules.nix {
           inherit (self) packages;
+          aifedOverlay = inputs.aifed.overlays.default;
         };
         nixosModules.default = self.nixosModules.kallipai;
       };
@@ -94,6 +96,7 @@
           checks = import ./nix/checks.nix {
             inherit pkgs common workspace;
             inherit (inputs) advisory-db;
+            inherit (inputs) aifed;
             inherit (inputs.nixpkgs) lib;
           };
 

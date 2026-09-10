@@ -22,7 +22,7 @@
 # feed every web-facing default (CORS origins, the session cookie,
 # webauthn, the baked runtime config); each derivation is a mkDefault,
 # so an explicit option still wins.
-{ packages }:
+{ packages, aifedOverlay }:
 {
   config,
   lib,
@@ -38,6 +38,12 @@ let
   # it, so enabling a service needs no package reference; setting an
   # option explicitly pins a specific build.
   hostPackages = packages.${pkgs.stdenv.hostPlatform.system};
+
+  # The aifed build from the flake input, resolved through the input's
+  # own overlay: the host's pkgs does not necessarily carry it, so the
+  # module extends locally and stays self-contained. flake.lock pins
+  # the revision; setting the option explicitly pins a specific build.
+  aifedDefault = (pkgs.extend aifedOverlay).aifed;
   inherit (import ./lib.nix) bakeRuntimeConfig;
 
   # Single source of truth for the polis port defaults: the option
@@ -91,6 +97,19 @@ in
       type = lib.types.bool;
       default = true;
       description = "Serve the platform over https; switching it off derives http origins and forces the session cookie non-Secure.";
+    };
+
+    aifedPackage = lib.mkOption {
+      type = lib.types.package;
+      default = aifedDefault;
+      description = ''
+        The aifed editor-face tool: agents shell out to it for file
+        edits, and people use it interactively, so it lands on the
+        system PATH next to the platform commands. Defaults to the
+        aifed flake input's own build (resolved through that input's
+        overlay, pinned by flake.lock); set this option to pin a
+        specific build.
+      '';
     };
 
     daemon = {
@@ -576,9 +595,14 @@ in
       nix.settings.allowed-users = lib.mkForce (lib.unique (cfg.tagmaUsers ++ [ "@${cfg.group}" ]));
 
       # Enabling the daemon puts every platform command on PATH (the
-      # full workspace build). The services still run from their own
-      # packages -- PATH is for people, not for the systemd units.
-      environment.systemPackages = [ hostPackages.workspace ];
+      # full workspace build), plus the aifed editor tool that agents
+      # shell out to and people use interactively. The services still
+      # run from their own packages -- PATH is for people and their
+      # agents, not for the systemd units.
+      environment.systemPackages = [
+        hostPackages.workspace
+        config.services.kallipai.aifedPackage
+      ];
 
       # The daemon's unit environment only covers the daemon itself;
       # interactive kallipctl sessions resolve the socket through
